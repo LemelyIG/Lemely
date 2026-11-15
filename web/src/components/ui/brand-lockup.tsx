@@ -46,7 +46,9 @@ export function BrandLockup({
     <svg
       aria-hidden="true"
       viewBox="28 4 46 94"
-      preserveAspectRatio="xMidYMax meet"
+      // Centred, as design A's `<symbol>` draws it. Only matters where a caller
+      // narrows the box (the shell sidebar's 0.451em); `w-auto` fits it exactly.
+      preserveAspectRatio="xMidYMid meet"
       className="h-[1.1em] w-auto shrink-0"
     >
       <path

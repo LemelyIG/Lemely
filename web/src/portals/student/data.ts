@@ -7,112 +7,68 @@
  * from these constants, no live fetch.
  */
 
-import {
-  Bell,
-  CalendarCheck,
-  ChalkboardTeacher,
-  Gear,
-  GraduationCap,
-  HandHeart,
-  House,
-  Megaphone,
-  NotePencil,
-  Trash,
-  Trophy,
-  UserCircle,
-  UsersThree,
-  type Icon,
-} from "@phosphor-icons/react"
+import { CalendarCheck, Gear, GraduationCap, type Icon } from "@phosphor-icons/react"
 
 import type { Crumb } from "@/components/ui/breadcrumbs"
+import type { ShellIconName } from "@/components/shell/icons"
 
 /** Semantic colour keys used by data-viz rows/bars, resolved to tokens per use. */
 export type VizColor = "accent" | "ok" | "warn" | "t1" | "t2" | "t3"
 
 /* ── Sidebar nav groups ─────────────────────────────────────────────────── */
 
-export interface NavItem {
-  to: string
-  label: string
-  tag?: string
-  end?: boolean
-  /**
-   * Phosphor glyph for the row (P4.1). DESIGN.md §10 prefers icon-plus-label
-   * "wherever space allows", and the Operate lane ranks scanability above
-   * expression — eleven identical dots gave a student nothing to aim at, so
-   * every row was read rather than recognised.
-   *
-   * The icon lives on the item, not in a lookup keyed by label, so a renamed
-   * destination cannot quietly lose its glyph and fall back to a default that
-   * means something else.
-   */
-  icon: Icon
-}
-
 export interface NavGroup {
   label: string
   items: NavItem[]
 }
 
-/*
- * P3.1 (DECISION D1.1 and D1.3, both defaulted-approved on timeout).
- *
- * D1.1 — the "Elsewhere" group is gone. It put three internal surfaces in front
- * of every real student: `/student/onboard` (a flow the student is *routed*
- * into once, not a place to revisit), `/student/landing` (the marketing page,
- * orphaned inside the authenticated app), and `/student/directions` (an
- * internal A/B/C design-comparison gallery that exists to help us choose a
- * result header, and means nothing to a fifteen-year-old). All three **routes
- * survive** — they are still mounted in `portals/student/index.tsx` and still
- * deep-linkable, which is what onboarding's redirect and our own review links
- * depend on. Only the navigation entries are removed.
- *
- * D1.3 — Notifications joins the list. Until now the single entry point to
- * `/student/notifications` was a push deep link, so a student who declined the
- * push permission prompt, or whose browser never offered it, had no route to
- * their own notification history from anywhere in the product.
- *
- * Grouping note: these labels are the sidebar's section headings, so they are
- * read by students, not by us. "Marking" stays its own group because
- * "Correct a paper" is the product's central action and burying it in a list
- * of ten siblings is the one thing this nav must not do.
+export interface NavItem {
+  to: string
+  label: string
+  tag?: string
+  end?: boolean
+  /** A design A shell icon by name, or a Phosphor glyph for rows design A has no icon for. */
+  icon: ShellIconName | Icon
+}
+
+/** The sidebar rows: design A's four, then the two `develop` rows design A has
+ * no place for (Task 0 decision 2; drift logged). */
+export const studentNavItems: NavItem[] = [
+  { to: "/student", label: "Overview", end: true, icon: "home" },
+  { to: "/student/classes", label: "Your classes", icon: "class" },
+  { to: "/student/board", label: "Standings", icon: "trophy" },
+  { to: "/student/friends", label: "Friends", icon: "friends" },
+  { to: "/student/tutors", label: "Tutors", icon: GraduationCap },
+  // S-38 ("Tutors & your data") has no nav entry of its own (SPEC C-13); Sessions links to it.
+  { to: "/student/sessions", label: "Sessions", icon: CalendarCheck },
+]
+
+/** The account panel's links (design A `.as-links`), before Sign out. */
+export const studentAccountLinks: NavItem[] = [
+  { to: "/student/profile", label: "Your profile", icon: "user" },
+  { to: "/student/parents", label: "Your parents", icon: "heart" },
+  { to: "/student/recently-deleted", label: "Recently deleted", icon: "trash" },
+]
+
+/** The bell panel's footer links (design A `.as-pop-foot`). */
+export const studentInboxLinks: NavItem[] = [
+  { to: "/student/notifications", label: "All notifications", icon: "bell" },
+  { to: "/student/announcements", label: "Announcements", icon: "mega" },
+]
+
+export const STUDENT_INBOX_EMPTY = "Nothing yet. Marked papers and messages from your teachers land here."
+
+/**
+ * Every destination the student shell links to, grouped by where it sits.
+ * `navigation.test.ts` checks each one is a mounted route with a real
+ * breadcrumb, so a renamed screen breaks a test rather than a link.
  */
 export const navGroups: NavGroup[] = [
-  {
-    label: "Student",
-    items: [
-      { to: "/student", label: "Overview", end: true, icon: House },
-      // `items[1]` — second in this array, so a student who was never handed
-      // a class link (the only way onto `POST /student/classes/join` before
-      // this route existed) finds one right after Overview in the source
-      // order. `NavGroups` in `index.tsx` renders `items.slice(0, 1)`, then
-      // the enrolled-subject accordion, then `items.slice(1)` — so this row
-      // actually paints below the subjects, not above them. That is the
-      // existing, deliberate order for everything past Overview (Standings,
-      // Friends, and the rest all sit in the same trailing slice), not a
-      // placement this entry is exempt from.
-      { to: "/student/classes", label: "Your classes", icon: ChalkboardTeacher },
-      { to: "/student/tutors", label: "Tutors", icon: GraduationCap },
-      // S-38 ("Tutors & your data") has no nav entry of its own (SPEC C-13); Sessions links to it.
-      { to: "/student/sessions", label: "Sessions", icon: CalendarCheck },
-      // Enrolled subjects render here as a collapsible accordion — see
-      // `SubjectNavGroup` in `index.tsx`. They come from `GET
-      // /student/overview`'s real `subjects` list, not this static array,
-      // since which subjects a student sits is per-account data.
-      { to: "/student/board", label: "Standings", icon: Trophy },
-      { to: "/student/friends", label: "Friends", icon: UsersThree },
-      { to: "/student/profile", label: "Your profile", icon: UserCircle },
-      { to: "/student/notifications", label: "Notifications", icon: Bell },
-      { to: "/student/announcements", label: "Announcements", icon: Megaphone },
-      { to: "/student/parents", label: "Your parents", icon: HandHeart },
-      { to: "/student/recently-deleted", label: "Recently deleted", icon: Trash },
-      { to: "/student/settings", label: "Settings", icon: Gear },
-    ],
-  },
-  {
-    label: "Marking",
-    items: [{ to: "/student/correct", label: "Correct a paper", icon: NotePencil }],
-  },
+  { label: "Sidebar", items: studentNavItems },
+  { label: "Account", items: studentAccountLinks },
+  { label: "Inbox", items: studentInboxLinks },
+  { label: "Marking", items: [{ to: "/student/correct", label: "Upload a paper", icon: "up" }] },
+  { label: "Settings", items: [{ to: "/student/settings", label: "Settings", icon: Gear }] },
 ]
 
 /**
@@ -188,6 +144,8 @@ export const crumbs: Record<string, string> = {
   "/student/settings": "Home / Settings",
   "/student/settings/devices": "Home / Settings / Account and devices",
   "/student/settings/notifications": "Home / Settings / Notifications",
+  "/student/settings/appearance": "Home / Settings / Appearance",
+  "/student/settings/install": "Home / Settings / Install Lemely",
   "/student/onboard": "Onboarding",
   "/student/landing": "lemely.com",
 }
@@ -291,11 +249,35 @@ export function resolveCrumbTrail(pathname: string): Crumb[] {
   })
 }
 
+const ROOT_CRUMBS = new Set(["Home", "Marking"])
+
+/** The top bar's trail: the crumb trail without its root ("Home" / "Marking"),
+ * so a section is one crumb (title only) and only a drilled-in page has
+ * breadcrumbs, as design A shows. */
+export function studentShellTrail(pathname: string): Crumb[] {
+  const trail = resolveCrumbTrail(pathname)
+  return ROOT_CRUMBS.has(trail[0]?.label ?? "") ? trail.slice(1) : trail
+}
+
+/** The top bar's title. A subject page shows the subject's name when known. */
+export function studentPageTitle(pathname: string, subjects: readonly { code: string; name: string }[] = []): string {
+  const subject = pathname.match(/^\/student\/subject\/([^/]+)$/)
+  if (subject) return subjects.find((s) => s.code === subject[1])?.name ?? subject[1]
+  const trail = studentShellTrail(pathname)
+  return trail[trail.length - 1]?.label ?? "Overview"
+}
+
+/** The line under the student's name (sidebar user block and account panel). */
+export function studentDetailLine(qualificationLabel: string | null, subjectCount: number): string {
+  const count = subjectCount === 0 ? "no subjects yet" : subjectCount === 1 ? "1 subject" : `${subjectCount} subjects`
+  return qualificationLabel ? `${qualificationLabel} · ${count}` : count
+}
+
 // `studentName`/`studentMeta` ("Maya Rahman" / "Year 11 - Helwan Science
 // Centre") were removed in P3.10 chunk c. They were the student-side twin of
 // the fabricated teacher identity P3.7 chunk b deleted, and no field anywhere
 // in the API supplies either one. The sidebar now renders the real caller via
-// `useProfile()` — see `UserBlock` in `portals/student/index.tsx`.
+// `useProfile()` — see `ShellUserBlock` in `components/shell/ShellSidebar.tsx`.
 
 /* ── Paper Result (flagship) ────────────────────────────────────────────── */
 

@@ -1,6 +1,11 @@
 import { createBrowserRouter } from "react-router-dom"
 import { appRoutes } from "@/routes"
 import { applyDocumentMeta } from "@/lib/meta/documentMeta"
+import { installNavigateMiddleware } from "@/lib/nav/navigateMiddleware"
+import { snapshotCaptureMiddleware } from "@/lib/nav/pageSnapshotCapture"
+import { createNativePushDefault } from "@/lib/nav/nativePushDefault"
+import { exposeRouterForChecks } from "@/lib/nav/exposeRouter"
+import { installVtChrome } from "@/lib/nav/vtChrome"
 
 /*
  * The router instance, and nothing else.
@@ -12,6 +17,22 @@ import { applyDocumentMeta } from "@/lib/meta/documentMeta"
  * environment. See the note at the top of `routes.tsx`.
  */
 export const router = createBrowserRouter(appRoutes)
+
+// Registered here, before `RouterProvider` mounts and subscribes, so it runs before the view transition starts.
+installVtChrome(router)
+
+/*
+ * Navigate middleware, in one place (see `lib/nav/navigateMiddleware.ts`). The swipe-back
+ * snapshot is cloned from the page being left, so it must see the options as they will actually
+ * run. The native push-default middleware (viewTransition on drill-downs) is installed in a LATER
+ * call, which wraps outside this one and therefore runs BEFORE capture.
+ *
+ * Both installs stay at module load, before the first render: `useSubmit` and `<Form>` cache
+ * `router.navigate` per render, so a wrapper added later would be missed by them.
+ */
+installNavigateMiddleware(router, [snapshotCaptureMiddleware])
+installNavigateMiddleware(router, [createNativePushDefault(router)])
+exposeRouterForChecks(router)
 
 /*
  * P6.5 · the document title, driven from the route table.

@@ -1,0 +1,259 @@
+/* Lemely design system v5 (Abyss), copied from the Claude Design project
+   "Lemely Brand Identity Workshop": tokens/colors, typography, spacing, motion. */
+:root {
+  --abyss: #042f4f;
+  --abyss-hover: #0a3d62;
+  --abyss-lip: #021f36;
+  --tide: #7fb8e0;
+  --tide-hover: #9ccaea;
+  --mist: oklch(0.92 0.035 235);
+  --night: #130e10;
+  --gold: oklch(0.80 0.13 80);
+  --success: oklch(0.60 0.12 150);
+  --error: oklch(0.55 0.20 25);
+  --white: #ffffff;
+
+  --grade-astar: oklch(0.46 0.12 155);
+  --grade-a: oklch(0.52 0.12 132);
+  --grade-b: oklch(0.58 0.12 110);
+  --grade-c: oklch(0.63 0.12 88);
+  --grade-d: oklch(0.59 0.125 62);
+  --grade-e: oklch(0.54 0.13 38);
+  --grade-u: oklch(0.50 0.14 15);
+
+  --md-surface: oklch(0.985 0.004 240);
+  --md-surface-lowest: #ffffff;
+  --md-surface-low: oklch(0.97 0.006 240);
+  --md-surface-container: oklch(0.955 0.008 240);
+  --md-surface-high: oklch(0.94 0.01 240);
+  --md-surface-highest: oklch(0.92 0.012 240);
+  --md-on-surface: #130e10;
+  --md-on-surface-variant: oklch(0.47 0.02 240);
+  --md-outline: oklch(0.87 0.012 240);
+  --md-outline-subtle: oklch(0.92 0.01 240);
+  --md-primary: #042f4f;
+  --md-on-primary: #ffffff;
+  --md-primary-hover: #0a3d62;
+  --md-primary-container: oklch(0.92 0.035 235);
+  --md-on-primary-container: #042f4f;
+  --md-tertiary: oklch(0.80 0.13 80);
+  --md-error: oklch(0.55 0.20 25);
+  --md-success: oklch(0.60 0.12 150);
+
+  /* Material 3 roles completed from the Lemely palette (Abyss primary, Tide secondary). */
+  --md-secondary: oklch(0.52 0.07 240);
+  --md-on-secondary: #ffffff;
+  --md-secondary-container: oklch(0.88 0.05 238);
+  --md-on-secondary-container: #042f4f;
+  --md-inverse-primary: #7fb8e0;
+  --md-on-primary-muted: oklch(0.86 0.03 235);
+  --md-error-container: oklch(0.93 0.04 25);
+  --md-on-error-container: oklch(0.38 0.14 25);
+  --md-inverse-error: oklch(0.72 0.15 25);
+  --md-scrim: oklch(0.2 0.03 242 / 0.4);
+  --md-shadow: oklch(0.3 0.06 242);
+
+  --text-body: var(--md-on-surface);
+  --text-secondary: oklch(0.42 0.02 240);
+  --text-muted: var(--md-on-surface-variant);
+  --surface-page: var(--md-surface);
+  --surface-section: var(--md-surface-low);
+  --surface-card: var(--md-surface-lowest);
+  --surface-row: var(--md-surface-low);
+  --surface-hover-tint: oklch(0.95 0.015 240);
+  --border-subtle: var(--md-outline-subtle);
+  --border-default: var(--md-outline);
+  --border-control: oklch(0.85 0.03 240);
+  --track: oklch(0.94 0.01 240);
+
+  --font-display: 'Bricolage Grotesque Variable', 'Schibsted Grotesk Variable', sans-serif;
+  --font-ui: 'Schibsted Grotesk Variable', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+
+  --fs-display: 64px;
+  --fs-display-sm: 40px;
+  --fs-headline: 32px;
+  --fs-title: 21px;
+  --fs-body: 16px;
+  --fs-body-sm: 14px;
+  --fs-data: 14px;
+  --fs-label: 11px;
+  --ls-display: -0.05em;
+  --ls-headline-ui: -0.02em;
+  --ls-label: 0.08em;
+  --lh-body: 1.5;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+  --space-12: 48px;
+
+  --radius-board: 32px;
+  --radius-card: 24px;
+  --radius-tile: 20px;
+  --radius-inner: 18px;
+  --radius-button: 14px;
+  --radius-chip: 12px;
+  --radius-pill: 999px;
+
+  --shadow-hover: 0 22px 40px -26px oklch(0.3 0.06 242 / 0.4);
+  --shadow-panel: 0 30px 60px -40px oklch(0.3 0.06 242 / 0.45), 0 0 0 1px oklch(0.92 0.01 240);
+
+  --ease-out: cubic-bezier(.2,.8,.2,1);
+  --dur-fast: .15s;
+  --dur-base: .2s;
+  --dur-slow: .35s;
+}
+
+@keyframes lmUp { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: none } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important } }
+
+/* Student home additions. Text on gold is the same dark ink in both schemes. */
+.sh-root {
+  --sh-gold-text: oklch(0.20 0.019 80);
+  --sh-success-text: oklch(0.49 0.12 150);
+  --sh-grade-astar: var(--grade-astar);
+  --sh-grade-a: var(--grade-a);
+  --sh-grade-b: var(--grade-b);
+  --sh-grade-c: var(--grade-c);
+  --sh-grade-d: var(--grade-d);
+  --sh-grade-e: var(--grade-e);
+  --sh-grade-u: var(--grade-u);
+}
+
+/* Native phone frame (design A, shell below 721px). Brief 2026-11-08 §3. One name per
+   measurement, a value per platform; nothing reads these at 721px and up. iOS numbers follow the
+   HIG (via third-party measurements), Android numbers follow Material 3. */
+.sh-root[data-platform="ios"] {
+  --pf-bar-h: 44px;            /* compact navigation bar, under the status bar */
+  --pf-title-inset: 144px;     /* centred inline title clears three 44px actions */
+  --pf-title-inset-detail: 124px; /* ...or the back chevron with its label */
+  --pf-tab-h: 49px;            /* tab bar, plus the home-indicator inset */
+  --pf-tab-label: 10px;
+  --pf-tab-ico: 24px;
+  --pf-group-radius: 12px;     /* inset-grouped section */
+  --pf-group-margin: 16px;
+  --pf-row-min: 44px;
+  --pf-sep-inset: 16px;        /* separators start at the row's leading content */
+  --pf-iconbtn: 44px;
+  --pf-grab-w: 36px;
+  --pf-grab-h: 5px;
+  --pf-grab-gap: 5px 6px;      /* space above / below the grabber */
+  --pf-sheet-medium: 50dvh;
+  --pf-sheet-large: calc(100dvh - max(env(safe-area-inset-top), 20px) - 10px);
+  --pf-sheet-dur: 320ms;
+  --pf-sheet-ease: cubic-bezier(0.32, 0.72, 0, 1); /* iOS sheet spring, critically damped */
+  --pf-sheet-scale: 0.94;      /* the page behind, at the large detent */
+  --pf-glass-blur: var(--blur-nav, 10px); /* the app's one blur (index.css --blur-nav); the preview does not define it, so 10px */
+  --pf-glass-mix: 86%;
+  --pf-hairline: 0.5px;
+  --pf-press-scale: 0.97;
+  --pf-press-layer: 8%;
+  --pf-ptr-threshold: 64px;
+  --pf-ptr-hold: 56px;
+}
+.sh-root[data-platform="android"] {
+  --pf-bar-h: 64px;            /* M3 small top app bar */
+  --pf-tab-h: 80px;            /* M3 navigation bar */
+  --pf-tab-label: 12px;
+  --pf-tab-ico: 24px;
+  --pf-pill-w: 64px;           /* M3 active indicator */
+  --pf-pill-h: 32px;
+  --pf-group-radius: 0px;      /* full-width list group */
+  --pf-group-margin: 0px;
+  --pf-row-min: 56px;          /* one-line list item; 72 and 88 for two and three lines */
+  --pf-sep-inset: 0px;
+  --pf-iconbtn: 48px;
+  --pf-grab-w: 32px;
+  --pf-grab-h: 4px;
+  --pf-grab-gap: 22px 22px;    /* M3 drag handle: centred in a 48dp touch area */
+  --pf-sheet-medium: 50dvh;
+  --pf-sheet-large: calc(100dvh - max(env(safe-area-inset-top), 24px) - 24px);
+  --pf-sheet-dur: 300ms;
+  --pf-sheet-ease: cubic-bezier(0.05, 0.7, 0.1, 1); /* M3 emphasized decelerate */
+  --pf-press-layer: 10%;       /* M3 pressed state layer */
+  --pf-ripple-dur: 450ms;
+  --pf-ptr-threshold: 64px;
+  --pf-ptr-hold: 64px;
+}
+
+/* Dark scheme: same names, DESIGN.md dark-* values. On dark the accent is Tide, never Abyss. */
+.sh-root[data-theme="dark"] {
+  --md-primary: #7fb8e0;
+  --md-primary-hover: #9ccaea;
+  --md-on-primary: #042f4f;
+  --md-primary-container: oklch(0.34 0.07 242);
+  --md-on-primary-container: oklch(0.92 0.035 235);
+  --md-secondary: oklch(0.80 0.037 235);
+  --md-on-secondary: oklch(0.20 0.006 235);
+  --md-secondary-container: oklch(0.30 0.006 235);
+  --md-on-secondary-container: oklch(0.90 0.037 235);
+  --md-tertiary: oklch(0.80 0.13 80);
+  --md-error: oklch(0.72 0.15 25);
+  --md-error-container: oklch(0.30 0.117 25);
+  --md-on-error-container: oklch(0.90 0.083 25);
+  --md-success: oklch(0.72 0.12 150);
+  --success: oklch(0.72 0.12 150);
+  --sh-success-text: oklch(0.72 0.12 150);
+  --error: oklch(0.72 0.15 25);
+  --md-surface: oklch(0.16 0.014 245);
+  --md-surface-lowest: oklch(0.12 0.010 245);
+  --md-surface-low: oklch(0.19 0.014 245);
+  --md-surface-container: oklch(0.215 0.016 245);
+  --md-surface-high: oklch(0.25 0.020 245);
+  --md-surface-highest: oklch(0.29 0.024 245);
+  --md-on-surface: oklch(0.95 0.006 240);
+  --md-on-surface-variant: oklch(0.77 0.015 240);
+  --md-outline: oklch(0.38 0.02 240);
+  --md-outline-subtle: oklch(0.30 0.018 240);
+  --md-inverse-primary: #042f4f;
+
+  /* Semantic aliases: page on surface, cards on surface-high without an outline, rows on surface-container. */
+  --text-body: var(--md-on-surface);
+  --text-secondary: var(--md-on-surface-variant);
+  --text-muted: var(--md-on-surface-variant);
+  --surface-page: var(--md-surface);
+  --surface-section: var(--md-surface-low);
+  --surface-card: var(--md-surface-high);
+  --surface-row: var(--md-surface-container);
+  --surface-hover-tint: var(--md-surface-highest);
+  --border-subtle: var(--md-outline-subtle);
+  --border-default: var(--md-outline);
+  --border-control: var(--md-outline);
+  --track: var(--md-surface-highest);
+  --shadow-panel: none;
+  color-scheme: dark;
+}
+
+/* Phone frame colours, per platform and scheme. Roles only (DESIGN.md Roles Only Rule).
+   iOS: grouped page, groups on the card surface, chrome as the landing header's glass.
+   Android: groups one tonal step up from the page, chrome lifting surface -> surface-container. */
+.sh-root[data-platform] {
+  --pf-group: var(--surface-card);
+  --pf-sheet-bg: var(--md-surface-low);
+  --pf-sep: var(--md-outline);
+  --pf-hair: var(--md-outline-subtle);
+  --pf-grab: var(--md-outline);
+  --pf-ink-dim: oklch(0 0 0);   /* iOS press dims toward black in light... */
+}
+.sh-root[data-platform="ios"] {
+  --pf-page: var(--md-surface-container);
+  --pf-glass: color-mix(in oklch, var(--md-surface-lowest) var(--pf-glass-mix), transparent);
+}
+.sh-root[data-platform="android"] {
+  --pf-page: var(--md-surface-low);
+  --pf-bar-raised: var(--md-surface-container);
+  --pf-nav: var(--md-surface-container);
+  --pf-grab: color-mix(in oklch, var(--md-on-surface-variant) 40%, transparent); /* M3 drag handle */
+}
+.sh-root[data-platform][data-theme="dark"] { --pf-ink-dim: oklch(1 0 0) } /* ...and toward white in dark */
+.sh-root[data-platform="ios"][data-theme="dark"] {
+  --pf-page: var(--md-surface-lowest);
+  --pf-glass: color-mix(in oklch, var(--md-surface-low) var(--pf-glass-mix), transparent);
+}
+.sh-root[data-platform="android"][data-theme="dark"] { --pf-page: var(--md-surface) }

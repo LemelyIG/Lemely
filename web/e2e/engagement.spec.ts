@@ -145,7 +145,7 @@ test("a teacher's announcement reaches the class as a notice and an inbox row", 
   //
   // Scoped by text rather than a bare role: `role="status"` is used
   // deliberately across many components (offline/queued/install banners,
-  // pull-indicator, state-views, loading-shapes), and this screen's seeded
+  // the shell's pull indicator, state-views, loading-shapes), and this screen's seeded
   // teacher has an unverified email, so the unverified-email banner is a
   // second, legitimate `role="status"` region on screen at the same time
   // (issue #240 — a bare `getByRole("status")` is a strict-mode violation
@@ -207,8 +207,9 @@ test("a teacher's announcement reaches the class as a notice and an inbox row", 
    * Issue #246/#247: a visibility assertion on "Open" would have passed
    * throughout the whole pull-to-refresh click-swallowing bug — the button
    * was visible the entire time, it just did nothing when tapped. This
-   * screen sits inside the same pull-to-refresh surface Announcements does
-   * (`usePullToRefresh`), so it needs its own click-level proof rather than
+   * screen sits inside the same shell pull-to-refresh surface Announcements
+   * does (`ShellPullToRefresh`, which wraps every root page), so it needs its
+   * own click-level proof rather than
    * inheriting Announcements' — a fix scoped to one screen's own DOM
    * structure could pass Announcements and still leave this one broken.
    */
@@ -229,7 +230,7 @@ test("Overview's subject row navigates on click, inside the same pull-to-refresh
    * `SubjectLedgerRow` `<Link>` had never actually been exercised.
    * `getByRole("main")` scopes past that trap: the sidebar is not landmark
    * `main`, so a locator that resolves at all here is inside the actual
-   * screen content, under `pullSurfaceRef`, not beside it.
+   * screen content, inside the shell's pull surface, not beside it.
    */
   const seed = readSeed()
   const student = seed.students.correctedPaper

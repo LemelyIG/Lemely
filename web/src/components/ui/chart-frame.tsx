@@ -80,7 +80,7 @@ export function ChartFrame({
   return (
     <div
       className={cn(
-        "flex flex-col gap-4 rounded-lg border border-outline-variant bg-surface-container-lowest p-6",
+        "lm-native-card flex flex-col gap-4 rounded-lg border border-outline-variant bg-surface-container-lowest p-6",
         className,
       )}
       {...props}

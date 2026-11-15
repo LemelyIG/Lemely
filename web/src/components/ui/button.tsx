@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils"
  *   - `ink`       solid ink fill, for a dark panel or a teacher's primary CTA
  *   - `secondary` raised paper with a hairline rule, the default
  *   - `ghost`     no fill and no border, for Cancel and inline actions
+ *   - `text`, `text-error`  Material 3 dialog actions: text only, in the primary / error role
  *
  * Rewritten in Phase 2 from the build-era version, which carried three real
  * defects against the new system rather than merely old colours:
@@ -50,11 +51,14 @@ const button = cva(
      * label centres in the taller box rather than sitting at its top.
      */
     "pointer-coarse:min-h-11 pointer-coarse:min-w-11",
-    // Colour-only transition, plus the transform used by the press. Never
-    // `ease-in-out` or `linear` on a designed transition (DESIGN.md §9.1).
-    "transition-[color,background-color,border-color,transform]",
+    // Material's floor is 48dp, not 44: `.lm-btn` carries it on the Android native frame (index.css, unlayered, so it
+    // outranks the utility floor above without `!`). The iOS 44pt floor above stays.
+    "lm-btn",
+    // Colour transition. The native frame adds the `scale` property (Tailwind v4 `scale-*` writes `scale`, which `transform` does not cover)
+    // for the press; desktop keeps the base list, so its press does not animate. Never `ease-in-out` or `linear` on a designed transition (DESIGN.md §9.1).
+    "transition-[color,background-color,border-color,transform] native:transition-[color,background-color,border-color,transform,scale]",
     "duration-[var(--dur-fast)] ease-out-soft",
-    "active:scale-[0.98]",
+    "active:scale-[0.98] lm-press lm-press-scale",
     "disabled:pointer-events-none disabled:opacity-50",
   ],
   {
@@ -74,6 +78,10 @@ const button = cva(
         secondary:
           "border border-outline-variant bg-surface-container-lowest text-on-surface hover:border-outline hover:bg-surface-container-low",
         ghost: "border-0 bg-transparent text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface",
+        /** Material 3 dialog action: a text button in the primary role (native Android confirm). */
+        text: "border-0 bg-transparent text-primary hover:bg-surface-container-low",
+        /** The same text button in the error role, for the destructive confirm. */
+        "text-error": "border-0 bg-transparent text-error hover:bg-surface-container-low",
       },
       size: {
         sm: "text-body-sm px-3 py-1.5 font-medium",

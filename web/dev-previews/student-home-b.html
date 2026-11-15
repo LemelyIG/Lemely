@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Student home: variant B</title>
+    <link rel="stylesheet" href="./student-home/tokens.css" />
+    <link rel="stylesheet" href="./student-home/shell.css" />
+    <link rel="stylesheet" href="./student-home/variant-b.css" />
+    <script type="module">
+      import "@fontsource-variable/bricolage-grotesque"
+      import "@fontsource-variable/schibsted-grotesk"
+      import "@fontsource-variable/jetbrains-mono"
+      import { mountHome } from "./student-home/controller.ts"
+      mountHome("b")
+    </script>
+  </head>
+  <body>
+    <nav class="sh-toolbar" aria-label="Preview controls">
+      <a data-variant-link="a">A</a> <a data-variant-link="b">B</a> <a data-variant-link="c">C</a>
+      <label>State <select data-control="state"></select></label>
+      <label>Theme <select data-control="theme"></select></label>
+      <label>Motion <select data-control="motion"></select></label>
+      <label>Width <select data-control="width"></select></label>
+      <span class="sh-demo">Demo data</span>
+    </nav>
+    <main id="sh-root" class="sh-root">
+      <!-- Clipped: each subject is a clipped bundle of its marked papers. The top sheet is the latest
+           result, earlier sheets peek out above it, weak topics are index tabs, and today's
+           next action is a sheet pulled out of a bundle. -->
+
+      <section class="rb-page rb-skel" data-when-state="loading" aria-busy="true" aria-label="Loading your overview">
+        <div class="rb-skel-band"><span></span><span></span><span></span><span></span></div>
+        <div class="rb-skel-hero"><span></span><span></span><span></span></div>
+        <div class="rb-skel-runway"><span></span><span></span><span></span><span></span></div>
+      </section>
+
+      <section class="rb-page" data-when-state="error" role="alert">
+        <div class="rb-error">
+          <svg class="rb-ico rb-error-ico" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" /><path d="M10 6v5M10 14v.01" /></svg>
+          <h1 class="rb-error-h">Couldn't load your overview.</h1>
+          <p class="rb-error-p">Check your connection and try again.</p>
+          <button class="rb-btn rb-btn--pri" type="button">Try again</button>
+        </div>
+      </section>
+
+      <section class="rb-page" data-when-state="new">
+        <header class="rb-band rb-band--new">
+          <div class="rb-greet">
+            <h1 class="rb-greet-h">Good morning, there.</h1>
+          </div>
+          <div class="rb-binny">
+            <div class="rb-binny-art" data-binny></div>
+            <p class="rb-binny-say">
+              <span data-when-mood="marking">Reading your answers.</span>
+              <span data-when-mood="grade-improved">A in 0580, up from B.</span>
+              <span data-when-mood="paper-marked">Your 0580/42 result is in.</span>
+              <span data-when-mood="streak-kept">Day 9. Streak kept.</span>
+              <span data-when-mood="idle">Ready when you are.</span>
+            </p>
+          </div>
+        </header>
+        <article class="rb-hero" data-when-action="first-paper">
+          <div class="rb-hero-text">
+            <h2 class="rb-hero-h">Let's get your first paper marked</h2>
+            <p class="rb-hero-p">Photograph or upload a paper you have already sat. Lemely finds the session and variant, pulls the official mark scheme, and marks it question by question.</p>
+          </div>
+          <div class="rb-hero-go">
+            <a class="rb-btn rb-btn--pri rb-btn--lg" href="/student/correct">Correct a paper
+              <!-- direction-dependent: mirrored under dir="rtl" in variant-b.css -->
+              <svg class="rb-ico rb-ico--dir" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5" /></svg></a>
+          </div>
+        </article>
+        <div class="cb-empty">
+          <svg class="cb-clip" viewBox="28 4 46 94" aria-hidden="true"><path d="M58 34 V72 A8 8 0 0 1 42 72 V20 A14 14 0 0 1 70 20 V78 A18 18 0 0 1 34 78 V36" /></svg>
+        <ol class="rb-steps">
+          <li class="rb-step is-now"><span class="rb-step-n">1</span><span class="rb-step-t">Correct your first paper</span><span class="rb-step-tag">Now</span></li>
+          <li class="rb-step"><span class="rb-step-n">2</span><span class="rb-step-t">See where you stand</span><span class="rb-step-tag">Later</span></li>
+          <li class="rb-step"><span class="rb-step-n">3</span><span class="rb-step-t">Get a study plan built from your own mistakes</span><span class="rb-step-tag">Later</span></li>
+        </ol>
+        </div>
+      </section>
+
+      <div class="rb-page rb-page--ready" data-when-state="ready">
+        <header class="rb-band rb-band--ready">
+          <div class="rb-hello">
+            <div class="rb-greet">
+              <h1 class="rb-greet-h">Good morning, Mariam.</h1>
+              <p class="rb-greet-p" data-needs="many-papers">3 subjects, 22 papers corrected so far.</p>
+              <p class="rb-greet-p" data-only-state="one-paper">1 subject, 1 paper corrected so far.</p>
+            </div>
+            <div class="rb-binny">
+              <div class="rb-binny-art" data-binny></div>
+              <p class="rb-binny-say">
+                <span data-when-mood="marking">Reading your answers.</span>
+                <span data-when-mood="grade-improved">A in 0580, up from B.</span>
+                <span data-when-mood="paper-marked">Your 0580/42 result is in.</span>
+                <span data-when-mood="streak-kept">Day 9. Streak kept.</span>
+                <span data-when-mood="idle">Ready when you are.</span>
+              </p>
+            </div>
+          </div>
+          <div class="rb-reward">
+            <div class="rb-level">
+              <div data-needs="many-papers">
+                <p class="rb-level-h">Level 7</p>
+                <p class="rb-level-xp">2,340 XP</p>
+                <div class="rb-meter" role="progressbar" aria-label="XP to level 8" aria-valuemin="0" aria-valuemax="500" aria-valuenow="240">
+                  <span class="rb-meter-fill" style="--fill: 0.48"></span>
+                </div>
+                <p class="rb-level-to">240 / 500 XP to level 8</p>
+              </div>
+              <div data-only-state="one-paper">
+                <p class="rb-level-h">Level 1</p>
+                <p class="rb-level-xp">50 XP</p>
+                <div class="rb-meter" role="progressbar" aria-label="XP to level 2" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50">
+                  <span class="rb-meter-fill" style="--fill: 0.5"></span>
+                </div>
+                <p class="rb-level-to">50 / 100 XP to level 2</p>
+              </div>
+            </div>
+            <div class="rb-streak">
+              <div data-when-streak="kept">
+                <p class="rb-streak-h">9-day streak</p>
+                <p class="rb-streak-meta">Longest 14 · 1 freeze</p>
+                <ol class="rb-days7" aria-label="Last 7 days">
+                  <li class="is-earned"><span>30</span><small>Oct</small></li>
+                  <li class="is-earned"><span>31</span><small></small></li>
+                  <li class="is-earned"><span>1</span><small>Nov</small></li>
+                  <li class="is-earned"><span>2</span><small></small></li>
+                  <li class="is-earned"><span>3</span><small></small></li>
+                  <li class="is-earned"><span>4</span><small></small></li>
+                  <li class="is-earned is-today" aria-current="date"><span>5</span><small>Today</small></li>
+                </ol>
+              </div>
+              <div data-when-streak="zero">
+                <p class="rb-streak-zero">No streak yet this week.</p>
+                <p class="rb-streak-meta">Correct a paper, finish a session, take a quiz or review flashcards to start one.</p>
+                <ol class="rb-days7" aria-label="Last 7 days">
+                  <li class="is-earned" data-needs="many-papers"><span>30</span><small>Oct</small></li>
+                  <li class="is-earned" data-needs="many-papers"><span>31</span><small></small></li>
+                  <li class="is-earned" data-needs="many-papers"><span>1</span><small>Nov</small></li>
+                  <li class="is-earned" data-needs="many-papers"><span>2</span><small></small></li>
+                  <li class="is-earned" data-needs="many-papers"><span>3</span><small></small></li>
+                  <li data-only-state="one-paper"><span>30</span><small>Oct</small></li>
+                  <li data-only-state="one-paper"><span>31</span><small></small></li>
+                  <li data-only-state="one-paper"><span>1</span><small>Nov</small></li>
+                  <li data-only-state="one-paper"><span>2</span><small></small></li>
+                  <li data-only-state="one-paper"><span>3</span><small></small></li>
+                  <li><span>4</span><small></small></li>
+                  <li class="is-today" aria-current="date"><span>5</span><small>Today</small></li>
+                </ol>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <section class="rb-next" aria-label="Next action">
+          <article class="rb-hero" data-when-action="marking">
+            <span class="rb-from" aria-hidden="true"><span class="rb-mono">0625</span></span>
+            <div class="rb-hero-text">
+              <p class="rb-hero-why"><span class="rb-pulse" aria-hidden="true"></span>Marking now · <span class="rb-mono">0625</span></p>
+              <h2 class="rb-hero-h">0625/42 is being marked</h2>
+              <p class="rb-hero-p">Lemely is reading your answers and checking each one against the official mark scheme.</p>
+            </div>
+            <div class="rb-hero-go">
+              <a class="rb-btn rb-btn--pri rb-btn--lg" href="/student/correct">See progress
+                <svg class="rb-ico rb-ico--dir" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5" /></svg></a>
+            </div>
+          </article>
+          <article class="rb-hero" data-when-action="session">
+            <span class="rb-from" aria-hidden="true"><span class="rb-mono">0606</span></span>
+            <div class="rb-hero-text">
+              <p class="rb-hero-why" data-needs="exams">Closest exam first · <span class="rb-mono">0606</span></p>
+              <p class="rb-hero-why" data-only-state="no-exams">Today's session · <span class="rb-mono">0606</span></p>
+              <h2 class="rb-hero-h">Quadratic inequalities <span class="rb-hero-meta">25 min</span></h2>
+              <p class="rb-hero-p">Next in your study plan for Additional Mathematics.</p>
+            </div>
+            <div class="rb-hero-go">
+              <a class="rb-btn rb-btn--pri rb-btn--lg" href="/student/plan/0606/session/s1">Start session
+                <svg class="rb-ico rb-ico--dir" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5" /></svg></a>
+            </div>
+          </article>
+          <article class="rb-hero" data-when-action="practice">
+            <span class="rb-from" data-needs="many-papers" aria-hidden="true"><span class="rb-mono">0625</span></span>
+            <div class="rb-hero-text" data-needs="many-papers">
+              <p class="rb-hero-why">Practise next · <span class="rb-mono">0625</span></p>
+              <h2 class="rb-hero-h">Waves <span class="rb-hero-meta">54% accuracy</span></h2>
+              <p class="rb-hero-p">Your weakest topic right now. A short set shows whether it is improving.</p>
+            </div>
+            <div class="rb-hero-go" data-needs="many-papers">
+              <a class="rb-btn rb-btn--pri rb-btn--lg" href="/student/practice/0625">Practise waves
+                <svg class="rb-ico rb-ico--dir" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5" /></svg></a>
+            </div>
+            <span class="rb-from" data-only-state="one-paper" aria-hidden="true"><span class="rb-mono">0580</span></span>
+            <div class="rb-hero-text" data-only-state="one-paper">
+              <p class="rb-hero-why">Practise next · <span class="rb-mono">0580</span></p>
+              <h2 class="rb-hero-h">Vectors <span class="rb-hero-meta">50% accuracy</span></h2>
+              <p class="rb-hero-p">Your weakest topic right now. A short set shows whether it is improving.</p>
+            </div>
+            <div class="rb-hero-go" data-only-state="one-paper">
+              <a class="rb-btn rb-btn--pri rb-btn--lg" href="/student/practice/0580">Practise vectors
+                <svg class="rb-ico rb-ico--dir" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5" /></svg></a>
+            </div>
+          </article>
+          <article class="rb-hero" data-when-action="correct">
+            <div class="rb-hero-text">
+              <h2 class="rb-hero-h">Ready for another paper?</h2>
+              <p class="rb-hero-p">Each paper sharpens your predicted grade.</p>
+            </div>
+            <div class="rb-hero-go">
+              <a class="rb-btn rb-btn--pri rb-btn--lg" href="/student/correct">Correct a paper
+                <svg class="rb-ico rb-ico--dir" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5" /></svg></a>
+            </div>
+          </article>
+        </section>
+
+        <p class="rb-note" data-only-state="no-plan">No study plan this week. Build one from your weak topics. <a href="/student/plan">Build a plan</a></p>
+        <p class="rb-note" data-only-state="no-exams">Add your exam dates to see how long you have for each subject. <a href="/student/settings/exams">Add exam dates</a></p>
+
+        <section class="cb-shelf" aria-labelledby="cb-shelf-h">
+          <div class="cb-shelf-head">
+            <h2 class="rb-sec-h" id="cb-shelf-h">Your bundles</h2>
+            <p class="cb-shelf-note" data-needs="exams">Closest exam first</p>
+          </div>
+          <div class="cb-bundles">
+            <article class="cb-bundle is-closest" data-needs="many-papers">
+              <ol class="cb-peeks" aria-label="Earlier papers in this bundle">
+                <li class="cb-peek" style="--i: 1"><span class="rb-mono">41%</span><span class="cb-peek-g">D</span></li>
+              </ol>
+              <svg class="cb-clip" viewBox="28 4 46 94" aria-hidden="true"><path d="M58 34 V72 A8 8 0 0 1 42 72 V20 A14 14 0 0 1 70 20 V78 A18 18 0 0 1 34 78 V36" /></svg>
+              <div class="cb-sheet">
+                <div class="cb-top">
+                  <h3 class="cb-name"><a href="/student/subject/0625"><span class="rb-mono">0625</span> Physics</a></h3>
+                  <p class="cb-label" data-needs="exams">Exam <span class="rb-mono">4 May</span> · <span class="rb-mono">180</span> days</p>
+                </div>
+                <p class="cb-paper">0625/42 · o/n 2023</p>
+                <p class="cb-score"><span class="cb-marks">38/80</span><span class="rb-chip" data-grade="C">C</span></p>
+                <p class="cb-move"><span class="rb-up"><svg class="rb-ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15V5M5 10l5-5 5 5" /></svg>up from D</span><span class="rb-est">estimated</span></p>
+                <p class="cb-to">4 points from a B</p>
+                <a class="cb-open" href="/student/result/0625-42-on23">See full marking
+                  <svg class="rb-ico rb-ico--dir" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5" /></svg></a>
+              </div>
+              <ul class="cb-tabs" aria-label="Weak topics">
+                <li><a class="cb-tab" href="/student/practice/0625"><svg class="rb-ring" viewBox="0 0 24 24" aria-hidden="true"><circle class="rb-ring-t" cx="12" cy="12" r="9" /><circle class="rb-ring-v" cx="12" cy="12" r="9" pathLength="100" style="--acc: 54" /></svg><span class="cb-tab-t">Waves</span><span class="cb-tab-v">54%</span></a></li>
+                <li><a class="cb-tab" href="/student/practice/0625"><svg class="rb-ring" viewBox="0 0 24 24" aria-hidden="true"><circle class="rb-ring-t" cx="12" cy="12" r="9" /><circle class="rb-ring-v" cx="12" cy="12" r="9" pathLength="100" style="--acc: 66" /></svg><span class="cb-tab-t">Moments</span><span class="cb-tab-v">66%</span></a></li>
+              </ul>
+            </article>
+
+            <article class="cb-bundle cb-bundle--0580">
+              <ol class="cb-peeks" aria-label="Earlier papers in this bundle" data-needs="many-papers">
+                <li class="cb-peek" style="--i: 3"><span class="rb-mono">58%</span><span class="cb-peek-g">B</span></li>
+                <li class="cb-peek" style="--i: 2"><span class="rb-mono">61%</span><span class="cb-peek-g">B</span></li>
+                <li class="cb-peek" style="--i: 1"><span class="rb-mono">63%</span><span class="cb-peek-g">B</span></li>
+              </ol>
+              <p class="cb-peeks cb-peeks--none" data-only-state="one-paper">One paper so far</p>
+              <svg class="cb-clip" viewBox="28 4 46 94" aria-hidden="true"><path d="M58 34 V72 A8 8 0 0 1 42 72 V20 A14 14 0 0 1 70 20 V78 A18 18 0 0 1 34 78 V36" /></svg>
+              <div class="cb-sheet">
+                <div class="cb-top">
+                  <h3 class="cb-name"><a href="/student/subject/0580"><span class="rb-mono">0580</span> Mathematics</a></h3>
+                  <p class="cb-label" data-needs="exams">Exam <span class="rb-mono">12 May</span> · <span class="rb-mono">188</span> days</p>
+                </div>
+                <p class="cb-paper">0580/42 · m/j 2024</p>
+                <p class="cb-score" data-needs="many-papers"><span class="cb-marks">61/80</span><span class="rb-chip" data-grade="A">A</span></p>
+                <p class="cb-score" data-only-state="one-paper"><span class="cb-marks">52/80</span><span class="rb-chip" data-grade="B">B</span></p>
+                <p class="cb-move" data-needs="many-papers"><span class="rb-up"><svg class="rb-ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15V5M5 10l5-5 5 5" /></svg>up from B</span></p>
+                <p class="cb-move" data-only-state="one-paper"><span class="rb-flat">1 paper</span></p>
+                <p class="cb-to" data-needs="many-papers">9 points from an A*</p>
+                <p class="cb-to" data-only-state="one-paper">5 points from an A</p>
+                <a class="cb-open" href="/student/result/0580-42-mj24">See full marking
+                  <svg class="rb-ico rb-ico--dir" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5" /></svg></a>
+              </div>
+              <ul class="cb-tabs" aria-label="Weak topics">
+                <li data-needs="many-papers"><a class="cb-tab" href="/student/practice/0580"><svg class="rb-ring" viewBox="0 0 24 24" aria-hidden="true"><circle class="rb-ring-t" cx="12" cy="12" r="9" /><circle class="rb-ring-v" cx="12" cy="12" r="9" pathLength="100" style="--acc: 63" /></svg><span class="cb-tab-t">Vectors</span><span class="cb-tab-v">63%</span></a></li>
+                <li data-only-state="one-paper"><a class="cb-tab" href="/student/practice/0580"><svg class="rb-ring" viewBox="0 0 24 24" aria-hidden="true"><circle class="rb-ring-t" cx="12" cy="12" r="9" /><circle class="rb-ring-v" cx="12" cy="12" r="9" pathLength="100" style="--acc: 50" /></svg><span class="cb-tab-t">Vectors</span><span class="cb-tab-v">50%</span></a></li>
+              </ul>
+            </article>
+
+            <article class="cb-bundle" data-needs="many-papers">
+              <ol class="cb-peeks" aria-label="Earlier papers in this bundle">
+                <li class="cb-peek" style="--i: 3"><span class="rb-mono">53%</span><span class="cb-peek-g">C</span></li>
+                <li class="cb-peek" style="--i: 2"><span class="rb-mono">57%</span><span class="cb-peek-g">B</span></li>
+                <li class="cb-peek" style="--i: 1"><span class="rb-mono">55%</span><span class="cb-peek-g">B</span></li>
+              </ol>
+              <svg class="cb-clip" viewBox="28 4 46 94" aria-hidden="true"><path d="M58 34 V72 A8 8 0 0 1 42 72 V20 A14 14 0 0 1 70 20 V78 A18 18 0 0 1 34 78 V36" /></svg>
+              <div class="cb-sheet">
+                <div class="cb-top">
+                  <h3 class="cb-name"><a href="/student/subject/0606"><span class="rb-mono">0606</span> Additional Mathematics</a></h3>
+                  <p class="cb-label" data-needs="exams">Exam <span class="rb-mono">18 May</span> · <span class="rb-mono">194</span> days</p>
+                </div>
+                <p class="cb-paper">0606/12 · m/j 2024</p>
+                <p class="cb-score"><span class="cb-marks">47/80</span><span class="rb-chip" data-grade="B">B</span></p>
+                <p class="cb-move"><span class="rb-flat">no change</span></p>
+                <p class="cb-to">9 points from an A</p>
+                <a class="cb-open" href="/student/result/0606-12-mj24">See full marking
+                  <svg class="rb-ico rb-ico--dir" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5" /></svg></a>
+              </div>
+              <ul class="cb-tabs" aria-label="Weak topics">
+                <li><a class="cb-tab" href="/student/practice/0606"><svg class="rb-ring" viewBox="0 0 24 24" aria-hidden="true"><circle class="rb-ring-t" cx="12" cy="12" r="9" /><circle class="rb-ring-v" cx="12" cy="12" r="9" pathLength="100" style="--acc: 58" /></svg><span class="cb-tab-t">Quadratic inequalities</span><span class="cb-tab-v">58%</span></a></li>
+              </ul>
+            </article>
+          </div>
+        </section>
+      </div>
+
+      <nav class="rb-tabbar" aria-label="Student">
+        <a class="rb-tab" href="/student" aria-current="page">
+          <svg class="rb-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z" /></svg>
+          <span>Overview</span>
+        </a>
+        <a class="rb-tab" href="/student/correct">
+          <svg class="rb-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2.2l1.5-2h5.6l1.5 2h2.2A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z" /><circle cx="12" cy="13" r="3.5" /></svg>
+          <span>Correct</span>
+        </a>
+        <a class="rb-tab" href="/student/classes">
+          <svg class="rb-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="9" r="3.2" /><path d="M3.5 19c.6-3 2.8-4.8 5.5-4.8s4.9 1.8 5.5 4.8" /><circle cx="16.5" cy="8" r="2.6" /><path d="M16 13.4c2.3 0 4 1.5 4.5 4.1" /></svg>
+          <span>Classes</span>
+        </a>
+        <a class="rb-tab" href="/student/profile">
+          <svg class="rb-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8.5" r="3.8" /><path d="M5 20c.8-3.7 3.6-5.8 7-5.8s6.2 2.1 7 5.8" /></svg>
+          <span>Profile</span>
+        </a>
+      </nav>
+    </main>
+  </body>
+</html>

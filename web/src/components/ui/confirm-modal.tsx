@@ -2,6 +2,8 @@
 import { Button } from "@/components/ui/button"
 import { Modal } from "@/components/ui/modal"
 import { haptic } from "@/lib/haptics"
+import { useNativeFrame } from "@/lib/useNativeFrame"
+import { cn } from "@/lib/utils"
 
 /*
  * C-24 · The confirmation step for a destructive action.
@@ -45,6 +47,7 @@ export function ConfirmModal({
   title,
   description,
   consequence = "This cannot be undone.",
+  destructive = true,
   confirmLabel,
   pendingLabel,
   cancelLabel = "Keep it",
@@ -59,6 +62,12 @@ export function ConfirmModal({
   /** The sentence under the title. Override it when the action is genuinely
    * reversible; the default claims it is not. */
   consequence?: string
+  /** True (default) when the action cannot be taken back or removes something:
+   * the confirm reads as an error. False for a reversible action (sign out,
+   * a roster removal that can be added back): the native confirm then uses the
+   * primary colour, and the caller owns the consequence sentence, since the
+   * default "This cannot be undone." would be false. */
+  destructive?: boolean
   confirmLabel: string
   /** Shown on the confirm button while the mutation is in flight. Falls back
    * to the confirm label, so a caller that forgets it still gets a disabled
@@ -71,6 +80,99 @@ export function ConfirmModal({
   onConfirm: () => void
   onCancel: () => void
 }) {
+  const { native, platform } = useNativeFrame()
+  // An empty consequence is a deliberate "say nothing": the description already says it.
+  const spoken = [description, consequence].filter(Boolean).join(" ")
+  if (native && platform === "ios") {
+    // The iOS destructive confirm is an action sheet: the question, then the
+    // destructive row, then Cancel in its own group. Modal's sr-only title and
+    // description are what the dialog's label and description point at, so the
+    // visible copy is aria-hidden and nothing is read twice. Escape, a scrim tap
+    // and a drag still cannot answer for the reader (`dismissible={false}`).
+    return (
+      <Modal
+        open={open}
+        // A scrim tap is Cancel, but not while the mutation is in flight: Cancel is disabled then,
+        // and a sheet that closed under a pending delete would hide its outcome and any error.
+        onClose={pending ? () => {} : onCancel}
+        title={title}
+        description={spoken}
+        size="sm"
+        dismissible={false}
+        hideCloseButton
+        presentation="action-sheet"
+      >
+        <div className="lm-action-sheet-group">
+          <div aria-hidden="true" className="flex flex-col gap-1 px-4 py-3 text-center">
+            <p className="text-label text-on-surface-variant">{title}</p>
+            {description ? <p className="text-body-sm text-on-surface-variant">{description}</p> : null}
+            {consequence ? <p className="text-body-sm text-on-surface-variant">{consequence}</p> : null}
+          </div>
+          {error ? (
+            <p role="alert" className="px-4 pb-3 text-center text-body-sm text-error">
+              {error}
+            </p>
+          ) : null}
+          <button
+            type="button"
+            className={cn("lm-press lm-action-sheet-row", destructive ? "text-error" : "text-primary")}
+            onClick={() => onConfirm()}
+            disabled={pending}
+            aria-busy={pending || undefined}
+          >
+            {pending ? (pendingLabel ?? confirmLabel) : confirmLabel}
+          </button>
+        </div>
+        <button
+          type="button"
+          className="lm-press lm-action-sheet-row lm-action-sheet-cancel"
+          data-autofocus
+          onClick={onCancel}
+          disabled={pending}
+        >
+          {cancelLabel}
+        </button>
+      </Modal>
+    )
+  }
+  if (native) {
+    // Material 3 dialog actions: two text buttons, the confirm trailing, in the error role
+    // when the action is destructive and the primary role otherwise. Never a filled accent
+    // button. Cancel is first in the DOM, so it is the safe default focus.
+    return (
+      <Modal
+        open={open}
+        onClose={onCancel}
+        title={title}
+        description={description}
+        size="sm"
+        dismissible={false}
+        hideCloseButton
+        footerLayout="actions"
+        footer={
+          <>
+            <Button variant="text" size="sm" data-autofocus onClick={onCancel} disabled={pending}>
+              {cancelLabel}
+            </Button>
+            <Button
+              variant={destructive ? "text-error" : "text"}
+              size="sm"
+              onClick={() => {
+                haptic("tap")
+                onConfirm()
+              }}
+              loading={pending}
+            >
+              {pending ? (pendingLabel ?? confirmLabel) : confirmLabel}
+            </Button>
+          </>
+        }
+      >
+        {consequence ? <p className="text-body-md text-on-surface-variant">{consequence}</p> : null}
+        {error ? <p role="alert" className="text-body-sm text-error">{error}</p> : null}
+      </Modal>
+    )
+  }
   return (
     <Modal
       open={open}
@@ -104,7 +206,7 @@ export function ConfirmModal({
         </div>
       }
     >
-      <p className="text-body-md text-on-surface-variant">{consequence}</p>
+      {consequence ? <p className="text-body-md text-on-surface-variant">{consequence}</p> : null}
       {/* The failure renders inside the dialog rather than behind it. A
           confirmation that closes on a failed mutation leaves the reader
           believing the thing happened, which is the shape surface 3 found on

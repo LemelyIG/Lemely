@@ -3,6 +3,8 @@ import { useState } from "react"
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
+import { ListGroup, ListRow } from "@/components/ui/list-group"
+import { TableOrList } from "@/components/ui/table-or-list"
 import { ConfirmModal } from "@/components/ui/confirm-modal"
 import { EmptyState } from "@/components/ui/state-views"
 import { QueryState } from "@/components/ui/query-state"
@@ -80,6 +82,7 @@ function UnshareControl({ classId, row }: { classId: string; row: ClassPaperRow 
         Unshare
       </Button>
       <ConfirmModal
+        destructive={false}
         open={open}
         title="Unshare this paper from the class?"
         consequence={unshareConsequence(classPaperLabel(row))}
@@ -126,45 +129,63 @@ export function ClassPapers() {
             body="Once a rostered student has a marked paper, it appears here."
           />
         ) : (
-          <Table density="operate" tabIndex={0} role="region" aria-label="Class papers, scrollable">
-            <caption className="sr-only">
-              Every rostered student's papers, with unshared state visible
-            </caption>
-            <THead>
-              <TR>
-                <TH>Student</TH>
-                <TH>Paper</TH>
-                <TH>Recorded</TH>
-                <TH>
-                  <span className="sr-only">Visibility</span>
-                </TH>
-                <TH>
-                  <span className="sr-only">Actions</span>
-                </TH>
-              </TR>
-            </THead>
-            <TBody>
-              {data.papers.map((row) => (
-                <TR key={row.attemptId}>
-                  <TD className="text-data-sm">{row.studentName}</TD>
-                  <TD className="whitespace-nowrap text-data-sm">{classPaperLabel(row)}</TD>
-                  <TD className="whitespace-nowrap text-on-surface-variant">
-                    {relativeTime(row.recordedAt)}
-                  </TD>
-                  <TD>
-                    {row.unshared ? (
-                      <Chip tone="neutral">Unshared from this class</Chip>
-                    ) : (
-                      <Chip tone="ok">Shared</Chip>
-                    )}
-                  </TD>
-                  <TD className="whitespace-nowrap text-end">
-                    <UnshareControl classId={classId} row={row} />
-                  </TD>
-                </TR>
-              ))}
-            </TBody>
-          </Table>
+          <TableOrList
+            storageKey="lemely.classPapers.view"
+            list={
+              <ListGroup label="Class papers">
+                {data.papers.map((row) => (
+                  <ListRow
+                    key={row.attemptId}
+                    lines={3}
+                    title={row.studentName}
+                    subtitle={`${row.unshared ? "Unshared from this class · " : ""}${classPaperLabel(row)} · ${relativeTime(row.recordedAt)}`}
+                    trailing={<UnshareControl classId={classId} row={row} />}
+                  />
+                ))}
+              </ListGroup>
+            }
+            table={
+              <Table density="operate" tabIndex={0} role="region" aria-label="Class papers, scrollable">
+                <caption className="sr-only">
+                  Every rostered student's papers, with unshared state visible
+                </caption>
+                <THead>
+                  <TR>
+                    <TH>Student</TH>
+                    <TH>Paper</TH>
+                    <TH>Recorded</TH>
+                    <TH>
+                      <span className="sr-only">Visibility</span>
+                    </TH>
+                    <TH>
+                      <span className="sr-only">Actions</span>
+                    </TH>
+                  </TR>
+                </THead>
+                <TBody>
+                  {data.papers.map((row) => (
+                    <TR key={row.attemptId}>
+                      <TD className="text-data-sm">{row.studentName}</TD>
+                      <TD className="whitespace-nowrap text-data-sm">{classPaperLabel(row)}</TD>
+                      <TD className="whitespace-nowrap text-on-surface-variant">
+                        {relativeTime(row.recordedAt)}
+                      </TD>
+                      <TD>
+                        {row.unshared ? (
+                          <Chip tone="neutral">Unshared from this class</Chip>
+                        ) : (
+                          <Chip tone="ok">Shared</Chip>
+                        )}
+                      </TD>
+                      <TD className="whitespace-nowrap text-end">
+                        <UnshareControl classId={classId} row={row} />
+                      </TD>
+                    </TR>
+                  ))}
+                </TBody>
+              </Table>
+            }
+          />
         )
       }
     </QueryState>

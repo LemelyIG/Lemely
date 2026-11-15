@@ -4,7 +4,7 @@ import { House } from "@phosphor-icons/react"
 
 /*
  * Regression for the `/student` portal crash (React error #31: "Objects are
- * not valid as a React child"): `NavRow` (portals/student/index.tsx) takes
+ * not valid as a React child"): the student `NavRow` (deleted with the old layout in the portal-shell Task 6; kept here as the guard's history) takes
  * `icon: Icon | ReactElement` — a bare Phosphor component for every ordinary
  * row, or an already-rendered `<SubjectGlyph>` for the one row that needs its
  * own tone/size. It used to tell the two apart with `typeof icon ===

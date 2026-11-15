@@ -1,4 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V3 */
+import { NoBreakTitle } from "@/components/shell/NoBreakTitle"
 import { Link, useNavigate } from "react-router-dom"
 import { Card, CardBody } from "@/components/ui/card"
 import { Chip } from "@/components/ui/chip"
@@ -24,6 +25,7 @@ import {
 import { formatAge } from "@/portals/student/screens/Notifications"
 import { useOverlayState } from "@/lib/nav/useOverlayState"
 import { cn } from "@/lib/utils"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * The teacher's inbox (push-delivery spec §6). Only `at_risk_alert` reaches a
@@ -63,9 +65,9 @@ function NotificationRow({ notification }: { notification: Notification }) {
       <CardBody className="flex flex-col gap-2">
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
-            {/* <h2>: these rows sit directly under the page's <h1>, the same
+            {/* <h2>: these rows sit directly under the page's h1, the same
                 outline the student inbox documents. */}
-            <h2 className="text-body-lg font-medium text-on-surface">{notification.title}</h2>
+            <h2 className="text-body-lg font-medium text-on-surface"><NoBreakTitle title={notification.title} /></h2>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-body-sm text-on-surface-variant">
               <Chip tone={notification.type === "at_risk_alert" ? "warn" : "neutral"}>
                 {staffTypeLabel(notification.type)}
@@ -122,8 +124,8 @@ export function TeacherNotifications() {
           looking for the setting. Playwright caught this. */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <Eyebrow>Inbox</Eyebrow>
-          <h1 className="text-display-md text-on-surface">Notifications</h1>
+          <Eyebrow className="native:hidden">Inbox</Eyebrow>
+          <PageHeading repeatsTitle={true} className="text-display-md text-on-surface">Notifications</PageHeading>
         </div>
         <Link
           to="/teacher/settings/notifications"

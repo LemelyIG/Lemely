@@ -123,13 +123,16 @@ export function underlyingPathname(input: {
   pathname: string
   state: unknown
   overlayBase: string
+  /** The page a deep link into the overlay renders underneath (the portal
+   * home). Without it such a link answers the overlay's own URL. */
+  fallbackPath?: string
 }): string {
   if (!isWithinBase(input.pathname, input.overlayBase)) return input.pathname
   const background = readBackgroundLocation(input.state)
   if (background && !isWithinBase(background.pathname, input.overlayBase)) {
     return background.pathname
   }
-  return input.pathname
+  return input.fallbackPath ?? input.pathname
 }
 
 export type OverlayCloseAction = { kind: "go"; delta: number } | { kind: "replace"; to: string }

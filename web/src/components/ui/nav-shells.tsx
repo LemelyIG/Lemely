@@ -1,5 +1,7 @@
-import type { HTMLAttributes, ReactNode } from "react"
-import { NavLink } from "react-router-dom"
+import type { HTMLAttributes, MouseEvent, ReactNode } from "react"
+import { NavLink, useMatch } from "react-router-dom"
+import { useDialogExitClick } from "@/lib/nav/dialogExit"
+import type { NavDirectionState } from "@/lib/nav/navDirectionState"
 import { cn } from "@/lib/utils"
 
 /*
@@ -34,6 +36,8 @@ export interface NavShellItem {
   id: string
   label: string
   icon: ReactNode
+  /** Native frame: the selected tab's icon (Phosphor `fill`); design A keeps `icon`. */
+  activeIcon?: ReactNode
   /** A route destination — renders as a router-wired `NavLink`, active state
    * from the router itself. Wins over `href`/`onClick` when present. */
   to?: string
@@ -53,6 +57,9 @@ export interface NavShellItem {
   /** Rendered in the filled badge style (Abyss variant only): a count that
    * asks for action, such as the review-queue depth. */
   urgent?: boolean
+  /** A button item that opens a dialog (BottomNav's "More"): announced with `aria-haspopup`
+   * and `aria-expanded`. Ignored for `to` and `href` items. */
+  popup?: { expanded: boolean }
   /** Wired by Task 11 (B6): prefetch the destination's chunk on hover/focus. */
   prefetch?: () => void
 }
@@ -61,18 +68,31 @@ interface NavShellLinkOwnProps {
   item: NavShellItem
   className: (isActive: boolean) => string
   children: (isActive: boolean) => ReactNode
+  /** Called when the link is clicked while it is already the active one (native tab re-tap). */
+  onActiveClick?: (event: MouseEvent) => void
+  /** Location state for the navigation (the tab bar tags its taps `navDirection: "tab"`). */
+  navState?: NavDirectionState
 }
 
-function NavShellLink({ item, className, children }: NavShellLinkOwnProps) {
+export function NavShellLink({ item, className, children, onActiveClick, navState }: NavShellLinkOwnProps) {
+  // Hooks run before the branch below; a non-route item matches nothing.
+  const routeMatch = useMatch({ path: item.to ?? "/", end: item.to ? (item.end ?? false) : true })
+  const isActiveNow = !!item.to && !!routeMatch
+  const dialogExitClick = useDialogExitClick(item.to ?? "/", { viewTransition: true })
   if (item.to) {
     return (
       <NavLink
         to={item.to}
         end={item.end}
         viewTransition
+        state={navState}
         onPointerEnter={item.prefetch}
         onTouchStart={item.prefetch}
         onFocus={item.prefetch}
+        onClick={(event) => {
+          if (isActiveNow || item.active) onActiveClick?.(event)
+          dialogExitClick(event)
+        }}
         className={({ isActive }) => className(isActive || !!item.active)}
       >
         {({ isActive }) => children(isActive || !!item.active)}
@@ -92,7 +112,14 @@ function NavShellLink({ item, className, children }: NavShellLinkOwnProps) {
   }
 
   return (
-    <button type="button" onClick={item.onClick} aria-current={current} className={className(isActive)}>
+    <button
+      type="button"
+      onClick={item.onClick}
+      aria-current={current}
+      aria-haspopup={item.popup ? "dialog" : undefined}
+      aria-expanded={item.popup ? item.popup.expanded : undefined}
+      className={className(isActive)}
+    >
       {children(isActive)}
     </button>
   )
@@ -104,11 +131,15 @@ export interface BottomNavProps extends HTMLAttributes<HTMLElement> {
    * student portal's "Correct a paper" tab) rather than an ordinary flat
    * icon+label cell. */
   emphasisId?: string
+  /** Native frame: a tap on the tab that is already active (scroll to top, pop to root). */
+  onActiveTap?: (item: NavShellItem, event: MouseEvent) => void
   className?: string
 }
 
+const TAB_NAV_STATE: NavDirectionState = { navDirection: "tab" }
+
 /** Mobile student/teacher tab bar — fixed to the viewport bottom. */
-export function BottomNav({ items, emphasisId, className, ...props }: BottomNavProps) {
+export function BottomNav({ items, emphasisId, onActiveTap, className, ...props }: BottomNavProps) {
   return (
     <nav
       aria-label="Primary"
@@ -116,7 +147,7 @@ export function BottomNav({ items, emphasisId, className, ...props }: BottomNavP
         // P6.3: `z-nav`. The raw `z-30` put a *navigation* bar in the dropdown
         // band, above every menu and popover that would ever need to open over
         // it — the exact inversion the §7 scale exists to prevent.
-        "lm-nav-chrome lm-safe-bottom fixed inset-x-0 bottom-0 z-nav flex items-stretch border-t border-outline-variant bg-surface-container-lowest",
+        "lm-nav-chrome lm-native-tabbar lm-safe-bottom fixed inset-x-0 bottom-0 z-nav flex items-stretch border-t border-outline-variant bg-surface-container-lowest",
         className,
       )}
       {...props}
@@ -127,9 +158,11 @@ export function BottomNav({ items, emphasisId, className, ...props }: BottomNavP
           <NavShellLink
             key={item.id}
             item={item}
+            navState={TAB_NAV_STATE}
+            onActiveClick={onActiveTap ? (event) => onActiveTap(item, event) : undefined}
             className={(isActive) =>
               cn(
-                "flex min-h-14 flex-1 flex-col items-center justify-center gap-1 py-2.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary active:scale-[0.98]",
+                "lm-press flex min-h-14 flex-1 flex-col items-center justify-center gap-1 py-2.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary active:scale-[0.98]",
                 isActive && !emphasis ? "text-primary" : "text-on-surface-variant hover:text-on-surface-variant",
               )
             }
@@ -137,20 +170,28 @@ export function BottomNav({ items, emphasisId, className, ...props }: BottomNavP
             {(isActive) => (
               <>
                 <span
+                  data-emphasis={emphasis || undefined}
                   className={cn(
-                    "relative flex items-center justify-center",
+                    "lm-native-tab-icon relative flex items-center justify-center",
                     emphasis &&
                       "-mt-5 h-11 w-11 rounded-full bg-primary text-on-primary shadow-[var(--shadow-float)]",
                   )}
                 >
-                  {item.icon}
+                  {isActive && item.activeIcon ? (
+                    <>
+                      <span className="native:hidden">{item.icon}</span>
+                      <span className="hidden native:inline-flex">{item.activeIcon}</span>
+                    </>
+                  ) : (
+                    item.icon
+                  )}
                   {item.badge ? (
-                    <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-error px-0.5 text-data-sm leading-none text-on-error">
+                    <span className="absolute -end-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-error px-0.5 text-data-sm leading-none text-on-error">
                       {item.badge}
                     </span>
                   ) : null}
                 </span>
-                <span className={cn("text-xs", isActive && "font-medium")}>{item.label}</span>
+                <span className={cn("lm-native-tab-label text-xs", isActive && "font-medium")}>{item.label}</span>
               </>
             )}
           </NavShellLink>
@@ -208,7 +249,7 @@ export function SidebarNav({ items, groups, variant = "default", className, ...p
               className={(isActive) =>
                 variant === "abyss"
                   ? cn(
-                      "flex w-full items-center gap-2.5 rounded-chip px-2.5 py-2 pointer-coarse:min-h-11 text-start text-label transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+                      "lm-press flex w-full items-center gap-2.5 rounded-chip px-2.5 py-2 pointer-coarse:min-h-11 text-start text-label transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
                       isActive
                         ? "bg-primary-container text-primary"
                         : "text-on-surface-variant hover:bg-surface-container hover:text-on-surface",
@@ -218,7 +259,7 @@ export function SidebarNav({ items, groups, variant = "default", className, ...p
                   // tall on every mobile width, and this is the control a student on
                   // a phone touches most. Safe as a min because the row already
                   // centres its content.
-                  "flex w-full items-center gap-2.5 rounded-md px-9px py-2 pointer-coarse:min-h-11 text-start text-body-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary active:scale-[0.98]",
+                  "lm-press flex w-full items-center gap-2.5 rounded-md px-9px py-2 pointer-coarse:min-h-11 text-start text-body-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary active:scale-[0.98]",
                   isActive
                     ? "bg-surface-container-low font-medium text-on-surface"
                     : "font-normal text-on-surface-variant hover:bg-surface-container-low",

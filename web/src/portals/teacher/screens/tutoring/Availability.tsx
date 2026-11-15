@@ -35,6 +35,7 @@ import {
 import { profileMode } from "@/lib/tutoring/profileSteps"
 import { tutorActionFailureMessage, tutorLoadFailureMessage } from "@/lib/tutoring/tutorSessionActions"
 import type { AvailabilityRule, TutorOwnProfile } from "@/lib/tutoringTypes"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * T-17 · Weekly availability (`/teacher/tutoring/availability`, SPEC §d).
@@ -291,7 +292,7 @@ function AvailabilityEditor({ profile }: { profile: TutorOwnProfile }) {
           <CaretLeft size={14} aria-hidden />
           Back to your profile
         </Link>
-        <h1 className="m-0 text-display-md text-on-surface">Weekly availability</h1>
+        <PageHeading repeatsTitle={true} className="m-0 text-display-md text-on-surface">Weekly availability</PageHeading>
         <p className="m-0 max-w-prose text-body-md text-on-surface-variant">{DST_NOTE_FOR(profile.zoneLabel)}</p>
       </div>
 

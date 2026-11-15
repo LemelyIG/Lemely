@@ -476,6 +476,22 @@ export interface ConfirmCopy {
   cancelLabel: string
 }
 
+/**
+ * How the confirm step presents each action. Cancelling a session cannot be taken back, so it
+ * is destructive and keeps `ConfirmModal`'s default consequence unless its copy sets one.
+ * Marking a session completed is not destructive: the confirm uses the primary role and the
+ * default "This cannot be undone." is silenced (empty string), because the description already
+ * says what the action records and the default sentence would be false.
+ */
+export function confirmPresentation(
+  kind: "cancel" | "complete",
+  copy: Pick<ConfirmCopy, "consequence">,
+): { consequence: string | undefined; destructive: boolean } {
+  return kind === "complete"
+    ? { consequence: copy.consequence ?? "", destructive: false }
+    : { consequence: copy.consequence, destructive: true }
+}
+
 export function cancelSheetCopy(
   booking: Pick<Booking, "effectiveState" | "tutor" | "subject" | "startsAt" | "endsAt">,
 ): ConfirmCopy {

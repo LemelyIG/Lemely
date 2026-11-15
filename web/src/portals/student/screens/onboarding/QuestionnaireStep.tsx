@@ -23,6 +23,7 @@ import {
   type QuestionnaireAnswers,
   type QuestionnaireStepDef,
 } from "./onboardingData"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * S-02 · Onboarding step 2: questionnaire. One question per view (the UI
@@ -192,9 +193,9 @@ function QuestionShell({ question, children }: { question: string; children: Rea
        * `display-md` alone, not `font-serif text-display-md`: the rung already
        * names the display face, and pairing it with `font-serif` set
        * `font-family` twice on one element (D4.2). */}
-      <h1 id={QUESTION_HEADING_ID} className="text-display-md text-on-surface">
+      <PageHeading repeatsTitle={false} id={QUESTION_HEADING_ID} className="text-display-md text-on-surface">
         {question}
-      </h1>
+      </PageHeading>
       {children}
     </div>
   )

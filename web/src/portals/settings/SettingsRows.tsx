@@ -68,8 +68,9 @@ export function SettingsSection({
 export function SettingsCard({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <div
+      data-list-group
       className={cn(
-        "flex flex-col divide-y divide-outline-variant rounded-tile border border-outline-variant bg-surface-container-lowest",
+        "lm-native-group flex flex-col divide-y divide-outline-variant rounded-tile border border-outline-variant bg-surface-container-lowest",
         className,
       )}
     >
@@ -101,7 +102,10 @@ export function SettingsRow({
   className,
 }: SettingsRowProps) {
   return (
-    <div className={cn("flex flex-col gap-3 px-4 py-4 sm:px-5", className)}>
+    <div
+      data-lines={description ? 2 : 1}
+      className={cn("lm-native-row flex flex-col gap-3 px-4 py-4 sm:px-5", className)}
+    >
       <div
         className={cn(
           "flex flex-col gap-3",

@@ -12,6 +12,7 @@ import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { classInviteCodeFailureMessage, teacherLoadFailureMessage } from "@/lib/teacherOutcome"
 import type { ClassDetail as ClassDetailData } from "@/lib/teacherTypes"
 import { BackArrow } from "@/components/ui/inline-arrow"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * Class detail shell (T-03/T-04's shared header + tabs). Fetches
@@ -154,6 +155,15 @@ function MintClassInvite({ classId }: { classId: string }) {
   )
 }
 
+/** The class's subject, shared by the desktop eyebrow and the native meta line.
+ * No " · code" repeat when the name has already resolved to the code itself
+ * (free-text `subjectCode`, det registry's default profile; see `subjectIdentifier`'s docstring). */
+function subjectLine(d: { subjectCode?: string | null; subjectName?: string | null }): string {
+  if (!d.subjectCode) return "No subject set"
+  const name = d.subjectName ?? d.subjectCode
+  return name !== d.subjectCode ? `${name} · ${d.subjectCode}` : d.subjectCode
+}
+
 export function ClassDetailLayout() {
   const navigate = useNavigate()
   const { classId } = useParams<{ classId: string }>()
@@ -206,19 +216,17 @@ export function ClassDetailLayout() {
               </Link>
               <div className="flex items-start gap-4 flex-wrap gap-y-2 mt-1">
                 <div className="min-w-0">
-                  <div className="text-eyebrow text-on-surface-variant">
+                  <div className="text-eyebrow native:hidden text-on-surface-variant">
                     {/* No " · code" repeat when the name has already resolved to
                         the code itself (free-text `subjectCode`, det registry's
                         default profile — see `subjectIdentifier`'s docstring). */}
-                    {classDetail.subjectCode
-                      ? (classDetail.subjectName ?? classDetail.subjectCode) !== classDetail.subjectCode
-                        ? `${classDetail.subjectName ?? classDetail.subjectCode} · ${classDetail.subjectCode}`
-                        : classDetail.subjectCode
-                      : "No subject set"}
+                    {subjectLine(classDetail)}
                   </div>
-                  <h1 className="text-display-md mt-1.5 text-pretty">
+                  <PageHeading repeatsTitle={false} className="text-display-md mt-1.5 text-pretty">
                     {classDetail.label}
-                  </h1>
+                  </PageHeading>
+                  {/* The subject is data, not a kicker: on the native frame it stays as a quiet line under the heading. */}
+                  <p data-native-meta className="hidden native:block m-0 mt-1 text-body-sm text-on-surface-variant">{subjectLine(classDetail)}</p>
                 </div>
                 <div className="flex-1" />
                 {/* Two ways to invite, deliberately not blurred into one (see the

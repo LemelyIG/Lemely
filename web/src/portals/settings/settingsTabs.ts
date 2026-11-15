@@ -4,8 +4,8 @@
  * Each tab is its own route under the portal's settings base
  * (`/teacher/settings`, `/teacher/settings/notifications`, ...), so the list
  * here is the single place that decides a tab's label, URL segment and the
- * one-line helper shown under its heading. The route block in
- * `portals/teacher/index.tsx` mounts one child per entry, and
+ * one-line helper shown under its heading. The route blocks in
+ * `portals/teacher/index.tsx` and `portals/student/index.tsx` mount one child per entry, and
  * `settingsTabs.test.ts` holds the two in step.
  */
 
@@ -84,3 +84,13 @@ export function activeSettingsTab(
   const trimmed = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname
   return tabs.find((tab) => settingsTabPath(basePath, tab) === trimmed) ?? null
 }
+
+/** The student portal's tabs (design A's settings dialog), in rail order.
+ * Segments keep the paths the page-based student settings used. */
+export const STUDENT_SETTINGS_TABS: readonly SettingsTab[] = TEACHER_SETTINGS_TABS.filter(
+  (tab) => tab.id !== "classes",
+).map((tab) =>
+  tab.id === "install"
+    ? { ...tab, description: "Add Lemely to your home screen for faster access and offline practice." }
+    : tab,
+)

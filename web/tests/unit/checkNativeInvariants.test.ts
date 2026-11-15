@@ -27,7 +27,7 @@ function run(input: unknown): { checks: Check[]; passed: boolean } {
 
 const GOOD_HTML =
   '<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />' +
-  '<meta name="apple-mobile-web-app-status-bar-style" content="default" />'
+  '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />'
 
 const GOOD_CSS = `
 html,
@@ -81,7 +81,8 @@ self.addEventListener("message", (event) => {
 
 const NAV_CHROME_FILE = `<div className="lm-nav-chrome">chrome</div>`
 const NAV_DRAWER_FILE = `
-  <div className="lm-nav-chrome">panel</div>
+  <div className="lm-nav-chrome">default panel</div>
+  <div className="lm-nav-chrome">shell panel</div>
   <button className="lm-nav-chrome">trigger</button>
 `
 
@@ -96,7 +97,8 @@ const GOOD_FILES: Record<string, string> = {
   "components/ui/nav-drawer.tsx": NAV_DRAWER_FILE,
   "components/ui/nav-shells.tsx": NAV_CHROME_FILE,
   "portals/student/index.tsx": `<main className="min-h-dvh flex flex-col">${NAV_CHROME_FILE}`,
-  "portals/teacher/index.tsx": NAV_CHROME_FILE,
+  "portals/teacher/index.tsx": `<main className="min-h-dvh flex flex-col">`,
+  "components/shell/ShellTopBar.tsx": NAV_CHROME_FILE,
   "portals/admin/index.tsx": NAV_CHROME_FILE,
   "portals/marketing/MarketingHeader.tsx": NAV_CHROME_FILE,
   "routes.tsx": `export const routes = []`,
@@ -396,14 +398,14 @@ const button = cva(
 describe("runChecks — lm-nav-chrome coverage", () => {
   it("fails when a chrome file is missing lm-nav-chrome", () => {
     const input = goodInput()
-    input.files["portals/teacher/index.tsx"] = `<div>no chrome class here</div>`
+    input.files["components/shell/ShellTopBar.tsx"] = `<div>no chrome class here</div>`
     const result = run(input)
     const check = result.checks.find((c) => c.name.includes("lm-nav-chrome"))
     expect(check?.pass).toBe(false)
-    expect(check?.detail).toContain("portals/teacher/index.tsx")
+    expect(check?.detail).toContain("components/shell/ShellTopBar.tsx")
   })
 
-  it("fails when nav-drawer.tsx applies lm-nav-chrome only once instead of twice", () => {
+  it("fails when nav-drawer.tsx applies lm-nav-chrome only once instead of three times", () => {
     const input = goodInput()
     input.files["components/ui/nav-drawer.tsx"] = `<div className="lm-nav-chrome">panel only</div>`
     const result = run(input)
@@ -412,11 +414,11 @@ describe("runChecks — lm-nav-chrome coverage", () => {
 })
 
 describe("runChecks — apple-mobile-web-app-status-bar-style", () => {
-  it("fails when it's black-translucent instead of default", () => {
+  it("fails when it's default instead of black-translucent", () => {
     const input = goodInput()
     input.indexHtml = input.indexHtml.replace(
-      '<meta name="apple-mobile-web-app-status-bar-style" content="default" />',
       '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />',
+      '<meta name="apple-mobile-web-app-status-bar-style" content="default" />',
     )
     const result = run(input)
     expect(result.checks.find((c) => c.name.includes("status-bar-style"))?.pass).toBe(false)

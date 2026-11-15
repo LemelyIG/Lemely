@@ -43,9 +43,9 @@ const ROOT = path.join(import.meta.dirname, "..", "..")
  * only grows by hand is a list new work falls out of, so if a fifth portal
  * layout is ever added, it belongs here as much as in that file.
  */
+// The student and teacher layouts are components/shell/PortalShell.tsx (portal shell spec).
 const PORTAL_LAYOUTS = [
-  "src/portals/student/index.tsx",
-  "src/portals/teacher/index.tsx",
+  "src/components/shell/PortalShell.tsx",
   "src/portals/parent/index.tsx",
   "src/portals/admin/index.tsx",
 ] as const

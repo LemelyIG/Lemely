@@ -142,23 +142,8 @@ describe("headers keep their existing padding while opting into the additive ins
     return line ?? ""
   }
 
-  it("student's header replaces py-4 with pb-4 and lm-app-header-pt-4, no inline style", () => {
-    const line = headerLine("portals/student/index.tsx")
-    expect(line).toContain("pb-4")
-    expect(line).not.toMatch(/(?<!p)\bpy-4\b/)
-    expect(line).toContain("lm-app-header-pt-4")
-    const source = readFileSync(join(SRC, "portals/student/index.tsx"), "utf8")
-    expect(source).not.toContain("--lm-app-header-pt")
-  })
-
-  it("teacher's header replaces py-2.5 with pb-2.5 and lm-app-header-pt-2.5, no inline style", () => {
-    const line = headerLine("portals/teacher/index.tsx")
-    expect(line).toContain("pb-2.5")
-    expect(line).not.toMatch(/\bpy-2\.5\b/)
-    expect(line).toContain("lm-app-header-pt-2.5")
-    const source = readFileSync(join(SRC, "portals/teacher/index.tsx"), "utf8")
-    expect(source).not.toContain("--lm-app-header-pt")
-  })
+  // The student header moved to components/shell/ShellTopBar.tsx (portal shell
+  // spec), which carries its own inset (`lm-shell-bar-inset`).
 
   it("admin's header replaces py-2.5 with pb-2.5 and lm-app-header-pt-2.5, no inline style", () => {
     const line = headerLine("portals/admin/index.tsx")
@@ -167,6 +152,20 @@ describe("headers keep their existing padding while opting into the additive ins
     expect(line).toContain("lm-app-header-pt-2.5")
     const source = readFileSync(join(SRC, "portals/admin/index.tsx"), "utf8")
     expect(source).not.toContain("--lm-app-header-pt")
+  })
+
+  it("ShellTopBar opts into the standalone safe-area inset outside its fixed box", () => {
+    const source = readFileSync(join(SRC, "components/shell/ShellTopBar.tsx"), "utf8")
+    expect(source).toContain("lm-shell-bar-inset")
+    const css = readFileSync(join(SRC, "index.css"), "utf8")
+    const standalone = [
+      ...css.matchAll(/@media \(display-mode: standalone\)[^{]*\{\s*\.lm-shell-bar-inset\s*\{([\s\S]*?)\}/g),
+    ].map((m) => m[1])
+    expect(standalone.length).toBeGreaterThanOrEqual(1)
+    for (const block of standalone) {
+      expect(block).toContain("env(safe-area-inset-top)")
+      expect(block).not.toMatch(/height|block-size/)
+    }
   })
 
   it("marketing's header is untouched — it had no py-* to lose", () => {
@@ -179,8 +178,8 @@ describe("lm-nav-chrome coverage", () => {
   const CHROME_FILES = [
     "components/ui/nav-drawer.tsx",
     "components/ui/nav-shells.tsx",
-    "portals/student/index.tsx",
-    "portals/teacher/index.tsx",
+    // The student and teacher bars are components/shell/ShellTopBar.tsx.
+    "components/shell/ShellTopBar.tsx",
     "portals/admin/index.tsx",
     "portals/marketing/MarketingHeader.tsx",
   ]
@@ -190,10 +189,11 @@ describe("lm-nav-chrome coverage", () => {
     expect(source).toContain("lm-nav-chrome")
   })
 
-  it("nav-drawer.tsx applies it to both the dialog panel and the trigger", () => {
+  it("nav-drawer.tsx applies it to both dialog panel variants and the trigger", () => {
     const source = readFileSync(join(SRC, "components/ui/nav-drawer.tsx"), "utf8")
     const count = (source.match(/lm-nav-chrome/g) ?? []).length
-    expect(count).toBe(2)
+    // default panel + shell panel + trigger
+    expect(count).toBe(3)
   })
 })
 
@@ -268,10 +268,22 @@ describe("no literal sidebar breakpoint/width on any <aside> in portals", () => 
 })
 
 describe("apple-mobile-web-app-status-bar-style", () => {
-  it("is declared as default, not black-translucent", () => {
-    expect(html).toContain(
-      '<meta name="apple-mobile-web-app-status-bar-style" content="default" />',
-    )
+  it("is black-translucent: the native frame's glass runs under the clock in standalone (native frame D7)", () => {
+    expect(html).toContain('<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />')
+  })
+})
+
+describe("text-size-adjust", () => {
+  it("html, body keep author font sizes on rotation", () => {
+    const body = css.match(/html,\s*body\s*\{([\s\S]*?)\}/)?.[1] ?? ""
+    expect(body).toContain("-webkit-text-size-adjust: 100%")
+    expect(body).toMatch(/(?<!-webkit-)text-size-adjust: 100%/)
+  })
+})
+
+describe("standalone top inset utility", () => {
+  it("lm-standalone-top pads the safe area only in standalone", () => {
+    expect(css).toMatch(/@media \(display-mode: standalone\)\s*\{\s*\.lm-standalone-top\s*\{\s*padding-top: env\(safe-area-inset-top\);/)
   })
 })
 
@@ -314,9 +326,9 @@ describe("min-h-dvh alone, no min-h-screen fallback", () => {
     "portals/misc/FullPageState.tsx",
     "portals/parent/index.tsx",
     "portals/auth/Login.tsx",
-    "portals/student/index.tsx",
+    // The student and teacher layouts are components/shell/PortalShell.tsx.
+    "components/shell/PortalShell.tsx",
     "portals/settings/SettingsFrame.tsx",
-    "portals/teacher/index.tsx",
     "portals/admin/index.tsx",
     "portals/marketing/index.tsx",
   ]

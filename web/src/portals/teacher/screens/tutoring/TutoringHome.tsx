@@ -45,6 +45,7 @@ import {
 import type { TutorBookingsParams } from "@/lib/tutoring/queryKeys"
 import { cn, relativeTime } from "@/lib/utils"
 import type { Booking, TutorOwnProfile, TutoringMode } from "@/lib/tutoringTypes"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * T-15 · Tutoring home (`/teacher/tutoring`, SPEC §d).
@@ -489,7 +490,7 @@ function Home({ profile }: { profile: TutorOwnProfile | null }) {
   return (
     <div className="flex flex-col gap-6 min-w-0">
       <div className="flex flex-col gap-1 border-b border-outline-variant pb-5">
-        <h1 className="m-0 text-display-md text-on-surface">Tutoring</h1>
+        <PageHeading repeatsTitle={true} className="m-0 text-display-md text-on-surface">Tutoring</PageHeading>
         <p className="m-0 text-body-md text-on-surface-variant">Your listing, the requests waiting for you and your sessions.</p>
       </div>
 

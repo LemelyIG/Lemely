@@ -88,7 +88,7 @@ export function NextUp({ growth }: { growth: GrowthModel }) {
   if (growth.complete) return null
   const { next } = growth
   return (
-    <section aria-labelledby={next ? "nu-h" : "nu-l"} className={`grid min-w-0 gap-8 rounded-card bg-surface-container-lowest p-6 shadow-panel ${next ? "lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] lg:gap-12" : ""}`}>
+    <section aria-labelledby={next ? "nu-h" : "nu-l"} className={`lm-native-card grid min-w-0 gap-8 rounded-card bg-surface-container-lowest p-6 shadow-panel ${next ? "lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] lg:gap-12" : ""}`}>
       {next && (
         <div className="min-w-0">
           <h2 id="nu-h" className="text-display-md">{next.title}</h2>

@@ -6,6 +6,7 @@
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
@@ -58,6 +59,18 @@ import { GESTURE_INTERACTIVE_SELECTOR } from "@/lib/gestures/interactiveSelector
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
+/** Focusable descendants a user can actually reach: the shell sidebar hides
+ * its wordmark (`visibility: hidden`) and Upload (`display: none`) in the
+ * phone sheet, and focus() on either silently does nothing, so the first and
+ * last stops must skip them. */
+function focusableIn(panel: HTMLElement): HTMLElement[] {
+  return Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter((el) =>
+    typeof el.checkVisibility === "function"
+      ? el.checkVisibility({ visibilityProperty: true })
+      : el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden",
+  )
+}
+
 export interface NavDrawerProps {
   open: boolean
   onClose: () => void
@@ -67,9 +80,11 @@ export interface NavDrawerProps {
   children: ReactNode
   /** Optional block pinned to the drawer foot (identity, cross-portal links). */
   footer?: ReactNode
+  /** `shell`: design A's floating drawer, a bottom sheet below 721px; the children supply their own head and close button. */
+  variant?: "default" | "shell"
 }
 
-export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerProps) {
+export function NavDrawer({ open, onClose, title, children, footer, variant = "default" }: NavDrawerProps) {
   const titleId = useId()
   const panelRef = useRef<HTMLDivElement>(null)
   const previouslyFocused = useRef<HTMLElement | null>(null)
@@ -116,7 +131,7 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
 
     // Defer a frame so the panel is mounted before we look inside it.
     const raf = requestAnimationFrame(() => {
-      const first = panelRef.current?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)
+      const first = panelRef.current ? focusableIn(panelRef.current)[0] : undefined
       ;(first ?? panelRef.current)?.focus()
     })
 
@@ -124,6 +139,26 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
       cancelAnimationFrame(raf)
       previouslyFocused.current?.focus()
     }
+  }, [mounted])
+
+  // Escape at document level, not on the panel wrapper: focus only moves into
+  // the panel a frame after mount, and an Escape pressed in that frame (focus
+  // still on the trigger) never reaches a React handler on the panel. The
+  // latest `onClose` is read through a ref so the listener is added once per
+  // open, not once per parent render.
+  // A layout effect, so the listener is live at commit rather than a passive
+  // flush later (which can itself land after the first frame under load).
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+  useLayoutEffect(() => {
+    if (!mounted) return
+    function onDocumentKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return
+      event.stopPropagation()
+      onCloseRef.current()
+    }
+    document.addEventListener("keydown", onDocumentKeyDown)
+    return () => document.removeEventListener("keydown", onDocumentKeyDown)
   }, [mounted])
 
   // Shared with Modal — see `lockScroll`'s own doc for why this replaces a
@@ -179,16 +214,12 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
   if (!mounted) return null
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
-    if (event.key === "Escape") {
-      event.stopPropagation()
-      onClose()
-      return
-    }
+    // Escape is handled at document level (effect above), not here.
     if (event.key !== "Tab") return
 
     const panel = panelRef.current
     if (!panel) return
-    const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+    const focusable = focusableIn(panel)
     if (focusable.length === 0) {
       event.preventDefault()
       return
@@ -209,7 +240,12 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
   return createPortal(
     <div className="fixed inset-0 z-modal" onKeyDown={handleKeyDown}>
       <div
-        className="fixed inset-0 z-scrim bg-scrim motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
+        className={cn(
+          "fixed inset-0 z-scrim motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]",
+          // Design A's `.as-side::backdrop`: the scrim colour at 0.4 alpha
+          // (`--md-scrim-dialog`, next to the 0.55 app scrim in index.css).
+          variant === "shell" ? "bg-scrim-dialog" : "bg-scrim",
+        )}
         aria-hidden="true"
         onClick={onClose}
       />
@@ -234,35 +270,50 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
             : undefined
         }
         className={cn(
-          "lm-nav-chrome fixed inset-y-0 start-0 z-modal flex w-[min(20rem,85vw)] flex-col gap-5",
-          "border-e border-outline-variant bg-surface-container-lowest px-4 py-5 shadow-[var(--shadow-float)]",
+          variant === "shell"
+            ? "lm-nav-chrome fixed inset-y-2.5 start-2.5 z-modal flex w-[min(280px,calc(100vw-20px))] flex-col rounded-card bg-surface-container-lowest text-on-surface shadow-[var(--shadow-panel)] max-shell-sm:inset-x-0 max-shell-sm:top-auto max-shell-sm:bottom-0 max-shell-sm:start-0 max-shell-sm:w-full max-shell-sm:max-h-[85dvh] max-shell-sm:rounded-b-none"
+            : cn(
+                "lm-nav-chrome fixed inset-y-0 start-0 z-modal flex w-[min(20rem,85vw)] flex-col gap-5",
+                "border-e border-outline-variant bg-surface-container-lowest px-4 py-5 shadow-[var(--shadow-float)]",
+              ),
           phase === "closing"
             ? "lm-slide-out-start"
             : "motion-safe:animate-[lm-slide-in-start_var(--dur-base)_var(--ease-spring)_both]",
         )}
       >
-        <div className="flex items-center justify-between gap-3">
-          <h2 id={titleId} className="text-display-sm text-on-surface">
-            {title}
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close navigation"
-            className={cn(
-              "-me-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-on-surface-variant transition-colors",
-              "hover:bg-surface-container-low hover:text-on-surface",
-              "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
-              "active:scale-[0.98]",
-            )}
-          >
-            <X size={20} aria-hidden="true" />
-          </button>
-        </div>
+        {variant === "shell" ? (
+          <>
+            <h2 id={titleId} className="sr-only">
+              {title}
+            </h2>
+            {children}
+          </>
+        ) : (
+          <>
+            <div className="flex items-center justify-between gap-3">
+              <h2 id={titleId} className="text-display-sm text-on-surface">
+                {title}
+              </h2>
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Close navigation"
+                className={cn(
+                  "-me-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-on-surface-variant transition-colors",
+                  "hover:bg-surface-container-low hover:text-on-surface",
+                  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+                  "active:scale-[0.98]",
+                )}
+              >
+                <X size={20} aria-hidden="true" />
+              </button>
+            </div>
 
-        <div className="lm-scroll min-h-0 flex-1 overflow-y-auto">{children}</div>
+            <div className="lm-scroll min-h-0 flex-1 overflow-y-auto">{children}</div>
 
-        {footer ? <div className="border-t border-outline-variant pt-4">{footer}</div> : null}
+            {footer ? <div className="border-t border-outline-variant pt-4">{footer}</div> : null}
+          </>
+        )}
       </div>
     </div>,
     document.body,

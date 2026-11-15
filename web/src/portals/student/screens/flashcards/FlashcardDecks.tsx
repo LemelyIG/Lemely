@@ -36,6 +36,7 @@ import {
   manualDeckRequest,
   nextDueMessage,
 } from "./flashcardData"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 
@@ -495,7 +496,7 @@ export function FlashcardDecks() {
           return (
             <>
               <div className="flex flex-col gap-2">
-                <h1 className="text-display-lg text-on-surface">Flashcards for {subjectName}</h1>
+                <PageHeading repeatsTitle={false} className="text-display-lg text-on-surface">Flashcards for {subjectName}</PageHeading>
                 <p className="lm-prose text-body-lg text-on-surface-variant">
                   Decks grouped by topic. Cards you write yourself and cards Lemely generates both
                   live here, and every card always shows which one it is.

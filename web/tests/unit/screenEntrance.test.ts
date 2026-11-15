@@ -64,9 +64,9 @@ describe("screen-outlet.tsx", () => {
 })
 
 describe("every portal layout renders <ScreenOutlet instead of a bare <Outlet", () => {
+  // The student and teacher layouts are components/shell/PortalShell.tsx (portal shell spec).
   const PORTAL_LAYOUTS = [
-    "src/portals/student/index.tsx",
-    "src/portals/teacher/index.tsx",
+    "src/components/shell/PortalShell.tsx",
     "src/portals/admin/index.tsx",
     "src/portals/parent/index.tsx",
   ] as const
@@ -94,11 +94,16 @@ describe("View Transitions are wired from shell chrome", () => {
     expect(sourceOf("src/components/ui/back-control.tsx")).toContain("viewTransition")
   })
 
-  it("student's sidebar NavLink passes viewTransition inline", () => {
-    expect(sourceOf("src/portals/student/index.tsx")).toContain("viewTransition")
+  it("the student shell's Upload link passes viewTransition inline", () => {
+    expect(sourceOf("src/portals/student/shell.tsx")).toContain("viewTransition")
   })
 
-  it.each(["src/portals/teacher/index.tsx", "src/portals/admin/index.tsx"])(
+  it("the shell sidebar renders through ShellNavList, which uses nav-shells' NavLink (viewTransition)", () => {
+    expect(sourceOf("src/components/shell/ShellNavList.tsx")).toContain("NavShellLink")
+    expect(sourceOf("src/components/ui/nav-shells.tsx")).toContain("viewTransition")
+  })
+
+  it.each(["src/portals/admin/index.tsx"])(
     "%s's sidebar renders through nav-shells.tsx, which passes viewTransition on its NavLink",
     (relativePath) => {
       // Teacher and admin sidebars render their nav rows through the shared
@@ -110,13 +115,13 @@ describe("View Transitions are wired from shell chrome", () => {
     },
   )
 
-  it("the /student/result/:paperId route opts out with handle.viewTransition: false", () => {
+  it("the /student/result/:paperId route no longer opts out (the paper result slides on phones)", () => {
     const source = sourceOf("src/portals/student/index.tsx")
     const resultRouteAt = source.indexOf('path: "result/:paperId"')
     expect(resultRouteAt).toBeGreaterThan(-1)
     const nextRouteAt = source.indexOf("path:", resultRouteAt + 1)
     const routeBlock = source.slice(resultRouteAt, nextRouteAt === -1 ? undefined : nextRouteAt)
-    expect(routeBlock).toContain("viewTransition: false")
+    expect(routeBlock).not.toContain("viewTransition: false")
   })
 
   it("CorrectPaper.tsx's navigate() to the result route does not pass viewTransition", () => {
@@ -132,6 +137,12 @@ describe("index.css carries the View Transition rules and their reduced-motion g
 
   it("suppresses .lm-screen's own entrance while a View Transition is active", () => {
     expect(css).toContain("html:active-view-transition .lm-screen")
+  })
+
+  it("does it with a zero duration, never `animation: none`, which restarts the entrance when the transition ends", () => {
+    const rule = css.match(/html:active-view-transition \.lm-screen \{([^}]*)\}/)?.[1] ?? ""
+    expect(rule).toMatch(/animation-duration:\s*0s/)
+    expect(rule).not.toMatch(/animation:\s*none/)
   })
 
   it("styles the root pseudo-elements directionally", () => {

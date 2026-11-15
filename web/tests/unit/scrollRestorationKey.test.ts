@@ -64,6 +64,13 @@ describe("createScrollKeyer", () => {
     expect(key(loc("/teacher/settings/", "s3"))).toBe("c1")
   })
 
+  it("keys the student settings dialog as the page it opened over", () => {
+    const key = createScrollKeyer()
+    key(loc("/student/friends", "f1"))
+    expect(key(loc("/student/settings", "s1"))).toBe("f1")
+    expect(key(loc("/student/settings/appearance", "s2"))).toBe("f1")
+  })
+
   it("keys an overlay normally when no page was seen (deep link, refresh)", () => {
     expect(createScrollKeyer()(loc("/teacher/settings", "s1"))).toBe("s1")
   })

@@ -8,6 +8,24 @@
  * it paints.
  */
 ;(function () {
+  // Platform for the native phone frame (docs/superpowers/plans/
+  // 2026-11-08-native-mobile-frame.md). This is the ONLY platform resolver:
+  // src/lib/platform.ts's readPlatform just reads data-platform back.
+  // tests/unit/platform.test.ts runs this file against the decision table.
+  try {
+    var nav = window.navigator || navigator
+    var ua = (nav && nav.userAgent) || ""
+    var uaData = nav && nav.userAgentData
+    var platform = "other"
+    if (uaData && uaData.platform === "Android") platform = "android"
+    else if (/\b(iPhone|iPad|iPod)\b/.test(ua)) platform = "ios"
+    else if (/\bMacintosh\b/.test(ua) && nav.maxTouchPoints > 1) platform = "ios"
+    else if (/\bAndroid\b/.test(ua)) platform = "android"
+    document.documentElement.dataset.platform = platform
+  } catch (platformError) {
+    // Worst case the page keeps design A (no data-platform = "other").
+  }
+
   // Theme preference (C5b). Resolves and paints the theme BEFORE the shell
   // markup below is parsed, so a cold load in dark mode never flashes light
   // first — the same "runs early, parser-blocking, no defer/async" timing

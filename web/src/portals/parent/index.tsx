@@ -242,7 +242,7 @@ function Header() {
   const navigate = useNavigate()
 
   return (
-    <header className="border-b border-outline-variant bg-surface-container-lowest">
+    <header className="lm-standalone-top border-b border-outline-variant bg-surface-container-lowest">
       <div className="mx-auto flex w-full max-w-240 flex-wrap items-center gap-x-4 gap-y-2 px-4 py-4 md:px-8">
         <Link
           to="/parent"

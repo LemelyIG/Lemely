@@ -92,7 +92,9 @@ describe("post-login return path", () => {
 })
 
 describe("student sub-screens render BackControl", () => {
-  it("student/index.tsx's Header renders <BackControl", () => {
-    expect(sourceOf("src/portals/student/index.tsx")).toContain("<BackControl")
+  // The student top bar moved to components/shell (portal shell spec); the
+  // student content for it lives in portals/student/shell.tsx.
+  it("student/shell.tsx renders <BackControl in the top bar", () => {
+    expect(sourceOf("src/portals/student/shell.tsx")).toContain("<BackControl")
   })
 })

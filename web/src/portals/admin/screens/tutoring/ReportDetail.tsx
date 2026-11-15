@@ -296,7 +296,7 @@ function ResolveForm({
           title={confirm.title}
           description={`${reportTargetLabel(report.targetType)} about ${report.tutorName}`}
           footer={
-            <div className="flex flex-wrap justify-end gap-2">
+            <div data-primary-first className="flex flex-wrap justify-end gap-2">
               <Button className="min-h-11" variant="primary" onClick={() => setConfirming(false)} disabled={resolve.isPending}>
                 Go back
               </Button>

@@ -1,6 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useEffect, useRef, useState } from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
+import { Funnel } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Select } from "@/components/ui/select"
@@ -20,6 +21,10 @@ import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
 import { useBulkApproveReview, useReviewQueue, useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import type { BulkApproveResponse, ReviewQueueItem, ReviewQueueList } from "@/lib/teacherTypes"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
+import { ListGroup, ListRow } from "@/components/ui/list-group"
+import { TableOrList } from "@/components/ui/table-or-list"
+import { Modal } from "@/components/ui/modal"
+import { useNativeFrame } from "@/lib/useNativeFrame"
 
 /*
  * Review queue (T-07). `GET /teacher/review?class_id=&reason=&min_age_hours=`
@@ -233,6 +238,15 @@ const SKIP_REASON_LABEL: Record<string, string> = {
   already_closed: "already resolved or dismissed",
 }
 
+/** "0625 P2/1 · May 2026": the paper in the width a phone row can hold. */
+function compactPaperLabel(item: ReviewQueueItem): string {
+  if (!item.subjectCode) return "Quiz question"
+  const paper =
+    item.paperNumber != null ? ` P${item.paperNumber}${item.paperVariant != null ? `/${item.paperVariant}` : ""}` : ""
+  const session = item.sessionMonth && item.sessionYear ? ` · ${item.sessionMonth} ${item.sessionYear}` : ""
+  return `${item.subjectCode}${paper}${session}`
+}
+
 function questionLabel(item: ReviewQueueItem): string {
   return item.questionId ? `Q${item.questionId}` : "this question"
 }
@@ -293,6 +307,8 @@ export function Review() {
     cursor,
   })
   const bulkApprove = useBulkApproveReview()
+  const { native } = useNativeFrame()
+  const [filterOpen, setFilterOpen] = useState(false)
 
   if (queueQuery.data && queueQuery.data !== mergedData) {
     setMergedData(queueQuery.data)
@@ -389,6 +405,65 @@ export function Review() {
           const allSelected =
             selectableItems.length > 0 && selectableItems.every((i) => selected.has(i.itemId))
 
+          const activeFilterCount = [classId, reason, minAgeHours].filter((v) => v !== "").length
+          const filterButton = (
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<Funnel size={16} />}
+              aria-haspopup="dialog"
+              aria-label={activeFilterCount > 0 ? `Filter, ${activeFilterCount} applied` : "Filter"}
+              data-review-filter
+              onClick={() => setFilterOpen(true)}
+            >
+              Filter
+              {activeFilterCount > 0 ? (
+                <span
+                  data-filter-count
+                  aria-hidden="true"
+                  className="ms-1 inline-flex min-w-5 items-center justify-center rounded-pill bg-primary px-1.5 text-3xs text-on-primary"
+                >
+                  {activeFilterCount}
+                </span>
+              ) : null}
+            </Button>
+          )
+          const filterControls = (
+            <>
+                <Select
+                label="Class"
+                value={classId}
+                onChange={(e) => updateFilter("class_id", e.target.value)}
+                wrapperClassName="min-w-[170px]"
+              >
+                <option value="">All classes</option>
+                {(classesQuery.data?.classes ?? []).map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label}
+                  </option>
+                ))}
+              </Select>
+              <Select label="Reason" value={reason} onChange={(e) => updateFilter("reason", e.target.value)}>
+                {REASON_FILTER_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+              <Select
+                label="Waiting at least"
+                value={minAgeHours}
+                onChange={(e) => updateFilter("min_age_hours", e.target.value)}
+              >
+                {AGE_FILTER_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+            </>
+          )
+
           return (
             <>
               <SectionHead
@@ -397,41 +472,36 @@ export function Review() {
                 kicker="Low-confidence marks and integrity flags land here, oldest first. Bulk-approve the trivially fine ones. Open anything that needs a real look."
                 rung="display-md"
                 level={1}
+                repeatsTitle={true}
               />
 
-              <div className="flex items-end gap-4 flex-wrap">
-                <Select
-                  label="Class"
-                  value={classId}
-                  onChange={(e) => updateFilter("class_id", e.target.value)}
-                  wrapperClassName="min-w-[170px]"
+              {native ? (
+                <Modal
+                  open={filterOpen}
+                  onClose={() => setFilterOpen(false)}
+                  title="Filter the review queue"
+                  size="sm"
+                  footer={
+                    <>
+                      {activeFilterCount > 0 ? (
+                        <Button variant="secondary" onClick={() => setSearchParams({}, { replace: true })}>
+                          Clear filters
+                        </Button>
+                      ) : null}
+                      <Button variant="primary" onClick={() => setFilterOpen(false)}>
+                        Done
+                      </Button>
+                    </>
+                  }
                 >
-                  <option value="">All classes</option>
-                  {(classesQuery.data?.classes ?? []).map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.label}
-                    </option>
-                  ))}
-                </Select>
-                <Select label="Reason" value={reason} onChange={(e) => updateFilter("reason", e.target.value)}>
-                  {REASON_FILTER_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </Select>
-                <Select
-                  label="Waiting at least"
-                  value={minAgeHours}
-                  onChange={(e) => updateFilter("min_age_hours", e.target.value)}
-                >
-                  {AGE_FILTER_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+                  <div className="flex flex-col gap-3">{filterControls}</div>
+                </Modal>
+              ) : (
+                <div className="flex items-end gap-4 flex-wrap">{filterControls}</div>
+              )}
+              {/* With rows, Filter shares the View table row (TableOrList `toolbar`); an empty
+                  queue has no such row, so Filter stands alone and a filter can still be cleared. */}
+              {native && items.length === 0 ? <div className="flex justify-start">{filterButton}</div> : null}
 
               {/*
                * The empty branch stays inside `children` rather than going
@@ -460,264 +530,294 @@ export function Review() {
                 />
               ) : (
                 <>
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <Checkbox
-                      checked={allSelected}
-                      disabled={selectableItems.length === 0}
-                      onChange={() => toggleSelectAll(items)}
-                      aria-label={allSelected ? "Deselect all selectable items" : "Select all selectable items"}
-                      label={selected.size > 0 ? `${selected.size} selected` : "Select all"}
-                    />
-                    <Button
-                      variant="ink"
-                      size="sm"
-                      disabled={selected.size === 0 || bulkApprove.isPending}
-                      onClick={() => handleBulkApprove(items)}
-                    >
-                      {bulkApprove.isPending
-                        ? "Approving…"
-                        : `Bulk-approve${selected.size > 0 ? ` (${selected.size})` : ""}`}
-                    </Button>
-                    <span className="text-body-sm text-on-surface-variant">
-                      Accepts each selected mark exactly as Lemely awarded it. Integrity flags aren't
-                      selectable here. Open one to look at it properly.
-                    </span>
-                  </div>
-
-                  {bulkApprove.isError ? (
-                    <div role="alert" className="text-body-sm text-error">
-                      Couldn't bulk-approve: {teacherMutationFailureMessage(bulkApprove.error)}
-                    </div>
-                  ) : null}
-
-                  {bulkResult ? (
-                    <div
-                      role="status"
-                      className="border border-outline-variant rounded-md p-4 bg-surface-container-low flex flex-col gap-2"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-body-md font-medium">
-                          Approved {bulkResult.approved.length} item
-                          {bulkResult.approved.length === 1 ? "" : "s"}
-                          {bulkResult.skipped.length > 0 ? ` · skipped ${bulkResult.skipped.length}` : "."}
-                        </div>
-                        <Button variant="ghost" size="sm" onClick={() => setBulkResult(null)}>
-                          Dismiss
+                  <TableOrList
+                    label="Review queue"
+                    toolbar={filterButton}
+                    storageKey="lemely.review.view"
+                    onListView={() => setSelected((prev) => (prev.size === 0 ? prev : new Set()))}
+                    tableHeader={
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <Checkbox
+                          checked={allSelected}
+                          disabled={selectableItems.length === 0}
+                          onChange={() => toggleSelectAll(items)}
+                          aria-label={allSelected ? "Deselect all selectable items" : "Select all selectable items"}
+                          label={selected.size > 0 ? `${selected.size} selected` : "Select all"}
+                        />
+                        <Button
+                          variant="ink"
+                          size="sm"
+                          disabled={selected.size === 0 || bulkApprove.isPending}
+                          onClick={() => handleBulkApprove(items)}
+                        >
+                          {bulkApprove.isPending
+                            ? "Approving…"
+                            : `Bulk-approve${selected.size > 0 ? ` (${selected.size})` : ""}`}
                         </Button>
+                        <span className="text-body-sm text-on-surface-variant">
+                          Accepts each selected mark exactly as Lemely awarded it. Integrity flags aren't
+                          selectable here. Open one to look at it properly.
+                        </span>
                       </div>
-                      {bulkResult.skipped.length > 0 ? (
-                        <ul className="flex flex-col gap-1 text-body-sm text-on-surface-variant m-0 ps-4 list-disc">
-                          {bulkResult.skipped.map((s) => {
-                            const row = snapshotRef.current.find((r) => r.itemId === s.itemId)
-                            return (
-                              <li key={s.itemId}>
-                                {row ? `${row.studentDisplayName} — ${questionLabel(row)}` : s.itemId}
-                                {": "}
-                                {SKIP_REASON_LABEL[s.reason] ?? s.reason}
-                              </li>
-                            )
-                          })}
-                        </ul>
-                      ) : null}
-                    </div>
-                  ) : null}
+                    }
+                    notices={
+                      <>
+                        {bulkApprove.isError ? (
+                          <div role="alert" className="text-body-sm text-error">
+                            Couldn't bulk-approve: {teacherMutationFailureMessage(bulkApprove.error)}
+                          </div>
+                        ) : null}
 
-                  <Table density="operate"
-                    tabIndex={0}
-                    role="region"
-                    aria-label="Review queue, scrollable horizontally"
-                  >
-                    <caption className="sr-only">
-                      Review queue, oldest-waiting item first, which is the priority order the server already
-                      returns this list in
-                    </caption>
-                    <THead>
-                      <TR>
-                        <TH>
-                          <span className="sr-only">Select</span>
-                        </TH>
-                        <TH>Student</TH>
-                        <TH>Paper</TH>
-                        <TH>Question</TH>
-                        <TH>Why it's here</TH>
-                        <TH>Waiting</TH>
-                        <TH numeric>AI mark</TH>
-                        <TH numeric>Confidence</TH>
-                        <TH>
-                          <span className="sr-only">Actions</span>
-                        </TH>
-                      </TR>
-                    </THead>
-                    <TBody>
-                      {items.map((item) => (
-                        <TR key={item.itemId} className="align-top">
-                          <TD>
-                            <Checkbox
-                              checked={selected.has(item.itemId)}
-                              disabled={isIntegrityReason(item.reason)}
-                              onChange={() => toggleSelected(item.itemId)}
-                              title={
-                                isIntegrityReason(item.reason)
-                                  ? "Integrity flags aren't selectable for bulk-approve. Open this item instead"
-                                  : undefined
-                              }
-                              aria-label={
-                                isIntegrityReason(item.reason)
-                                  ? `${item.studentDisplayName}'s ${questionLabel(item)} is an integrity flag and isn't selectable here. Open it instead`
-                                  : `Select ${item.studentDisplayName}'s ${questionLabel(item)} for bulk approve`
-                              }
-                            />
-                          </TD>
-                          <TD>
-                            {/* Two row shapes, because the queue has two
-                                sources. A console-uploaded paper has no
-                                student and no class (D1.12), so it gets
-                                neither an avatar nor the two links below:
-                                rendering a person's avatar for a scan, or a
-                                link to `/teacher/students/null`, would be
-                                inventing a student this row does not have. */}
-                            {isConsolePaperItem(item) ? (
-                                <div className="flex items-center gap-2.5 min-w-0">
-                                  <span
-                                    aria-hidden="true"
-                                    className="flex-none w-8 h-8 rounded-full bg-surface-container-low border border-outline-variant flex items-center justify-center text-on-surface-variant"
-                                  >
-                                    <svg
-                                      viewBox="0 0 16 16"
-                                      className="w-3.5 h-3.5"
-                                      fill="none"
-                                      stroke="currentColor"
-                                      strokeWidth="1.5"
-                                    >
-                                      <path d="M9.5 1.5H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5z" />
-                                      <path d="M9.5 1.5V5H13" />
-                                    </svg>
-                                  </span>
-                                  <div className="min-w-0 max-w-[20ch]">
+                        {bulkResult ? (
+                          <div
+                            role="status"
+                            className="border border-outline-variant rounded-md p-4 bg-surface-container-low flex flex-col gap-2"
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="text-body-md font-medium">
+                                Approved {bulkResult.approved.length} item
+                                {bulkResult.approved.length === 1 ? "" : "s"}
+                                {bulkResult.skipped.length > 0 ? ` · skipped ${bulkResult.skipped.length}` : "."}
+                              </div>
+                              <Button variant="ghost" size="sm" onClick={() => setBulkResult(null)}>
+                                Dismiss
+                              </Button>
+                            </div>
+                            {bulkResult.skipped.length > 0 ? (
+                              <ul className="flex flex-col gap-1 text-body-sm text-on-surface-variant m-0 ps-4 list-disc">
+                                {bulkResult.skipped.map((s) => {
+                                  const row = snapshotRef.current.find((r) => r.itemId === s.itemId)
+                                  return (
+                                    <li key={s.itemId}>
+                                      {row ? `${row.studentDisplayName} — ${questionLabel(row)}` : s.itemId}
+                                      {": "}
+                                      {SKIP_REASON_LABEL[s.reason] ?? s.reason}
+                                    </li>
+                                  )
+                                })}
+                              </ul>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </>
+                    }
+                    list={
+                      <ListGroup>
+                        {items.map((item) => (
+                          <ListRow
+                            key={item.itemId}
+                            to={`/teacher/review/${item.itemId}${filterQsString ? `?${filterQsString}` : ""}`}
+                            title={item.studentDisplayName}
+                            titleLines={2}
+                            lines={3}
+                            subtitle={
+                              <>
+                                <span data-review-question className="block">
+                                  {item.questionId ? questionLabel(item) : "No question"} · {compactPaperLabel(item)}
+                                </span>
+                                <Chip tone={isIntegrityReason(item.reason) ? "warn" : "neutral"} className="mt-1">
+                                  {reasonLabel(item.reason)}
+                                </Chip>
+                              </>
+                            }
+                            trailing={
+                              item.confidenceScore != null ? (
+                                <Chip tone={confidenceTone(item.confidenceScore)} data-review-confidence>
+                                  {Math.round(item.confidenceScore * 100)}%
+                                </Chip>
+                              ) : (
+                                <span className="text-body-sm">–</span>
+                              )
+                            }
+                          />
+                        ))}
+                      </ListGroup>
+                    }
+                    table={
+                      <Table density="operate"
+                        tabIndex={0}
+                        role="region"
+                        aria-label="Review queue, scrollable horizontally"
+                      >
+                        <caption className="sr-only">
+                          Review queue, oldest-waiting item first, which is the priority order the server already
+                          returns this list in
+                        </caption>
+                        <THead>
+                          <TR>
+                            <TH>
+                              <span className="sr-only">Select</span>
+                            </TH>
+                            <TH>Student</TH>
+                            <TH>Paper</TH>
+                            <TH>Question</TH>
+                            <TH>Why it's here</TH>
+                            <TH>Waiting</TH>
+                            <TH numeric>AI mark</TH>
+                            <TH numeric>Confidence</TH>
+                            <TH>
+                              <span className="sr-only">Actions</span>
+                            </TH>
+                          </TR>
+                        </THead>
+                        <TBody>
+                          {items.map((item) => (
+                            <TR key={item.itemId} className="align-top">
+                              <TD>
+                                <Checkbox
+                                  checked={selected.has(item.itemId)}
+                                  disabled={isIntegrityReason(item.reason)}
+                                  onChange={() => toggleSelected(item.itemId)}
+                                  title={
+                                    isIntegrityReason(item.reason)
+                                      ? "Integrity flags aren't selectable for bulk-approve. Open this item instead"
+                                      : undefined
+                                  }
+                                  aria-label={
+                                    isIntegrityReason(item.reason)
+                                      ? `${item.studentDisplayName}'s ${questionLabel(item)} is an integrity flag and isn't selectable here. Open it instead`
+                                      : `Select ${item.studentDisplayName}'s ${questionLabel(item)} for bulk approve`
+                                  }
+                                />
+                              </TD>
+                              <TD>
+                                {/* Two row shapes, because the queue has two
+                                    sources. A console-uploaded paper has no
+                                    student and no class (D1.12), so it gets
+                                    neither an avatar nor the two links below:
+                                    rendering a person's avatar for a scan, or a
+                                    link to `/teacher/students/null`, would be
+                                    inventing a student this row does not have. */}
+                                {isConsolePaperItem(item) ? (
+                                    <div className="flex items-center gap-2.5 min-w-0">
+                                      <span
+                                        aria-hidden="true"
+                                        className="flex-none w-8 h-8 rounded-full bg-surface-container-low border border-outline-variant flex items-center justify-center text-on-surface-variant"
+                                      >
+                                        <svg
+                                          viewBox="0 0 16 16"
+                                          className="w-3.5 h-3.5"
+                                          fill="none"
+                                          stroke="currentColor"
+                                          strokeWidth="1.5"
+                                        >
+                                          <path d="M9.5 1.5H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5z" />
+                                          <path d="M9.5 1.5V5H13" />
+                                        </svg>
+                                      </span>
+                                      <div className="min-w-0 max-w-[20ch]">
+                                        <Link
+                                          to="/teacher/grading"
+                                          className="flex items-center text-on-surface hover:underline pointer-coarse:min-h-11"
+                                        >
+                                          <span className="truncate">{item.studentDisplayName}</span>
+                                        </Link>
+                                        <span className="flex items-center text-body-sm text-on-surface-variant">
+                                          Grading console
+                                        </span>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    <Avatar name={item.studentDisplayName} size="sm" />
+                                    {/* P6.2's long-content pass. `min-w-0` alone could not
+                                        make the `truncate` below fire, and this is the
+                                        first capture that ever rendered a name long enough
+                                        to show it: the table is `w-full` with the default
+                                        `table-layout: auto`, so a long name grows its own
+                                        cell, drags the table past the card, and the text is
+                                        CLIPPED by the `overflow-x-auto` wrapper rather than
+                                        ellipsised. The rule was correct and unreachable —
+                                        present, resolving, and unable to fire, which no
+                                        gate in this build can see.
+
+                                        What the capture showed is worse than a missing
+                                        ellipsis, and it is why this is bounded rather than
+                                        left to scroll: at 1440, one long name widened the
+                                        student column by ~170px and pushed the per-row
+                                        "Review →" button off the right edge of the card.
+                                        The action every row exists for became unreachable
+                                        without horizontal scrolling, on a desktop screen
+                                        with room to spare, because of one student's name.
+
+                                        A character measure rather than a pixel width, for
+                                        the same reason `CorrectPaper`'s `max-w-[60ch]` is
+                                        one: it is a count of glyphs, not a spacing value,
+                                        so it is out of scope for the 4px scale. 20ch is
+                                        about the column's own natural width, so it is a
+                                        `max` that ordinary names never reach and long ones
+                                        cannot exceed. 30ch was tried first and did not
+                                        bind — it truncated the name and the table still
+                                        grew. */}
+                                    {/* One link to the student with the class as plain text under
+                                        the name, so the cell has one target and it carries §6.1's
+                                        44px floor (`min-h-11`, flex-centred) on a finger. The class
+                                        used to be a second link; two stacked links in one 44px cell
+                                        each fall under the floor. `truncate` sits on inner spans:
+                                        on a flex container the text is an anonymous flex item and
+                                        text-overflow has nothing to apply to. */}
                                     <Link
-                                      to="/teacher/grading"
-                                      className="flex items-center text-on-surface hover:underline pointer-coarse:min-h-11"
+                                      to={`/teacher/students/${item.studentId}`}
+                                      className="flex min-w-0 max-w-[20ch] flex-col justify-center text-on-surface hover:underline pointer-coarse:min-h-11"
                                     >
                                       <span className="truncate">{item.studentDisplayName}</span>
+                                      <span className="truncate text-body-sm text-on-surface-variant">{item.className}</span>
                                     </Link>
-                                    <span className="flex items-center text-body-sm text-on-surface-variant">
-                                      Grading console
-                                    </span>
                                   </div>
-                                </div>
-                              ) : (
-                              <div className="flex items-center gap-2.5 min-w-0">
-                                <Avatar name={item.studentDisplayName} size="sm" />
-                                {/* P6.2's long-content pass. `min-w-0` alone could not
-                                    make the `truncate` below fire, and this is the
-                                    first capture that ever rendered a name long enough
-                                    to show it: the table is `w-full` with the default
-                                    `table-layout: auto`, so a long name grows its own
-                                    cell, drags the table past the card, and the text is
-                                    CLIPPED by the `overflow-x-auto` wrapper rather than
-                                    ellipsised. The rule was correct and unreachable —
-                                    present, resolving, and unable to fire, which no
-                                    gate in this build can see.
-
-                                    What the capture showed is worse than a missing
-                                    ellipsis, and it is why this is bounded rather than
-                                    left to scroll: at 1440, one long name widened the
-                                    student column by ~170px and pushed the per-row
-                                    "Review →" button off the right edge of the card.
-                                    The action every row exists for became unreachable
-                                    without horizontal scrolling, on a desktop screen
-                                    with room to spare, because of one student's name.
-
-                                    A character measure rather than a pixel width, for
-                                    the same reason `CorrectPaper`'s `max-w-[60ch]` is
-                                    one: it is a count of glyphs, not a spacing value,
-                                    so it is out of scope for the 4px scale. 20ch is
-                                    about the column's own natural width, so it is a
-                                    `max` that ordinary names never reach and long ones
-                                    cannot exceed. 30ch was tried first and did not
-                                    bind — it truncated the name and the table still
-                                    grew. */}
-                                <div className="min-w-0 max-w-[20ch]">
-                                  {/* Two stacked links to two different destinations,
-                                      so both need §6.1's floor, not just the primary
-                                      one. `min-h-11` with flex centring rather than the
-                                      `py-[11px]` this used to carry: 21.7px of line
-                                      plus 22px of padding is 43.7px, which fails the
-                                      floor by a third of a pixel and reported as "44"
-                                      until the gate started printing tenths. Hand-tuned
-                                      padding cannot be right for both rungs anyway,
-                                      because they have different line-heights.
-
-                                      `truncate` moves to an inner span: on a flex
-                                      container the text is an anonymous flex item and
-                                      text-overflow has nothing to apply to, so the
-                                      ellipsis would silently stop working. */}
-                                  <Link
-                                    to={`/teacher/students/${item.studentId}`}
-                                    className="flex items-center text-on-surface hover:underline pointer-coarse:min-h-11"
-                                  >
-                                    <span className="truncate">{item.studentDisplayName}</span>
-                                  </Link>
-                                  <Link
-                                    to={`/teacher/classes/${item.classId}`}
-                                    className="flex items-center text-body-sm text-on-surface-variant transition-colors hover:text-on-surface hover:underline pointer-coarse:min-h-11"
-                                  >
-                                    <span className="truncate">{item.className}</span>
-                                  </Link>
-                                </div>
-                              </div>
-                              )}
-                          </TD>
-                          <TD className="whitespace-nowrap text-body-sm text-on-surface-variant">
-                            {paperIdentityLabel(item)}
-                          </TD>
-                          <TD className="text-data-sm whitespace-nowrap">
-                            {item.questionId ?? "—"}
-                          </TD>
-                          <TD>
-                            <Chip tone={isIntegrityReason(item.reason) ? "warn" : "neutral"}>
-                              {reasonLabel(item.reason)}
-                            </Chip>
-                          </TD>
-                          <TD className="whitespace-nowrap text-body-sm text-on-surface-variant">
-                            {relativeTime(item.createdAt)}
-                          </TD>
-                          {/* The confidence gets its own column rather than sitting
-                              unlabelled under the mark. Stacked, a tone-coloured
-                              "85%" read as a second figure about the *mark* — the
-                              same shape as surface 4's unlabelled rank column, where
-                              a coloured number beside another number invited the two
-                              to be read as a pair. A percentage under "2/3" is
-                              especially open to being read as a score. */}
-                          <TD numeric className="whitespace-nowrap text-data-sm">
-                            {item.aiAwardedMarks ?? "–"}/{item.maximumMarks ?? "–"}
-                          </TD>
-                          <TD numeric className="whitespace-nowrap">
-                            {item.confidenceScore != null ? (
-                              <Chip tone={confidenceTone(item.confidenceScore)}>
-                                {Math.round(item.confidenceScore * 100)}%
-                              </Chip>
-                            ) : (
-                              <span className="text-body-sm text-on-surface-variant">–</span>
-                            )}
-                          </TD>
-                          <TD className="text-end whitespace-nowrap">
-                            <Button
-                              size="sm"
-                              variant="secondary"
-                              onClick={() =>
-                                navigate(
-                                  `/teacher/review/${item.itemId}${filterQsString ? `?${filterQsString}` : ""}`,
-                                )
-                              }
-                            >
-                              Review <ForwardArrow />
-                            </Button>
-                          </TD>
-                        </TR>
-                      ))}
-                    </TBody>
-                  </Table>
+                                  )}
+                              </TD>
+                              <TD className="whitespace-nowrap text-body-sm text-on-surface-variant">
+                                {paperIdentityLabel(item)}
+                              </TD>
+                              <TD className="text-data-sm whitespace-nowrap">
+                                {item.questionId ?? "—"}
+                              </TD>
+                              <TD>
+                                <Chip tone={isIntegrityReason(item.reason) ? "warn" : "neutral"}>
+                                  {reasonLabel(item.reason)}
+                                </Chip>
+                              </TD>
+                              <TD className="whitespace-nowrap text-body-sm text-on-surface-variant">
+                                {relativeTime(item.createdAt)}
+                              </TD>
+                              {/* The confidence gets its own column rather than sitting
+                                  unlabelled under the mark. Stacked, a tone-coloured
+                                  "85%" read as a second figure about the *mark* — the
+                                  same shape as surface 4's unlabelled rank column, where
+                                  a coloured number beside another number invited the two
+                                  to be read as a pair. A percentage under "2/3" is
+                                  especially open to being read as a score. */}
+                              <TD numeric className="whitespace-nowrap text-data-sm">
+                                {item.aiAwardedMarks ?? "–"}/{item.maximumMarks ?? "–"}
+                              </TD>
+                              <TD numeric className="whitespace-nowrap">
+                                {item.confidenceScore != null ? (
+                                  <Chip tone={confidenceTone(item.confidenceScore)}>
+                                    {Math.round(item.confidenceScore * 100)}%
+                                  </Chip>
+                                ) : (
+                                  <span className="text-body-sm text-on-surface-variant">–</span>
+                                )}
+                              </TD>
+                              <TD className="text-end whitespace-nowrap">
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={() =>
+                                    navigate(
+                                      `/teacher/review/${item.itemId}${filterQsString ? `?${filterQsString}` : ""}`,
+                                    )
+                                  }
+                                >
+                                  Review <ForwardArrow />
+                                </Button>
+                              </TD>
+                            </TR>
+                          ))}
+                        </TBody>
+                      </Table>
+                    }
+                  />
 
                   {/* Task 11 (B6c): keyset "Load more", not a virtualized
                       list or infinite scroll — deferred by design. The

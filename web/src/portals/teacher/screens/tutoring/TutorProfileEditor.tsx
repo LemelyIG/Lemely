@@ -62,6 +62,7 @@ import {
 import { tutorActionFailureMessage, tutorLoadFailureMessage } from "@/lib/tutoring/tutorSessionActions"
 import { cn, relativeTime } from "@/lib/utils"
 import type { Evidence, TutorCard as TutorCardData, TutorOwnProfile, TutoringMode } from "@/lib/tutoringTypes"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * T-16 · Tutor profile and onboarding (`/teacher/tutoring/profile`, SPEC §d,
@@ -977,7 +978,7 @@ function Editor({ profile }: { profile: TutorOwnProfile | null }) {
         >
           Back to tutoring
         </Link>
-        <h1 className="m-0 text-display-md text-on-surface">Tutor profile</h1>
+        <PageHeading repeatsTitle={true} className="m-0 text-display-md text-on-surface">Tutor profile</PageHeading>
         <p
           className={cn(
             "m-0 flex flex-col gap-0.5 rounded-md border border-outline-variant px-3 py-2.5 text-body-md text-on-surface",

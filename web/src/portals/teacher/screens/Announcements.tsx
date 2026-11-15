@@ -25,6 +25,7 @@ import {
 } from "@/lib/teacherOutcome"
 import { useProfile } from "@/lib/hooks/useMeApi"
 import type { Announcement } from "@/lib/teacherTypes"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * Announcement composer (T-12) at `/teacher/announcements`, on P3.8 chunk a's
@@ -204,7 +205,7 @@ export function Announcements() {
   return (
     <div className="flex flex-col gap-6 min-w-0">
       <header>
-        <h1 className="text-display-md text-on-surface m-0">Announcements</h1>
+        <PageHeading repeatsTitle={true} className="text-display-md text-on-surface m-0">Announcements</PageHeading>
         <p className="text-body-md text-on-surface-variant m-0 mt-1 max-w-[640px] text-pretty">
           Write a note for one or more of your classes. Students see it in their announcements
           list and get a notification. A dated announcement stays hidden and unsent until the
@@ -401,7 +402,7 @@ export function Announcements() {
       ) : null}
 
       <section>
-        <h2 className="text-eyebrow text-on-surface-variant m-0 mb-2.5">
+        <h2 className="text-eyebrow native:sr-only text-on-surface-variant m-0 mb-2.5">
           Your announcements
         </h2>
         {/*

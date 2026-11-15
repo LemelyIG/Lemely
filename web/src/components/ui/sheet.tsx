@@ -1,6 +1,8 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 */
 import * as React from "react"
 import { cn } from "@/lib/utils"
+import { BottomSheetSurface } from "@/components/ui/bottom-sheet"
+import { useNativeFrame } from "@/lib/useNativeFrame"
 import { X as XIcon } from "@phosphor-icons/react"
 import { Dialog as SheetPrimitive } from "radix-ui"
 
@@ -34,7 +36,7 @@ function SheetOverlay({
     <SheetPrimitive.Overlay
       data-slot="sheet-overlay"
       className={cn(
-        "fixed inset-0 z-scrim bg-scrim motion-reduce:animate-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
+        "fixed inset-0 z-scrim bg-scrim native:bg-scrim-dialog motion-reduce:animate-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
         className
       )}
       {...props}
@@ -47,12 +49,44 @@ function SheetContent({
   children,
   side = "right",
   showCloseButton = true,
+  nativeHeader,
+  nativeBodyClassName = "p-6",
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
   /** `adaptive`: a floating panel from the end edge from `sm`, a bottom sheet below it. */
   side?: "top" | "right" | "bottom" | "left" | "adaptive"
   showCloseButton?: boolean
+  /** The native grabber sheet's header, inside the drag region right under the grabber (a title that
+   * should sit close to it). Where the sheet is not native it renders first in the content instead. */
+  nativeHeader?: React.ReactNode
+  /** Classes for the native sheet's scrolling body; the default is the 24px inset. */
+  nativeBodyClassName?: string
 }) {
+  const { native } = useNativeFrame()
+  const closeRef = React.useRef<HTMLButtonElement>(null)
+  if (native && (side === "bottom" || side === "adaptive")) {
+    // Native frame: the grabber sheet. Radix keeps the focus trap, Escape and the label;
+    // a drag past the threshold clicks the hidden Close so focus returns to the trigger.
+    return (
+      <SheetPortal>
+        <SheetOverlay />
+        <SheetPrimitive.Content asChild {...props}>
+          <BottomSheetSurface
+            data-slot="sheet-content"
+            detents={["content"]}
+            onDismiss={() => closeRef.current?.click()}
+            header={nativeHeader ?? null}
+            bodyClassName={nativeBodyClassName}
+          >
+            {children}
+            <SheetPrimitive.Close ref={closeRef} tabIndex={-1} className="sr-only">
+              Close
+            </SheetPrimitive.Close>
+          </BottomSheetSurface>
+        </SheetPrimitive.Content>
+      </SheetPortal>
+    )
+  }
   return (
     <SheetPortal>
       <SheetOverlay />
@@ -75,6 +109,7 @@ function SheetContent({
         )}
         {...props}
       >
+        {nativeHeader}
         {children}
         {showCloseButton && (
           <SheetPrimitive.Close className="absolute top-4 end-4 rounded-xs opacity-70 ring-offset-surface transition-opacity hover:opacity-100 active:opacity-100 focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-on-surface-variant">

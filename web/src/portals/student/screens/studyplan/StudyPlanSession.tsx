@@ -21,6 +21,7 @@ import {
   sessionRationale,
   sessionStartAction,
 } from "./studyPlanData"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * S-25 · Study-plan session detail.
@@ -156,7 +157,7 @@ export function StudyPlanSession() {
           return (
             <>
               <div className="flex flex-col gap-2">
-                <h1 className="text-display-lg text-on-surface">{session.topic}</h1>
+                <PageHeading repeatsTitle={false} className="text-display-lg text-on-surface">{session.topic}</PageHeading>
                 <p className="text-body-md text-on-surface-variant">
                   {activityLabel(session.activityType)} · {formatDuration(session.durationMinutes)}{" "}
                   · {formatDayHeading(session.date)}

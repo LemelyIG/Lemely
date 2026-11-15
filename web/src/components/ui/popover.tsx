@@ -1,12 +1,20 @@
+import { createPortal } from "react-dom"
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react"
 import { cn } from "@/lib/utils"
+import { lockScroll } from "@/lib/scrollLock"
+import { useDialogHistory } from "@/lib/nav/useDialogHistory"
+import { useNativeFrame } from "@/lib/useNativeFrame"
+import { BottomSheetSurface } from "@/components/ui/bottom-sheet"
+import { useDialogFocus } from "@/components/ui/use-dialog-focus"
+import { useOverlayPhase } from "@/lib/overlayPhase"
 
 /*
  * Anchored popover for menus, filter panels and small pickers — content that
@@ -22,6 +30,13 @@ import { cn } from "@/lib/utils"
  * State can be controlled (`open`/`onOpenChange`, for a caller that needs to
  * close the popover from elsewhere, e.g. after a menu item's action runs) or
  * uncontrolled (`defaultOpen` only) for the common case.
+ *
+ * Native frame (D4): on an iOS or Android phone the anchored panel becomes a
+ * content-fit bottom sheet (`BottomSheetSurface`) in a portal, with the same
+ * dialog contract as `Modal`: `role="dialog"`, `aria-modal`, a label (the
+ * trigger), the shared `useDialogFocus` trap, and Escape plus browser Back
+ * (`useDialogHistory`) closing it. `contentClassName` and `align` are
+ * desktop-only there; the sheet is full width.
  */
 
 export interface PopoverRenderProps {
@@ -30,6 +45,7 @@ export interface PopoverRenderProps {
    * needed for outside-click detection, and the ARIA popup attributes. */
   triggerProps: {
     ref: (node: HTMLElement | null) => void
+    id: string
     onClick: () => void
     "aria-haspopup": "dialog"
     "aria-expanded": boolean
@@ -53,6 +69,9 @@ export interface PopoverProps {
   align?: "start" | "end"
   className?: string
   contentClassName?: string
+  /** Native sheet only: a short one-line visible title that also names the dialog. Without it the
+   * trigger names the sheet, which suits a button but not a whole card. */
+  sheetTitle?: string
 }
 
 export function Popover({
@@ -65,11 +84,20 @@ export function Popover({
   align = "start",
   className,
   contentClassName,
+  sheetTitle,
 }: PopoverProps) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen)
   const isControlled = openProp !== undefined
   const open = isControlled ? openProp : uncontrolledOpen
   const contentId = useId()
+  const triggerId = useId()
+  const sheetTitleId = useId()
+  const { native } = useNativeFrame()
+  // Like Modal: the sheet stays mounted (history entry, scroll lock, focus trap live) while it
+  // slides out, and only "closed" unmounts it.
+  const { phase, onAnimationEnd } = useOverlayPhase(native && open)
+  const sheetOpen = native && phase !== "closed"
+  const sheetRef = useRef<HTMLDivElement>(null)
 
   const wrapperRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLElement | null>(null)
@@ -87,12 +115,21 @@ export function Popover({
     setOpen(false)
   }
 
-  // Click-outside: closes the popover on any pointerdown outside both the
+  // Native sheet: one history entry so Back closes it, a pinned page behind it,
+  // and the shared focus trap (focus returns to the trigger on close).
+  useDialogHistory({ open: sheetOpen, dismissible: true, onClose: close })
+  const trapFocus = useDialogFocus(sheetRef, sheetOpen)
+  useEffect(() => {
+    if (!sheetOpen) return
+    return lockScroll()
+  }, [sheetOpen])
+
+  // Click-outside (the sheet has its own scrim): closes the popover on any pointerdown outside both the
   // trigger and the content. `pointerdown` rather than `click` so a drag
   // that starts inside and releases outside doesn't count as an outside
   // click, matching native `<select>` behaviour.
   useEffect(() => {
-    if (!open) return
+    if (!open || native) return
     function handlePointerDown(event: PointerEvent) {
       const target = event.target as Node
       if (wrapperRef.current?.contains(target)) return
@@ -101,7 +138,21 @@ export function Popover({
     document.addEventListener("pointerdown", handlePointerDown)
     return () => document.removeEventListener("pointerdown", handlePointerDown)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
+  }, [open, native])
+
+  // The trigger names the sheet. A call site that does not spread `triggerProps.id`
+  // (the notification row wires only the ref) would leave a dangling reference, so
+  // those fall back to a plain label rather than an unnamed dialog. A visible sheet title
+  // wins. Read from the ref in a layout effect (before paint), never from the DOM during render.
+  const [triggerNamed, setTriggerNamed] = useState(false)
+  useLayoutEffect(() => {
+    setTriggerNamed(sheetOpen && triggerRef.current?.id === triggerId)
+  }, [sheetOpen, triggerId])
+  const sheetLabel = sheetTitle
+    ? { "aria-labelledby": sheetTitleId }
+    : triggerNamed
+      ? { "aria-labelledby": triggerId }
+      : { "aria-label": "More actions" }
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
     if (event.key !== "Escape") return
@@ -118,13 +169,64 @@ export function Popover({
           ref: (node) => {
             triggerRef.current = node
           },
+          id: triggerId,
           onClick: toggle,
           "aria-haspopup": "dialog",
           "aria-expanded": open,
           "aria-controls": contentId,
         },
       })}
-      {open ? (
+      {sheetOpen
+        ? createPortal(
+            <div className="fixed inset-0 z-modal">
+              <div
+                className="fixed inset-0 z-scrim bg-scrim-dialog motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
+                aria-hidden="true"
+                onClick={close}
+              />
+              <BottomSheetSurface
+                ref={sheetRef}
+                role="dialog"
+                aria-modal="true"
+                {...sheetLabel}
+                id={contentId}
+                tabIndex={-1}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.stopPropagation()
+                    close()
+                    triggerRef.current?.focus()
+                    return
+                  }
+                  trapFocus(event.nativeEvent)
+                }}
+                detents={["content"]}
+                onDismiss={close}
+                closing={phase === "closing"}
+                // Only the sheet's own exit ends the phase: a child's animation must not.
+                onAnimationEnd={
+                  phase === "closing"
+                    ? (event) => {
+                        if (event.target === event.currentTarget) onAnimationEnd()
+                      }
+                    : undefined
+                }
+                header={
+                  sheetTitle ? (
+                    <h2 id={sheetTitleId} className="lm-native-sheet-title w-full truncate px-4 pb-2 text-display-md">
+                      {sheetTitle}
+                    </h2>
+                  ) : null
+                }
+                bodyClassName="flex flex-col gap-1 px-1 pb-4 [&_button]:min-h-11"
+              >
+                {children}
+              </BottomSheetSurface>
+            </div>,
+            document.body,
+          )
+        : null}
+      {open && !native ? (
         <div
           id={contentId}
           role="dialog"

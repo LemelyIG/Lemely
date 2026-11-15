@@ -211,6 +211,7 @@ export function DeviceSettingsSection() {
       </SettingsSection>
 
       <ConfirmModal
+        destructive={false}
         open={confirmingCurrent !== null}
         title="Sign out this device?"
         description="You are reading this on the device you are about to sign out."

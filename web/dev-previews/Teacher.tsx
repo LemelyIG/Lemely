@@ -8,10 +8,13 @@ import { EmptyState, ErrorState, OfflineState } from "@/components/ui/state-view
 import { gradeChipClass } from "@/lib/grade"
 import { cn } from "@/lib/utils"
 import { unreadBadgeLabel } from "@/lib/staffInbox"
-import { ClassesNavSection, TOP_BAR_ICON_BUTTON } from "@/portals/teacher"
-import { NotificationsMenu } from "@/portals/teacher/components/NotificationsMenu"
-import { ProfileMenu } from "@/portals/teacher/components/ProfileMenu"
-import { CreateSheet } from "@/portals/teacher/components/TopBarSheets"
+import { ClassesNavList, TEACHER_ACCOUNT_LINKS, TEACHER_NOTIFICATIONS_PANEL } from "@/portals/teacher"
+import { AccountPanel } from "@/components/shell/AccountPanel"
+import { NotificationsPanel } from "@/components/shell/NotificationsPanel"
+import { roleLabel } from "@/portals/teacher/components/topBarActions"
+import { useProfile } from "@/lib/hooks/useMeApi"
+import { SHELL_ICON_BUTTON } from "@/components/shell/shellStyles"
+import { CreateSheet } from "@/portals/teacher/components/CreateSheet"
 import { AtRiskTable } from "@/portals/teacher/home/AtRiskTable"
 import { ClassStrip } from "@/portals/teacher/home/ClassStrip"
 import { MarkClassSet } from "@/portals/teacher/home/MarkClassSet"
@@ -78,11 +81,17 @@ function TopBarCell({ children }: { children: ReactNode }) {
   )
 }
 
+/** The teacher bar's account panel, wired as `TeacherTopBar` wires it. */
+function PreviewAccountPanel() {
+  const { data } = useProfile()
+  return <AccountPanel links={TEACHER_ACCOUNT_LINKS} detail={data ? roleLabel(data.role) : null} />
+}
+
 function BellCell({ seed, badge }: { seed: QuerySeed; badge: string | null }) {
   return (
     <Seeded seed={seed}>
       <TopBarCell>
-        <NotificationsMenu unread={badge} triggerClassName={TOP_BAR_ICON_BUTTON} />
+        <NotificationsPanel {...TEACHER_NOTIFICATIONS_PANEL} unread={badge} triggerClassName={SHELL_ICON_BUTTON} />
       </TopBarCell>
     </Seeded>
   )
@@ -143,30 +152,30 @@ export function TeacherGroup() {
             <CreateSheet triggerClassName="inline-flex h-9 items-center gap-2 rounded-button bg-primary px-3.5 btn-text text-on-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" />
           </TopBarCell>
         </StateCell>
-        <StateCell state="default" provenance="live" note="ProfileMenu with a seeded profile. Click the avatar.">
+        <StateCell state="default" provenance="live" note="AccountPanel with a seeded profile. Click the avatar.">
           <Seeded seed={SEED_PROFILE}>
             <TopBarCell>
-              <ProfileMenu />
+              <PreviewAccountPanel />
             </TopBarCell>
           </Seeded>
         </StateCell>
-        <StateCell state="loading" provenance="prop" note="ProfileMenu while the profile is pending: the real hook, never answered.">
+        <StateCell state="loading" provenance="prop" note="AccountPanel while the profile is pending: the real hook, never answered.">
           <Seeded seed={{}}>
             <TopBarCell>
-              <ProfileMenu />
+              <PreviewAccountPanel />
             </TopBarCell>
           </Seeded>
         </StateCell>
-        <StateCell state="default" provenance="live" note="NotificationsMenu, 2 unread. Click the bell: three rows, Mark all read, two footer links.">
+        <StateCell state="default" provenance="live" note="NotificationsPanel, 2 unread. Click the bell: three rows, Mark all read, two footer links.">
           <BellCell seed={SEED_INBOX} badge={unreadBadgeLabel(FIXTURE_COUNTS)} />
         </StateCell>
-        <StateCell state="success" provenance="live" note="NotificationsMenu, all read: no badge, no Mark all read. Open it to see the empty copy.">
+        <StateCell state="success" provenance="live" note="NotificationsPanel, all read: no badge, no Mark all read. Open it to see the empty copy.">
           <BellCell seed={SEED_INBOX_EMPTY} badge={null} />
         </StateCell>
-        <StateCell state="loading" provenance="live" note="NotificationsMenu, inbox pending. Open it to see the Loading line; the request never answers here.">
+        <StateCell state="loading" provenance="live" note="NotificationsPanel, inbox pending. Open it to see the Loading line; the request never answers here.">
           <BellCell seed={{}} badge={null} />
         </StateCell>
-        <StateCell state="error" provenance="live" note="NotificationsMenu, inbox failed. Open it to see the alert and Try again.">
+        <StateCell state="error" provenance="live" note="NotificationsPanel, inbox failed. Open it to see the alert and Try again.">
           <BellCell seed={SEED_INBOX_ERROR} badge={null} />
         </StateCell>
       </ComponentSection>
@@ -180,38 +189,38 @@ export function TeacherGroup() {
             <SidebarNav variant="abyss" items={NAV_ITEMS} />
           </SidebarFrame>
         </StateCell>
-        <StateCell state="default" provenance="prop" note="ClassesNavSection with four seeded classes. The last has no grade, so no chip.">
+        <StateCell state="default" provenance="prop" note="ClassesNavList with four seeded classes. The last has no grade, so no chip.">
           <SidebarFrame>
             <Seeded seed={SEED_CLASSES}>
-              <ClassesNavSection />
+              <ClassesNavList labelledBy="preview-classes" />
             </Seeded>
           </SidebarFrame>
         </StateCell>
         <StateCell state="default" provenance="prop" note="More than five classes: the list caps at five and links to the rest.">
           <SidebarFrame>
             <Seeded seed={SEED_CLASSES_MANY}>
-              <ClassesNavSection />
+              <ClassesNavList labelledBy="preview-classes" />
             </Seeded>
           </SidebarFrame>
         </StateCell>
         <StateCell state="default" provenance="prop" note="No classes yet: a single link to add the first.">
           <SidebarFrame>
             <Seeded seed={SEED_CLASSES_NONE}>
-              <ClassesNavSection />
+              <ClassesNavList labelledBy="preview-classes" />
             </Seeded>
           </SidebarFrame>
         </StateCell>
         <StateCell state="loading" provenance="prop" note="Classes pending.">
           <SidebarFrame>
             <Seeded seed={{}}>
-              <ClassesNavSection />
+              <ClassesNavList labelledBy="preview-classes" />
             </Seeded>
           </SidebarFrame>
         </StateCell>
         <StateCell state="error" provenance="prop" note="Classes failed to load.">
           <SidebarFrame>
             <Seeded seed={SEED_CLASSES_ERROR}>
-              <ClassesNavSection />
+              <ClassesNavList labelledBy="preview-classes" />
             </Seeded>
           </SidebarFrame>
         </StateCell>

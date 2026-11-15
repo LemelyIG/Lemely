@@ -24,6 +24,7 @@ import type {
 } from "@/lib/leaderboardTypes"
 import { cn } from "@/lib/utils"
 import { vizText } from "../components/colors"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * S-29 · Leaderboards (P5.8 chunk C).
@@ -436,10 +437,10 @@ export function Standings() {
   return (
     <div className="flex flex-col gap-8">
       <header className="flex flex-col gap-1">
-        <Eyebrow>Standings</Eyebrow>
+        <Eyebrow className="native:hidden">Standings</Eyebrow>
         {/* `text-display` was the class here and it resolves to nothing — see
             the note in `Profile.tsx`. */}
-        <h1 className="text-display-lg text-on-surface">Effort, not marks</h1>
+        <PageHeading repeatsTitle={false} className="text-display-lg text-on-surface">Effort, not marks</PageHeading>
         <p className="lm-prose text-body-lg text-on-surface-variant">
           Boards rank XP: the work you put in. Nobody here can see anyone's
           grades.

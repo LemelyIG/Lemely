@@ -82,7 +82,7 @@ export function GettingStarted({
   return (
     <section
       className={cn(
-        "relative overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest",
+        "lm-native-card relative overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest",
         className,
       )}
     >

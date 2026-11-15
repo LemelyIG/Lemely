@@ -12,7 +12,9 @@ import { Celebrate, CountUp, MilestoneSticker } from "@/components/ui/celebratio
 import { Fire, Snowflake } from "@phosphor-icons/react"
 import { useXpProfile } from "@/lib/hooks/useXpApi"
 import { useProfile } from "@/lib/hooks/useMeApi"
+import { useOverlayState } from "@/lib/nav/useOverlayState"
 import type { XpDay, XpProfile, XpSource } from "@/lib/xpTypes"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * S-31 · Profile / XP / streak (P5.8 chunk D), on chunk A's
@@ -384,6 +386,7 @@ function TrainingLogSkeleton() {
 
 export function Profile() {
   const navigate = useNavigate()
+  const overlayState = useOverlayState()
   const xp = useXpProfile()
   const me = useProfile()
 
@@ -397,7 +400,7 @@ export function Profile() {
   return (
     <div className="flex flex-col gap-8">
       <header className="flex flex-col gap-1">
-        <Eyebrow>Your training log</Eyebrow>
+        <Eyebrow className="native:hidden">Your training log</Eyebrow>
         {/* `text-display` was the class here, and it does not exist: nothing in
             index.css defines it and nothing in the shipped bundle emits it, so
             this title rendered at the browser's default h1 in the body face
@@ -406,7 +409,7 @@ export function Profile() {
             is therefore invisible to every gate that looks at rendered output.
             `tests/unit/utilityExistence.test.ts` is the gate that now catches
             it. */}
-        <h1 className="text-display-lg text-on-surface">{name}</h1>
+        <PageHeading repeatsTitle={false} className="text-display-lg text-on-surface">{name}</PageHeading>
         <p className="lm-prose text-body-lg text-on-surface-variant">
           Everything here measures work done, never how well you did it.
         </p>
@@ -477,7 +480,7 @@ export function Profile() {
         <Button
           variant="secondary"
           size="sm"
-          onClick={() => navigate("/student/settings/devices")}
+          onClick={() => navigate("/student/settings/devices", { state: overlayState })}
         >
           Your devices
         </Button>

@@ -1,5 +1,6 @@
 /* Hallmark · pre-emit critique: P5 H4 E4 S5 R5 V4 */
-import { useEffect, useRef, useState } from "react"
+import { NoBreakTitle } from "@/components/shell/NoBreakTitle"
+import { useEffect, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { Card, CardBody } from "@/components/ui/card"
 import { Chip } from "@/components/ui/chip"
@@ -9,7 +10,6 @@ import { ListSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
 import { Button } from "@/components/ui/button"
 import { Popover } from "@/components/ui/popover"
-import { PullIndicator } from "@/components/ui/pull-indicator"
 import {
   useMarkAllNotificationsRead,
   useMarkNotificationRead,
@@ -17,9 +17,11 @@ import {
 } from "@/lib/hooks/useNotificationApi"
 import { setAppBadge } from "@/lib/badging"
 import type { Notification } from "@/lib/notificationTypes"
+import { studentDestinationFor } from "@/lib/studentInbox"
 import { cn } from "@/lib/utils"
-import { usePullToRefresh } from "@/lib/gestures/usePullToRefresh"
+import { useOverlayState } from "@/lib/nav/useOverlayState"
 import { useLongPress } from "@/lib/gestures/useLongPress"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * G-13 · The notification inbox (P5.9 chunk B).
@@ -85,19 +87,7 @@ export function typeLabel(type: string): string {
  * action", the bridge returns the root, because a click has to go somewhere.
  */
 export function destinationFor(notification: Notification): string | null {
-  switch (notification.type) {
-    case "announcement":
-      return "/student/announcements"
-    case "streak_warning":
-      return "/student/profile"
-    case "study_plan_reminder": {
-      const { subjectCode, sessionId } = notification.payload
-      if (!subjectCode || !sessionId) return null
-      return `/student/plan/${encodeURIComponent(subjectCode)}/session/${encodeURIComponent(sessionId)}`
-    }
-    default:
-      return null
-  }
+  return studentDestinationFor(notification)
 }
 
 /**
@@ -141,11 +131,14 @@ function NotificationRow({ notification }: { notification: Notification }) {
   // `question-row` does — the menu's only item is already a visible,
   // keyboard-reachable button two lines down.
   //
-  // `triggerProps` is still wired, minus its `onClick`: a *tap* on a
-  // notification must not open the menu, but the popover needs the trigger's
-  // ref and ARIA attributes to describe the relationship correctly and to
-  // hand focus back here when Escape closes it (`tabIndex={-1}` makes the
-  // card focusable programmatically without adding a tab stop).
+  // `triggerProps` is still wired for its `ref` and `id` only (the id is what names the native sheet via aria-labelledby), minus its `onClick`: a
+  // *tap* on a notification must not open the menu, but the popover needs the
+  // trigger's ref to anchor and to hand focus back here when Escape closes it
+  // (`tabIndex={-1}` makes the card focusable programmatically without adding
+  // a tab stop). Its ARIA attributes are left off: the card is a role-less
+  // div, where axe rejects `aria-haspopup` / `aria-expanded` (aria-allowed-attr)
+  // and an `aria-controls` that points at a menu not yet mounted
+  // (aria-valid-attr-value), and the card is not a button.
   const [menuOpen, setMenuOpen] = useState(false)
   const longPress = useLongPress({ onLongPress: () => setMenuOpen(true) })
 
@@ -154,14 +147,13 @@ function NotificationRow({ notification }: { notification: Notification }) {
       label="Notification actions"
       open={unread && menuOpen}
       onOpenChange={setMenuOpen}
+      sheetTitle={notification.title}
       className="block"
       renderTrigger={({ triggerProps }) => (
         <Card
           ref={triggerProps.ref}
+          id={triggerProps.id}
           tabIndex={-1}
-          aria-haspopup={unread ? triggerProps["aria-haspopup"] : undefined}
-          aria-expanded={unread ? triggerProps["aria-expanded"] : undefined}
-          aria-controls={unread ? triggerProps["aria-controls"] : undefined}
           className={cn(
             "transition-colors outline-none",
             // Same unread marker as S-28's, for the same reason: a bold title
@@ -174,7 +166,7 @@ function NotificationRow({ notification }: { notification: Notification }) {
           <CardBody className="flex flex-col gap-2">
             <div className="flex items-start gap-3">
               <div className="min-w-0 flex-1">
-                {/* <h2>, not <h3>: these rows sit directly under the page's <h1>
+                {/* <h2>, not <h3>: these rows sit directly under the page's h1
                     with no section heading between them, so an <h3> skips a level
                     (axe `heading-order`, moderate — found the moment the audit
                     registry grew a POPULATED state for this screen in P5.11 chunk
@@ -183,7 +175,7 @@ function NotificationRow({ notification }: { notification: Notification }) {
                     does have "Notices"/"Calendar" <h2>s above them. Do not
                     normalize the two to the same level; the level has to describe
                     the actual outline, not match a sibling screen. */}
-                <h2 className="text-body-lg font-medium text-on-surface">{notification.title}</h2>
+                <h2 className="text-body-lg font-medium text-on-surface"><NoBreakTitle title={notification.title} /></h2>
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-body-sm text-on-surface-variant">
                   <Chip tone={notification.type === "at_risk_alert" ? "warn" : "neutral"}>
                     {typeLabel(notification.type)}
@@ -255,14 +247,15 @@ function NotificationRow({ notification }: { notification: Notification }) {
 function InboxHeading() {
   return (
     <div>
-      <Eyebrow>Inbox</Eyebrow>
-      <h1 className="text-display-md text-on-surface">Notifications</h1>
+      <Eyebrow className="native:hidden">Inbox</Eyebrow>
+      <PageHeading repeatsTitle={true} className="text-display-md text-on-surface">Notifications</PageHeading>
     </div>
   )
 }
 
 export function Notifications() {
   const query = useNotifications()
+  const overlayState = useOverlayState()
   const markAll = useMarkAllNotificationsRead()
 
   // Task 7 (B5a): the reader landing on the canonical inbox (D5.9 §1) is
@@ -271,20 +264,6 @@ export function Notifications() {
   useEffect(() => {
     void setAppBadge(0)
   }, [])
-
-  // Task 6 (B4b): pull-to-refresh. The surface is this screen's own content
-  // wrapper, never `document.documentElement`: the hook translates whatever
-  // it is given, and a transformed root is the containing block for every
-  // `position: fixed` descendant, so pulling here used to drag `BottomNav`
-  // and any open scrim down with the list. `usePullToRefresh` still asks the
-  // *window* whether we are at the scroll top (this wrapper does not scroll
-  // itself — the portal shell scrolls `document`). The wrapper is the screen
-  // root rather than something narrower so `--lm-pull-progress`, which the
-  // hook sets on it, still cascades to the indicator positioned inside it.
-  const pullSurfaceRef = useRef<HTMLDivElement>(null)
-  const { pulling, refreshing } = usePullToRefresh(pullSurfaceRef, {
-    onRefresh: () => query.refetch(),
-  })
 
   return (
     /*
@@ -301,19 +280,7 @@ export function Notifications() {
      * already put the heading on its own line above their content, and only
      * the loaded render had it sharing a row with the controls.
      */
-    <div ref={pullSurfaceRef} className="relative flex flex-col gap-4">
-      {/* `top` maps the hook's own `--lm-pull-progress` (0..1) onto the
-          40px the indicator travels to reveal itself, off-screen at rest
-          (`-40px`) and fully in view once the pull is armed (`0`). */}
-      <div
-        // P6.3: `z-dropdown`, not the raw `z-10` this carried. 10 is
-        // `--z-index-sticky`'s value, i.e. this floating indicator declared
-        // the band that belongs to sticky table headers and portal top bars.
-        className="pointer-events-none absolute inset-x-0 z-dropdown flex justify-center"
-        style={{ top: "calc(var(--lm-pull-progress, 0) * 40px - 40px)" }}
-      >
-        <PullIndicator progress={pulling ? 1 : 0} refreshing={refreshing} />
-      </div>
+    <div className="relative flex flex-col gap-4">
       <InboxHeading />
       <QueryState
         query={query}
@@ -346,9 +313,12 @@ export function Notifications() {
                       reader notices they are getting too much or too little.
                       The sidebar's Settings entry also reaches this screen
                       (Notification settings), so this is a convenience, not
-                      the only route to it. */}
+                      the only route to it. It carries the overlay state so the
+                      dialog opens over this inbox and Escape returns here,
+                      not to home. */}
                   <Link
                     to="/student/settings/notifications"
+                    state={overlayState}
                     className="text-body-sm text-on-primary-container hover:underline"
                   >
                     Notification settings

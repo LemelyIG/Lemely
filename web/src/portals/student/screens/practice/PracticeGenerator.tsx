@@ -21,6 +21,7 @@ import {
   practiceUnavailableMessage,
   weakTopicPrefill,
 } from "./practiceData"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * S-20 · Practice generator. Filter set (count, topics, weak-topics-only,
@@ -161,9 +162,9 @@ export function PracticeGenerator() {
             return (
               <>
                 <div className="flex flex-col gap-2">
-                  <h1 className="text-display-lg text-on-surface">
+                  <PageHeading repeatsTitle={false} className="text-display-lg text-on-surface">
                     Your {subjectName} practice set is ready
-                  </h1>
+                  </PageHeading>
                   <p className="lm-prose text-body-lg text-on-surface-variant">
                     <span className="text-data-md text-on-surface">{created.questionCount}</span>{" "}
                     question
@@ -205,6 +206,8 @@ export function PracticeGenerator() {
                   from — before the source control below asks the student to
                   choose among them. */}
               <SectionHead
+                level={1}
+                repeatsTitle={false}
                 title={`Practice for ${subjectName}`}
                 kicker="Questions come from past papers, your own marked papers, or Lemely's practice bank; pick a source or use all."
               />

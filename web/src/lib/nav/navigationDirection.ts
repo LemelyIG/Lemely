@@ -11,8 +11,29 @@
  * read as `"forward"`. `POP` cannot itself distinguish "back" from "forward
  * again" — the History API does not say which direction a POP moved — so
  * this treats every POP as `"back"`, matching `BackControl` and the browser
- * back gesture, the two things that actually trigger one.
+ * back gesture. `resolveDirection` refines it with the entry index.
  */
 export function navigationDirection(type: "POP" | "PUSH" | "REPLACE"): "back" | "forward" {
   return type === "POP" ? "back" : "forward"
+}
+
+/**
+ * The direction `html[data-direction]` gets for a navigation: the router action, unless the
+ * location state names one. A "tab" tag on the destination only means something on the PUSH the tab
+ * bar made. A POP that leaves an entry the tab bar made is the same tab switch undone ("tab"); any
+ * other POP, including popping a drill-down pushed from a tab, is a back.
+ *
+ * `popForward` is a POP that moved to a later history entry (a browser Forward). It re-enters a page,
+ * so it reads "forward", or "tab" when the entry it re-enters was made by the tab bar.
+ */
+export function resolveDirection(
+  type: "POP" | "PUSH" | "REPLACE",
+  explicit?: "back" | "tab",
+  leaving?: "back" | "tab",
+  popForward = false,
+): "back" | "forward" | "tab" {
+  if (type === "POP" && popForward) return explicit === "tab" ? "tab" : "forward"
+  if (type === "POP") return leaving === "tab" ? "tab" : "back"
+  if (explicit === "tab") return type === "PUSH" ? "tab" : navigationDirection(type)
+  return explicit ?? navigationDirection(type)
 }
