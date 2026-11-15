@@ -201,6 +201,37 @@ def test_student_buys_own_plan_priced_from_the_tier(
     assert result.checkout_url.startswith("https://")
 
 
+def test_a_new_subscription_is_stamped_with_the_tiers_current_terms_version(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = seed_user(pg_sessionmaker, Role.student)
+    tier = seed_tier(pg_sessionmaker, price_minor=9_900, paymob_plan_id=5002)
+    with pg_sessionmaker.begin() as session:
+        session.execute(
+            sa.text(
+                "INSERT INTO plan_tier_terms (plan_tier_id, terms_version, price_minor, "
+                "extra_seat_price_minor, allowance_units, included_seats, seat_allowance_units) "
+                "SELECT plan_tier_id, 2, 12000, extra_seat_price_minor, allowance_units, "
+                "included_seats, seat_allowance_units FROM plan_tier_terms "
+                "WHERE plan_tier_id = :t AND terms_version = 1"
+            ),
+            {"t": tier},
+        )
+        session.execute(
+            sa.text("UPDATE plan_tiers SET price_minor = 12000, terms_version = 2 WHERE id = :t"),
+            {"t": tier},
+        )
+
+    result = _checkout(
+        pg_sessionmaker, FakePaymobClient(), payer_user_id=student, plan_tier_id=tier
+    )
+
+    with pg_sessionmaker() as session:
+        sub = session.get(Subscription, result.subscription_id)
+        assert sub is not None
+        assert sub.terms_version == 2
+
+
 def test_teacher_extra_seats_are_priced_on_the_server_in_unit_quantity_lines(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:

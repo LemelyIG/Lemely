@@ -812,6 +812,43 @@ def test_a_seat_checkout_paid_after_the_plan_moved_to_a_plan_that_sells_none_is_
     assert _credited_reasons(logs) == ["seats_not_sold"]
 
 
+def test_a_seat_payment_records_the_billed_terms_version(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher(sm)
+    seats = _buy(sm, _CheckoutClient(), scene, 1)
+    assert _payment(sm, seats).terms_version == _sub(sm, scene).terms_version
+
+
+def test_a_seat_checkout_paid_after_the_billed_terms_moved_at_an_equal_price_is_credited(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher(sm)
+    seats = _buy(sm, _CheckoutClient(), scene, 1)
+    with sm.begin() as session:
+        sub = session.get(Subscription, scene["subscription_id"])
+        assert sub is not None
+        session.execute(
+            sa.text(
+                "INSERT INTO plan_tier_terms (plan_tier_id, terms_version, price_minor, "
+                "extra_seat_price_minor, allowance_units, included_seats, seat_allowance_units) "
+                "SELECT plan_tier_id, 2, price_minor, extra_seat_price_minor, allowance_units + 1, "
+                "included_seats, seat_allowance_units FROM plan_tier_terms "
+                "WHERE plan_tier_id = :t AND terms_version = 1"
+            ),
+            {"t": sub.plan_tier_id},
+        )
+        sub.terms_version = 2
+
+    with capture_logs() as logs:
+        _pay(sm, seats, at=NOW + timedelta(minutes=1))
+
+    assert _sub(sm, scene).extra_seats == 1
+    assert _credited_reasons(logs) == ["superseded"]
+
+
 def test_a_renewal_seat_payment_only_clears_the_grace(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:

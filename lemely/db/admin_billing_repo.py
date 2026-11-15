@@ -27,15 +27,27 @@ from lemely.db.models.admin_audit import (
     IDEMPOTENCY_KEY_SQL,
     AdminAuditLog,
 )
-from lemely.db.models.billing import CreditPack, PlanAudience, PlanTier, PlanTierTerms
-from lemely.db.models.billing_ops import PaymentRefund, RefundKind, RefundStatus
+from lemely.db.models.billing import (
+    LIVE_SUBSCRIPTION_STATUSES,
+    AutoTopupSettings,
+    CreditPack,
+    PlanAudience,
+    PlanTier,
+    PlanTierTerms,
+    Subscription,
+)
+from lemely.db.models.billing_ops import (
+    BillingSettings,
+    PaymentRefund,
+    RefundKind,
+    RefundStatus,
+)
 from lemely.db.models.usage import EstimatorInputKind, UsageEstimator, UsageRate
 from lemely.db.subscription_repo import PlanNotPurchasable, PlanSyncFailed
 from lemely.db.subscription_repo import sync_paymob_plan as link_paymob_plan
 from lemely.db.usage_catalogue_repo import (
     SIGNUP_STUDENT_PACK,
     SIGNUP_TEACHER_PACK,
-    TEACHER_SIGNUP_VALIDITY,
     ensure_usage_catalogue,
 )
 from lemely.io.paymob.client import PaymobError, PaymobNotConfigured
@@ -238,6 +250,15 @@ _BACKDATE_TOLERANCE: Final = timedelta(minutes=5)
 
 #: How a tier compares with its Paymob plan (:func:`paymob_drift`).
 DriftState = Literal["in_sync", "not_synced", "unverified", "drifted"]
+
+
+class Unset(enum.Enum):
+    """Marks "the caller did not send this field", distinct from ``None`` (a real value)."""
+
+    TOKEN = enum.auto()
+
+
+UNSET: Final = Unset.TOKEN
 FreeAudience = Literal["student", "teacher"]
 
 #: The free start is stored as non-sellable credit packs whose code starts with this prefix
@@ -268,14 +289,14 @@ _PLAN_TIER_AUDIT: Final = (
     "extra_seat_price_minor",
     "features",
     "is_active",
+    "terms_version",
     "paymob_plan_id",
     "paymob_plan_mode",
     "paymob_plan_synced_price_minor",
     "paymob_plan_synced_frequency",
 )
-#: The columns a ``plan_tier_terms`` row snapshots. Until T13 inserts the next terms version
-#: with the tier edit, changing one on a tier that has terms would leave the terms (which
-#: upgrade pricing reads) at the old numbers while checkout charges the new ones.
+#: The columns a ``plan_tier_terms`` row snapshots. Changing one inserts the next terms version
+#: in the same transaction as the tier edit, so the tier always equals its latest terms row.
 _TERMS_FIELDS: Final = (
     "price_minor",
     "extra_seat_price_minor",
@@ -285,6 +306,9 @@ _TERMS_FIELDS: Final = (
 )
 CREDIT_PACK_MUTABLE: Final = ("name", "units", "price_minor", "is_active")
 _CREDIT_PACK_AUDIT: Final = ("code", "name", "units", "price_minor", "currency", "is_active")
+_FREE_ALLOWANCE_AUDIT: Final = (*_CREDIT_PACK_AUDIT, "signup_validity_days")
+#: ``price_change_notice_days`` when ``billing_settings`` has no row (the migration's seed).
+_DEFAULT_NOTICE_DAYS: Final = 14
 _SIGNUP_CODES: Final[dict[FreeAudience, str]] = {
     "student": SIGNUP_STUDENT_PACK,
     "teacher": SIGNUP_TEACHER_PACK,
@@ -342,8 +366,15 @@ class FreeAllowanceView:
 
 
 def _free_allowance_view(audience: FreeAudience, pack: CreditPack) -> FreeAllowanceView:
-    days = None if audience == "student" else TEACHER_SIGNUP_VALIDITY.days
-    return FreeAllowanceView(audience=audience, pack=pack, valid_days=days)
+    return FreeAllowanceView(audience=audience, pack=pack, valid_days=pack.signup_validity_days)
+
+
+@dataclass(frozen=True, slots=True)
+class TierCounts:
+    """How many subscribers a tier has, and how many still bill on an older terms version."""
+
+    live: int = 0
+    pending_moves: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -353,6 +384,9 @@ class CatalogueSnapshot:
     free_allowances: list[FreeAllowanceView]
     usage_rates: list[UsageRate]
     usage_estimators: list[UsageEstimator]
+    tier_counts: Mapping[uuid.UUID, TierCounts] = field(default_factory=dict)
+    auto_topup_counts: Mapping[uuid.UUID, int] = field(default_factory=dict)
+    price_change_notice_days: int = _DEFAULT_NOTICE_DAYS
 
 
 def paymob_drift(tier: PlanTier, key_mode: str) -> DriftState:
@@ -383,6 +417,31 @@ def _has_terms(session: Session, plan_tier_id: uuid.UUID) -> bool:
                 select(PlanTierTerms.id).where(PlanTierTerms.plan_tier_id == plan_tier_id).limit(1)
             )
             is not None
+        )
+
+
+def tier_extra_seats_held(session: Session, plan_tier_id: uuid.UUID) -> int:
+    """Extra seats held on a tier: the one definition ``seat price -> 0`` is refused against.
+
+    The ``extra_seats`` of every live subscription on the tier (a pending checkout counts, it holds
+    the beneficiary's live slot and was priced with them).
+    """
+    return int(
+        session.scalar(
+            select(sa.func.coalesce(sa.func.sum(Subscription.extra_seats), 0)).where(
+                Subscription.plan_tier_id == plan_tier_id,
+                Subscription.status.in_(LIVE_SUBSCRIPTION_STATUSES),
+            )
+        )
+        or 0
+    )
+
+
+def _require_version(row_version: int, expected: int | None) -> None:
+    """Refuse a write that carries a version other than the locked row's (UD13-DV-1)."""
+    if expected is not None and expected != row_version:
+        raise AdminConflictError(
+            "stale_write", "This was changed by someone else. Reload and try again."
         )
 
 
@@ -422,6 +481,31 @@ def _require_metered(action: str) -> None:
         raise AdminInvalidError("unknown_action", f"{action} is not a metered action.") from exc
 
 
+def _tier_counts(session: Session) -> dict[uuid.UUID, TierCounts]:
+    """Live subscribers and not-yet-moved subscribers per tier, in one grouped query."""
+    rows = session.execute(
+        select(
+            Subscription.plan_tier_id,
+            sa.func.count(),
+            sa.func.count().filter(Subscription.terms_version < PlanTier.terms_version),
+        )
+        .join(PlanTier, PlanTier.id == Subscription.plan_tier_id)
+        .where(Subscription.status.in_(LIVE_SUBSCRIPTION_STATUSES))
+        .group_by(Subscription.plan_tier_id)
+    )
+    return {tier_id: TierCounts(live=live, pending_moves=moves) for tier_id, live, moves in rows}
+
+
+def _auto_topup_counts(session: Session) -> dict[uuid.UUID, int]:
+    """Enabled auto top-up settings per credit pack, in one grouped query."""
+    rows = session.execute(
+        select(AutoTopupSettings.credit_pack_id, sa.func.count())
+        .where(AutoTopupSettings.enabled.is_(True))
+        .group_by(AutoTopupSettings.credit_pack_id)
+    )
+    return {pack_id: count for pack_id, count in rows}
+
+
 class AdminCatalogueService:
     """Plan tiers, credit packs, free allowances, usage rates and estimators (spec §8 area 1).
 
@@ -452,6 +536,16 @@ class AdminCatalogueService:
         """The Paymob key mode (``test`` or ``live``) plans are created under now."""
         return self._settings.key_mode
 
+    @property
+    def subscription_amount_updatable(self) -> bool:
+        """Whether Paymob can change an existing subscription's renewal amount (sandbox S14)."""
+        return self._settings.subscription_amount_updatable
+
+    def tier_counts(self) -> Mapping[uuid.UUID, TierCounts]:
+        """Live and not-yet-moved subscriber counts per tier (one grouped query)."""
+        with self._sm() as s:
+            return _tier_counts(s)
+
     def catalogue(self) -> CatalogueSnapshot:
         with self._sm() as s:
             packs = list(s.scalars(select(CreditPack).order_by(CreditPack.code)))
@@ -476,6 +570,10 @@ class AdminCatalogueService:
                         )
                     )
                 ),
+                tier_counts=_tier_counts(s),
+                auto_topup_counts=_auto_topup_counts(s),
+                price_change_notice_days=s.scalar(select(BillingSettings.price_change_notice_days))
+                or _DEFAULT_NOTICE_DAYS,
             )
 
     # -- tiers ---------------------------------------------------------------
@@ -518,7 +616,14 @@ class AdminCatalogueService:
         *,
         admin_user_id: uuid.UUID,
         reason: str,
+        expected_version: int | None = None,
     ) -> PlanTier:
+        """Edit a tier in place.
+
+        A change to any of the five terms inserts the next ``plan_tier_terms`` row (before it
+        moves ``terms_version``, DV-T1a) in the same transaction, so the tier equals its latest
+        terms row. Subscribers keep their own ``terms_version`` until their renewal move (T16).
+        """
         require_reason(reason)
         if set(changes) - set(PLAN_TIER_MUTABLE):
             raise AdminInvalidError(
@@ -528,21 +633,41 @@ class AdminCatalogueService:
             tier = s.get(PlanTier, plan_tier_id, with_for_update=True)
             if tier is None:
                 raise AdminNotFoundError("plan_tier_not_found")
+            _require_version(tier.version, expected_version)
             before = snapshot(tier, _PLAN_TIER_AUDIT)
             terms_changed = any(
                 name in _TERMS_FIELDS and getattr(tier, name) != value
                 for name, value in changes.items()
             )
+            had_terms = _has_terms(s, tier.id)
+            seat_price_before = tier.extra_seat_price_minor
             for name, value in changes.items():
                 setattr(tier, name, value)
             _check_tier_shape(tier)
-            if terms_changed and _has_terms(s, tier.id):
-                # T13 replaces this refusal with the terms version bump.
-                raise AdminConflictError(
-                    "terms_versioning_pending",
-                    "Price, seat and allowance changes are not available yet; name, features "
-                    "and active state can be edited.",
+            if seat_price_before > 0 and tier.extra_seat_price_minor == 0:
+                held = tier_extra_seats_held(s, tier.id)
+                if held:
+                    raise AdminConflictError(
+                        "extra_seats_held",
+                        f"Subscribers on this plan hold {held} extra seats; "
+                        "the seat price cannot be set to zero.",
+                    )
+            tier.version += 1
+            if terms_changed and had_terms:
+                s.add(
+                    PlanTierTerms(
+                        plan_tier_id=tier.id,
+                        terms_version=tier.terms_version + 1,
+                        price_minor=tier.price_minor,
+                        extra_seat_price_minor=tier.extra_seat_price_minor,
+                        allowance_units=tier.allowance_units,
+                        included_seats=tier.included_seats,
+                        seat_allowance_units=tier.seat_allowance_units,
+                        created_by=admin_user_id,
+                    )
                 )
+                s.flush()  # the terms row exists before the tier points at it
+                tier.terms_version += 1
             s.flush()
             audited(
                 s,
@@ -659,6 +784,7 @@ class AdminCatalogueService:
         *,
         admin_user_id: uuid.UUID,
         reason: str,
+        expected_version: int | None = None,
     ) -> CreditPack:
         require_reason(reason)
         if set(changes) - set(CREDIT_PACK_MUTABLE):
@@ -671,9 +797,11 @@ class AdminCatalogueService:
                 raise AdminConflictError(
                     "signup_pack_use_free_allowances", "Edit signup packs through free allowances."
                 )
+            _require_version(pack.version, expected_version)
             before = snapshot(pack, _CREDIT_PACK_AUDIT)
             for name, value in changes.items():
                 setattr(pack, name, value)
+            pack.version += 1
             s.flush()
             audited(
                 s,
@@ -688,13 +816,21 @@ class AdminCatalogueService:
             return pack
 
     def set_free_allowance(
-        self, *, audience: FreeAudience, units: int, admin_user_id: uuid.UUID, reason: str
+        self,
+        *,
+        audience: FreeAudience,
+        units: int,
+        valid_days: int | None | Unset = UNSET,
+        admin_user_id: uuid.UUID,
+        reason: str,
+        expected_version: int | None = None,
     ) -> FreeAllowanceView:
-        """Set the units of the student free allowance or the teacher signup credits.
+        """Set the units and validity of the student free allowance or teacher signup credits.
 
-        Units alone: the pack stays inactive at price zero, and ``0`` switches the allowance
-        off. Phase 04's ``ensure_usage_catalogue`` creates the signup packs on first use, so
-        the first edit works on a fresh database too.
+        Units and ``valid_days`` (``None`` = never expires, ``UNSET`` = keep). The pack stays
+        inactive at price zero, and ``0`` units switches the allowance off. Phase 04's
+        ``ensure_usage_catalogue`` creates the signup packs on first use, so the first edit works
+        on a fresh database too.
         """
         require_reason(reason)
         code = _SIGNUP_CODES[audience]
@@ -703,8 +839,12 @@ class AdminCatalogueService:
             pack = s.scalars(
                 select(CreditPack).where(CreditPack.code == code).with_for_update()
             ).one()
-            before = snapshot(pack, _CREDIT_PACK_AUDIT)
+            _require_version(pack.version, expected_version)
+            before = snapshot(pack, _FREE_ALLOWANCE_AUDIT)
             pack.units = units
+            if not isinstance(valid_days, Unset):
+                pack.signup_validity_days = valid_days
+            pack.version += 1
             s.flush()
             audited(
                 s,
@@ -714,7 +854,7 @@ class AdminCatalogueService:
                 pack.id,
                 reason,
                 before,
-                snapshot(pack, _CREDIT_PACK_AUDIT),
+                snapshot(pack, _FREE_ALLOWANCE_AUDIT),
             )
             return _free_allowance_view(audience, pack)
 

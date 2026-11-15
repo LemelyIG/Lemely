@@ -50,7 +50,9 @@ phase. Every table and column the phase's tasks need is here:
   ``paymob_plan_synced_frequency`` / ``paymob_plan_synced_retrial_days``,
   ``credit_packs.version`` / ``signup_validity_days`` (``signup_teacher`` backfilled to 30; only
   a ``signup_*`` pack may set it), ``credit_conversion_rates.version`` and
-  ``payments.callback_received_at``.
+  ``payments.callback_received_at`` and ``payments.terms_version`` (nullable: the target's
+  terms version an upgrade, or the billed terms version a seat purchase, was priced on; the paid
+  handler voids to credits when it no longer matches).
 * Indexes for the admin margin, payments and health queries on ``usage_jobs`` (two),
   ``payments`` (two), ``usage_entries`` and ``paymob_events``. ``ix_admin_usage_jobs_created_at``
   is partial on ``actual_cost_usd IS NOT NULL``: the margin query states that predicate, and a
@@ -551,6 +553,7 @@ def upgrade() -> None:
         postgresql_where=sa.text("status IN ('active', 'past_due')"),
     )
     op.add_column("subscription_periods", sa.Column("terms_version", sa.Integer(), nullable=True))
+    op.add_column("payments", sa.Column("terms_version", sa.Integer(), nullable=True))
 
     op.create_table(
         "billing_settings",
@@ -733,6 +736,7 @@ def downgrade() -> None:
     )
     op.drop_table("llm_price_overrides")
     op.drop_table("billing_settings")
+    op.drop_column("payments", "terms_version")
     op.drop_column("subscription_periods", "terms_version")
     op.drop_index("ix_subscriptions_terms_move", table_name="subscriptions")
     op.drop_constraint(op.f("fk_subscriptions_pending_terms"), "subscriptions", type_="foreignkey")

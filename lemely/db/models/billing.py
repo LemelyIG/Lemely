@@ -689,6 +689,10 @@ class Payment(TimestampMixin, Base):
         sa.DateTime(timezone=True), nullable=True
     )
     """When Paymob last called us about this payment (admin "missing callback" queue)."""
+    terms_version: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    """The terms version an upgrade (the target's) or a seat purchase (the billed one) was priced
+    on. The paid handler voids to credits when it no longer matches, even at an equal price.
+    NULL on every other payment and on rows written before the column."""
 
 
 class PaymobEvent(TimestampMixin, Base):

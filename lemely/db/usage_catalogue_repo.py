@@ -49,6 +49,12 @@ _SIGNUP_NAMES = {
     SIGNUP_TEACHER_PACK: "Teacher signup credits",
 }
 TEACHER_SIGNUP_VALIDITY = timedelta(days=30)
+#: ``credit_packs.signup_validity_days`` seeded with a signup pack (NULL = never expires). A
+#: database seeded after migration 0057 has no backfill, so without this the teacher pack would
+#: read as "never" while the grant still expires it (DV-T1d).
+DEFAULT_SIGNUP_VALIDITY_DAYS: Mapping[str, int | None] = MappingProxyType(
+    {SIGNUP_STUDENT_PACK: None, SIGNUP_TEACHER_PACK: TEACHER_SIGNUP_VALIDITY.days}
+)
 #: One signup grant per account: ``usage_grants`` is unique on (owner, idempotency_key).
 SIGNUP_IDEMPOTENCY_KEY = "signup"
 #: Version 1 applies to every job this build can create.
@@ -112,6 +118,7 @@ def ensure_usage_catalogue(session: Session, *, now: datetime) -> int:
                 price_minor=0,
                 currency="EGP",
                 is_active=False,
+                signup_validity_days=DEFAULT_SIGNUP_VALIDITY_DAYS[code],
             )
             .on_conflict_do_nothing(index_elements=["code"]),
         )

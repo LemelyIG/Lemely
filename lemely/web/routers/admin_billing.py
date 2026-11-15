@@ -20,10 +20,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from lemely.db.admin_billing_repo import (
+    UNSET,
     AdminCatalogueService,
     CreditPackFields,
     FreeAllowanceView,
     PlanTierFields,
+    TierCounts,
     paymob_drift,
 )
 from lemely.db.models.billing import CreditPack, PlanAudience, PlanTier
@@ -60,7 +62,8 @@ CatalogueService = Annotated[AdminCatalogueService, Depends(get_admin_catalogue_
 # -- DTO mapping ------------------------------------------------------------------
 
 
-def plan_tier_dto(t: PlanTier, key_mode: str) -> PlanTierDTO:
+def plan_tier_dto(t: PlanTier, key_mode: str, counts: TierCounts | None = None) -> PlanTierDTO:
+    counts = counts or TierCounts()
     return PlanTierDTO(
         id=str(t.id),
         code=t.code,
@@ -75,12 +78,16 @@ def plan_tier_dto(t: PlanTier, key_mode: str) -> PlanTierDTO:
         extraSeatPriceMinor=t.extra_seat_price_minor or 0,
         features=dict(t.features or {}),
         isActive=t.is_active,
+        version=t.version,
+        termsVersion=t.terms_version,
+        liveSubscriptionCount=counts.live,
+        pendingMoves=counts.pending_moves,
         paymobPlanId=t.paymob_plan_id,
         paymobDrift=paymob_drift(t, key_mode),
     )
 
 
-def credit_pack_dto(p: CreditPack) -> CreditPackDTO:
+def credit_pack_dto(p: CreditPack, auto_topup_count: int = 0) -> CreditPackDTO:
     return CreditPackDTO(
         id=str(p.id),
         code=p.code,
@@ -89,6 +96,8 @@ def credit_pack_dto(p: CreditPack) -> CreditPackDTO:
         priceMinor=p.price_minor,
         currency=p.currency,
         isActive=p.is_active,
+        version=p.version,
+        autoTopupCount=auto_topup_count,
     )
 
 
@@ -98,6 +107,7 @@ def free_allowance_dto(f: FreeAllowanceView) -> FreeAllowanceDTO:
         creditPackId=str(f.pack.id),
         units=f.pack.units,
         validDays=f.valid_days,
+        version=f.pack.version,
     )
 
 
@@ -125,6 +135,10 @@ def usage_estimator_dto(e: UsageEstimator) -> UsageEstimatorDTO:
     )
 
 
+def _tier_response(service: AdminCatalogueService, tier: PlanTier) -> PlanTierDTO:
+    return plan_tier_dto(tier, service.key_mode, service.tier_counts().get(tier.id))
+
+
 # -- area 1: catalogue ----------------------------------------------------------
 
 
@@ -133,11 +147,15 @@ def get_catalogue(service: CatalogueService) -> AdminCatalogueDTO:
     snap = service.catalogue()
     mode = service.key_mode
     return AdminCatalogueDTO(
-        planTiers=[plan_tier_dto(t, mode) for t in snap.plan_tiers],
-        creditPacks=[credit_pack_dto(p) for p in snap.credit_packs],
+        planTiers=[plan_tier_dto(t, mode, snap.tier_counts.get(t.id)) for t in snap.plan_tiers],
+        creditPacks=[
+            credit_pack_dto(p, snap.auto_topup_counts.get(p.id, 0)) for p in snap.credit_packs
+        ],
         freeAllowances=[free_allowance_dto(f) for f in snap.free_allowances],
         usageRates=[usage_rate_dto(r) for r in snap.usage_rates],
         usageEstimators=[usage_estimator_dto(e) for e in snap.usage_estimators],
+        subscriptionAmountUpdatable=service.subscription_amount_updatable,
+        priceChangeNoticeDays=snap.price_change_notice_days,
     )
 
 
@@ -159,7 +177,7 @@ def create_tier(body: PlanTierCreateDTO, service: CatalogueService, auth: AdminA
     )
     with mapped_errors():
         tier = service.create_plan_tier(fields, admin_user_id=admin_id(auth), reason=body.reason)
-    return plan_tier_dto(tier, service.key_mode)
+    return _tier_response(service, tier)
 
 
 @router.put("/tiers/{plan_tier_id}", response_model=PlanTierDTO)
@@ -178,9 +196,13 @@ def update_tier(
     }
     with mapped_errors():
         tier = service.update_plan_tier(
-            plan_tier_id, changes, admin_user_id=admin_id(auth), reason=body.reason
+            plan_tier_id,
+            changes,
+            admin_user_id=admin_id(auth),
+            reason=body.reason,
+            expected_version=body.expectedVersion,
         )
-    return plan_tier_dto(tier, service.key_mode)
+    return _tier_response(service, tier)
 
 
 @router.post("/tiers/{plan_tier_id}/sync", response_model=PlanTierDTO)
@@ -191,7 +213,7 @@ def sync_tier(
         tier = service.sync_paymob_plan(
             plan_tier_id, admin_user_id=admin_id(auth), reason=body.reason
         )
-    return plan_tier_dto(tier, service.key_mode)
+    return _tier_response(service, tier)
 
 
 @router.post("/packs", response_model=CreditPackDTO)
@@ -223,7 +245,11 @@ def update_pack(
     }
     with mapped_errors():
         pack = service.update_credit_pack(
-            credit_pack_id, changes, admin_user_id=admin_id(auth), reason=body.reason
+            credit_pack_id,
+            changes,
+            admin_user_id=admin_id(auth),
+            reason=body.reason,
+            expected_version=body.expectedVersion,
         )
     return credit_pack_dto(pack)
 
@@ -236,8 +262,10 @@ def set_free_allowance(
         view = service.set_free_allowance(
             audience=body.audience,
             units=body.units,
+            valid_days=body.validDays if "validDays" in body.model_fields_set else UNSET,
             admin_user_id=admin_id(auth),
             reason=body.reason,
+            expected_version=body.expectedVersion,
         )
     return free_allowance_dto(view)
 

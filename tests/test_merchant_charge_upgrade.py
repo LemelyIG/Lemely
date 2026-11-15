@@ -1149,6 +1149,52 @@ def test_a_target_price_raised_between_checkout_and_payment_is_credited_not_appl
     assert event["reason"] == "superseded"
 
 
+def test_an_upgrade_payment_records_the_target_terms_version(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _student(sm)
+    target = _target(sm, price_minor=20_000)
+    _publish_terms(sm, target, 2, 25_000)
+    payment_id = _checkout(sm, _CheckoutClient(), scene, target)
+    with sm() as session:
+        payment = session.get(Payment, payment_id)
+        assert payment is not None
+        assert payment.terms_version == 2
+
+
+def test_an_allowance_only_terms_change_on_the_target_credits_the_upgrade_at_an_equal_price(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """P06-T4 m2: the price is unchanged, so the amount check passes; the version check must not."""
+    sm = pg_sessionmaker
+    scene = _student(sm)
+    target = _target(sm, price_minor=20_000)
+    payment_id = _checkout(sm, _CheckoutClient(), scene, target)
+    with sm.begin() as session:
+        session.execute(
+            sa.text(
+                "INSERT INTO plan_tier_terms (plan_tier_id, terms_version, price_minor, "
+                "extra_seat_price_minor, allowance_units, included_seats, seat_allowance_units) "
+                "SELECT plan_tier_id, 2, price_minor, extra_seat_price_minor, 0, "
+                "included_seats, seat_allowance_units FROM plan_tier_terms "
+                "WHERE plan_tier_id = :t AND terms_version = 1"
+            ),
+            {"t": target},
+        )
+        session.execute(
+            sa.text("UPDATE plan_tiers SET terms_version = 2 WHERE id = :t"), {"t": target}
+        )
+
+    with capture_logs() as logs:
+        _pay(sm, payment_id)
+
+    assert _sub(sm, scene).plan_tier_id == scene["tier_id"]
+    assert _grant(sm, scene["user_id"], f"credited:{payment_id}") is not None
+    [event] = [log for log in logs if log["event"] == "merchant_charge_credited"]
+    assert event["reason"] == "superseded"
+
+
 # ---------------------------------------------------------------------------
 # Teacher upgrade: the extra-seat price difference is part of the charge (UD, M2).
 # ---------------------------------------------------------------------------

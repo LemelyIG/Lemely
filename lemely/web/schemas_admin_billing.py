@@ -27,6 +27,12 @@ Seats = Annotated[int, Field(ge=0, le=10_000)]
 Code = Annotated[str, StringConstraints(pattern=r"^[a-z0-9_]{2,64}$")]
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
 ActionName = Annotated[str, StringConstraints(min_length=1, max_length=64)]
+#: ``version`` is an ``INTEGER`` column; an expected version is one the client read.
+ExpectedVersion = Annotated[int, Field(ge=1, le=2**31 - 1)]
+#: ``credit_packs.signup_validity_days`` (``ck_credit_packs_signup_validity``): 1 day to 10 years.
+ValidDays = Annotated[int, Field(ge=1, le=3650)]
+#: ``features`` is free-form JSON: bound the keys, not the shape.
+Features = Annotated[dict[str, Any], Field(max_length=100)]
 
 
 class ReasonDTO(ApiModel):
@@ -50,6 +56,10 @@ class PlanTierDTO(ApiModel):
     extraSeatPriceMinor: int
     features: dict[str, Any]
     isActive: bool
+    version: int
+    termsVersion: int
+    liveSubscriptionCount: int
+    pendingMoves: int
     paymobPlanId: int | None
     paymobDrift: Literal["in_sync", "not_synced", "unverified", "drifted"]
 
@@ -62,6 +72,8 @@ class CreditPackDTO(ApiModel):
     priceMinor: int
     currency: str
     isActive: bool
+    version: int
+    autoTopupCount: int
 
 
 class FreeAllowanceDTO(ApiModel):
@@ -69,6 +81,7 @@ class FreeAllowanceDTO(ApiModel):
     creditPackId: str
     units: int
     validDays: int | None
+    version: int
 
 
 class UsageRateDTO(ApiModel):
@@ -97,6 +110,8 @@ class AdminCatalogueDTO(ApiModel):
     freeAllowances: list[FreeAllowanceDTO]
     usageRates: list[UsageRateDTO]
     usageEstimators: list[UsageEstimatorDTO]
+    subscriptionAmountUpdatable: bool
+    priceChangeNoticeDays: int
 
 
 class PlanTierCreateDTO(ApiModel):
@@ -110,7 +125,7 @@ class PlanTierCreateDTO(ApiModel):
     includedSeats: Seats = 0
     seatAllowanceUnits: Units = 0
     extraSeatPriceMinor: Money = 0
-    features: dict[str, Any] = Field(default_factory=dict)
+    features: Features = Field(default_factory=dict)
     isActive: bool = True
     reason: Reason
 
@@ -124,8 +139,9 @@ class PlanTierUpdateDTO(ApiModel):
     includedSeats: Seats
     seatAllowanceUnits: Units
     extraSeatPriceMinor: Money
-    features: dict[str, Any]
+    features: Features
     isActive: bool
+    expectedVersion: ExpectedVersion | None = None
     reason: Reason
 
 
@@ -144,12 +160,16 @@ class CreditPackUpdateDTO(ApiModel):
     units: PositiveUnits
     priceMinor: PositiveMoney
     isActive: bool
+    expectedVersion: ExpectedVersion | None = None
     reason: Reason
 
 
 class FreeAllowanceUpdateDTO(ApiModel):
     audience: Literal["student", "teacher"]
     units: Units
+    #: Absent keeps the stored value; ``null`` means never expires.
+    validDays: ValidDays | None = None
+    expectedVersion: ExpectedVersion | None = None
     reason: Reason
 
 

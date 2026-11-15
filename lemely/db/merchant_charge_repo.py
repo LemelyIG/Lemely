@@ -480,6 +480,7 @@ class MerchantChargeService:
         credit_pack_id: uuid.UUID | None = None,
         seat_quantity: int | None = None,
         dedupe_key: str | None = None,
+        terms_version: int | None = None,
     ) -> Payment:
         """Add a ``created`` payment (``special_reference`` is its id) and flush; never commits."""
         payment_id = uuid.uuid4()
@@ -497,6 +498,7 @@ class MerchantChargeService:
             currency=currency,
             status=PaymentStatus.created,
             dedupe_key=dedupe_key,
+            terms_version=terms_version,
         )
         self._session.add(payment)
         self._session.flush()
@@ -569,6 +571,7 @@ class MerchantChargeService:
             currency=plan.currency,
             subscription_id=plan.subscription.id,
             plan_tier_id=plan.new_tier.id,
+            terms_version=current_terms(self._session, plan.new_tier).terms_version,
         )
         # The injected clock is the checkout's birth: the void-at-settle rules compare against it.
         payment.created_at = now
@@ -740,6 +743,7 @@ class MerchantChargeService:
             currency=plan.currency,
             subscription_id=plan.subscription.id,
             seat_quantity=seats,
+            terms_version=plan.subscription.terms_version,
         )
         # The injected clock is the checkout's birth: the void-at-settle rules compare against it.
         payment.created_at = now
@@ -1530,6 +1534,16 @@ def start_present_checkout(
 # ---------------------------------------------------------------------------
 
 
+def _terms_moved(payment: Payment, terms_version_now: int) -> bool:
+    """True when the terms the payment was priced on are no longer the ones in force.
+
+    An edit that keeps the price but changes the allowance or the seats would pass the amount
+    comparison and sell the payer something other than the quote (P06-T4 m2). A payment without a
+    recorded version (written before the column) is not checked.
+    """
+    return payment.terms_version is not None and payment.terms_version != terms_version_now
+
+
 def upgrade_void_reason(session: Session, sub: Subscription, payment: Payment) -> str | None:
     """Why a paid upgrade no longer buys what it was priced for, or ``None`` when it does (DV-26).
 
@@ -1569,6 +1583,8 @@ def upgrade_void_reason(session: Session, sub: Subscription, payment: Payment) -
     # was only converted to credits never moved the tier, so it can never trigger this.
     if _seats_not_sold(sub, target, current_terms(session, target)):
         return "seats_not_sold"
+    if _terms_moved(payment, current_terms(session, target).terms_version):
+        return "superseded"
     repriced = _upgrade_amount(
         billed_terms(session, sub),
         current_terms(session, target),
@@ -1832,6 +1848,8 @@ def seats_void_reason(session: Session, sub: Subscription, payment: Payment) -> 
         return "period_rolled"
     if sub.pending_extra_seats is not None or sub.extra_seat_grace_until is not None:
         return "seats_changing"
+    if _terms_moved(payment, sub.terms_version):
+        return "superseded"
     price = billed_terms(session, sub).extra_seat_price_minor
     if price <= 0:
         return "seats_not_sold"

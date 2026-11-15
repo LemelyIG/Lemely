@@ -23,8 +23,14 @@ from lemely.db.admin_billing_repo import (
     ReasonRequiredError,
     paymob_drift,
 )
-from lemely.db.models.billing import CreditPack, PlanTier, PlanTierTerms
-from lemely.db.models.enums import PlanInterval, Role
+from lemely.db.models.billing import (
+    AutoTopupSettings,
+    CreditPack,
+    PlanTier,
+    PlanTierTerms,
+    Subscription,
+)
+from lemely.db.models.enums import PlanInterval, Role, SubscriptionStatus
 from lemely.db.models.usage import UsageEstimator, UsageRate
 from lemely.db.usage_catalogue_repo import SIGNUP_STUDENT_PACK
 from lemely.io.paymob.client import PaymobError, PaymobNotConfigured
@@ -33,6 +39,7 @@ from tests.admin_billing_db import (
     FakePaymobClient,
     add_credit_pack,
     add_plan_tier,
+    add_subscription,
     add_user,
     admin_client,
     audit_count,
@@ -776,7 +783,33 @@ def test_each_catalogue_write_adds_exactly_one_audit_row(
     assert audit_count(sm) == 8
 
 
-# -- terms are not editable in place until T13 (I1) ---------------------------------
+# -- terms history: an edit inserts the next terms row (UD13-A) -----------------------
+
+
+def _terms(sm: sessionmaker[Session], tier_id: str | uuid.UUID) -> list[PlanTierTerms]:
+    with sm() as session:
+        return list(
+            session.scalars(
+                select(PlanTierTerms)
+                .where(PlanTierTerms.plan_tier_id == uuid.UUID(str(tier_id)))
+                .order_by(PlanTierTerms.terms_version)
+            )
+        )
+
+
+def _tier_body(created: dict[str, Any], **change: Any) -> dict[str, Any]:
+    return {
+        "name": created["name"],
+        "priceMinor": created["priceMinor"],
+        "allowanceUnits": created["allowanceUnits"],
+        "includedSeats": created["includedSeats"],
+        "seatAllowanceUnits": created["seatAllowanceUnits"],
+        "extraSeatPriceMinor": created["extraSeatPriceMinor"],
+        "features": {},
+        "isActive": True,
+        "reason": "edit terms",
+        **change,
+    }
 
 
 @pytest.mark.parametrize(
@@ -790,39 +823,277 @@ def test_each_catalogue_write_adds_exactly_one_audit_row(
     ],
     ids=["price", "allowance", "extra_seat_price", "included_seats", "seat_allowance"],
 )
-def test_a_terms_change_on_a_tier_with_terms_is_refused(
+def test_a_terms_change_bumps_terms_version_and_the_history_equals_the_tier(
     sm: sessionmaker[Session], admin: uuid.UUID, change: dict[str, Any]
 ) -> None:
     client = admin_client(sm, admin)
     created = client.post(f"{P}/tiers", json=TEACHER_TIER).json()
-    update = {
-        "name": created["name"],
-        "priceMinor": created["priceMinor"],
-        "allowanceUnits": created["allowanceUnits"],
-        "includedSeats": created["includedSeats"],
-        "seatAllowanceUnits": created["seatAllowanceUnits"],
-        "extraSeatPriceMinor": created["extraSeatPriceMinor"],
-        "features": {},
-        "isActive": True,
-        "reason": "edit terms",
-        **change,
-    }
 
-    resp = client.put(f"{P}/tiers/{created['id']}", json=update)
+    resp = client.put(f"{P}/tiers/{created['id']}", json=_tier_body(created, **change))
 
-    assert resp.status_code == 409, resp.text
-    assert resp.json()["detail"]["code"] == "terms_versioning_pending"
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["termsVersion"] == 2
+    history = _terms(sm, created["id"])
+    assert [t.terms_version for t in history] == [1, 2]
+    assert (history[0].price_minor, history[0].allowance_units) == (50000, 5000)
+    assert history[0].created_by is None
+    assert history[1].created_by == admin
     with sm() as session:
         tier = session.get(PlanTier, uuid.UUID(created["id"]))
         assert tier is not None
-        assert (tier.price_minor, tier.allowance_units, tier.included_seats) == (50000, 5000, 10)
-        terms = session.scalars(
-            select(PlanTierTerms).where(PlanTierTerms.plan_tier_id == tier.id)
-        ).all()
-        assert [(t.terms_version, t.price_minor, t.allowance_units) for t in terms] == [
-            (1, 50000, 5000)
-        ]
+        latest = history[-1]
+        assert (
+            tier.price_minor,
+            tier.extra_seat_price_minor,
+            tier.allowance_units,
+            tier.included_seats,
+            tier.seat_allowance_units,
+            tier.terms_version,
+        ) == (
+            latest.price_minor,
+            latest.extra_seat_price_minor,
+            latest.allowance_units,
+            latest.included_seats,
+            latest.seat_allowance_units,
+            latest.terms_version,
+        )
+    [row] = audit_rows(sm, "catalogue.plan_tier.update")
+    assert row.before is not None and row.after is not None
+    assert (row.before["terms_version"], row.after["terms_version"]) == (1, 2)
+
+
+def test_a_name_only_edit_adds_no_terms_row_and_a_refused_edit_adds_none(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    client = admin_client(sm, admin)
+    created = client.post(f"{P}/tiers", json=TEACHER_TIER).json()
+    ok = client.put(f"{P}/tiers/{created['id']}", json=_tier_body(created, name="Renamed"))
+    bad = client.put(
+        f"{P}/tiers/{created['id']}",
+        json=_tier_body(created, priceMinor=60000, expectedVersion=99),
+    )
+    assert (ok.status_code, bad.status_code) == (200, 409)
+    assert [t.terms_version for t in _terms(sm, created["id"])] == [1]
+    assert ok.json()["termsVersion"] == 1
+
+
+def test_a_stale_tier_edit_is_refused_before_any_terms_row_is_written(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    client = admin_client(sm, admin)
+    created = client.post(f"{P}/tiers", json=TEACHER_TIER).json()
+    bad = client.put(
+        f"{P}/tiers/{created['id']}",
+        json=_tier_body(created, priceMinor=60000, expectedVersion=7),
+    )
+    assert bad.status_code == 409
+    assert bad.json()["detail"]["code"] == "stale_write"
     assert audit_rows(sm, "catalogue.plan_tier.update") == []
+    assert len(_terms(sm, created["id"])) == 1
+
+
+def test_the_terms_row_exists_before_the_tier_points_at_it(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    """The composite FK from subscriptions needs the row first (DV-T1a): a live subscriber on
+    v1 keeps working through a bump, and a tier row never names a missing terms version."""
+    client = admin_client(sm, admin)
+    created = client.post(f"{P}/tiers", json=TEACHER_TIER).json()
+    teacher = add_user(sm, Role.teacher)
+    add_subscription(sm, teacher, uuid.UUID(created["id"]))
+    resp = client.put(f"{P}/tiers/{created['id']}", json=_tier_body(created, priceMinor=60000))
+    assert resp.status_code == 200, resp.text
+    body = client.get(f"{P}/catalogue").json()["planTiers"][0]
+    assert (body["liveSubscriptionCount"], body["pendingMoves"], body["termsVersion"]) == (1, 1, 2)
+
+
+# -- seat price 0 while extra seats are held (P06-T4 n3) -------------------------------
+
+
+def test_a_seat_price_of_zero_is_refused_while_subscribers_hold_extra_seats(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    client = admin_client(sm, admin)
+    created = client.post(f"{P}/tiers", json=TEACHER_TIER).json()
+    teacher = add_user(sm, Role.teacher)
+    sid = add_subscription(sm, teacher, uuid.UUID(created["id"]))
+    with sm.begin() as session:
+        sub = session.get(Subscription, sid)
+        assert sub is not None
+        sub.extra_seats = 3
+
+    resp = client.put(f"{P}/tiers/{created['id']}", json=_tier_body(created, extraSeatPriceMinor=0))
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"]["code"] == "extra_seats_held"
+    assert audit_rows(sm, "catalogue.plan_tier.update") == []
+    with sm.begin() as session:
+        sub = session.get(Subscription, sid)
+        assert sub is not None
+        sub.extra_seats = 0
+    ok = client.put(f"{P}/tiers/{created['id']}", json=_tier_body(created, extraSeatPriceMinor=0))
+    assert ok.status_code == 200, ok.text
+
+
+# -- optimistic concurrency (UD13-DV-1) --------------------------------------------------
+
+
+def test_expected_version_on_a_tier_matches_stale_and_absent(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    client = admin_client(sm, admin)
+    created = client.post(f"{P}/tiers", json=TEACHER_TIER).json()
+    tid = created["id"]
+    assert created["version"] == 1
+    stale = client.put(f"{P}/tiers/{tid}", json=_tier_body(created, name="A", expectedVersion=5))
+    match = client.put(f"{P}/tiers/{tid}", json=_tier_body(created, name="B", expectedVersion=1))
+    absent = client.put(f"{P}/tiers/{tid}", json=_tier_body(created, name="C"))
+    assert (stale.status_code, match.status_code, absent.status_code) == (409, 200, 200)
+    assert stale.json()["detail"]["code"] == "stale_write"
+    assert (match.json()["version"], absent.json()["version"]) == (2, 3)
+    assert len(audit_rows(sm, "catalogue.plan_tier.update")) == 2
+
+
+def test_expected_version_on_a_pack_matches_stale_and_absent(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    pack = add_credit_pack(sm)
+    client = admin_client(sm, admin)
+
+    def put(**extra: Any) -> Any:
+        return client.put(
+            f"{P}/packs/{pack}",
+            json={"name": "n", "units": 9, "priceMinor": 9, "isActive": True, "reason": "edit"}
+            | extra,
+        )
+
+    stale, match, absent = put(expectedVersion=4), put(expectedVersion=1), put()
+    assert (stale.status_code, match.status_code, absent.status_code) == (409, 200, 200)
+    assert (match.json()["version"], absent.json()["version"]) == (2, 3)
+    assert len(audit_rows(sm, "catalogue.credit_pack.update")) == 2
+
+
+def test_expected_version_on_free_allowances_matches_stale_and_absent(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    client = admin_client(sm, admin)
+
+    def put(**extra: Any) -> Any:
+        return client.put(
+            f"{P}/free-allowances",
+            json={"audience": "teacher", "units": 100, "reason": "edit"} | extra,
+        )
+
+    first = put()
+    version = first.json()["version"]
+    stale = put(expectedVersion=version + 5)
+    match = put(expectedVersion=version)
+    absent = put()
+    assert (first.status_code, stale.status_code, match.status_code, absent.status_code) == (
+        200,
+        409,
+        200,
+        200,
+    )
+    assert stale.json()["detail"]["code"] == "stale_write"
+    assert (match.json()["version"], absent.json()["version"]) == (version + 1, version + 2)
+    assert len(audit_rows(sm, "catalogue.free_allowance.update")) == 3
+
+
+def test_two_concurrent_puts_with_the_same_expected_version_one_wins(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    tier = add_plan_tier(sm)
+    barrier = threading.Barrier(2)
+
+    def edit(name: str) -> int:
+        client = admin_client(sm, admin)
+        barrier.wait(timeout=10)
+        return client.put(
+            f"{P}/tiers/{tier}", json=_tier_update(name=name, expectedVersion=1)
+        ).status_code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        codes = sorted(
+            f.result(timeout=60) for f in [pool.submit(edit, "A"), pool.submit(edit, "B")]
+        )
+    assert codes == [200, 409]
+    assert len(audit_rows(sm, "catalogue.plan_tier.update")) == 1
+
+
+# -- validDays and the counts --------------------------------------------------------------
+
+
+def test_valid_days_round_trips_and_zero_is_422(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    client = admin_client(sm, admin)
+    teacher = client.put(
+        f"{P}/free-allowances",
+        json={"audience": "teacher", "units": 2000, "validDays": 45, "reason": "longer"},
+    )
+    student = client.put(
+        f"{P}/free-allowances",
+        json={"audience": "student", "units": 250, "validDays": None, "reason": "never"},
+    )
+    zero = client.put(
+        f"{P}/free-allowances",
+        json={"audience": "teacher", "units": 1, "validDays": 0, "reason": "bad"},
+    )
+    assert (teacher.json()["validDays"], student.json()["validDays"]) == (45, None)
+    assert zero.status_code == 422
+    shown = {
+        f["audience"]: f["validDays"] for f in client.get(f"{P}/catalogue").json()["freeAllowances"]
+    }
+    assert shown == {"teacher": 45, "student": None}
+    rows = audit_rows(sm, "catalogue.free_allowance.update")
+    assert rows[0].before is not None and rows[0].after is not None
+    assert (rows[0].before["signup_validity_days"], rows[0].after["signup_validity_days"]) == (
+        30,
+        45,
+    )
+
+
+def test_an_absent_valid_days_keeps_the_stored_value(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    client = admin_client(sm, admin)
+    resp = client.put(
+        f"{P}/free-allowances", json={"audience": "teacher", "units": 7, "reason": "units only"}
+    )
+    assert resp.json()["validDays"] == 30  # seeded by ensure_usage_catalogue (DV-T1d)
+
+
+def test_live_subscription_and_auto_topup_counts(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    tier = add_plan_tier(sm)
+    for status in (
+        SubscriptionStatus.active,
+        SubscriptionStatus.past_due,
+        SubscriptionStatus.pending_first_payment,
+        SubscriptionStatus.expired,
+    ):
+        add_subscription(sm, add_user(sm), tier, status=status, end=None)
+    pack = add_credit_pack(sm)
+    for enabled in (True, True, False):
+        user = add_user(sm)
+        with sm.begin() as session:
+            session.add(
+                AutoTopupSettings(
+                    beneficiary_user_id=user,
+                    payer_user_id=user,
+                    enabled=enabled,
+                    threshold_units=10,
+                    credit_pack_id=pack,
+                    monthly_cap_minor=1000,
+                )
+            )
+    body = admin_client(sm, admin).get(f"{P}/catalogue").json()
+    assert body["planTiers"][0]["liveSubscriptionCount"] == 3
+    assert body["creditPacks"][0]["autoTopupCount"] == 2
+    assert body["priceChangeNoticeDays"] == 14
+    assert body["subscriptionAmountUpdatable"] is True
 
 
 def test_a_name_features_and_active_edit_still_works_with_the_terms_unchanged(

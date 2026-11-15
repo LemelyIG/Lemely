@@ -1551,6 +1551,7 @@ class SubscriptionService:
             user_id=beneficiary.id,
             payer_user_id=payer_user_id,
             plan_tier_id=tier.id,
+            terms_version=tier.terms_version,
             status=SubscriptionStatus.pending_first_payment,
             extra_seats=extra_seats,
         )
