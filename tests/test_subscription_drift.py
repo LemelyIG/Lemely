@@ -21,6 +21,7 @@ from structlog.testing import capture_logs
 
 from lemely.core.subscription_rules import PAYMOB_ACCOUNT_TZ
 from lemely.db.billing_repo import CheckoutUnavailable
+from lemely.db.merchant_charge_repo import current_period
 from lemely.db.models.billing import (
     Payment,
     PaymentPurpose,
@@ -355,7 +356,7 @@ def test_a_failed_cancel_of_an_expired_subscription_is_retried(
     sid = _linked(pg_sessionmaker, status=SubscriptionStatus.expired)
     client = _client()
     assert _drift(pg_sessionmaker, client) == 1
-    assert client.names() == ["get_subscription", "cancel_subscription"]
+    assert client.names() == ["get_subscription", "last_transaction", "cancel_subscription"]
     assert _sub(pg_sessionmaker, sid).paymob_cancelled_at == DAY
     assert _drift(pg_sessionmaker, client) == 0  # no longer a candidate
 
@@ -366,7 +367,7 @@ def test_an_ended_row_whose_paymob_subscription_is_already_cancelled_is_stamped(
     sid = _linked(pg_sessionmaker, status=SubscriptionStatus.cancelled)
     client = _client(state="canceled")
     assert _drift(pg_sessionmaker, client) == 1
-    assert client.names() == ["get_subscription"]  # no cancel call
+    assert client.names() == ["get_subscription", "last_transaction"]  # no cancel call
     assert _sub(pg_sessionmaker, sid).paymob_cancelled_at == DAY
 
 
@@ -386,7 +387,7 @@ def test_a_superseded_checkout_linked_to_paymob_is_cancelled(
     )
     client = _client()
     assert _drift(pg_sessionmaker, client) == 1
-    assert client.names() == ["get_subscription", "cancel_subscription"]
+    assert client.names() == ["get_subscription", "last_transaction", "cancel_subscription"]
     assert _sub(pg_sessionmaker, sid).paymob_cancelled_at == DAY
 
 
@@ -407,6 +408,55 @@ def test_a_refused_cancel_of_an_ended_row_is_not_stamped(
     client.fail["cancel_subscription"] = PaymobError("down", status_code=503)
     assert _drift(pg_sessionmaker, client) == 0
     assert _sub(pg_sessionmaker, sid).paymob_cancelled_at is None  # tomorrow tries again
+
+
+# -- a paid charge the webhook lost, on an ended row (I-1) --------------------------------
+
+
+def test_a_lost_late_charge_reactivates_a_lapsed_plan_and_is_not_cancelled(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    sid = _linked(sm, status=SubscriptionStatus.expired)
+    client = _client(last=charge(888, 10_000, created_at=END + timedelta(hours=1)))
+    assert _drift(sm, client) == 1
+    row = _sub(sm, sid)
+    assert (row.status, row.paymob_cancelled_at) == (SubscriptionStatus.active, None)
+    assert len(_renewals(sm, sid)) == 1
+    assert "cancel_subscription" not in client.names()  # the plan is paid for again
+
+
+def test_a_lost_late_charge_on_a_cancelled_plan_is_kept_for_a_refund_before_the_cancel(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    sid = _linked(sm, status=SubscriptionStatus.cancelled)
+    client = _client(last=charge(888, 10_000, created_at=END + timedelta(hours=1)))
+    with capture_logs() as logs:
+        assert _drift(sm, client) == 1
+    [alert] = [log for log in logs if log["event"] == "subscription_charge_on_ended_subscription"]
+    assert alert.get("alert") is True
+    [payment] = _renewals(sm, sid)
+    assert payment.paid_at is not None  # the money is on record
+    row = _sub(sm, sid)
+    assert (row.status, row.paymob_cancelled_at) == (SubscriptionStatus.cancelled, None)
+    assert "cancel_subscription" not in client.names()  # not in the pass that found the money
+    assert _drift(sm, client) == 1  # the next pass cancels it
+    assert _sub(sm, sid).paymob_cancelled_at == DAY
+    assert len(_renewals(sm, sid)) == 1
+
+
+def test_a_lost_late_charge_is_recorded_even_when_paymob_already_reports_canceled(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    sid = _linked(sm, status=SubscriptionStatus.cancelled)
+    client = _client(
+        state="canceled", last=charge(888, 10_000, created_at=END + timedelta(hours=1))
+    )
+    assert _drift(sm, client) == 1
+    assert len(_renewals(sm, sid)) == 1
+    assert _sub(sm, sid).paymob_cancelled_at is None  # stamped by the next pass, after the record
 
 
 # -- robustness --------------------------------------------------------------------------
@@ -644,6 +694,99 @@ def test_a_manual_activation_that_ended_is_never_selected(
     assert client.calls == []
 
 
+# -- underpaid renewals and refused PUTs (I-4, I-5) --------------------------------------
+
+
+def _success_webhook(sm: sessionmaker[Session], client: FakePaymobClient, *, at: Any) -> None:
+    with sm.begin() as session:
+        SubscriptionService(session, client, paymob_settings()).apply_renewal_webhook(
+            subscription_webhook(TRIGGER_SUCCESS, PID), now=at
+        )
+
+
+def test_a_renewal_below_the_expected_amount_after_an_unknown_put_is_alerted(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """I-4: Paymob holds half, drift's PUT is unknown, Paymob charges half: never silent."""
+    sm = pg_sessionmaker
+    sid = _linked(sm, period_end=DAY + timedelta(days=1))
+    client = _client(amount=5_000)
+    client.fail["update_subscription"] = PaymobError("timeout", timeout=True)
+    assert _drift(sm, client) == 0
+    assert _sub(sm, sid).amount_sync_uncertain_at is not None  # tomorrow sends it again
+    client.last_transactions[PID] = charge(889, 5_000, created_at=DAY + timedelta(hours=2))
+    with capture_logs() as logs:
+        _success_webhook(sm, client, at=DAY + timedelta(hours=3))
+    [alert] = [log for log in logs if log["event"] == "subscription_renewal_underpaid"]
+    assert (alert["charged_minor"], alert["expected_minor"], alert.get("alert")) == (
+        5_000,
+        10_000,
+        True,
+    )
+    [renewal] = _renewals(sm, sid)
+    assert renewal.paid_at is not None  # the payer did pay what Paymob held: the period is theirs
+
+
+def test_a_renewal_at_the_expected_amount_is_not_underpaid(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    _linked(sm, period_end=DAY + timedelta(days=1))
+    client = _client(last=charge(889, 10_000, created_at=DAY + timedelta(hours=2)))
+    with capture_logs() as logs:
+        _success_webhook(sm, client, at=DAY + timedelta(hours=3))
+    assert not any(log["event"] == "subscription_renewal_underpaid" for log in logs)
+
+
+def test_a_refused_amount_put_keeps_the_recovered_renewal_and_the_stamp(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """I-5: the amount goes back in a transaction of its own; its refusal costs only the PUT."""
+    sm = pg_sessionmaker
+    sid = _linked(sm)
+    client = _client(amount=12_345, last=charge(888, 10_000, created_at=END - timedelta(hours=1)))
+    client.fail["update_subscription"] = PaymobError("refused", status_code=400)
+    with capture_logs() as logs:
+        assert _drift(sm, client) == 1
+    assert len(_renewals(sm, sid)) == 1  # recovered
+    assert _checked(sm, sid) == DAY  # and stamped
+    [failed] = [log for log in logs if log["event"] == "subscription_sweep_failed"]
+    assert failed.get("alert") is True
+    assert _sub(sm, sid).previous_amount_minor is None  # the refused PUT left nothing behind
+
+
+def test_rows_whose_put_is_refused_do_not_sort_first_for_ever(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    refused = _linked(sm, pid=1, period_end=DAY + timedelta(days=1))
+    other = _linked(sm, pid=2)
+    client = _client(pid=1, amount=12_345)
+    client.fail_for[("update_subscription", 1)] = PaymobError("refused", status_code=400)
+    client.subscriptions[2] = remote_subscription(2, state="canceled", initial_transaction=702)
+    client.last_transactions[2] = charge(702, 10_000)
+    for _ in range(2):
+        _drift(sm, client, limit=1)
+    assert _checked(sm, refused) == DAY
+    assert _sub(sm, other).cancel_at_period_end is True  # reached though `limit` is 1
+
+
+def test_a_row_whose_repair_raises_is_stamped_and_goes_to_the_back(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    broken = _linked(sm, pid=1, status=SubscriptionStatus.expired)
+    other = _linked(sm, pid=2, status=SubscriptionStatus.expired)
+    client = _client(pid=1)
+    client.subscriptions[2] = remote_subscription(2, state="canceled", initial_transaction=702)
+    client.last_transactions[2] = charge(702, 10_000)
+    client.fail_for[("cancel_subscription", 1)] = RuntimeError("boom")
+    for _ in range(2):
+        _drift(sm, client, limit=1)
+    assert _checked(sm, broken) == DAY  # rolled back, then stamped on its own
+    assert _sub(sm, other).paymob_cancelled_at == DAY
+
+
 # -- linking a Paymob-created plan from its stored event (T5-I2) --------------------------
 
 
@@ -784,6 +927,41 @@ def test_the_link_pass_is_bounded_by_the_limit(pg_sessionmaker: sessionmaker[Ses
     assert sorted(linked) == [False, True]
 
 
+def test_a_link_conflict_is_alerted_once_and_does_not_hold_the_link_slot(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    _linked(sm)  # holds PID
+    stuck = _unlinked(sm, txn=FIRST_TXN + 50)
+    _store_created_event(sm, initial=FIRST_TXN + 50)
+    free = _unlinked(sm, txn=FIRST_TXN + 60)
+    _store_created_event(sm, paymob_id=PID + 60, initial=FIRST_TXN + 60)
+    client = _client()
+    client.subscriptions[PID + 60] = remote_subscription(
+        PID + 60, initial_transaction=FIRST_TXN + 60
+    )
+    client.last_transactions[PID + 60] = charge(FIRST_TXN + 60, 10_000)
+    with capture_logs() as logs:
+        for _ in range(3):
+            _drift(sm, client, limit=1)
+    conflicts = [log for log in logs if log["event"] == "subscription_created_event_link_conflict"]
+    assert len(conflicts) == 1  # once per conflict, not once a day
+    assert _sub(sm, stuck).paymob_subscription_id is None
+    assert _sub(sm, free).paymob_subscription_id == PID + 60  # the conflict did not block it
+
+
+def test_a_link_and_a_repair_of_the_same_row_are_one_repair(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    sid = _unlinked(sm)
+    _store_created_event(sm)
+    client = _client(state="canceled")
+    assert _drift(sm, client) == 1
+    row = _sub(sm, sid)
+    assert (row.paymob_subscription_id, row.cancel_at_period_end) == (PID, True)
+
+
 # -- Paymob's next_billing against our period end (M8) -----------------------------------
 
 
@@ -794,22 +972,21 @@ def _with_next_billing(client: FakePaymobClient, when: Any) -> FakePaymobClient:
     return client
 
 
-def test_a_next_billing_far_after_our_end_moves_the_end_out_and_alerts(
+def _disagreements(logs: list[Any]) -> list[Any]:
+    return [log for log in logs if log["event"] == "subscription_next_billing_disagrees"]
+
+
+def test_a_next_billing_far_after_our_end_is_alerted_and_never_moves_the_end(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     sm = pg_sessionmaker
     sid = _linked(sm, period_end=DAY + timedelta(days=2))
-    client = _with_next_billing(_client(), DAY + timedelta(days=12))
+    client = _with_next_billing(_client(), DAY + timedelta(days=400))  # I-3: no bound to abuse
     with capture_logs() as logs:
-        assert _drift(sm, client) == 1
-    [alert] = [log for log in logs if log["event"] == "subscription_next_billing_disagrees"]
-    assert (alert["direction"], alert["corrected"], alert.get("alert")) == ("later", True, True)
-    end = _sub(sm, sid).current_period_end
-    assert end is not None
-    assert end.astimezone(PAYMOB_ACCOUNT_TZ).date() == (
-        (DAY + timedelta(days=12)).astimezone(PAYMOB_ACCOUNT_TZ).date()
-    )
-    assert _drift(sm, client) == 0  # agreed now: nothing more to do
+        assert _drift(sm, client) == 0  # nothing was repaired
+    [alert] = _disagreements(logs)
+    assert (alert["direction"], alert.get("alert")) == ("later", True)
+    assert _sub(sm, sid).current_period_end == DAY + timedelta(days=2)
 
 
 def test_a_next_billing_far_before_our_end_is_alerted_and_never_shortens_the_period(
@@ -820,9 +997,78 @@ def test_a_next_billing_far_before_our_end_is_alerted_and_never_shortens_the_per
     client = _with_next_billing(_client(), DAY + timedelta(days=5))
     with capture_logs() as logs:
         assert _drift(sm, client) == 0
-    [alert] = [log for log in logs if log["event"] == "subscription_next_billing_disagrees"]
-    assert (alert["direction"], alert["corrected"]) == ("earlier", False)
+    [alert] = _disagreements(logs)
+    assert alert["direction"] == "earlier"
     assert _sub(sm, sid).current_period_end == DAY + timedelta(days=20)  # untouched
+
+
+def test_a_disagreement_is_alerted_once_per_period(pg_sessionmaker: sessionmaker[Session]) -> None:
+    sm = pg_sessionmaker
+    _linked(sm, period_end=DAY + timedelta(days=2))
+    client = _with_next_billing(_client(), DAY + timedelta(days=30))
+    with capture_logs() as logs:
+        for _ in range(3):
+            _drift(sm, client)
+    assert len(_disagreements(logs)) == 1
+
+
+def test_a_disagreement_is_alerted_again_for_the_next_period(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    sid = _linked(sm, period_end=DAY + timedelta(days=2))
+    client = _with_next_billing(_client(), DAY + timedelta(days=30))
+    with capture_logs() as logs:
+        _drift(sm, client)
+        with sm.begin() as session:
+            row = session.get(Subscription, sid)
+            assert row is not None
+            row.current_period_end = DAY + timedelta(days=3)  # a renewal moved the period
+        _drift(sm, client)
+    assert len(_disagreements(logs)) == 2
+
+
+def test_the_period_lookups_still_find_the_period_after_a_disagreement(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """I-2: the end stays equal to the period row's, so P06 lookups and the grace work."""
+    sm = pg_sessionmaker
+    sid = _linked(sm)
+    client = _client(last=charge(888, 10_000, created_at=END - timedelta(hours=1)))
+    assert _drift(sm, client) == 1  # the renewal: a new period row and its grant
+    new_end = END + timedelta(days=30)
+    _with_next_billing(client, new_end + timedelta(days=10))
+    with sm() as session:
+        assert (
+            SubscriptionService(session, client, paymob_settings()).check_drift(
+                now=DAY + timedelta(days=1)
+            )
+            == 0
+        )
+    with sm() as session:
+        sub = session.get(Subscription, sid)
+        assert sub is not None
+        period = current_period(session, sub)
+        assert period is not None and period.period_end == sub.current_period_end == new_end
+
+
+def test_a_far_next_billing_does_not_hide_a_real_failure(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """I-3: with the end untouched, a failure at the real billing date starts the grace."""
+    sm = pg_sessionmaker
+    sid = _linked(sm, period_end=DAY + timedelta(days=2))
+    client = _with_next_billing(_client(), DAY + timedelta(days=400))
+    _drift(sm, client)
+    fail_at = DAY + timedelta(days=2, hours=1)
+    client.last_transactions[PID] = charge(999, 10_000, created_at=fail_at, success=False)
+    with sm.begin() as session:
+        SubscriptionService(session, client, paymob_settings()).apply_renewal_webhook(
+            subscription_webhook(TRIGGER_FAILED, PID), now=fail_at
+        )
+    row = _sub(sm, sid)
+    assert row.status is SubscriptionStatus.past_due
+    assert row.grace_until is not None
 
 
 @pytest.mark.parametrize("days", [-2, 0, 1, 2])
@@ -1053,6 +1299,62 @@ def test_a_full_refund_of_an_older_periods_payment_changes_nothing_and_alerts(
     assert _sub(sm, sid).status is SubscriptionStatus.cancelled
 
 
+def _early_renewal(sm: sessionmaker[Session]) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, Any]:
+    """``(student, subscription, early renewal payment, now)``: N in force, N+1 paid early."""
+    student = seed_user(sm, Role.student)
+    sid = seed_subscription(
+        sm,
+        user_id=student,
+        tier_id=seed_tier(sm, allowance_units=100),
+        payer_id=student,
+        paymob_subscription_id=PID,
+        paymob_amount_minor=10_000,
+        activated_at=T0,
+    )
+    seed_first_payment(sm, subscription_id=sid, paymob_txn_id=FIRST_TXN)
+    _give_period(sm, sid, _first_payment_of(sm, sid), start=T0, end=END)
+    now = END - timedelta(hours=2)
+    client = _client(last=charge(888, 10_000, created_at=END - timedelta(hours=3)))
+    with sm() as session:
+        assert SubscriptionService(session, client, paymob_settings()).check_drift(now=now) == 1
+    [renewal] = _renewals(sm, sid)
+    return student, sid, renewal.id, now
+
+
+def _refund_at(sm: sessionmaker[Session], payment_id: uuid.UUID, now: Any) -> None:
+    with sm.begin() as session:
+        SubscriptionService(session, FakePaymobClient(), paymob_settings()).on_payment_refunded(
+            payment_id, full=True, now=now
+        )
+
+
+def test_refunding_a_period_that_has_not_started_does_not_end_the_plan_now(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    student, sid, renewal, now = _early_renewal(sm)
+    assert _remaining(sm, student) == 100
+    with capture_logs() as logs:
+        _refund_at(sm, renewal, now)
+    row = _sub(sm, sid)
+    assert (row.status, row.cancel_at_period_end) == (SubscriptionStatus.active, False)
+    assert _remaining(sm, student) == 0  # what the future period would have granted is taken back
+    [alert] = [log for log in logs if log["event"] == "subscription_future_period_refunded"]
+    assert alert.get("alert") is True
+
+
+def test_refunding_the_period_in_force_during_an_early_charge_ends_the_plan(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    _, sid, _, now = _early_renewal(sm)
+    first = _first_payment_of(sm, sid)
+    with capture_logs() as logs:
+        _refund_at(sm, first, now)
+    assert _sub(sm, sid).status is SubscriptionStatus.cancelled
+    assert not any(log["event"] == "subscription_old_period_refunded" for log in logs)
+
+
 def test_a_refund_of_a_charge_that_bought_no_period_changes_nothing(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
@@ -1126,3 +1428,14 @@ def test_the_first_checkout_fails_closed_without_the_settings_row(
     assert any(log["event"] == "seat_ceiling_setting_missing" and log.get("alert") for log in logs)
     with sm() as session:  # nothing was written
         assert session.scalar(sa.select(sa.func.count()).select_from(Subscription)) == 0
+
+
+def test_a_checkout_of_no_extra_seats_does_not_need_the_ceiling_setting(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    with sm.begin() as session:
+        session.execute(sa.delete(BillingSettings))
+    _teacher_checkout(sm, 0)  # no seats asked for, so nothing to bound
+    with sm() as session:
+        assert session.scalar(sa.select(sa.func.count()).select_from(Subscription)) == 1

@@ -1180,7 +1180,9 @@ def test_only_the_one_live_constraint_means_already_subscribed(
 
     The beneficiary is deleted from a second session after the checkout read it and before it
     inserts the subscription, so the insert itself fails on a foreign key to ``users``
-    (``fk_subscriptions_payer_user_id_users``, the first one Postgres checks).
+    (``fk_subscriptions_payer_user_id_users`` or ``fk_subscriptions_user_id_users``: the payer
+    and the beneficiary are the same user here, and which of the two Postgres checks first
+    follows its internal trigger order, so either is accepted).
     The failure must come from that insert (asserted by constraint name): a failure from any
     other statement would pass the test without exercising the service's constraint mapping.
     """
@@ -1201,7 +1203,10 @@ def test_only_the_one_live_constraint_means_already_subscribed(
         _checkout(pg_sessionmaker, client, payer_user_id=student, plan_tier_id=tier)
     assert not isinstance(excinfo.value, AlreadySubscribed)
     diag = getattr(excinfo.value.orig, "diag", None)
-    assert getattr(diag, "constraint_name", None) == "fk_subscriptions_payer_user_id_users"
+    assert getattr(diag, "constraint_name", None) in {
+        "fk_subscriptions_payer_user_id_users",
+        "fk_subscriptions_user_id_users",
+    }
     assert "INSERT INTO subscriptions" in (excinfo.value.statement or "")
     assert client.intentions == []
 
