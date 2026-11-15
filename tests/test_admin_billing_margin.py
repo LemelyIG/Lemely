@@ -26,8 +26,14 @@ from lemely.db.admin_margin_repo import (
     JOB_WINDOW_QUERIES,
     AdminMarginService,
 )
-from lemely.db.models.billing import PaymentPurpose, PaymentStatus
-from lemely.db.models.billing_ops import PaymentRefund, RefundKind, RefundStatus, UsageJobModelCost
+from lemely.db.models.billing import Payment, PaymentPurpose, PaymentStatus
+from lemely.db.models.billing_ops import (
+    BillingSettings,
+    PaymentRefund,
+    RefundKind,
+    RefundStatus,
+    UsageJobModelCost,
+)
 from lemely.db.models.enums import Role
 from lemely.db.models.usage import GrantKind, UsageJob
 from lemely.db.usage_ledger_repo import UsageLedger
@@ -68,6 +74,7 @@ REPORT_KEYS = {
     "revenue",
     "cost",
     "egpPerUsd",
+    "egpPerUsdSource",  # added by the server: where the rate came from (T14 adds it to the TS type)
     "costMinor",
     "marginMinor",
     "accuracy",
@@ -141,7 +148,12 @@ def _model_costs(sm: sessionmaker[Session], job: uuid.UUID, costs: dict[str, str
 
 
 def _refund(
-    sm: sessionmaker[Session], payment: uuid.UUID, admin_id: uuid.UUID, minor: int, closed: datetime
+    sm: sessionmaker[Session],
+    payment: uuid.UUID,
+    admin_id: uuid.UUID,
+    minor: int,
+    closed: datetime,
+    created: datetime | None = None,
 ) -> None:
     with sm.begin() as session:
         session.add(
@@ -152,7 +164,7 @@ def _refund(
                 status=RefundStatus.succeeded,
                 amount_minor=minor,
                 reason="goodwill",
-                created_at=closed,
+                created_at=created or closed,
                 updated_at=closed,
             )
         )
@@ -184,6 +196,7 @@ def _seed_margin_world(sm: sessionmaker[Session]) -> None:
         sm,
         payer=teacher,
         amount_minor=10000,
+        status=PaymentStatus.partially_refunded,  # what a console refund leaves behind
         paid_at=NOV_1 + timedelta(days=2),
         credit_pack_id=pack,
         paymob_txn_id=5,
@@ -245,18 +258,13 @@ def _seed_margin_world(sm: sessionmaker[Session]) -> None:
         sm, student, s_pay, action="regrade", low=1, high=2, cost=Decimal("0.0005"), created_at=nov4
     )
     metered_job(sm, teacher, t_pay, low=2, high=4, cost=Decimal("0.0021"), created_at=nov4)
-    expired = metered_job(
+    # A job that crashed: really expired, so it never has a cost (a late settle is refused).
+    metered_job(
         sm, teacher, t_pay, action="generate_quiz", low=1, high=2, cost=None, created_at=nov4
     )
     with sm.begin() as session:
         UsageLedger(session).expire_stale_jobs(now=nov4 + timedelta(hours=1))
-    with sm.begin() as session:
-        session.execute(
-            sa.update(UsageJob)
-            .where(UsageJob.id == expired)
-            .values(actual_cost_usd=Decimal("0.0015"))
-        )
-    # j1 has two models, j2 one, and the 0.0021 / 0.0005 / 0.0015 jobs none (unattributed).
+    # j1 has two models, j2 one, and the 0.0021 / 0.0005 jobs none (unattributed).
     _model_costs(sm, outside, {"gemini-2.5-flash": "0.009"})
     _model_costs(sm, j1, {"gemini-2.5-flash": "0.003", "claude-haiku-4-5": "0.001"})
     _model_costs(sm, j2, {"gemini-2.5-flash": "0.007"})
@@ -266,7 +274,7 @@ def test_revenue_cost_margin_and_accuracy_are_exact(
     sm: sessionmaker[Session], admin: uuid.UUID
 ) -> None:
     _seed_margin_world(sm)
-    body = _get(_client(sm, admin), egpPerUsd="50")
+    body = _get(_client(sm, admin), egpPerUsd="50.5")
 
     # Gross: 20000 first + 10000 + 10000 + 10000 (dashboard-refunded, partially_refunded) packs.
     # Refunded: 4000 console (3 Nov) + 2500 dashboard (6 Nov). Voided 7777 and failed 9999 absent.
@@ -279,25 +287,24 @@ def test_revenue_cost_margin_and_accuracy_are_exact(
         "byPlan": [{"key": "student_monthly", "minor": 20000}],
     }
     assert body["cost"] == {
-        "totalUsd": "0.015100",
+        "totalUsd": "0.013600",
         "byAction": [
-            {"key": "generate_quiz", "jobs": 1, "costUsd": "0.001500"},
             {"key": "mark_paper", "jobs": 3, "costUsd": "0.013100"},
             {"key": "regrade", "jobs": 1, "costUsd": "0.000500"},
         ],
         "byPlan": [
             {"key": "student_monthly", "jobs": 3, "costUsd": "0.011500"},
-            {"key": None, "jobs": 2, "costUsd": "0.003600"},
+            {"key": None, "jobs": 1, "costUsd": "0.002100"},
         ],
         "byModel": [
             {"model": "claude-haiku-4-5", "costUsd": "0.001000"},
             {"model": "gemini-2.5-flash", "costUsd": "0.010000"},
         ],
-        "unattributedModelUsd": "0.004100",
+        "unattributedModelUsd": "0.002600",
     }
-    # 0.0151 USD x 50 EGP x 100 piasters = 75.5 -> 76 (up); 43500 - 76.
-    assert (body["costMinor"], body["marginMinor"]) == (76, 43424)
-    assert body["egpPerUsd"] == "50"
+    # 0.0136 USD x 50.5 EGP x 100 piasters = 68.68 -> 69 (up); 43500 - 69.
+    assert (body["costMinor"], body["marginMinor"]) == (69, 43431)
+    assert (body["egpPerUsd"], body["egpPerUsdSource"]) == ("50.5", "request")
     assert body["accuracy"] == [
         {
             "action": "mark_paper",
@@ -322,7 +329,7 @@ def test_revenue_cost_margin_and_accuracy_are_exact(
     ]
     exposure = body["exposure"]
     assert isinstance(exposure, dict)
-    assert exposure["expiredJobs"] == {"count": 1, "costUsd": "0.001500"}
+    assert exposure["expiredJobs"] == {"count": 1}  # a real expiry, no cost to show
 
 
 def test_the_dashboard_refund_is_counted_once_next_to_a_console_refund(
@@ -368,7 +375,7 @@ def test_a_dashboard_refund_is_attributed_to_its_updated_at_and_ignores_junk(
         updated_at=EARLY,
         last_callback={"refunded_amount_cents": 10000},
     )
-    for junk in (True, "12.5", -3, "9" * 40, None):
+    for junk in (True, "12.5", -3, "1e3", "", None):
         add_payment(
             sm,
             payer=payer,
@@ -446,10 +453,10 @@ def test_cost_minor_rounds_against_us_even_for_a_small_fraction(
     sm: sessionmaker[Session], admin: uuid.UUID
 ) -> None:
     _seed_margin_world(sm)
-    # 0.0151 x 49.9 x 100 = 75.349: half-up would say 75; we round up to 76.
-    body = _get(_client(sm, admin), egpPerUsd="49.9")
-    assert body["costMinor"] == 76
-    assert body["marginMinor"] == 43500 - 76
+    # 0.0136 x 49.5 x 100 = 67.32: half-up would say 67; we round up to 68.
+    body = _get(_client(sm, admin), egpPerUsd="49.5")
+    assert body["costMinor"] == 68
+    assert body["marginMinor"] == 43500 - 68
 
 
 def test_without_an_exchange_rate_there_is_no_margin_figure(
@@ -457,10 +464,13 @@ def test_without_an_exchange_rate_there_is_no_margin_figure(
 ) -> None:
     _seed_margin_world(sm)
     body = _get(_client(sm, admin))
-    assert (body["egpPerUsd"], body["costMinor"], body["marginMinor"]) == (None, None, None)
+    assert (body["egpPerUsd"], body["egpPerUsdSource"]) == (None, None)
+    assert (body["costMinor"], body["marginMinor"]) == (None, None)
 
 
-@pytest.mark.parametrize("rate", ["0", "-1", "10000.01", "abc", "NaN", "Infinity"])
+@pytest.mark.parametrize(
+    "rate", ["0", "-1", "10000.01", "abc", "NaN", "Infinity", "1" * 10, "1.23456"]
+)
 def test_a_bad_exchange_rate_is_422(sm: sessionmaker[Session], admin: uuid.UUID, rate: str) -> None:
     resp = _client(sm, admin).get("/api/admin/billing/margin", params={**WINDOW, "egpPerUsd": rate})
     assert resp.status_code == 422
@@ -539,24 +549,40 @@ def test_exposure_counts_debt_limits_and_expiring_credits(
         "creditsExpiring30dUnits": 50,
         "creditsExpiring30dOwners": 1,
         "creditsExpiredUnusedUnits": 20,
-        "expiredJobs": {"count": 0, "costUsd": "0.000000"},
+        "expiredJobs": {"count": 0},
     }
 
 
-def test_an_expired_job_with_no_recorded_cost_is_not_counted(
+def test_an_expired_job_is_counted_even_after_a_refused_late_settle(
     sm: sessionmaker[Session], admin: uuid.UUID
 ) -> None:
-    """Every ``created_at`` query states ``actual_cost_usd IS NOT NULL`` (index amendment)."""
+    """The real sequence: expire, then the worker settles late and ``settle`` ignores it.
+
+    The job never carries a cost, so the count must not depend on one (D1 was rejected).
+    """
     payer = add_user(sm, Role.teacher)
     add_rate(sm, "mark_paper")
     grant(sm, payer, units=50, effective_at=EARLY)
     pay = [Payer(owner_user_id=payer, scope=GrantScope.CREDITS)]
     created = NOV_1 + timedelta(days=2)
-    metered_job(sm, payer, pay, low=1, high=2, cost=None, created_at=created)
+    job = metered_job(sm, payer, pay, low=1, high=2, cost=None, created_at=created)
     with sm.begin() as session:
         UsageLedger(session).expire_stale_jobs(now=created + timedelta(hours=1))
-    exposure = _get(_client(sm, admin))["exposure"]
-    assert exposure["expiredJobs"] == {"count": 0, "costUsd": "0.000000"}  # type: ignore[index]
+    with sm.begin() as session:
+        row = session.get(UsageJob, job)
+        assert row is not None
+        late = UsageLedger(session).settle(
+            row.job_id, actual_cost_usd=Decimal("0.0042"), now=created + timedelta(hours=2)
+        )
+        assert late.actual_cost_usd is None  # refused: this is why the count has no cost
+    report = _get(_client(sm, admin))
+    assert report["exposure"]["expiredJobs"] == {"count": 1}  # type: ignore[index]
+    assert report["cost"]["totalUsd"] == "0.000000"  # type: ignore[index]
+    # An expired job outside the window is not counted.
+    assert _get(
+        _client(sm, admin),
+        **{"from": DEC_1.isoformat(), "to": (DEC_1 + timedelta(days=5)).isoformat()},
+    )["exposure"]["expiredJobs"] == {"count": 0}  # type: ignore[index]
 
 
 def test_a_naive_from_is_422_naive_datetime(sm: sessionmaker[Session], admin: uuid.UUID) -> None:
@@ -612,7 +638,7 @@ def test_the_report_has_exactly_the_frontends_keys(
     exposure = body["exposure"]
     assert isinstance(exposure, dict)
     assert set(exposure) == EXPOSURE_KEYS
-    assert set(exposure["expiredJobs"]) == {"count", "costUsd"}
+    assert set(exposure["expiredJobs"]) == {"count"}
     assert set(body["revenue"]["byPlan"][0]) == {"key", "minor"}  # type: ignore[index]
 
 
@@ -625,7 +651,7 @@ def test_the_report_writes_nothing(sm: sessionmaker[Session], admin: uuid.UUID) 
     assert audit_count(sm) == before
 
 
-def test_the_margin_route_is_get_only_and_platform_admin_only(sm: sessionmaker[Session]) -> None:
+def test_the_margin_route_accepts_get_only(sm: sessionmaker[Session]) -> None:
     client = _client(sm, add_user(sm, Role.platform_admin))
     assert client.post("/api/admin/billing/margin", json={}).status_code == 405
 
@@ -669,3 +695,198 @@ def test_the_explain_pin_goes_red_without_the_predicate(sm: sessionmaker[Session
             )
         )
     assert "ix_admin_usage_jobs_created_at" not in plan, plan
+
+
+# -- review fixes (P07-T10 review: I2, M2, M3, M4, M5, M6, M8) ------------------------------
+
+
+def _dashboard_payment(
+    sm: sessionmaker[Session],
+    payer: uuid.UUID,
+    total: object,
+    *,
+    updated: datetime,
+    amount: int = 10000,
+    status: PaymentStatus = PaymentStatus.partially_refunded,
+) -> uuid.UUID:
+    return add_payment(
+        sm,
+        payer=payer,
+        status=status,
+        amount_minor=amount,
+        paid_at=NOV_1 + timedelta(days=1),
+        updated_at=updated,
+        last_callback={"refunded_amount_cents": total},
+    )
+
+
+def _refunded(sm: sessionmaker[Session], start: datetime, end: datetime) -> int:
+    report = AdminMarginService(sm, now=lambda: NOW).margin(start, end, egp_per_usd=None)
+    return report.revenue.refunded_minor
+
+
+def test_a_later_console_refund_does_not_erase_the_earlier_dashboard_refund(
+    sm: sessionmaker[Session],
+) -> None:
+    """I2: November's 2000 dashboard refund survives a 3000 console refund closing in December."""
+    payer = add_user(sm, Role.student)
+    admin_id = add_user(sm, Role.platform_admin)
+    jan_1 = DEC_1 + timedelta(days=31)
+    payment = _dashboard_payment(sm, payer, 2000, updated=NOV_1 + timedelta(days=5))
+    assert _refunded(sm, NOV_1, DEC_1) == 2000
+    # The console refund succeeds on 3 Dec; the payment row is not rewritten (status unchanged).
+    _refund(sm, payment, admin_id, 3000, DEC_1 + timedelta(days=2))
+    assert _refunded(sm, NOV_1, DEC_1) == 2000
+    assert _refunded(sm, DEC_1, jan_1) == 3000
+    # Paymob's callback (total 5000) then lands on 3 Dec: December holds the whole 5000, once.
+    with sm.begin() as session:
+        session.execute(
+            sa.update(Payment)
+            .where(Payment.id == payment)
+            .values(
+                last_callback={"refunded_amount_cents": 5000}, updated_at=DEC_1 + timedelta(days=2)
+            )
+        )
+    assert _refunded(sm, DEC_1, jan_1) == 5000
+
+
+def test_a_callback_that_already_includes_a_pending_console_refund_counts_it_once(
+    sm: sessionmaker[Session],
+) -> None:
+    """I2: the 30 Nov callback includes a console refund created 30 Nov that succeeds 1 Dec."""
+    payer = add_user(sm, Role.student)
+    admin_id = add_user(sm, Role.platform_admin)
+    payment = _dashboard_payment(sm, payer, 3000, updated=DEC_1 - timedelta(days=1))
+    _refund(sm, payment, admin_id, 3000, DEC_1, created=DEC_1 - timedelta(days=1))
+    jan_1 = DEC_1 + timedelta(days=31)
+    nov, dec = _refunded(sm, NOV_1, DEC_1), _refunded(sm, DEC_1, jan_1)
+    assert (nov, dec) == (0, 3000)  # November nets the pending refund out; December counts it
+
+
+def test_a_job_whose_model_rows_exceed_its_own_cost_alerts_even_when_another_has_no_split(
+    sm: sessionmaker[Session],
+) -> None:
+    """M2: the check is per job, so job B's missing split cannot hide job A's excess."""
+    payer = add_user(sm, Role.student)
+    add_rate(sm, "mark_paper")
+    grant(sm, payer, units=50, effective_at=EARLY)
+    pay = [Payer(owner_user_id=payer, scope=GrantScope.CREDITS)]
+    day = NOV_1 + timedelta(days=1)
+    a = metered_job(sm, payer, pay, low=1, high=2, cost=Decimal("0.001"), created_at=day)
+    metered_job(sm, payer, pay, low=1, high=2, cost=Decimal("0.005"), created_at=day)
+    _model_costs(sm, a, {"gemini-2.5-flash": "0.002"})
+    events: list[str] = []
+    from lemely.db import admin_margin_repo
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(admin_margin_repo.alerts, "warning", lambda event, **_: events.append(event))
+        report = AdminMarginService(sm, now=lambda: NOW).margin(NOV_1, DEC_1, egp_per_usd=None)
+    assert report.cost.unattributed_model_usd == Decimal("0.004")
+    assert events == ["margin_model_cost_exceeds_total"]
+
+
+def test_cost_minor_rounds_up_beyond_28_digits_of_precision(sm: sessionmaker[Session]) -> None:
+    """M3: 0.75 x 100.000...0001 x 100 is 7500.00...01, whose ceiling is 7501, not 7500."""
+    payer = add_user(sm, Role.student)
+    add_rate(sm, "mark_paper")
+    grant(sm, payer, units=50, effective_at=EARLY)
+    pay = [Payer(owner_user_id=payer, scope=GrantScope.CREDITS)]
+    metered_job(
+        sm, payer, pay, low=1, high=2, cost=Decimal("0.75"), created_at=NOV_1 + timedelta(days=1)
+    )
+    rate = Decimal("100.0000000000000000000000000001")
+    report = AdminMarginService(sm, now=lambda: NOW).margin(NOV_1, DEC_1, egp_per_usd=rate)
+    assert report.cost_minor == 7501
+
+
+@pytest.mark.parametrize(("sent", "echoed"), [("1e3", "1000"), ("50.0", "50"), ("49.5", "49.5")])
+def test_the_rate_is_echoed_normalised(
+    sm: sessionmaker[Session], admin: uuid.UUID, sent: str, echoed: str
+) -> None:
+    assert _get(_client(sm, admin), egpPerUsd=sent)["egpPerUsd"] == echoed
+
+
+def _set_margin_rate(sm: sessionmaker[Session], rate: Decimal | None) -> None:
+    with sm.begin() as session:
+        session.execute(sa.update(BillingSettings).values(margin_egp_per_usd=rate))
+
+
+def test_the_admin_set_rate_is_the_default_and_a_request_rate_overrides_it(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    """M4 (UD-13): the setting backs the report; the source tells which rate was used."""
+    _seed_margin_world(sm)
+    _set_margin_rate(sm, Decimal("50.5000"))
+    client = _client(sm, admin)
+    default = _get(client)
+    assert (default["egpPerUsd"], default["egpPerUsdSource"]) == ("50.5", "settings")
+    assert (default["costMinor"], default["marginMinor"]) == (69, 43431)
+    override = _get(client, egpPerUsd="49.5")
+    assert (override["egpPerUsd"], override["egpPerUsdSource"]) == ("49.5", "request")
+    assert override["costMinor"] == 68
+    _set_margin_rate(sm, None)
+    none = _get(client)
+    assert (none["egpPerUsd"], none["egpPerUsdSource"], none["costMinor"]) == (None, None, None)
+
+
+def test_the_cost_is_labelled_as_metered_settled_cost() -> None:
+    """M5: the DTO says what the figure leaves out."""
+    from lemely.web.schemas_admin_billing_margin import CostDTO
+
+    description = CostDTO.model_fields["totalUsd"].description or ""
+    assert "Metered settled cost" in description
+    assert "excludes released or exempt spend" in description
+    assert "metered" in (CostDTO.__doc__ or "").lower()
+
+
+@pytest.mark.parametrize(
+    ("total", "expected"),
+    [
+        (" 2500 ", 2500),  # Phase 02's _as_int strips
+        ("2500", 2500),
+        ("9" * 16, 10000),  # 16 digits: Phase 02 accepts it, so it is the payment amount
+        ("9" * 40, 10000),
+        (99999, 10000),  # capped at the amount
+        ("12.5", 0),
+        (-3, 0),
+        (True, 0),
+        ("", 0),
+    ],
+)
+def test_the_dashboard_total_is_read_as_phase_02_reads_it(
+    sm: sessionmaker[Session], total: object, expected: int
+) -> None:
+    """M6."""
+    payer = add_user(sm, Role.student)
+    _dashboard_payment(sm, payer, total, updated=NOV_1 + timedelta(days=3))
+    assert _refunded(sm, NOV_1, DEC_1) == expected
+
+
+def test_only_egp_payments_count_and_other_currencies_are_logged(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    """M8: costMinor is EGP, so a USD payment must not add into the piasters."""
+    payer = add_user(sm, Role.student)
+    admin_id = add_user(sm, Role.platform_admin)
+    add_payment(sm, payer=payer, amount_minor=1000, paid_at=NOV_1 + timedelta(days=1))
+    foreign = add_payment(sm, payer=payer, amount_minor=5000, paid_at=NOV_1 + timedelta(days=1))
+    dashboard = _dashboard_payment(sm, payer, 700, updated=NOV_1 + timedelta(days=2))
+    with sm.begin() as session:
+        session.execute(
+            sa.update(Payment).where(Payment.id.in_([foreign, dashboard])).values(currency="USD")
+        )
+    _refund(sm, foreign, admin_id, 400, NOV_1 + timedelta(days=3))
+    events: list[tuple[str, object]] = []
+    from lemely.db import admin_margin_repo
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            admin_margin_repo.alerts,
+            "warning",
+            lambda event, **kw: events.append((event, kw.get("currencies"))),
+        )
+        body = _get(_client(sm, admin))
+    revenue = body["revenue"]
+    assert isinstance(revenue, dict)
+    assert (revenue["packsMinor"], revenue["refundedMinor"], revenue["netMinor"]) == (1000, 0, 1000)
+    assert events == [("margin_non_egp_payments", ["USD"])]

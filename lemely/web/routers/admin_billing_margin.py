@@ -79,7 +79,8 @@ def margin_dto(r: MarginReport) -> MarginReportDTO:
             byModel=[ModelCostDTO(model=m, costUsd=_usd(c)) for m, c in r.cost.by_model],
             unattributedModelUsd=_usd(r.cost.unattributed_model_usd),
         ),
-        egpPerUsd=None if r.egp_per_usd is None else str(r.egp_per_usd),
+        egpPerUsd=None if r.egp_per_usd is None else format(r.egp_per_usd.normalize(), "f"),
+        egpPerUsdSource=r.egp_per_usd_source,
         costMinor=r.cost_minor,
         marginMinor=r.margin_minor,
         accuracy=[
@@ -106,9 +107,7 @@ def margin_dto(r: MarginReport) -> MarginReportDTO:
             creditsExpiring30dUnits=r.exposure.credits_expiring_30d_units,
             creditsExpiring30dOwners=r.exposure.credits_expiring_30d_owners,
             creditsExpiredUnusedUnits=r.exposure.credits_expired_unused_units,
-            expiredJobs=ExpiredJobsDTO(
-                count=r.exposure.expired_jobs, costUsd=_usd(r.exposure.expired_jobs_cost_usd)
-            ),
+            expiredJobs=ExpiredJobsDTO(count=r.exposure.expired_jobs),
         ),
     )
 
@@ -118,7 +117,9 @@ def margin_report(
     service: MarginService,
     start: Annotated[datetime, Query(alias="from")],
     end: Annotated[datetime, Query(alias="to")],
-    egpPerUsd: Annotated[Decimal | None, Query(gt=0, le=10_000)] = None,
+    egpPerUsd: Annotated[
+        Decimal | None, Query(gt=0, le=10_000, max_digits=9, decimal_places=4)
+    ] = None,
 ) -> MarginReportDTO:
     """The window is half-open ``[from, to)``; both ends need a time zone (DV-24)."""
     with mapped_errors():

@@ -8,6 +8,9 @@ The keys equal ``MarginReport`` in ``web/src/lib/billingTypes.ts``, field for fi
 from __future__ import annotations
 
 from datetime import datetime  # noqa: TC003 - pydantic resolves annotations at runtime
+from typing import Literal
+
+from pydantic import Field
 
 from lemely.web.schemas_admin import ApiModel
 
@@ -38,7 +41,9 @@ class RevenueDTO(ApiModel):
 
 
 class CostDTO(ApiModel):
-    totalUsd: str
+    """LLM cost is the metered settled cost; it excludes released or exempt spend."""
+
+    totalUsd: str = Field(description="Metered settled cost; excludes released or exempt spend.")
     byAction: list[CostRowDTO]
     byPlan: list[CostRowDTO]
     byModel: list[ModelCostDTO]
@@ -63,8 +68,9 @@ class DebtorDTO(ApiModel):
 
 
 class ExpiredJobsDTO(ApiModel):
+    """Jobs that expired unsettled. No cost: an expired job never has one recorded."""
+
     count: int
-    costUsd: str
 
 
 class ExposureDTO(ApiModel):
@@ -84,6 +90,7 @@ class MarginReportDTO(ApiModel):
     revenue: RevenueDTO
     cost: CostDTO
     egpPerUsd: str | None
+    egpPerUsdSource: Literal["request", "settings"] | None
     costMinor: int | None
     marginMinor: int | None
     accuracy: list[AccuracyRowDTO]

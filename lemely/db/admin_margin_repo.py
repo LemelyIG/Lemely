@@ -16,43 +16,58 @@ Definitions, stated once so the screen and the tests agree:
   (b) *Dashboard refunds* (Phase 02): a refund made in the Paymob dashboard leaves no console
   row; the callback records Paymob's running total in ``last_callback.refunded_amount_cents``.
   The dashboard part is that total (capped at the payment amount) minus every succeeded console
-  refund of the payment, when positive, attributed to the payment's ``updated_at`` (the last
-  callback). A payment refunded in the console and reported back by Paymob therefore counts
-  once. A value that is not a non-negative integer of at most 15 digits counts as 0, as
-  ``PaymentView.refunded_minor`` does. Caveat: any later write to the payment moves its
+  refund of the payment *created before the window ends*, when positive, attributed to the
+  payment's ``updated_at`` (the last callback). A payment refunded in the console and reported
+  back by Paymob therefore counts once, and a console refund that starts after the window never
+  erases the window's dashboard refund (a callback on 30 Nov that already includes a console
+  refund created that day is netted out of November). The total is read as Phase 02's
+  ``_as_int`` reads it (an integer or an all-digit string, spaces allowed; anything else is 0),
+  then capped at the payment amount, since the field is not HMAC-signed.
+  Caveat: any later write to the payment moves its
   ``updated_at`` and so the attribution of an earlier dashboard refund.
   Net = gross - refunded, and may be negative when a window refunds earlier sales.
-* **LLM cost**: ``usage_jobs.actual_cost_usd`` of jobs created in the window, any status (an
-  expired job's recorded cost is real money spent). Every query that filters ``usage_jobs`` by
-  ``created_at`` also states ``actual_cost_usd IS NOT NULL``: ``ix_admin_usage_jobs_created_at``
-  is partial on it and is unusable otherwise. So a job with no recorded cost is in no figure
-  here, including the expired-jobs exposure (it counts expired jobs *with* a cost).
+* **LLM cost**: the *metered, settled* cost, ``usage_jobs.actual_cost_usd`` of jobs created in
+  the window. It excludes released or exempt spend (jobs released after model calls, settles
+  refused on a closed job, exempt and unmetered callers), so margin is overstated by that
+  amount. Every cost query that filters ``usage_jobs`` by ``created_at`` also states
+  ``actual_cost_usd IS NOT NULL``: ``ix_admin_usage_jobs_created_at`` is partial on it and is
+  unusable otherwise.
+* **Expired jobs** (exposure): a count of ``expired`` jobs created in the window. It carries no
+  cost: an expired job never has a recorded cost (``settle`` ignores a closed job), so a USD
+  figure would read as a measured zero. It has its own query without the cost predicate; no
+  index covers ``status = 'expired'``, so it is one scan of the window's rows.
 * **Cost by plan**: the plan of the actor's subscription period covering the job's creation;
   jobs with none (credits-only users, assistants acting without a plan of their own) are the
   ``None`` row.
 * **Cost by model**: ``usage_job_model_costs`` of jobs created in the window; the remainder of
-  the total is ``unattributed`` (jobs settled before per-model recording, or expired by crash),
-  never negative: model rows above the total mean double counting, so the remainder is clamped
-  to 0 and ``margin_model_cost_exceeds_total`` is logged.
+  the total is ``unattributed`` (jobs settled before per-model recording), never negative.
+  Model rows above their own job's cost mean double counting: that is checked per job in SQL
+  (so one job's missing split cannot hide another's excess), and logs
+  ``margin_model_cost_exceeds_total``.
+* **Currency**: revenue and refunds count EGP payments only; any other currency in the window
+  logs ``margin_non_egp_payments`` and is left out, since ``costMinor`` is EGP.
 * **Accuracy**: settled jobs only; actual units = ``ceil(actual_cost_usd x units_per_usd)`` at
   the job's own rate version, compared with its own estimate range.
 * **Margin**: needs an EGP-per-USD rate from the caller; without one it is ``None`` rather than
-  a number built on a guessed rate. ``costMinor = ceil(totalUsd x rate x 100)``: the cost is
-  rounded up, against us.
+  a number built on a guessed rate. A request rate wins; otherwise the admin-set
+  ``billing_settings.margin_egp_per_usd`` is the default, and the report says which was used.
+  ``costMinor = ceil(totalUsd x rate x 100)`` in a 60-digit decimal context: rounded up, against
+  us.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from decimal import ROUND_CEILING, Decimal
-from typing import TYPE_CHECKING, Final
+from decimal import ROUND_CEILING, Decimal, localcontext
+from typing import TYPE_CHECKING, Final, Literal
 
 import sqlalchemy as sa
 import structlog
 
 from lemely.db.admin_billing_repo import AdminInvalidError
 from lemely.db.models.billing import PaymentPurpose
+from lemely.db.models.billing_ops import BillingSettings
 
 if TYPE_CHECKING:
     import uuid
@@ -78,7 +93,7 @@ _TOP_DEBTORS = 20
 _ZERO = Decimal("0")
 
 _REVENUE_FILTER = (
-    "p.paid_at >= :start AND p.paid_at < :end"
+    "p.paid_at >= :start AND p.paid_at < :end AND p.currency = 'EGP'"
     " AND p.status::text IN ('paid', 'partially_refunded', 'refunded')"
 )
 
@@ -122,9 +137,17 @@ _ACCURACY = (
     " FROM settled GROUP BY action, estimator_version"
     " ORDER BY action, estimator_version"
 )
+#: Expired jobs have no recorded cost, so this query must not carry the cost predicate.
 _EXPIRED_JOBS = (
-    "SELECT COUNT(*), COALESCE(SUM(j.actual_cost_usd), 0) FROM usage_jobs j"  # noqa: S608 - fixed fragments, no caller input
-    f" WHERE j.status::text = 'expired' AND {_JOBS_IN_WINDOW}"
+    "SELECT COUNT(*) FROM usage_jobs j"
+    " WHERE j.status::text = 'expired' AND j.created_at >= :start AND j.created_at < :end"
+)
+#: Per job, how far its model rows exceed its own cost; positive means double counting.
+_MODEL_EXCESS = (
+    "SELECT COALESCE(SUM(GREATEST(m.model_usd - j.actual_cost_usd, 0)), 0) FROM usage_jobs j"  # noqa: S608 - fixed fragments, no caller input
+    " JOIN LATERAL (SELECT SUM(c.cost_usd) AS model_usd FROM usage_job_model_costs c"
+    "   WHERE c.usage_job_id = j.id) m ON m.model_usd IS NOT NULL"
+    f" WHERE {_JOBS_IN_WINDOW}"
 )
 
 #: Every statement that filters ``usage_jobs`` by ``created_at``, named for the EXPLAIN pin in
@@ -133,8 +156,8 @@ JOB_WINDOW_QUERIES: Final[dict[str, str]] = {
     "cost_by_action": _COST_BY_ACTION,
     "cost_by_plan": _COST_BY_PLAN,
     "cost_by_model": _COST_BY_MODEL,
+    "model_excess": _MODEL_EXCESS,
     "accuracy": _ACCURACY,
-    "expired_jobs": _EXPIRED_JOBS,
 }
 
 _GROSS_BY_PURPOSE = (
@@ -146,24 +169,30 @@ _GROSS_BY_PLAN = (
     " JOIN plan_tiers t ON t.id = p.plan_tier_id"
     f" WHERE {_REVENUE_FILTER} GROUP BY t.code ORDER BY t.code"
 )
+_FOREIGN_CURRENCIES = (
+    "SELECT DISTINCT p.currency FROM payments p"
+    " WHERE p.paid_at >= :start AND p.paid_at < :end AND p.currency <> 'EGP'"
+    " AND p.status::text IN ('paid', 'partially_refunded', 'refunded')"
+)
 _CONSOLE_REFUNDED = (
     "SELECT COALESCE(SUM(r.amount_minor), 0) FROM payment_refunds r"
-    " WHERE r.kind::text = 'refund' AND r.status::text = 'succeeded'"
+    " JOIN payments p ON p.id = r.payment_id"
+    " WHERE r.kind::text = 'refund' AND r.status::text = 'succeeded' AND p.currency = 'EGP'"
     " AND r.updated_at >= :start AND r.updated_at < :end"
 )
+_REPORTED_TOTAL = "substring(p.last_callback->>'refunded_amount_cents' from '^\\s*([0-9]+)\\s*$')"
 _DASHBOARD_REFUNDED = (
-    "SELECT COALESCE(SUM(GREATEST(reported.minor - reported.console, 0)), 0) FROM ("
-    "  SELECT LEAST(p.amount_minor,"
-    "           CASE WHEN p.last_callback->>'refunded_amount_cents' ~ '^[0-9]{1,15}$'"
-    "                THEN (p.last_callback->>'refunded_amount_cents')::bigint ELSE 0 END"
-    "         ) AS minor,"
+    "SELECT COALESCE(SUM(GREATEST(reported.minor - reported.console, 0)), 0) FROM ("  # noqa: S608 - fixed fragments, no caller input
+    "  SELECT CASE WHEN " + _REPORTED_TOTAL + " IS NULL THEN 0"
+    "              WHEN length(" + _REPORTED_TOTAL + ") > 15 THEN p.amount_minor"
+    "              ELSE LEAST(p.amount_minor, (" + _REPORTED_TOTAL + ")::bigint) END AS minor,"
     "         COALESCE(("
     "           SELECT SUM(r.amount_minor) FROM payment_refunds r"
     "           WHERE r.payment_id = p.id AND r.kind::text = 'refund'"
-    "             AND r.status::text = 'succeeded'"
+    "             AND r.status::text = 'succeeded' AND r.created_at < :end"
     "         ), 0) AS console"
     "  FROM payments p"
-    "  WHERE p.status::text IN ('partially_refunded', 'refunded')"
+    "  WHERE p.status::text IN ('partially_refunded', 'refunded') AND p.currency = 'EGP'"
     "    AND p.updated_at >= :start AND p.updated_at < :end"
     ") reported"
 )
@@ -228,7 +257,6 @@ class ExposureReport:
     credits_expiring_30d_owners: int
     credits_expired_unused_units: int
     expired_jobs: int
-    expired_jobs_cost_usd: Decimal
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,6 +266,7 @@ class MarginReport:
     revenue: RevenueReport
     cost: CostReport
     egp_per_usd: Decimal | None
+    egp_per_usd_source: Literal["request", "settings"] | None
     cost_minor: int | None
     margin_minor: int | None
     accuracy: list[AccuracyRow]
@@ -262,14 +291,21 @@ class AdminMarginService:
             cost = self._cost(s, window)
             accuracy = self._accuracy(s, window)
             exposure = self._exposure(s, window, now=self._now())
+            rate = egp_per_usd
+            source: Literal["request", "settings"] | None = "request" if rate is not None else None
+            if rate is None:
+                rate = s.scalar(sa.select(BillingSettings.margin_egp_per_usd))
+                source = "settings" if rate is not None else None
         cost_minor = margin_minor = None
-        if egp_per_usd is not None:
-            cost_minor = int(
-                (cost.total_usd * egp_per_usd * 100).to_integral_value(rounding=ROUND_CEILING)
-            )
+        if rate is not None:
+            with localcontext() as ctx:
+                ctx.prec = 60  # the default 28 digits would round before the ceiling
+                cost_minor = int(
+                    (cost.total_usd * rate * 100).quantize(Decimal(1), rounding=ROUND_CEILING)
+                )
             margin_minor = revenue.net_minor - cost_minor
         return MarginReport(
-            start, end, revenue, cost, egp_per_usd, cost_minor, margin_minor, accuracy, exposure
+            start, end, revenue, cost, rate, source, cost_minor, margin_minor, accuracy, exposure
         )
 
     # -- revenue -------------------------------------------------------------------
@@ -280,6 +316,11 @@ class AdminMarginService:
             str(purpose): int(minor)
             for purpose, minor in s.execute(sa.text(_GROSS_BY_PURPOSE), window)
         }
+        foreign = sorted(
+            str(c) for (c,) in s.execute(sa.text(_FOREIGN_CURRENCIES), window) if c is not None
+        )
+        if foreign:
+            alerts.warning("margin_non_egp_payments", currencies=foreign, alert=True)
         console = int(s.execute(sa.text(_CONSOLE_REFUNDED), window).scalar_one())
         dashboard = int(s.execute(sa.text(_DASHBOARD_REFUNDED), window).scalar_one())
         by_plan = [
@@ -315,15 +356,16 @@ class AdminMarginService:
         ]
         total = sum((row.cost_usd for row in by_action), _ZERO)
         attributed = sum((cost for _, cost in by_model), _ZERO)
-        unattributed = total - attributed
-        if unattributed < _ZERO:
+        excess = Decimal(s.execute(sa.text(_MODEL_EXCESS), window).scalar_one())
+        if excess > _ZERO:
             alerts.warning(
                 "margin_model_cost_exceeds_total",
                 total_usd=str(total),
                 model_usd=str(attributed),
+                excess_usd=str(excess),
                 alert=True,
             )
-            unattributed = _ZERO
+        unattributed = max(total - attributed, _ZERO)
         return CostReport(total, by_action, by_plan, by_model, unattributed)
 
     # -- estimate accuracy -------------------------------------------------------------
@@ -397,7 +439,7 @@ class AdminMarginService:
             ),
             window,
         ).scalar_one()
-        expired_jobs, expired_cost = s.execute(sa.text(_EXPIRED_JOBS), window).one()
+        expired_jobs = s.execute(sa.text(_EXPIRED_JOBS), window).scalar_one()
         return ExposureReport(
             outstanding_debt_units=int(debt_units),
             debtors=int(debtors),
@@ -407,7 +449,6 @@ class AdminMarginService:
             credits_expiring_30d_owners=int(expiring_owners),
             credits_expired_unused_units=int(expired_unused),
             expired_jobs=int(expired_jobs),
-            expired_jobs_cost_usd=Decimal(expired_cost),
         )
 
 
