@@ -41,16 +41,17 @@ from lemely.web.deps import (
     get_study_plan_service,
     get_xp_service,
 )
+from lemely.web.routers import widget as widget_router
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
 # The real current date at noon UTC, not a fixed historical instant like
 # ``test_web_xp.py``/``test_web_study_plan.py`` use: `widget.py`'s own
-# `_next_session` filters `session.date >= today` against the real wall
-# clock (`datetime.now(UTC).date()`, A5 review fix — a past, uncompleted
-# session must never render as "next"), so a fixed date in the past would
-# make every session this file generates look overdue and get filtered out.
+# `_next_session` filters `session.date >= today` (A5 review fix — a past,
+# uncompleted session must never render as "next"). The router's clock is
+# pinned to this same instant by `_pin_router_clock`, so a run that crosses
+# UTC midnight cannot see the services on one date and the router on the next.
 _TODAY = datetime.now(UTC).date()
 _NOON_UTC = datetime.combine(_TODAY, time(12, 0), tzinfo=UTC)
 
@@ -58,6 +59,11 @@ _NOON_UTC = datetime.combine(_TODAY, time(12, 0), tzinfo=UTC)
 # ---------------------------------------------------------------------------
 # Fixtures.
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _pin_router_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(widget_router, "_utcnow", lambda: _NOON_UTC)
 
 
 @pytest.fixture
