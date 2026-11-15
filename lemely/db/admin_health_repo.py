@@ -42,6 +42,11 @@ if TYPE_CHECKING:
 BILLING_JOB_NAMES: Final = (
     "billing.prune_webhook_failures",
     "billing.reconcile_pending",
+    "seats.monthly_allowance",
+    "seats.release_due",
+    "subscriptions.drift_check",
+    "subscriptions.expire_overdue",
+    "subscriptions.period_end",
     "usage.expire_grants",
     "usage.expire_stale_jobs",
     "usage.reconcile_balances",

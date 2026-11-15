@@ -53,6 +53,13 @@ from lemely.db.models.users import User
 from lemely.db.xp_repo import DEFAULT_ZONE, resolve_zone
 from lemely.web.notify import notify_safely
 from lemely.web.purge import purge_expired_papers, purge_expired_teacher_papers
+from lemely.web.subscription_jobs import (
+    drift_check_job,
+    expire_overdue_job,
+    monthly_seat_allowance_job,
+    period_end_job,
+    release_due_seats_job,
+)
 from lemely.web.tutoring_email import deliver_tutoring_email
 from lemely.web.usage_sweeps import ReconcileMemo, RepairCursor, usage_jobs
 
@@ -69,6 +76,7 @@ if TYPE_CHECKING:
     from lemely.io.storage import StorageBackend
     from lemely.runtime.config import NotificationsSettings
     from lemely.web.push import NotificationTransport
+    from lemely.web.subscription_deps import SubscriptionDeps
 
 log = structlog.get_logger(__name__)
 
@@ -536,9 +544,18 @@ class Sweeper:
     #: Writes ``job_runs`` for the admin health view (Phase 07). ``deps.get_sweeper`` sets it;
     #: ``None`` for a sweeper built without a database, as most tests build one.
     job_recorder: JobRunRecorder | None = None
+    #: Paymob billing Phase 05: the subscription jobs run only when given (Paymob configured),
+    #: the same optional-collaborator pattern as ``billing_reconcile``.
+    subscriptions: SubscriptionDeps | None = None
+    #: The two seat jobs run whatever the Paymob configuration: manual teacher plans grant
+    #: seats too (DV-22). ``deps.get_sweeper`` sets it; tests that build a sweeper for
+    #: notifications alone keep the jobs they had.
+    seat_allowances: bool = False
+    #: Once-a-day memo for the drift check (an optimisation, like the zone memos).
+    billing_day_memo: ZoneDateMemo = field(default_factory=ZoneDateMemo)
 
     def sweep_once(self) -> dict[str, int | None]:
-        """Run every job the sweeper was given (notifications, purge, email, billing, usage)."""
+        """Run every job given (notifications, purge, email, billing, usage, subscription, seat)."""
         moment = self.now()
         jobs: list[tuple[str, Callable[[], int]]] = [
             (
@@ -625,6 +642,41 @@ class Sweeper:
                     memo=self.usage_reconcile,
                     repair=self.usage_repair,
                 )
+            )
+        # DV-32: an expired teacher plan grants no new month, and a seat leaving at month end
+        # is released before the new month's grant, so the order below is load-bearing.
+        subscriptions = self.subscriptions
+        if subscriptions is not None:
+            jobs.extend(
+                [
+                    (
+                        "subscriptions.expire_overdue",
+                        lambda: expire_overdue_job(subscriptions, now=moment),
+                    ),
+                    (
+                        "subscriptions.period_end",
+                        lambda: period_end_job(subscriptions, now=moment),
+                    ),
+                    (
+                        "subscriptions.drift_check",
+                        lambda: drift_check_job(
+                            subscriptions, now=moment, memo=self.billing_day_memo
+                        ),
+                    ),
+                ]
+            )
+        if self.seat_allowances:
+            jobs.extend(
+                [
+                    (
+                        "seats.release_due",
+                        lambda: release_due_seats_job(self.sessionmaker, now=moment),
+                    ),
+                    (
+                        "seats.monthly_allowance",
+                        lambda: monthly_seat_allowance_job(self.sessionmaker, now=moment),
+                    ),
+                ]
             )
         return run_jobs(jobs, recorder=self.job_recorder, now=self.now)
 
