@@ -19,10 +19,13 @@ import pytest
 import sqlalchemy as sa
 from structlog.testing import capture_logs
 
+from lemely.core.subscription_rules import PAYMOB_ACCOUNT_TZ
 from lemely.db.billing_repo import CheckoutUnavailable
 from lemely.db.models.billing import (
     Payment,
     PaymentPurpose,
+    PaymobEvent,
+    PaymobEventKind,
     PlanAudience,
     Subscription,
     SubscriptionPeriod,
@@ -114,7 +117,11 @@ def _client(
     """Paymob as it stands: ``last`` is the last charge, by default the first payment."""
     client = FakePaymobClient()
     client.subscriptions[pid] = remote_subscription(
-        pid, state=state, amount_cents=amount, initial_transaction=700 + pid
+        pid,
+        state=state,
+        amount_cents=amount,
+        initial_transaction=700 + pid,
+        next_billing=END.astimezone(PAYMOB_ACCOUNT_TZ).date().isoformat(),
     )
     client.last_transactions[pid] = last or charge(700 + pid, 10_000)
     return client
@@ -480,23 +487,70 @@ def test_a_limit_below_one_is_refused(pg_sessionmaker: sessionmaker[Session]) ->
         _drift(pg_sessionmaker, FakePaymobClient(), limit=0)
 
 
-def test_rows_are_taken_least_recently_updated_first(
+def _checked(sm: sessionmaker[Session], sid: uuid.UUID) -> Any:
+    return _sub(sm, sid).drift_checked_at
+
+
+def test_rows_never_checked_come_first_then_the_least_recently_checked(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    newer = _linked(pg_sessionmaker, pid=1)
-    older = _linked(pg_sessionmaker, pid=2)
-    with pg_sessionmaker.begin() as session:
-        session.execute(
-            sa.update(Subscription)
-            .where(Subscription.id == older)
-            .values(updated_at=T0 - timedelta(days=9))
-        )
-    client = _client(pid=1, state="canceled")
-    client.subscriptions[2] = remote_subscription(2, state="canceled", initial_transaction=702)
-    client.last_transactions[2] = charge(702, 10_000)
-    assert _drift(pg_sessionmaker, client, limit=1) == 1
-    assert _sub(pg_sessionmaker, older).cancel_at_period_end is True
-    assert _sub(pg_sessionmaker, newer).cancel_at_period_end is False
+    sm = pg_sessionmaker
+    stale = _linked(sm, pid=1)
+    fresh = _linked(sm, pid=2)
+    _linked(sm, pid=3)  # never checked
+    with sm.begin() as session:
+        for sid, days in ((stale, 9), (fresh, 1)):
+            session.execute(
+                sa.update(Subscription)
+                .where(Subscription.id == sid)
+                .values(drift_checked_at=DAY - timedelta(days=days))
+            )
+    client = _client(pid=1)
+    for pid in (2, 3):
+        client.subscriptions[pid] = remote_subscription(pid, initial_transaction=700 + pid)
+        client.last_transactions[pid] = charge(700 + pid, 10_000)
+    seen: list[int] = []
+    for _ in range(3):
+        _drift(sm, client, limit=1)
+        seen = [c["subscription_id"] for c in client.calls_to("get_subscription")]
+    assert seen == [3, 1, 2]  # never checked, then the stale one, then the fresh one
+
+
+def test_rows_in_sync_cannot_starve_the_rest_of_a_bounded_pass(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """With ``limit=1`` every row is reached, though the first two need nothing."""
+    sm = pg_sessionmaker
+    ids = [_linked(sm, pid=pid) for pid in (1, 2, 3)]
+    client = _client(pid=1)
+    for pid in (2, 3):
+        client.subscriptions[pid] = remote_subscription(pid, initial_transaction=700 + pid)
+        client.last_transactions[pid] = charge(700 + pid, 10_000)
+    client.subscriptions[3]["state"] = "canceled"
+    results = [_drift(sm, client, limit=1) for _ in range(3)]
+    assert sorted(results) == [0, 0, 1]
+    assert all(_checked(sm, sid) == DAY for sid in ids)
+    assert _sub(sm, ids[2]).cancel_at_period_end is True  # the last row was reached and repaired
+
+
+def test_a_row_whose_read_failed_goes_to_the_back_of_the_queue(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    broken = _linked(sm, pid=1)
+    client = _client(pid=1)
+    client.fail_for[("get_subscription", 1)] = PaymobError("down", status_code=503)
+    assert _drift(sm, client) == 0
+    assert _checked(sm, broken) == DAY
+
+
+def test_every_check_stamps_the_row_even_when_nothing_is_repaired(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sid = _linked(pg_sessionmaker)
+    assert _checked(pg_sessionmaker, sid) is None
+    assert _drift(pg_sessionmaker, _client()) == 0
+    assert _checked(pg_sessionmaker, sid) == DAY
 
 
 def test_a_held_row_is_skipped(pg_sessionmaker: sessionmaker[Session]) -> None:
@@ -588,6 +642,235 @@ def test_a_manual_activation_that_ended_is_never_selected(
     client = FakePaymobClient()
     assert _drift(pg_sessionmaker, client) == 0
     assert client.calls == []
+
+
+# -- linking a Paymob-created plan from its stored event (T5-I2) --------------------------
+
+
+def _unlinked(sm: sessionmaker[Session], *, txn: int = FIRST_TXN, **kwargs: Any) -> uuid.UUID:
+    """An active plan that was paid but never linked to its Paymob subscription."""
+    student = seed_user(sm, Role.student)
+    sid = seed_subscription(
+        sm,
+        user_id=student,
+        tier_id=seed_tier(sm),
+        payer_id=student,
+        paymob_amount_minor=None,
+        activated_at=T0,
+        **kwargs,
+    )
+    seed_first_payment(sm, subscription_id=sid, paymob_txn_id=txn)
+    return sid
+
+
+def _store_created_event(
+    sm: sessionmaker[Session], *, paymob_id: int = PID, initial: int | None = FIRST_TXN
+) -> uuid.UUID:
+    remote = remote_subscription(paymob_id, initial_transaction=initial or 0)
+    if initial is None:
+        del remote["initial_transaction"]
+    with sm.begin() as session:
+        event = PaymobEvent(
+            kind=PaymobEventKind.subscription,
+            dedupe_key=f"sub:{paymob_id}:Subscription Created:{uuid.uuid4()}",
+            payload={"body": {"trigger_type": "Subscription Created"}, "remote": remote},
+        )
+        session.add(event)
+        session.flush()
+        return event.id
+
+
+def _event_processed(sm: sessionmaker[Session], event_id: uuid.UUID) -> bool:
+    with sm() as session:
+        event = session.get(PaymobEvent, event_id)
+        assert event is not None
+        return event.processed_at is not None
+
+
+def test_a_stored_created_event_links_the_plan_and_the_same_pass_checks_it(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    sid = _unlinked(sm)
+    event = _store_created_event(sm)
+    client = _client()
+    assert _drift(sm, client) == 1  # the link; the plan itself is in sync
+    row = _sub(sm, sid)
+    assert row.paymob_subscription_id == PID
+    assert _event_processed(sm, event)
+    assert "get_subscription" in client.names()  # linked rows are checked in the same pass
+    assert _drift(sm, client) == 0  # and it is linked once
+
+
+def test_a_stored_event_for_another_transaction_links_nothing(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    sid = _unlinked(sm)
+    event = _store_created_event(sm, initial=FIRST_TXN + 1)
+    assert _drift(sm, _client()) == 0
+    assert _sub(sm, sid).paymob_subscription_id is None
+    assert not _event_processed(sm, event)
+
+
+def test_an_already_processed_event_is_not_linked_again(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    sid = _unlinked(sm)
+    event = _store_created_event(sm)
+    with sm.begin() as session:
+        stored = session.get(PaymobEvent, event)
+        assert stored is not None
+        stored.processed_at = T0
+    assert _drift(sm, _client()) == 0
+    assert _sub(sm, sid).paymob_subscription_id is None
+
+
+def test_an_event_without_an_initial_transaction_links_nothing(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    sid = _unlinked(sm)
+    _store_created_event(sm, initial=None)
+    assert _drift(sm, _client()) == 0
+    assert _sub(sm, sid).paymob_subscription_id is None
+
+
+def test_a_paymob_id_another_plan_holds_is_not_linked_and_is_alerted(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    holder = _linked(sm)  # holds PID already
+    sid = _unlinked(sm, txn=FIRST_TXN + 50)
+    event = _store_created_event(sm, initial=FIRST_TXN + 50)
+    with capture_logs() as logs:
+        _drift(sm, _client())
+    assert any(log["event"] == "subscription_created_event_link_conflict" for log in logs)
+    assert _sub(sm, sid).paymob_subscription_id is None
+    assert _sub(sm, holder).paymob_subscription_id == PID
+    assert not _event_processed(sm, event)
+
+
+def test_a_complimentary_row_is_never_linked(pg_sessionmaker: sessionmaker[Session]) -> None:
+    sm = pg_sessionmaker
+    student = seed_user(sm, Role.student)
+    sid = seed_subscription(
+        sm,
+        user_id=student,
+        tier_id=seed_tier(sm),
+        is_manually_activated=True,
+        period_start=None,
+        period_end=None,
+    )
+    _store_created_event(sm)
+    client = FakePaymobClient()
+    assert _drift(sm, client) == 0
+    assert client.calls == []
+    assert _sub(sm, sid).paymob_subscription_id is None
+
+
+def test_the_link_pass_is_bounded_by_the_limit(pg_sessionmaker: sessionmaker[Session]) -> None:
+    sm = pg_sessionmaker
+    first = _unlinked(sm, txn=FIRST_TXN)
+    second = _unlinked(sm, txn=FIRST_TXN + 7)
+    _store_created_event(sm, paymob_id=PID, initial=FIRST_TXN)
+    _store_created_event(sm, paymob_id=PID + 7, initial=FIRST_TXN + 7)
+    client = _client()
+    client.subscriptions[PID + 7] = remote_subscription(PID + 7, initial_transaction=FIRST_TXN + 7)
+    client.last_transactions[PID + 7] = charge(FIRST_TXN + 7, 10_000)
+    _drift(sm, client, limit=1)
+    linked = [_sub(sm, sid).paymob_subscription_id is not None for sid in (first, second)]
+    assert sorted(linked) == [False, True]
+
+
+# -- Paymob's next_billing against our period end (M8) -----------------------------------
+
+
+def _with_next_billing(client: FakePaymobClient, when: Any) -> FakePaymobClient:
+    client.subscriptions[PID]["next_billing"] = (
+        when.astimezone(PAYMOB_ACCOUNT_TZ).date().isoformat()
+    )
+    return client
+
+
+def test_a_next_billing_far_after_our_end_moves_the_end_out_and_alerts(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    sid = _linked(sm, period_end=DAY + timedelta(days=2))
+    client = _with_next_billing(_client(), DAY + timedelta(days=12))
+    with capture_logs() as logs:
+        assert _drift(sm, client) == 1
+    [alert] = [log for log in logs if log["event"] == "subscription_next_billing_disagrees"]
+    assert (alert["direction"], alert["corrected"], alert.get("alert")) == ("later", True, True)
+    end = _sub(sm, sid).current_period_end
+    assert end is not None
+    assert end.astimezone(PAYMOB_ACCOUNT_TZ).date() == (
+        (DAY + timedelta(days=12)).astimezone(PAYMOB_ACCOUNT_TZ).date()
+    )
+    assert _drift(sm, client) == 0  # agreed now: nothing more to do
+
+
+def test_a_next_billing_far_before_our_end_is_alerted_and_never_shortens_the_period(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    sid = _linked(sm, period_end=DAY + timedelta(days=20))
+    client = _with_next_billing(_client(), DAY + timedelta(days=5))
+    with capture_logs() as logs:
+        assert _drift(sm, client) == 0
+    [alert] = [log for log in logs if log["event"] == "subscription_next_billing_disagrees"]
+    assert (alert["direction"], alert["corrected"]) == ("earlier", False)
+    assert _sub(sm, sid).current_period_end == DAY + timedelta(days=20)  # untouched
+
+
+@pytest.mark.parametrize("days", [-2, 0, 1, 2])
+def test_a_next_billing_inside_the_tolerance_is_not_a_disagreement(
+    pg_sessionmaker: sessionmaker[Session], days: int
+) -> None:
+    sm = pg_sessionmaker
+    sid = _linked(sm, period_end=DAY + timedelta(days=10))
+    client = _with_next_billing(_client(), DAY + timedelta(days=10 + days))
+    with capture_logs() as logs:
+        assert _drift(sm, client) == 0
+    assert not any(log["event"] == "subscription_next_billing_disagrees" for log in logs)
+    assert _sub(sm, sid).current_period_end == DAY + timedelta(days=10)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"cancel_at_period_end": True, "paymob_cancelled_at": T0},
+        {"status": SubscriptionStatus.past_due, "grace_until": DAY + timedelta(days=2)},
+    ],
+)
+def test_next_billing_is_not_compared_for_a_cancelling_or_past_due_plan(
+    pg_sessionmaker: sessionmaker[Session], kwargs: dict[str, Any]
+) -> None:
+    sm = pg_sessionmaker
+    sid = _linked(sm, period_end=DAY + timedelta(days=2), **kwargs)
+    client = _with_next_billing(_client(), DAY + timedelta(days=12))
+    assert _drift(sm, client) == 0
+    assert _sub(sm, sid).current_period_end == DAY + timedelta(days=2)
+
+
+def test_next_billing_is_not_compared_once_the_period_is_over(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    sid = _linked(sm)  # ends at END, before DAY: a renewal is due, not an anchor
+    client = _with_next_billing(_client(), DAY + timedelta(days=12))
+    assert _drift(sm, client) == 0
+    assert _sub(sm, sid).current_period_end == END
+
+
+def test_an_unreadable_next_billing_is_ignored(pg_sessionmaker: sessionmaker[Session]) -> None:
+    sm = pg_sessionmaker
+    _linked(sm, period_end=DAY + timedelta(days=2))
+    client = _client()
+    client.subscriptions[PID]["next_billing"] = "someday"
+    assert _drift(sm, client) == 0
 
 
 # -- full refund of a subscription payment (UD-6 (a)) ------------------------------------
@@ -717,15 +1000,68 @@ def test_a_refund_of_a_payment_that_is_not_a_subscription_charge_changes_nothing
     _refund(sm, uuid.uuid4(), full=True)  # an unknown payment is not an error either
 
 
-def test_a_full_refund_of_the_first_payment_ends_the_plan(
+def _first_payment_of(sm: sessionmaker[Session], sid: uuid.UUID) -> uuid.UUID:
+    with sm() as session:
+        return session.scalars(
+            sa.select(Payment.id).where(
+                Payment.subscription_id == sid,
+                Payment.purpose == PaymentPurpose.subscription_first,
+            )
+        ).one()
+
+
+def _give_period(
+    sm: sessionmaker[Session], sid: uuid.UUID, payment_id: uuid.UUID, *, start: Any, end: Any
+) -> None:
+    with sm.begin() as session:
+        session.add(
+            SubscriptionPeriod(
+                subscription_id=sid, period_start=start, period_end=end, payment_id=payment_id
+            )
+        )
+
+
+def test_a_full_refund_of_the_current_periods_first_payment_ends_the_plan(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     sm = pg_sessionmaker
     sid = _linked(sm)
-    with sm() as session:
-        first = session.scalars(sa.select(Payment.id).where(Payment.subscription_id == sid)).one()
+    first = _first_payment_of(sm, sid)
+    _give_period(sm, sid, first, start=T0, end=END)  # the only, so the current, period
     _refund(sm, first, full=True)
     assert _sub(sm, sid).status is SubscriptionStatus.cancelled
+
+
+def test_a_full_refund_of_an_older_periods_payment_changes_nothing_and_alerts(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    student, sid, renewal, _ = _renewed_with_spend(sm, spent=0)
+    first = _first_payment_of(sm, sid)
+    _give_period(sm, sid, first, start=T0, end=END)  # the renewal's period came after it
+    before = _remaining(sm, student)
+    with capture_logs() as logs:
+        _refund(sm, first, full=True)
+    [alert] = [log for log in logs if log["event"] == "subscription_old_period_refunded"]
+    assert alert.get("alert") is True
+    assert str(sid) == alert["subscription_id"]
+    row = _sub(sm, sid)
+    assert (row.status, row.cancel_at_period_end) == (SubscriptionStatus.active, False)
+    assert _remaining(sm, student) == before  # nothing clawed back
+    # The current period's payment still ends the plan.
+    _refund(sm, renewal, full=True)
+    assert _sub(sm, sid).status is SubscriptionStatus.cancelled
+
+
+def test_a_refund_of_a_charge_that_bought_no_period_changes_nothing(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    sid = _linked(sm)  # no period row for its first payment
+    with capture_logs() as logs:
+        _refund(sm, _first_payment_of(sm, sid), full=True)
+    assert _sub(sm, sid).status is SubscriptionStatus.active
+    assert not any(log["event"] == "subscription_old_period_refunded" for log in logs)
 
 
 def test_a_refund_never_writes_to_paymob(pg_sessionmaker: sessionmaker[Session]) -> None:

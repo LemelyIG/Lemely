@@ -20,6 +20,10 @@ Additive, all on ``subscriptions`` and all nullable:
 * ``amount_sync_uncertain_at`` (``timestamptz``): set when the last amount PUT had an unknown
   outcome (Paymob may hold an amount the stamp does not show), so the next sweep repeats it on any
   replica after any restart. Cleared by a PUT that succeeds and when the plan ends.
+* ``drift_checked_at`` (``timestamptz``): when the daily drift check last looked at the row,
+  whether or not it repaired anything. The check takes the least recently checked rows first
+  (``NULLS FIRST``), so rows that are in sync cannot crowd the others out of a bounded pass.
+  Bookkeeping only: ``downgrade`` drops it without a guard.
 
 NULL for every existing row. **Lock behaviour**, as 0037/0038/0056: both directions take ACCESS
 EXCLUSIVE on ``subscriptions`` while the old revision may be serving traffic, so ``SET
@@ -67,6 +71,9 @@ def upgrade() -> None:
     op.add_column(
         "subscriptions",
         sa.Column("amount_sync_uncertain_at", sa.DateTime(timezone=True), nullable=True),
+    )
+    op.add_column(
+        "subscriptions", sa.Column("drift_checked_at", sa.DateTime(timezone=True), nullable=True)
     )
     op.execute(
         f"ALTER TABLE subscriptions ADD CONSTRAINT {PAIRED_CHECK} "
@@ -122,6 +129,7 @@ def downgrade() -> None:
             "is unconfirmed. Downgrading past 0058 is not possible while any is recorded."
         )
     op.drop_constraint(op.f(PAIRED_CHECK), "subscriptions", type_="check")
+    op.drop_column("subscriptions", "drift_checked_at")
     op.drop_column("subscriptions", "amount_sync_uncertain_at")
     op.drop_column("subscriptions", "amount_replaced_at")
     op.drop_column("subscriptions", "previous_amount_minor")

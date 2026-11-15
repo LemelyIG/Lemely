@@ -357,6 +357,13 @@ class Subscription(TimestampMixin, Base):
     """Set when the last amount PUT had an unknown outcome (migration 0058): Paymob may hold an
     amount the stamp does not show, so the next sweep sends the expected amount again. Cleared by
     a PUT that succeeds, and when the plan ends."""
+    drift_checked_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    """When the daily drift check last looked at this row (migration 0058), repaired or not.
+
+    The check takes the least recently checked rows first (``NULL`` first), so rows in sync
+    cannot starve the rest of a bounded pass."""
     extra_seat_grace_until: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True
     )

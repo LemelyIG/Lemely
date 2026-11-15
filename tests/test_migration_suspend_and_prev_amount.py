@@ -50,6 +50,7 @@ NEW_COLUMNS = {
     "previous_amount_minor",
     "amount_replaced_at",
     "amount_sync_uncertain_at",
+    "drift_checked_at",
 }
 PAIRED_CHECK = "ck_subscriptions_previous_amount_paired"
 
@@ -68,7 +69,12 @@ def _marked_subscription(sm: sessionmaker[Session], assignment: str) -> uuid.UUI
 
 def test_the_model_declares_the_columns() -> None:
     columns = Base.metadata.tables["subscriptions"].columns
-    for name in ("suspended_at", "amount_replaced_at", "amount_sync_uncertain_at"):
+    for name in (
+        "suspended_at",
+        "amount_replaced_at",
+        "amount_sync_uncertain_at",
+        "drift_checked_at",
+    ):
         assert columns[name].nullable is True
         assert getattr(columns[name].type, "timezone", False) is True
     assert columns["previous_amount_minor"].nullable is True
@@ -108,7 +114,7 @@ def test_the_columns_have_the_right_types_and_start_null(
         stamped = session.execute(
             sa.text(
                 "SELECT suspended_at, previous_amount_minor, amount_replaced_at, "
-                "amount_sync_uncertain_at "
+                "amount_sync_uncertain_at, drift_checked_at "
                 "FROM subscriptions WHERE id = :s"
             ),
             {"s": sid},
@@ -118,8 +124,9 @@ def test_the_columns_have_the_right_types_and_start_null(
         "previous_amount_minor": "bigint",
         "amount_replaced_at": "timestamp with time zone",
         "amount_sync_uncertain_at": "timestamp with time zone",
+        "drift_checked_at": "timestamp with time zone",
     }
-    assert tuple(stamped) == (None, None, None, None)  # every row starts unmarked
+    assert tuple(stamped) == (None, None, None, None, None)  # every row starts unmarked
 
 
 def test_the_previous_amount_and_its_time_are_set_together_or_not_at_all(
@@ -172,8 +179,7 @@ def test_upgrade_downgrade_upgrade_round_trip(
     migrated_sessionmaker_with_downgrade: tuple[sessionmaker[Session], Callable[[str], None]],
 ) -> None:
     sm, downgrade_to = migrated_sessionmaker_with_downgrade
-    user = seed_user(sm, Role.student)
-    seed_subscription(sm, user_id=user, tier_id=seed_tier(sm), payer_id=user)
+    _marked_subscription(sm, "drift_checked_at = now()")  # bookkeeping: no downgrade guard
 
     downgrade_to(DOWN_REVISION)
     with sm() as session:
@@ -189,7 +195,7 @@ def test_upgrade_downgrade_upgrade_round_trip(
                 sa.text(
                     "SELECT count(*) FROM subscriptions WHERE suspended_at IS NULL "
                     "AND previous_amount_minor IS NULL AND amount_replaced_at IS NULL "
-                    "AND amount_sync_uncertain_at IS NULL"
+                    "AND amount_sync_uncertain_at IS NULL AND drift_checked_at IS NULL"
                 )
             ).scalar_one()
             == 1

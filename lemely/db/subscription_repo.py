@@ -123,6 +123,15 @@ SUBSCRIPTION_SWEEP_BATCH: Final = 200
 #: ignored only when Paymob's last charge confirms the payment (``_confirms_payment``).
 EARLY_CHARGE_WINDOW: Final = timedelta(days=3, hours=6)
 
+#: How far Paymob's ``next_billing`` may sit after our ``current_period_end`` before the drift
+#: check calls it a disagreement. ``next_billing`` is a Cairo calendar date and our end is a UTC
+#: instant (about a day apart), so two days leaves room for that and nothing more.
+NEXT_BILLING_LATER_TOLERANCE: Final = timedelta(days=2)
+
+#: How far it may sit before our end. A late retry restarts our period at the charge while Paymob
+#: keeps its own schedule (up to ``PAYMOB_RETRIAL_DAYS``), so the early-charge window is normal.
+NEXT_BILLING_EARLIER_TOLERANCE: Final = EARLY_CHARGE_WINDOW
+
 
 class AmountPush(enum.StrEnum):
     """What :meth:`SubscriptionService.sync_renewal_amount` did."""
@@ -2529,7 +2538,8 @@ class SubscriptionService:
     def check_drift(self, *, now: datetime, limit: int = SUBSCRIPTION_SWEEP_BATCH) -> int:
         """Compare Paymob-linked subscriptions with Paymob and repair what webhooks missed.
 
-        Candidates, at most ``limit`` and least recently updated first: linked plans that are
+        Candidates, at most ``limit`` and least recently checked first (``drift_checked_at``,
+        never-checked rows first, so rows in sync cannot crowd the rest out): linked plans that are
         live, and linked ``expired`` or ``cancelled`` rows whose Paymob cancel is not stamped
         (a lapsed plan, a superseded checkout, a refused reactivation: DV-27). Complimentary rows
         have no Paymob id and are never selected (R15). Per row, Paymob is read first with no
@@ -2548,6 +2558,10 @@ class SubscriptionService:
         * a Paymob subscription still open after the plan ended: cancelled and stamped, or just
           stamped when Paymob already reports it cancelled.
 
+        Before that, a live or ended plan that Paymob created but Lemely never linked (its
+        ``Subscription Created`` event was stored unprocessed) is linked through the stored event
+        (T5-I2), at most ``limit`` of them; each counts as a repair.
+
         Returns how many rows were repaired. The session must hold no uncommitted work: every
         row commits.
 
@@ -2557,6 +2571,7 @@ class SubscriptionService:
         if limit < 1:
             raise ValueError("limit must be at least 1")
         S = Subscription
+        repaired = self._link_unlinked(now, limit)
         rows = self._session.execute(
             select(S.id, S.paymob_subscription_id, S.status)
             .where(
@@ -2569,10 +2584,9 @@ class SubscriptionService:
                     ),
                 ),
             )
-            .order_by(S.updated_at, S.id)
+            .order_by(S.drift_checked_at.asc().nulls_first(), S.updated_at, S.id)
             .limit(limit)
         ).all()
-        repaired = 0
         for subscription_id, paymob_id, status in rows:
             if paymob_id is None:
                 continue
@@ -2580,6 +2594,9 @@ class SubscriptionService:
                 subscription_id, paymob_id, live=status in PLAN_LIVE_STATUSES
             )
             if reads is None:
+                # Looked at, and Paymob would not say: it goes to the back of the queue, not the
+                # front of tomorrow's.
+                self._sweep_one(subscription_id, self._mark_drift_checked, now)
                 continue
             remote, txn = reads
             repaired += self._sweep_one(
@@ -2588,6 +2605,78 @@ class SubscriptionService:
                 now,
             )
         return repaired
+
+    def _link_unlinked(self, now: datetime, limit: int) -> int:
+        """Link plans whose Paymob subscription Lemely never learnt of; how many were linked.
+
+        A paid ``subscription_first`` payment whose subscription has no Paymob id, with a stored
+        unprocessed ``Subscription Created`` event naming that payment's transaction as its
+        ``initial_transaction``. Without the id the plan is never checked, never cancelled at
+        Paymob and cannot take a seat purchase. Complimentary rows have no payment and are never
+        candidates. Per row, the transaction's advisory lock comes before the row lock, the order
+        the webhook and the first-payment handler use (T5-I2).
+        """
+        S, P, E = Subscription, Payment, PaymobEvent
+        rows = self._session.execute(
+            select(S.id, P.paymob_txn_id)
+            .join(P, P.subscription_id == S.id)
+            .where(
+                S.paymob_subscription_id.is_(None),
+                S.is_manually_activated.is_(False),
+                P.purpose == PaymentPurpose.subscription_first,
+                P.status == PaymentStatus.paid,
+                P.paymob_txn_id.is_not(None),
+                sa.exists().where(
+                    E.kind == PaymobEventKind.subscription,
+                    E.processed_at.is_(None),
+                    E.payload["remote"]["initial_transaction"] == sa.func.to_jsonb(P.paymob_txn_id),
+                ),
+            )
+            .order_by(S.created_at, S.id)
+            .limit(limit)
+        ).all()
+        self._session.rollback()  # the read is over; the Paymob-free work below is per row
+        linked = 0
+        for subscription_id, txn_id in rows:
+            if txn_id is not None:
+                linked += self._link_one(subscription_id, txn_id, now)
+        return linked
+
+    def _link_one(self, subscription_id: uuid.UUID, txn_id: int, now: datetime) -> int:
+        """Link one subscription from its stored ``Subscription Created`` event, atomically."""
+        session = self._session
+        try:
+            lock_paymob_transaction(session, txn_id)
+            subscription = self._lock_for_sweep(subscription_id)
+            linked = False
+            if subscription is not None and subscription.paymob_subscription_id is None:
+                payment = session.scalars(
+                    select(Payment).where(
+                        Payment.paymob_txn_id == txn_id,
+                        Payment.purpose == PaymentPurpose.subscription_first,
+                    )
+                ).one_or_none()
+                if payment is not None:
+                    _link_stored_created_event(session, subscription, payment, now=now)
+                    linked = subscription.paymob_subscription_id is not None
+                    if linked:
+                        _bump(subscription)
+            session.commit()
+        except Exception as exc:
+            session.rollback()
+            alerts.error(
+                "subscription_sweep_failed",
+                subscription_id=str(subscription_id),
+                error=type(exc).__name__,
+                alert=True,
+            )
+            return 0
+        return int(linked)
+
+    def _mark_drift_checked(self, subscription: Subscription, now: datetime) -> bool:
+        """Sweep step: record that the drift check looked at this row; never a repair."""
+        subscription.drift_checked_at = now
+        return False
 
     def _read_for_drift(
         self, subscription_id: uuid.UUID, paymob_id: int, *, live: bool
@@ -2628,6 +2717,7 @@ class SubscriptionService:
         ended or revived it since. A row that was ended when ``txn`` was not read and is live
         now waits for tomorrow's pass.
         """
+        subscription.drift_checked_at = now
         if subscription.paymob_subscription_id != paymob_id:
             return False
         if subscription.status in (SubscriptionStatus.expired, SubscriptionStatus.cancelled):
@@ -2689,7 +2779,57 @@ class SubscriptionService:
                 )
                 return True
             return repaired
+        if not repaired and self._anchor_period_end(subscription, remote, now):
+            return True
         return self._repair_amount(subscription, remote, now) or repaired
+
+    def _anchor_period_end(
+        self, subscription: Subscription, remote: JsonMap, now: datetime
+    ) -> bool:
+        """Compare ``current_period_end`` with Paymob's ``next_billing`` and correct it safely (M8).
+
+        Only an active, not-cancelling plan whose paid period is still running, and only when
+        Paymob's date sits outside the tolerances (:data:`NEXT_BILLING_LATER_TOLERANCE`,
+        :data:`NEXT_BILLING_EARLIER_TOLERANCE`), is looked at; every disagreement is alerted
+        ``subscription_next_billing_disagrees`` (so it repeats daily until someone resolves it).
+
+        The correction goes one way only: a ``next_billing`` that is later than our period end
+        moves ``current_period_end`` out to it, so the payer is not left with a gap between the
+        end of what they paid for and the charge Paymob will make. A ``next_billing`` earlier than
+        our end would mean shortening paid access, which is never done silently: it is alerted and
+        the row is left alone (Paymob's earlier charge is accepted by the early-charge rule).
+        The current period's row and allowance grant keep their own end, so the allowance is not
+        extended. ``True`` when the end was moved.
+        """
+        end = subscription.current_period_end
+        if (
+            subscription.status is not SubscriptionStatus.active
+            or subscription.cancel_at_period_end
+            or end is None
+            or end <= now
+        ):
+            return False
+        billing = parse_paymob_time(remote.get("next_billing"))
+        if billing is None:
+            return False
+        gap = billing - end
+        if -NEXT_BILLING_EARLIER_TOLERANCE <= gap <= NEXT_BILLING_LATER_TOLERANCE:
+            return False
+        later = gap > timedelta(0)
+        alerts.error(
+            "subscription_next_billing_disagrees",
+            subscription_id=str(subscription.id),
+            direction="later" if later else "earlier",
+            corrected=later,
+            period_end=end.isoformat(),
+            next_billing=billing.isoformat(),
+            alert=True,
+        )
+        if not later:
+            return False
+        subscription.current_period_end = billing
+        _bump(subscription)
+        return True
 
     def _repair_amount(self, subscription: Subscription, remote: JsonMap, now: datetime) -> bool:
         """Put an amount Paymob holds back to :meth:`next_renewal_amount`, once (DV-18).
@@ -2725,12 +2865,15 @@ class SubscriptionService:
     def on_payment_refunded(self, payment_id: uuid.UUID, *, full: bool, now: datetime) -> None:
         """A subscription payment was refunded (Phase 07's admin refund calls this, UD-6 (a)).
 
-        A partial refund has no effect. A full refund claws back the unspent, unheld part of the
+        A partial refund has no effect. A full refund of the payment for the CURRENT period (the
+        subscription's latest period) claws back the unspent, unheld part of the
         period allowance that payment bought (spent units stay spent) and ends the plan at once:
         ``cancelled``, with no notice, and the Paymob cancel left to the sweeps (the row is then
         a cancel candidate, DV-15). A payment that is not a subscription charge, or an unknown
         one, is ignored. Idempotent: the ledger refunds a grant once and an ended plan stays
-        ended. Seat allowances are not touched. The caller commits; no Paymob call is made.
+        ended. A full refund of an older period's payment changes nothing and is alerted
+        ``subscription_old_period_refunded`` for manual handling. Seat allowances are not
+        touched. The caller commits; no Paymob call is made.
         """
         if not full:
             return
@@ -2750,6 +2893,29 @@ class SubscriptionService:
             log.info("subscription_refund_ignored", payment_id=str(payment_id))
             return
         subscription = self._lock(payment.subscription_id)
+        paid_period = session.scalar(
+            select(SubscriptionPeriod.id).where(SubscriptionPeriod.payment_id == payment.id)
+        )
+        if paid_period is None:
+            # Kept for a refund and never granted (UD-2, a mismatch): nothing was bought.
+            log.info("subscription_refund_without_period", payment_id=str(payment.id))
+            return
+        latest_period = session.scalar(
+            select(SubscriptionPeriod.id)
+            .where(SubscriptionPeriod.subscription_id == subscription.id)
+            .order_by(SubscriptionPeriod.period_start.desc())
+            .limit(1)
+        )
+        if paid_period != latest_period:
+            # Refunding a month the payer has already used up and moved past must not end the
+            # plan they are paying for now: someone settles it by hand.
+            alerts.error(
+                "subscription_old_period_refunded",
+                subscription_id=str(subscription.id),
+                payment_id=str(payment.id),
+                alert=True,
+            )
+            return
         ledger = UsageLedger(session)
         grant_ids = session.scalars(
             select(UsageGrant.id)
