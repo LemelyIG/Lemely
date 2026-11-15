@@ -27,6 +27,15 @@ class JobHealthDTO(ApiModel):
 
 
 class BillingHealthDTO(ApiModel):
+    """The billing health report for the last ``windowHours``.
+
+    ``verifiedEvents`` counts every stored Paymob event (callbacks and reconcile inquiry
+    results; the table records no source), so ``webhookErrorRate`` is HMAC failures per stored
+    Paymob event. ``hmacFailures`` is capped at 60 rows per minute per process and undercounts in
+    a flood. ``renewalFailureEvents`` counts failure callbacks received, stale replays included.
+    A job whose first run never finished reads ``neverRun``.
+    """
+
     windowHours: int
     jobs: list[JobHealthDTO]
     verifiedEvents: int

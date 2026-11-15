@@ -40,11 +40,13 @@ def _outcome(value: str | None) -> Literal["ok", "failed"] | None:
 
 def _job_health_dto(job: JobHealth) -> JobHealthDTO:
     run = job.run
-    if run is None:
+    if run is None or run.total_runs == 0:
+        # A first run that started and never finished (hung, or the process died) has a row
+        # but no outcome: it is not an OK run.
         return JobHealthDTO(
             name=job.name,
             neverRun=True,
-            lastStartedAt=None,
+            lastStartedAt=None if run is None else run.last_started_at,
             lastFinishedAt=None,
             lastOutcome=None,
             lastResultCount=None,

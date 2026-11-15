@@ -5,6 +5,12 @@ never run shows as ``never_run`` instead of being absent. ``job_runs`` also hold
 notification jobs (announcements, tutoring email, streaks); those are not billing and are left
 off: only a recorded name under a billing prefix is listed beyond the fixed names, which is how
 a job a later phase registers appears before this list learns it. Read-only: no audit rows.
+
+``verified_events`` counts every stored ``paymob_events`` row in the window: callbacks and
+reconcile inquiry results alike (the table records no source), so the error rate is "HMAC
+failures per stored Paymob event", not a pure callback failure rate. The failure side is capped
+at 60 rows a minute per process (``record_webhook_failure``), so ``hmac_failures`` undercounts
+in a flood; a ``paymob_hmac_failure_unrecorded`` alert means the count is low.
 """
 
 from __future__ import annotations
@@ -89,17 +95,6 @@ class AdminHealthService:
             def count(stmt: sa.Select[tuple[int]]) -> int:
                 return int(s.scalar(stmt) or 0)
 
-            def failed_payments(*purposes: PaymentPurpose, mismatch_only: bool = False) -> int:
-                statuses = (PaymentStatus.failed_mismatch,) if mismatch_only else _FAILED
-                stmt = (
-                    select(sa.func.count())
-                    .select_from(Payment)
-                    .where(Payment.status.in_(statuses), Payment.updated_at >= since)
-                )
-                if purposes:
-                    stmt = stmt.where(Payment.purpose.in_(purposes))
-                return count(stmt)
-
             runs = {
                 r.name: r
                 for r in s.scalars(select(JobRun))
@@ -131,6 +126,14 @@ class AdminHealthService:
                 .select_from(Subscription)
                 .where(Subscription.status == SubscriptionStatus.past_due)
             )
+            # One scan of the window for the three failed-payment counts (no new index).
+            mismatches, auto_topups, extra_seats = s.execute(
+                select(
+                    sa.func.count().filter(Payment.status == PaymentStatus.failed_mismatch),
+                    sa.func.count().filter(Payment.purpose == PaymentPurpose.auto_topup),
+                    sa.func.count().filter(Payment.purpose == PaymentPurpose.extra_seats),
+                ).where(Payment.status.in_(_FAILED), Payment.updated_at >= since)
+            ).one()
             seen = events + failures
             return HealthReport(
                 window_hours=hours,
@@ -138,11 +141,11 @@ class AdminHealthService:
                 verified_events=events,
                 hmac_failures=failures,
                 webhook_error_rate=round(failures / seen, 4) if seen else None,
-                mismatches=failed_payments(mismatch_only=True),
+                mismatches=mismatches,
                 renewal_failure_events=renewal_failures,
                 past_due_now=past_due,
-                failed_auto_topups=failed_payments(PaymentPurpose.auto_topup),
-                failed_extra_seat_charges=failed_payments(PaymentPurpose.extra_seats),
+                failed_auto_topups=auto_topups,
+                failed_extra_seat_charges=extra_seats,
             )
 
 

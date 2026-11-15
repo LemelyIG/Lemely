@@ -268,6 +268,18 @@ def test_only_billing_jobs_are_listed(sm: sessionmaker[Session], admin: uuid.UUI
     assert jobs["usage.repair_signup_grants"]["neverRun"] is True
 
 
+def test_a_first_run_that_never_finished_is_not_an_ok_run(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    JobRunRecorder(sm).start("billing.reconcile_pending", NOW - timedelta(days=3))
+
+    jobs = {j["name"]: j for j in _client(sm, admin).get("/api/admin/billing/health").json()["jobs"]}
+
+    job = jobs["billing.reconcile_pending"]
+    assert (job["neverRun"], job["lastOutcome"], job["totalRuns"]) == (True, None, 0)
+    assert job["lastStartedAt"] is not None
+
+
 def test_the_job_list_is_the_billing_names_in_order(
     sm: sessionmaker[Session], admin: uuid.UUID
 ) -> None:
@@ -298,6 +310,23 @@ def test_every_event_kind_counts_as_a_verified_event(
         _event(sm, kind, 1)
     body = _client(sm, admin).get("/api/admin/billing/health").json()
     assert body["verifiedEvents"] == len(PaymobEventKind)
+
+
+def test_the_rate_is_documented_as_failures_per_stored_event() -> None:
+    """``paymob_events`` records no source, so inquiry results cannot be told from callbacks."""
+    doc = " ".join((BillingHealthDTO.__doc__ or "").split())
+    assert "HMAC failures per stored Paymob event" in doc
+    assert "60 rows per minute per process" in doc
+
+
+def test_a_reconcile_inquiry_event_counts_as_a_stored_event(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    """Pins the documented meaning: any stored event, whatever its source, is in the rate."""
+    _hmac_failures(sm, 1)
+    _event(sm, PaymobEventKind.transaction, 1)  # stored the way an inquiry result is
+    body = _client(sm, admin).get("/api/admin/billing/health").json()
+    assert body["webhookErrorRate"] == 0.5
 
 
 def test_no_traffic_means_no_error_rate(sm: sessionmaker[Session], admin: uuid.UUID) -> None:
