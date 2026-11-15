@@ -50,6 +50,7 @@ def refund_payment(
             amount_minor=body.amountMinor,
             admin_user_id=admin_id(auth),
             reason=body.reason,
+            reverse_change=body.reverseChange,
         )
     return payment_row_dto(view)
 

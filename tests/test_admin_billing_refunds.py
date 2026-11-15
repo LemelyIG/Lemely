@@ -9,6 +9,7 @@ from __future__ import annotations
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
@@ -21,10 +22,22 @@ from structlog.testing import capture_logs
 from lemely.core.usage_types import GrantScope, Payer
 from lemely.db.admin_billing_repo import AdminConflictError, AuditAction
 from lemely.db.admin_payments_repo import AdminPaymentsService
-from lemely.db.models.billing import Payment, PaymentPurpose, PaymentStatus
+from lemely.db.models.billing import (
+    Payment,
+    PaymentPurpose,
+    PaymentStatus,
+    Subscription,
+    SubscriptionPeriod,
+)
 from lemely.db.models.billing_ops import PaymentRefund, RefundKind, RefundStatus
-from lemely.db.models.enums import Role
-from lemely.db.models.usage import UsageEntry, UsageEntryKind
+from lemely.db.models.enums import Role, SubscriptionStatus
+from lemely.db.models.usage import (
+    GrantKind,
+    UsageEntry,
+    UsageEntryKind,
+    UsageGrant,
+    UsageGrantBalance,
+)
 from lemely.io.paymob.client import PaymobError, PaymobNotConfigured
 from lemely.web.deps import AuthContext, get_auth_context
 from lemely.web.routers import admin_billing_payments
@@ -33,7 +46,9 @@ from tests.admin_billing_db import (
     NOW,
     FakePaymobClient,
     add_payment,
+    add_plan_tier,
     add_rate,
+    add_subscription,
     add_user,
     audit_rows,
     billing_database,
@@ -252,13 +267,13 @@ def test_an_auto_topup_is_clawed_back_like_a_pack(
 @pytest.mark.parametrize(
     ("purpose", "effect_key", "effect"),
     [
-        (PaymentPurpose.subscription_first, "subscription_effect", "pending_phase05"),
-        (PaymentPurpose.subscription_renewal, "subscription_effect", "pending_phase05"),
+        (PaymentPurpose.subscription_first, "subscription_effect", "none"),
+        (PaymentPurpose.subscription_renewal, "subscription_effect", "none"),
         (PaymentPurpose.upgrade_proration, "purpose_effect", "money_only"),
         (PaymentPurpose.extra_seats, "purpose_effect", "money_only"),
     ],
 )
-def test_other_purposes_refund_money_only_and_say_so_in_the_audit(
+def test_other_purposes_without_a_subscription_refund_money_only_and_say_so_in_the_audit(
     sm: sessionmaker[Session],
     admin: uuid.UUID,
     purpose: PaymentPurpose,
@@ -707,3 +722,437 @@ def test_every_path_writes_a_requested_row_and_one_closing_row(
 def _rows(sm: sessionmaker[Session]) -> list[PaymentRefund]:
     with sm() as session:
         return list(session.scalars(select(PaymentRefund).order_by(PaymentRefund.created_at)))
+
+
+# -- Part B: a subscription payment (Phase 05's on_payment_refunded, UD-6 (a)) --------------------
+
+
+def _subscribed(
+    sm: sessionmaker[Session],
+    *,
+    purpose: PaymentPurpose = PaymentPurpose.subscription_first,
+    older_period: bool = False,
+) -> dict[str, Any]:
+    """A student on an active plan whose latest period was paid by one 10,000-piaster payment."""
+    student = add_user(sm, Role.student)
+    tier = add_plan_tier(sm, price_minor=10000)
+    sub = add_subscription(
+        sm, student, tier, start=NOW - timedelta(days=4), end=NOW + timedelta(days=26)
+    )
+    payment = add_payment(
+        sm,
+        payer=student,
+        purpose=PaymentPurpose.credit_pack,
+        amount_minor=10000,
+        paymob_txn_id=4242,
+    )
+    with sm.begin() as session:
+        row = session.get(Payment, payment)
+        assert row is not None
+        row.purpose = purpose
+        row.credit_pack_id = None
+        row.subscription_id = sub
+        row.plan_tier_id = tier
+        period = session.scalars(
+            sa.select(SubscriptionPeriod).where(SubscriptionPeriod.subscription_id == sub)
+        ).one()
+        period.payment_id = payment
+        period.terms_version = 1
+        if older_period:  # the paid period ended; a later one is in force at NOW
+            newer_start, newer_end = period.period_start, period.period_end
+            period.period_start = newer_start - timedelta(days=30)
+            period.period_end = newer_start
+            session.flush()
+            session.add(
+                SubscriptionPeriod(
+                    subscription_id=sub, period_start=newer_start, period_end=newer_end
+                )
+            )
+    allowance = grant(
+        sm, student, units=1000, kind=GrantKind.period_allowance, visible=False, payment_id=payment
+    )
+    return {"student": student, "sub": sub, "payment": payment, "tier": tier, "grant": allowance}
+
+
+def _sub_status(sm: sessionmaker[Session], sub: uuid.UUID) -> SubscriptionStatus:
+    with sm() as session:
+        row = session.get(Subscription, sub)
+        assert row is not None
+        return row.status
+
+
+@pytest.mark.parametrize(
+    "purpose", [PaymentPurpose.subscription_first, PaymentPurpose.subscription_renewal]
+)
+def test_a_full_refund_of_the_latest_period_ends_the_plan_and_claws_back(
+    sm: sessionmaker[Session], admin: uuid.UUID, purpose: PaymentPurpose
+) -> None:
+    w = _subscribed(sm, purpose=purpose)
+    body = _refund(_client(sm, admin), w["payment"]).json()
+    assert body["status"] == "refunded"
+    assert body["refunds"][0]["clawedBackUnits"] == 1000
+    assert _sub_status(sm, w["sub"]) is SubscriptionStatus.cancelled
+    [done] = audit_rows(sm, AuditAction.PAYMENT_REFUND_SUCCEEDED)
+    assert done.after["subscription_effect"] == "plan_ended"  # type: ignore[index]
+    assert "pending_phase05" not in str(done.after)
+
+
+def test_a_partial_refund_of_a_subscription_payment_changes_nothing(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _subscribed(sm)
+    body = _refund(_client(sm, admin), w["payment"], 3000).json()
+    assert (body["status"], body["refunds"][0]["clawedBackUnits"]) == ("partially_refunded", 0)
+    assert _sub_status(sm, w["sub"]) is SubscriptionStatus.active
+    assert _credits_total(sm, w["student"]) == 1000
+
+
+def test_a_full_refund_of_an_older_period_leaves_the_plan_and_alerts(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _subscribed(sm, older_period=True)
+    with capture_logs() as logs:
+        body = _refund(_client(sm, admin), w["payment"]).json()
+    assert body["status"] == "refunded"  # the money went back
+    assert _sub_status(sm, w["sub"]) is SubscriptionStatus.active
+    assert [e for e in logs if e["event"] == "subscription_old_period_refunded"]
+    [done] = audit_rows(sm, AuditAction.PAYMENT_REFUND_SUCCEEDED)
+    assert done.after["subscription_effect"] == "none"  # type: ignore[index]
+
+
+def test_a_subscription_void_ends_the_plan_too(sm: sessionmaker[Session], admin: uuid.UUID) -> None:
+    w = _subscribed(sm)
+    body = (
+        _client(sm, admin).post(f"{BASE}/{w['payment']}/void", json={"reason": "same day"}).json()
+    )
+    assert body["status"] == "voided"
+    assert _sub_status(sm, w["sub"]) is SubscriptionStatus.cancelled
+
+
+def _credits_total(sm: sessionmaker[Session], user: uuid.UUID) -> int:
+    with sm() as session:
+        return int(
+            session.scalar(
+                sa.select(sa.func.coalesce(sa.func.sum(UsageGrantBalance.remaining), 0))
+                .select_from(UsageGrant)
+                .join(UsageGrantBalance, UsageGrantBalance.grant_id == UsageGrant.id)
+                .where(UsageGrant.owner_user_id == user)
+            )
+            or 0
+        )
+
+
+# -- Part C: reverse what the payment bought (UD-4) ----------------------------------------------
+
+
+def _teacher_with_seats(
+    sm: sessionmaker[Session], *, held: int = 3, bought: int = 2
+) -> dict[str, Any]:
+    teacher = add_user(sm, Role.teacher)
+    tier = add_plan_tier(
+        sm,
+        code=f"teacher_{uuid.uuid4().hex[:8]}",
+        audience="teacher",
+        price_minor=30000,
+        included_seats=1,
+        extra_seat_price_minor=5000,
+    )
+    sub = add_subscription(sm, teacher, tier)
+    payment = add_payment(
+        sm,
+        payer=teacher,
+        purpose=PaymentPurpose.credit_pack,
+        amount_minor=10000,
+        paymob_txn_id=uuid.uuid4().int % 10**12,
+    )
+    with sm.begin() as session:
+        row = session.get(Payment, payment)
+        assert row is not None
+        row.purpose = PaymentPurpose.extra_seats
+        row.credit_pack_id = None
+        row.subscription_id = sub
+        row.seat_quantity = bought
+        row.plan_tier_id = tier
+        subscription = session.get(Subscription, sub)
+        assert subscription is not None
+        subscription.extra_seats = held
+    return {"teacher": teacher, "tier": tier, "sub": sub, "payment": payment}
+
+
+def _sub_row(sm: sessionmaker[Session], sub: uuid.UUID) -> Subscription:
+    with sm() as session:
+        row = session.get(Subscription, sub)
+        assert row is not None
+        return row
+
+
+def _reversing(client: TestClient, payment: uuid.UUID, amount: int | None = None) -> Any:
+    return client.post(
+        f"{BASE}/{payment}/refund",
+        json={"amountMinor": amount, "reason": "undo it", "reverseChange": True},
+    )
+
+
+def test_reversing_extra_seats_schedules_the_reduction_and_audits_it(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _teacher_with_seats(sm, held=3, bought=2)
+    resp = _reversing(_client(sm, admin), w["payment"])
+    assert resp.status_code == 200, resp.text
+    assert _sub_row(sm, w["sub"]).pending_extra_seats == 1
+    with sm() as session:
+        assert session.scalars(select(PaymentRefund.reverse_change)).one() is True
+    [done] = audit_rows(sm, AuditAction.PAYMENT_REFUND_SUCCEEDED)
+    assert done.after["reverse_effect"] == "seat_reduction_scheduled"  # type: ignore[index]
+    assert done.after["pending_extra_seats"] == 1  # type: ignore[index]
+    [asked] = audit_rows(sm, AuditAction.PAYMENT_REFUND_REQUESTED)
+    assert asked.after["reverse_change"] is True  # type: ignore[index]
+
+
+def test_extra_seats_are_money_only_unless_the_admin_asks_to_reverse(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _teacher_with_seats(sm)
+    assert _refund(_client(sm, admin), w["payment"]).status_code == 200
+    assert _sub_row(sm, w["sub"]).pending_extra_seats is None
+    with sm() as session:
+        assert session.scalars(select(PaymentRefund.reverse_change)).one() is False
+
+
+def test_a_reverse_the_seat_api_refuses_is_422_before_any_row_or_paymob_call(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _teacher_with_seats(sm)
+    with sm.begin() as session:
+        sub = session.get(Subscription, w["sub"])
+        assert sub is not None
+        sub.status = SubscriptionStatus.past_due
+    paymob = FakePaymobClient()
+    resp = _reversing(_client(sm, admin, paymob), w["payment"])
+    assert (resp.status_code, resp.json()["detail"]["code"]) == (422, "reverse_unavailable")
+    assert paymob.calls == [] and _statuses(sm) == []
+    assert _sub_row(sm, w["sub"]).pending_extra_seats is None  # the dry run left nothing behind
+
+
+def test_reversing_a_renewal_seat_charge_is_422_because_it_added_no_seats(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _teacher_with_seats(sm)
+    with sm.begin() as session:
+        row = session.get(Payment, w["payment"])
+        assert row is not None
+        row.dedupe_key = f"extra_seat_renewal:{uuid.uuid4()}:1"
+    resp = _reversing(_client(sm, admin), w["payment"])
+    assert (resp.status_code, resp.json()["detail"]["code"]) == (422, "reverse_unavailable")
+
+
+def test_reversing_needs_the_whole_remaining_amount(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _teacher_with_seats(sm)
+    paymob = FakePaymobClient()
+    resp = _reversing(_client(sm, admin, paymob), w["payment"], 4000)
+    assert (resp.status_code, resp.json()["detail"]["code"]) == (422, "reverse_needs_full_refund")
+    assert paymob.calls == [] and _statuses(sm) == []
+
+
+def test_a_reverse_that_stops_working_after_the_money_moved_is_audited_and_alerted(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    """Never silent: the refund stands, and the audit row and an alert say the undo did not run."""
+    w = _teacher_with_seats(sm)
+
+    class PlanLapses(FakePaymobClient):
+        def refund(self, **kwargs: Any) -> dict[str, Any]:
+            with sm.begin() as session:
+                sub = session.get(Subscription, w["sub"])
+                assert sub is not None
+                sub.status = SubscriptionStatus.past_due
+            return {"id": 1, "success": True}
+
+    with capture_logs() as logs:
+        resp = _reversing(_client(sm, admin, PlanLapses()), w["payment"])
+    assert resp.json()["status"] == "refunded"
+    assert [e for e in logs if e["event"] == "admin_refund_reverse_unavailable"]
+    [done] = audit_rows(sm, AuditAction.PAYMENT_REFUND_SUCCEEDED)
+    assert done.after["reverse_effect"] == "unavailable_after_refund"  # type: ignore[index]
+    assert _sub_row(sm, w["sub"]).pending_extra_seats is None
+
+
+def test_extra_seats_that_became_credits_keep_them_money_only_and_lose_them_on_reverse(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _teacher_with_seats(sm)
+    grant(sm, w["teacher"], units=400, kind=GrantKind.credit_pack, payment_id=w["payment"])
+    paymob = FakePaymobClient()
+    kept = _refund(_client(sm, admin, paymob), w["payment"]).json()
+    assert kept["refunds"][0]["clawedBackUnits"] == 0
+    assert _sub_row(sm, w["sub"]).pending_extra_seats is None
+    w2 = _teacher_with_seats(sm)
+    grant(sm, w2["teacher"], units=400, kind=GrantKind.credit_pack, payment_id=w2["payment"])
+    undone = _reversing(_client(sm, admin, paymob), w2["payment"]).json()
+    assert undone["refunds"][0]["clawedBackUnits"] == 400
+    assert _sub_row(sm, w2["sub"]).pending_extra_seats is None  # no seat was ever added
+
+
+def test_a_subscription_payment_converted_to_credits_loses_them_on_reverse_and_ends_no_plan(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    """UD-3: a stale checkout paid, no plan was activated, the money became credits."""
+    student = add_user(sm, Role.student)
+    tier = add_plan_tier(sm, price_minor=10000)
+    sub = add_subscription(sm, student, tier)  # a live plan from another, paid period
+    payment = add_payment(
+        sm, payer=student, purpose=PaymentPurpose.credit_pack, amount_minor=10000, paymob_txn_id=9
+    )
+    with sm.begin() as session:
+        row = session.get(Payment, payment)
+        assert row is not None
+        row.purpose = PaymentPurpose.subscription_first
+        row.credit_pack_id = None
+        row.subscription_id = sub
+        row.plan_tier_id = tier
+        row.grant_units = 400
+    grant(sm, student, units=400, kind=GrantKind.credit_pack, payment_id=payment)
+    with capture_logs() as logs:
+        body = _reversing(_client(sm, admin), payment).json()
+    assert body["refunds"][0]["clawedBackUnits"] == 400
+    assert _sub_status(sm, sub) is SubscriptionStatus.active  # no plan was bought by this payment
+    assert not [e for e in logs if str(e["event"]).startswith("subscription_")]
+    [done] = audit_rows(sm, AuditAction.PAYMENT_REFUND_SUCCEEDED)
+    assert done.after["reverse_effect"] == "credits_clawed_back"  # type: ignore[index]
+    assert "subscription_effect" not in done.after  # type: ignore[operator]
+
+
+def test_a_converted_subscription_payment_keeps_its_credits_when_money_only(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    student = add_user(sm, Role.student)
+    tier = add_plan_tier(sm, price_minor=10000)
+    sub = add_subscription(sm, student, tier)
+    payment = add_payment(
+        sm, payer=student, purpose=PaymentPurpose.credit_pack, amount_minor=10000, paymob_txn_id=9
+    )
+    with sm.begin() as session:
+        row = session.get(Payment, payment)
+        assert row is not None
+        row.purpose = PaymentPurpose.subscription_first
+        row.credit_pack_id = None
+        row.subscription_id = sub
+        row.plan_tier_id = tier
+    grant(sm, student, units=400, kind=GrantKind.credit_pack, payment_id=payment)
+    body = _refund(_client(sm, admin), payment).json()
+    assert body["refunds"][0]["clawedBackUnits"] == 0
+    assert _sub_status(sm, sub) is SubscriptionStatus.active
+
+
+def _upgraded(
+    sm: sessionmaker[Session], *, terms_version: int | None = 1, bill_prev: bool = True
+) -> dict[str, Any]:
+    """A student who upgraded mid-period: the period was paid on ``previous``, now on ``target``."""
+    student = add_user(sm, Role.student)
+    previous = add_plan_tier(sm, code="student_basic", price_minor=10000)
+    target = add_plan_tier(sm, code="student_plus", price_minor=20000)
+    sub = add_subscription(
+        sm, student, target, start=NOW - timedelta(days=4), end=NOW + timedelta(days=26)
+    )
+    first = add_payment(sm, payer=student, amount_minor=10000, paymob_txn_id=1)
+    upgrade = add_payment(
+        sm, payer=student, amount_minor=6000, paymob_txn_id=2, created_at=NOW - timedelta(days=1)
+    )
+    with sm.begin() as session:
+        for pid, purpose, tier in (
+            (first, PaymentPurpose.subscription_first, previous if bill_prev else target),
+            (upgrade, PaymentPurpose.upgrade_proration, target),
+        ):
+            row = session.get(Payment, pid)
+            assert row is not None
+            row.purpose = purpose
+            row.credit_pack_id = None
+            row.subscription_id = sub
+            row.plan_tier_id = tier
+        period = session.scalars(
+            sa.select(SubscriptionPeriod).where(SubscriptionPeriod.subscription_id == sub)
+        ).one()
+        period.payment_id = first
+        period.terms_version = terms_version
+    return {
+        "student": student,
+        "previous": previous,
+        "target": target,
+        "sub": sub,
+        "upgrade": upgrade,
+    }
+
+
+def test_reversing_an_upgrade_schedules_the_billed_previous_tier(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _upgraded(sm)
+    resp = _reversing(_client(sm, admin), w["upgrade"])
+    assert resp.status_code == 200, resp.text
+    assert _sub_row(sm, w["sub"]).pending_plan_tier_id == w["previous"]
+    [done] = audit_rows(sm, AuditAction.PAYMENT_REFUND_SUCCEEDED)
+    assert done.after["reverse_effect"] == "downgrade_scheduled"  # type: ignore[index]
+    assert done.after["previous_plan_tier_id"] == str(w["previous"])  # type: ignore[index]
+
+
+def test_an_upgrade_refund_without_reverse_leaves_the_plan(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _upgraded(sm)
+    assert _refund(_client(sm, admin), w["upgrade"]).status_code == 200
+    assert _sub_row(sm, w["sub"]).pending_plan_tier_id is None
+
+
+@pytest.mark.parametrize("case", ["terms_unknown", "terms_not_recorded", "previous_not_recorded"])
+def test_an_upgrade_whose_previous_tier_or_terms_are_not_recoverable_is_422(
+    sm: sessionmaker[Session], admin: uuid.UUID, case: str
+) -> None:
+    w = _upgraded(
+        sm,
+        terms_version={"terms_unknown": 7, "terms_not_recorded": None, "previous_not_recorded": 1}[
+            case
+        ],
+        bill_prev=case != "previous_not_recorded",
+    )
+    paymob = FakePaymobClient()
+    resp = _reversing(_client(sm, admin, paymob), w["upgrade"])
+    assert (resp.status_code, resp.json()["detail"]["code"]) == (422, "reverse_unavailable")
+    assert paymob.calls == [] and _statuses(sm) == []
+
+
+def test_reversing_a_credit_pack_is_the_clawback_a_full_refund_already_makes(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    student, payment = _pack_bought_and_partly_spent(sm)
+    body = _reversing(_client(sm, admin), payment).json()
+    assert body["refunds"][0]["clawedBackUnits"] == 300
+    [done] = audit_rows(sm, AuditAction.PAYMENT_REFUND_SUCCEEDED)
+    assert done.after["reverse_effect"] == "same_as_full_refund"  # type: ignore[index]
+
+
+# -- the refunded-total lag ----------------------------------------------------------------------
+
+
+def test_a_console_refund_hidden_behind_a_dashboard_refund_cannot_be_requested_twice(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    """Dashboard 7000 plus console 3000, with Paymob's parent callback not yet back."""
+    student = add_user(sm, Role.student)
+    payment = add_payment(
+        sm,
+        payer=student,
+        amount_minor=10000,
+        paymob_txn_id=5,
+        status=PaymentStatus.partially_refunded,
+        last_callback={"is_refunded": True, "refunded_amount_cents": 7000},
+    )
+    paymob = FakePaymobClient()
+    client = _client(sm, admin, paymob)
+    first = _refund(client, payment, 3000, "the rest")
+    assert first.status_code == 200, first.text
+    assert first.json()["status"] == "refunded"
+    again = _refund(client, payment, 3000, "same again")
+    assert (again.status_code, again.json()["detail"]["code"]) == (409, "not_refundable")
+    assert len(paymob.calls) == 1

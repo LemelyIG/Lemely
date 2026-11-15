@@ -14,8 +14,12 @@ from lemely.web.schemas_admin_billing import (  # noqa: TC001 - pydantic field t
 )
 
 
-class AdminRefundRequestDTO(ApiModel):  # type: ignore[explicit-any]  # pydantic plugin
-    """``amountMinor`` ``None`` refunds everything not yet refunded."""
+class AdminRefundRequestDTO(ApiModel):
+    """``amountMinor`` ``None`` refunds everything not yet refunded.
+
+    ``reverseChange`` also undoes what the payment bought (UD-4); the default is money only.
+    """
 
     amountMinor: PositiveMoney | None = None
+    reverseChange: bool = False
     reason: Reason
