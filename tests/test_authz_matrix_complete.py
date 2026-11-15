@@ -207,6 +207,8 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("PUT", "/api/admin/billing/free-allowances"): PLATFORM_ADMIN,
     ("GET", "/api/admin/billing/customers"): PLATFORM_ADMIN,
     ("GET", "/api/admin/billing/customers/{user_id}"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/billing/payments/{payment_id}/refund"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/billing/payments/{payment_id}/void"): PLATFORM_ADMIN,
     # ── TEACHER_OR_SCHOOL_ADMIN (7) ────────────────────
     ("GET", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
     ("POST", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
