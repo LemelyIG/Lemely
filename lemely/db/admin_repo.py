@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import func, select
 
 from lemely.core.deletion import purge_cutoff
+from lemely.db.admin_billing_repo import AuditAction, AuditTarget, audited
 from lemely.db.models import (
     Attempt,
     MarkScheme,
@@ -59,6 +60,10 @@ from lemely.db.session import INCLUDE_DELETED
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
+
+
+#: The audit reason when the legacy activation screen sends no note (spec §8: a reason is required).
+NO_NOTE_REASON = "Decided from the activations queue without a note."
 
 
 class AdminError(Exception):
@@ -332,10 +337,13 @@ class PlatformAdminService:
         activate: bool,
         note: str | None = None,
         now: datetime | None = None,
+        admin_user_id: uuid.UUID,
     ) -> SubscriptionStatus:
-        """Activate or reject a pending subscription, recording the note.
+        """Activate or reject a pending subscription, recording the note and an audit row.
 
-        Returns the status the row now holds.
+        Returns the status the row now holds. The audit row (``subscription.activation_decision``)
+        is written in the same transaction; with no note its reason is :data:`NO_NOTE_REASON`.
+        A refused decision writes none.
 
         A row that has already left ``inactive`` raises rather than being
         rewritten: two admins working one queue is the ordinary case, and the
@@ -361,6 +369,7 @@ class PlatformAdminService:
                 raise SubscriptionNotFoundError(f"Unknown subscription: {subscription_uuid}")
             if subscription.status is not SubscriptionStatus.inactive:
                 raise SubscriptionAlreadyDecidedError(subscription.status)
+            before = {"status": subscription.status.value}
             if activate:
                 # Per-user lock: the row lock above covers only the row being decided, so two
                 # admins deciding two different queued rows for one user would each see the
@@ -389,6 +398,19 @@ class PlatformAdminService:
             else:
                 subscription.status = SubscriptionStatus.rejected
             subscription.activation_note = note
+            audited(
+                session,
+                admin_user_id,
+                AuditAction.SUBSCRIPTION_ACTIVATION_DECISION,
+                AuditTarget.SUBSCRIPTION,
+                subscription.id,
+                (note or "").strip() or NO_NOTE_REASON,
+                before,
+                {
+                    "status": subscription.status.value,
+                    "is_manually_activated": subscription.is_manually_activated,
+                },
+            )
             return subscription.status
 
     # -- X-03 ---------------------------------------------------------------

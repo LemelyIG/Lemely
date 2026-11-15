@@ -184,3 +184,22 @@ class AdminForgiveRequestDTO(ApiModel):
 
     units: Annotated[int, Field(gt=0, le=1_000_000)] | None = None
     reason: Reason
+
+
+# -- subscription-action requests (Task 7) ----------------------------------------
+
+
+class ManualActivationRequestDTO(ApiModel):
+    planTierId: uuid.UUID
+    periodDays: Annotated[int, Field(gt=0, le=400)]
+    reason: Reason
+
+
+class AdminExtendRequestDTO(ApiModel):
+    days: Annotated[int, Field(gt=0, le=366)]
+    reason: Reason
+
+
+class AdminCancelRequestDTO(ApiModel):
+    when: Literal["period_end", "now"]
+    reason: Reason

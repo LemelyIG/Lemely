@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Literal
 
 import sqlalchemy as sa
+import structlog
 from sqlalchemy import and_, or_, select
 
 from lemely.core.usage_pricing import usd_to_units
@@ -31,13 +32,22 @@ from lemely.db.admin_billing_repo import (
     lock_idempotency_key,
     payment_views,
     require_reason,
+    snapshot,
 )
 from lemely.db.models.admin_audit import (
     HAS_IDEMPOTENCY_KEY_SQL,
     IDEMPOTENCY_KEY_SQL,
     AdminAuditLog,
 )
-from lemely.db.models.billing import Payment, PlanTier, Subscription, SubscriptionPeriod
+from lemely.db.models.billing import (
+    LIVE_SUBSCRIPTION_STATUSES,
+    Payment,
+    PlanAudience,
+    PlanTier,
+    Subscription,
+    SubscriptionPeriod,
+)
+from lemely.db.models.enums import Role, SubscriptionStatus
 from lemely.db.models.team import TeacherMember, TeacherMemberKind
 from lemely.db.models.usage import (
     GrantKind,
@@ -48,7 +58,7 @@ from lemely.db.models.usage import (
     UsageRate,
 )
 from lemely.db.models.users import ParentChildLink, User
-from lemely.db.usage_ledger_repo import UsageLedger
+from lemely.db.usage_ledger_repo import GrantAlreadyExpired, UsageLedger
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -58,6 +68,8 @@ if TYPE_CHECKING:
 
     from lemely.io.paymob.client import PaymobClient
     from lemely.runtime.config import PaymobSettings
+
+alerts = structlog.get_logger("lemely.db.admin_customer_repo")
 
 #: Closed (expired) grants shown beside every usable one.
 _CLOSED_GRANTS = 100
@@ -72,6 +84,23 @@ _FORGIVE_DEDUPE = timedelta(seconds=120)
 #: Recent forgive rows read for the dedupe; a window holds a handful at most.
 _FORGIVE_LOOKBACK = 50
 
+
+#: The role each plan audience is sold to. Parents and admins have no audience.
+_AUDIENCE_ROLE = {PlanAudience.student: Role.student, PlanAudience.teacher: Role.teacher}
+#: The subscription columns an audit row records.
+_SUBSCRIPTION_AUDIT = (
+    "status",
+    "plan_tier_id",
+    "payer_user_id",
+    "current_period_start",
+    "current_period_end",
+    "cancel_at_period_end",
+    "is_manually_activated",
+    "paymob_subscription_id",
+    "paymob_cancelled_at",
+)
+#: Complimentary rows ended per pass of the expiry job (DV-27).
+EXPIRY_BATCH = 200
 
 MatchedOn = Literal["user_id", "payment_id", "paymob_order", "email", "name"]
 
@@ -773,6 +802,324 @@ class AdminCustomerService:
                 return True
         return False
 
+    # -- subscription actions (Task 7) -------------------------------------------
+
+    def manual_activation(
+        self,
+        user_id: uuid.UUID,
+        *,
+        plan_tier_id: uuid.UUID,
+        period_days: int,
+        admin_user_id: uuid.UUID,
+        reason: str,
+    ) -> CustomerDetail:
+        """Create a live complimentary subscription with its period and allowance grant.
+
+        Complimentary means no payer (DV-16): ``payer_user_id`` is NULL, so the partial unique
+        index of live paid plans does not cover it. The one-live-plan rule rests on the per-user
+        row lock ``decide_activation`` takes too, and the check below reads every live plan of
+        the user, whoever pays. No payment and no Paymob subscription:
+        :func:`expire_manual_subscriptions` ends it. Lock order: user row, then the ledger
+        owner lock inside ``issue_grant``.
+        """
+        require_reason(reason)
+        now = self._now()
+        with self._sm.begin() as s:
+            locked = s.execute(
+                select(User.id, User.role).where(User.id == user_id).with_for_update(key_share=True)
+            ).one_or_none()
+            if locked is None:
+                raise AdminNotFoundError("customer_not_found")
+            tier = s.get(PlanTier, plan_tier_id)
+            if tier is None:
+                raise AdminNotFoundError("plan_tier_not_found")
+            if not tier.is_active or tier.price_minor <= 0:
+                raise AdminInvalidError(
+                    "plan_not_activatable", "Only an active, priced plan can be activated."
+                )
+            if _AUDIENCE_ROLE.get(tier.audience) is not locked.role:
+                raise AdminInvalidError("audience_mismatch", "That plan is for another role.")
+            live = s.scalar(
+                select(Subscription.id)
+                .where(
+                    Subscription.user_id == user_id,
+                    Subscription.status.in_(LIVE_SUBSCRIPTION_STATUSES),
+                )
+                .limit(1)
+            )
+            if live is not None:
+                raise AdminConflictError("live_subscription_exists", "Cancel the live plan first.")
+            end = now + timedelta(days=period_days)
+            sub = Subscription(
+                user_id=user_id,
+                payer_user_id=None,
+                plan_tier_id=tier.id,
+                status=SubscriptionStatus.active,
+                is_manually_activated=True,
+                activated_at=now,
+                activation_note=reason.strip(),
+                current_period_start=now,
+                current_period_end=end,
+            )
+            s.add(sub)
+            s.flush()
+            period = SubscriptionPeriod(subscription_id=sub.id, period_start=now, period_end=end)
+            s.add(period)
+            s.flush()
+            grant_id: uuid.UUID | None = None
+            if tier.allowance_units > 0:
+                grant_id = (
+                    UsageLedger(s)
+                    .issue_grant(
+                        owner_user_id=user_id,
+                        kind=GrantKind.period_allowance,
+                        units=tier.allowance_units,
+                        idempotency_key=f"admin-activation:{sub.id}",
+                        expires_at=end,
+                        visible=False,
+                        effective_at=now,
+                        subscription_period_id=period.id,
+                    )
+                    .id
+                )
+            audited(
+                s,
+                admin_user_id,
+                AuditAction.SUBSCRIPTION_MANUAL_ACTIVATION,
+                AuditTarget.SUBSCRIPTION,
+                sub.id,
+                reason,
+                None,
+                {**snapshot(sub, _SUBSCRIPTION_AUDIT), "allowance_grant_id": grant_id},
+            )
+        return self.detail(user_id)
+
+    def extend_subscription(
+        self, subscription_id: uuid.UUID, *, days: int, admin_user_id: uuid.UUID, reason: str
+    ) -> CustomerDetail:
+        """Push a complimentary plan's period end, and its allowance expiry, out by ``days``.
+
+        Only a live complimentary plan extends: Paymob owns the date of a billed one. The
+        allowance moves through ``UsageLedger.extend_grant_expiry`` (never a direct write), so a
+        grant already lapsed but not yet swept is still extended.
+        """
+        require_reason(reason)
+        now = self._now()
+        with self._sm.begin() as s:
+            sub = s.get(Subscription, subscription_id, with_for_update=True)
+            if sub is None:
+                raise AdminNotFoundError("subscription_not_found")
+            if sub.paymob_subscription_id is not None:
+                raise AdminConflictError(
+                    "paymob_billed", "Grant credits instead; Paymob owns the date."
+                )
+            if not sub.is_manually_activated or sub.status is not SubscriptionStatus.active:
+                raise AdminConflictError("not_extendable", "Only live complimentary plans extend.")
+            if sub.current_period_end is None:
+                raise AdminConflictError("open_ended", "This plan has no end to extend.")
+            new_end = sub.current_period_end + timedelta(days=days)
+            if new_end <= now:
+                raise AdminInvalidError(
+                    "extension_in_the_past", "The new end would still be in the past."
+                )
+            before = snapshot(sub, _SUBSCRIPTION_AUDIT)
+            sub.current_period_end = new_end
+            latest = self._latest_period(s, sub.id)
+            extended: list[uuid.UUID] = []
+            if latest is not None:
+                latest.period_end = new_end
+                ledger = UsageLedger(s)
+                for grant in self._period_grants(s, latest.id):
+                    try:
+                        ledger.extend_grant_expiry(
+                            grant.id,
+                            expires_at=new_end,
+                            now=now,
+                            issued_expires_at=grant.expires_at,
+                        )
+                    except GrantAlreadyExpired as exc:
+                        raise AdminConflictError(
+                            "grant_expired", "The allowance already expired; grant credits instead."
+                        ) from exc
+                    extended.append(grant.id)
+            s.flush()
+            audited(
+                s,
+                admin_user_id,
+                AuditAction.SUBSCRIPTION_EXTEND,
+                AuditTarget.SUBSCRIPTION,
+                sub.id,
+                reason,
+                before,
+                {
+                    **snapshot(sub, _SUBSCRIPTION_AUDIT),
+                    "days": days,
+                    "extended_grant_ids": extended,
+                },
+            )
+            user_id = sub.user_id
+        return self.detail(user_id)
+
+    def cancel_subscription(
+        self,
+        subscription_id: uuid.UUID,
+        *,
+        when: Literal["period_end", "now"],
+        admin_user_id: uuid.UUID,
+        reason: str,
+    ) -> CustomerDetail:
+        """Cancel a live plan at its period end, or now.
+
+        A complimentary plan is ours alone: ``period_end`` sets ``cancel_at_period_end`` for
+        :func:`expire_manual_subscriptions`, ``now`` ends it and cuts the current period's
+        allowance (UD-2). A Paymob-billed plan is refused here until Part B.
+        """
+        require_reason(reason)
+        now = self._now()
+        with self._sm.begin() as s:
+            sub = s.get(Subscription, subscription_id, with_for_update=True)
+            if sub is None:
+                raise AdminNotFoundError("subscription_not_found")
+            if sub.status not in LIVE_SUBSCRIPTION_STATUSES:
+                raise AdminConflictError("not_live", "Only a live plan can be cancelled.")
+            if sub.paymob_subscription_id is not None:
+                raise AdminConflictError(
+                    "paymob_cancel_pending", "Cancelling a Paymob-billed plan is not available yet."
+                )
+            before = snapshot(sub, _SUBSCRIPTION_AUDIT)
+            extra: dict[str, object] = {"when": when}
+            if when == "now":
+                sub.status = SubscriptionStatus.cancelled
+                sub.cancel_at_period_end = False
+                sub.current_period_end = now
+                extra.update(self._end_period_allowance(s, sub.id, now))
+            else:
+                sub.cancel_at_period_end = True
+            s.flush()
+            audited(
+                s,
+                admin_user_id,
+                AuditAction.SUBSCRIPTION_CANCEL,
+                AuditTarget.SUBSCRIPTION,
+                sub.id,
+                reason,
+                before,
+                {**snapshot(sub, _SUBSCRIPTION_AUDIT), **extra},
+            )
+            user_id = sub.user_id
+        return self.detail(user_id)
+
+    @staticmethod
+    def _latest_period(s: Session, subscription_id: uuid.UUID) -> SubscriptionPeriod | None:
+        return s.scalars(
+            select(SubscriptionPeriod)
+            .where(SubscriptionPeriod.subscription_id == subscription_id)
+            .order_by(SubscriptionPeriod.period_start.desc())
+            .limit(1)
+        ).first()
+
+    @staticmethod
+    def _period_grants(s: Session, period_id: uuid.UUID) -> list[UsageGrant]:
+        """The grants a period issued, by ascending owner: ledger owner locks go in that order."""
+        return list(
+            s.scalars(
+                select(UsageGrant)
+                .where(UsageGrant.subscription_period_id == period_id)
+                .order_by(UsageGrant.owner_user_id, UsageGrant.id)
+            )
+        )
+
+    def _end_period_allowance(
+        self, s: Session, subscription_id: uuid.UUID, now: datetime
+    ) -> dict[str, object]:
+        """UD-2: end the current period's grants now; the next expiry sweep takes the unspent part.
+
+        ``shorten_grant_expiry`` makes the leftover unusable at once and leaves the units for
+        ``expire_grants`` (no claw-back entry, no balance change here). Returns the audit fields.
+        """
+        period = self._latest_period(s, subscription_id)
+        grants = [] if period is None else self._period_grants(s, period.id)
+        ledger = UsageLedger(s)
+        unspent = 0
+        for grant in grants:
+            balance = s.get(UsageGrantBalance, grant.id)
+            if balance is not None:
+                unspent += max(balance.remaining - balance.held, 0)
+            ledger.shorten_grant_expiry(grant.id, expires_at=now)
+        return {
+            "ended_grant_ids": [g.id for g in grants],
+            "unspent_allowance_units": unspent,
+            "allowance_ends": "next_expiry_sweep",
+        }
+
+
+def _complimentary_due(now: datetime) -> list[sa.ColumnElement[bool]]:
+    """What makes a row one the expiry job ends (admin-created, active, period over)."""
+    return [
+        Subscription.payer_user_id.is_(None),
+        Subscription.paymob_subscription_id.is_(None),
+        Subscription.is_manually_activated.is_(True),
+        Subscription.status == SubscriptionStatus.active,
+        Subscription.current_period_end.is_not(None),
+        Subscription.current_period_end <= now,
+    ]
+
+
+def _expire_manual_row(
+    factory: sessionmaker[Session], subscription_id: uuid.UUID, now: datetime
+) -> bool:
+    """End one complimentary row in its own transaction; ``False`` when another holds it."""
+    with factory.begin() as session:
+        sub = session.scalars(
+            select(Subscription)
+            .where(Subscription.id == subscription_id, *_complimentary_due(now))
+            .with_for_update(skip_locked=True)
+        ).one_or_none()
+        if sub is None:
+            return False
+        sub.status = (
+            SubscriptionStatus.cancelled if sub.cancel_at_period_end else SubscriptionStatus.expired
+        )
+        return True
+
+
+def expire_manual_subscriptions(
+    factory: sessionmaker[Session], *, now: datetime, limit: int = EXPIRY_BATCH
+) -> int:
+    """End complimentary subscriptions whose period has run out (sweeper job, DV-27).
+
+    Only admin-created ones: no payer, no Paymob subscription, manually activated, active, and a
+    period end that has passed (a legacy manual row has none and runs until an admin cancels it).
+    ``cancel_at_period_end`` ends as ``cancelled``, otherwise ``expired``. At most ``limit`` rows,
+    oldest period end first, each in its own transaction under ``FOR UPDATE SKIP LOCKED``: a
+    held row waits for the next pass and a failing row alerts (``admin_manual_expiry_failed``)
+    without stopping the rest. The allowance itself ends through the ledger's own expiry sweep.
+    """
+    if limit < 1:
+        raise ValueError("limit must be at least 1")
+    with factory() as session:
+        ids = list(
+            session.scalars(
+                select(Subscription.id)
+                .where(*_complimentary_due(now))
+                .order_by(Subscription.current_period_end, Subscription.id)
+                .limit(limit)
+            )
+        )
+    ended = 0
+    for subscription_id in ids:
+        try:
+            if _expire_manual_row(factory, subscription_id, now):
+                ended += 1
+        except Exception as exc:
+            alerts.error(
+                "admin_manual_expiry_failed",
+                alert=True,
+                subscription_id=str(subscription_id),
+                error_type=type(exc).__name__,
+            )
+    return ended
+
 
 def _parse_uuid(term: str) -> uuid.UUID | None:
     try:
@@ -782,6 +1129,7 @@ def _parse_uuid(term: str) -> uuid.UUID | None:
 
 
 __all__ = [
+    "EXPIRY_BATCH",
     "AdminCustomerService",
     "BalanceView",
     "CustomerDetail",
@@ -795,4 +1143,5 @@ __all__ = [
     "balance_for",
     "balance_from_grants",
     "escape_like",
+    "expire_manual_subscriptions",
 ]

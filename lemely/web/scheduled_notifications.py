@@ -42,6 +42,7 @@ import sqlalchemy as sa
 import structlog
 from sqlalchemy import select
 
+from lemely.db.admin_customer_repo import expire_manual_subscriptions
 from lemely.db.announcement_repo import DEFAULT_CLAIM_LIMIT
 from lemely.db.billing_observability_repo import prune_webhook_failures
 from lemely.db.models.engagement import Streak
@@ -567,6 +568,10 @@ class Sweeper:
                     hour=self.settings.study_plan_reminder_hour,
                     memo=self.plan_memo,
                 ),
+            ),
+            (
+                "admin.expire_manual_subscriptions",
+                lambda: expire_manual_subscriptions(self.sessionmaker, now=moment),
             ),
         ]
         storage, bucket = self.storage, self.bucket

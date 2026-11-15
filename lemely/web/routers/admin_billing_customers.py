@@ -4,8 +4,10 @@ A lane router of ``admin_billing`` (DV-2). It is mounted in ``app.py`` beside th
 the full prefix, and carries its own ``platform_admin`` guard: FastAPI 0.138 keeps a router
 included into another as a lazy wrapper, so ``flatten_routes`` (the authz matrix and
 ``test_admin_billing_authz``) would see ``/customers`` without the parent's prefix. Mounted
-directly, the discovery tests see the real path and check this guard. Task 6 appends the ledger
-actions (grant, adjust, forgive debt) below the reads; Task 7 the subscription ones.
+directly, the discovery tests see the real path and check this guard. The prefix stops at
+``/api/admin/billing`` because the lane also owns ``/subscriptions/...`` (Task 7); every route
+spells its own ``/customers`` or ``/subscriptions`` segment. Task 6 appends the ledger actions
+(grant, adjust, forgive debt) below the reads; Task 7 the subscription ones.
 """
 
 # FastAPI ``Depends``/``response_model`` and pydantic construction need these type imports at
@@ -30,6 +32,8 @@ from lemely.web.deps import require_role
 from lemely.web.deps_admin_billing import get_admin_customer_service
 from lemely.web.schemas_admin_billing_customers import (
     AdminAdjustRequestDTO,
+    AdminCancelRequestDTO,
+    AdminExtendRequestDTO,
     AdminForgiveRequestDTO,
     AdminGrantRequestDTO,
     AuditEntryDTO,
@@ -41,6 +45,7 @@ from lemely.web.schemas_admin_billing_customers import (
     DebtDTO,
     GrantDTO,
     LinkedUserDTO,
+    ManualActivationRequestDTO,
     MemberDTO,
     PeriodDTO,
     SubscriptionDTO,
@@ -52,7 +57,7 @@ if TYPE_CHECKING:
     from lemely.db.models.users import User
 
 router = APIRouter(
-    prefix="/api/admin/billing/customers",
+    prefix="/api/admin/billing",
     dependencies=[Depends(require_role(Role.platform_admin))],
 )
 
@@ -194,7 +199,7 @@ def customer_detail_dto(d: CustomerDetail) -> CustomerDetailDTO:
     )
 
 
-@router.get("", response_model=CustomerSearchResultDTO)
+@router.get("/customers", response_model=CustomerSearchResultDTO)
 def search_customers(
     service: CustomerService,
     q: Annotated[str, Query(min_length=1, max_length=200)],
@@ -216,13 +221,13 @@ def search_customers(
     )
 
 
-@router.get("/{user_id}", response_model=CustomerDetailDTO)
+@router.get("/customers/{user_id}", response_model=CustomerDetailDTO)
 def get_customer(user_id: uuid.UUID, service: CustomerService) -> CustomerDetailDTO:
     with mapped_errors():
         return customer_detail_dto(service.detail(user_id))
 
 
-@router.post("/{user_id}/grant", response_model=CustomerDetailDTO)
+@router.post("/customers/{user_id}/grant", response_model=CustomerDetailDTO)
 def grant_credits(
     user_id: uuid.UUID, body: AdminGrantRequestDTO, service: CustomerService, auth: AdminAuth
 ) -> CustomerDetailDTO:
@@ -239,7 +244,7 @@ def grant_credits(
         )
 
 
-@router.post("/{user_id}/adjust", response_model=CustomerDetailDTO)
+@router.post("/customers/{user_id}/adjust", response_model=CustomerDetailDTO)
 def adjust_balance(
     user_id: uuid.UUID, body: AdminAdjustRequestDTO, service: CustomerService, auth: AdminAuth
 ) -> CustomerDetailDTO:
@@ -255,7 +260,7 @@ def adjust_balance(
         )
 
 
-@router.post("/{user_id}/forgive-debt", response_model=CustomerDetailDTO)
+@router.post("/customers/{user_id}/forgive-debt", response_model=CustomerDetailDTO)
 def forgive_debt(
     user_id: uuid.UUID, body: AdminForgiveRequestDTO, service: CustomerService, auth: AdminAuth
 ) -> CustomerDetailDTO:
@@ -263,5 +268,51 @@ def forgive_debt(
         return customer_detail_dto(
             service.forgive_debt(
                 user_id, units=body.units, admin_user_id=admin_id(auth), reason=body.reason
+            )
+        )
+
+
+@router.post("/customers/{user_id}/manual-activation", response_model=CustomerDetailDTO)
+def manual_activation(
+    user_id: uuid.UUID, body: ManualActivationRequestDTO, service: CustomerService, auth: AdminAuth
+) -> CustomerDetailDTO:
+    with mapped_errors():
+        return customer_detail_dto(
+            service.manual_activation(
+                user_id,
+                plan_tier_id=body.planTierId,
+                period_days=body.periodDays,
+                admin_user_id=admin_id(auth),
+                reason=body.reason,
+            )
+        )
+
+
+@router.post("/subscriptions/{subscription_id}/extend", response_model=CustomerDetailDTO)
+def extend_subscription(
+    subscription_id: uuid.UUID,
+    body: AdminExtendRequestDTO,
+    service: CustomerService,
+    auth: AdminAuth,
+) -> CustomerDetailDTO:
+    with mapped_errors():
+        return customer_detail_dto(
+            service.extend_subscription(
+                subscription_id, days=body.days, admin_user_id=admin_id(auth), reason=body.reason
+            )
+        )
+
+
+@router.post("/subscriptions/{subscription_id}/cancel", response_model=CustomerDetailDTO)
+def cancel_subscription(
+    subscription_id: uuid.UUID,
+    body: AdminCancelRequestDTO,
+    service: CustomerService,
+    auth: AdminAuth,
+) -> CustomerDetailDTO:
+    with mapped_errors():
+        return customer_detail_dto(
+            service.cancel_subscription(
+                subscription_id, when=body.when, admin_user_id=admin_id(auth), reason=body.reason
             )
         )
