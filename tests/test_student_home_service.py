@@ -10,6 +10,7 @@ from lemely.core.schemas import ExamMetadata, WeakArea
 from lemely.db.exam_calendar_repo import ExamDateRow, StudentExamCalendar, StudentExamEntry
 from lemely.db.models.enums import QuizSubmissionStatus, XpSource
 from lemely.db.quiz_taking_repo import AssignedQuizRow
+from lemely.db.student_home_repo import TeacherReplyRow
 from lemely.db.study_plan_repo import SessionView
 from lemely.db.xp_repo import StreakState, XpBreakdown
 from lemely.io.det.profiles import get_profile
@@ -25,6 +26,7 @@ from lemely.web.services.student_home import (
     build_homework,
     build_recent_papers,
     build_stats,
+    build_teacher_replies,
     build_today_sessions,
     build_week,
     build_win_back,
@@ -432,3 +434,36 @@ def test_build_home_orders_moments_marking_paper_reply_streak_back() -> None:
     assert [m.kind for m in home.moments] == ["marking", "result", "backAfterBreak"]
     # 61/80 = 76% against BOUNDARIES -> B
     assert home.floor[0].grade == "B"
+
+
+def test_teacher_replies_link_to_history_by_attempt_id_with_real_repo_rows() -> None:
+    linked, unlinked = uuid.uuid4(), uuid.uuid4()
+
+    def _row(attempt: uuid.UUID, name: str, code: str | None) -> TeacherReplyRow:
+        return TeacherReplyRow(
+            review_id=uuid.uuid4(),
+            attempt_id=attempt,
+            teacher_name=name,
+            question_id="7",
+            subject_code=code,
+            paper_number=4 if code else None,
+            marks_added=1,
+            resolved_at=NOW - timedelta(hours=1),
+        )
+
+    records = [_paper(at=NOW - timedelta(days=3)), _paper(attempt_id=str(linked))]
+    replies = build_teacher_replies(
+        [_row(linked, "Ms. Hanna", "0580"), _row(unlinked, "Your teacher", None)],
+        {str(linked): 1},
+    )
+    assert [r.paperId for r in replies] == ["1", None]
+    assert (replies[0].teacherName, replies[0].subjectName, replies[0].marksAdded) == (
+        "Ms. Hanna",
+        "Mathematics",
+        1,
+    )
+    assert (replies[1].subjectCode, replies[1].subjectName) == (None, None)
+    home = build_home(
+        _inputs(records=records, teacher_replies=[_row(linked, "Ms. Hanna", "0580")]), _boundaries
+    )
+    assert home.teacherReplies[0].paperId == "1"

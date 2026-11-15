@@ -13,7 +13,7 @@ import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from lemely.core.history import is_grade_bearing
 from lemely.db.models.enums import QuizSubmissionStatus, XpSource
@@ -42,13 +42,13 @@ from lemely.web.schemas_student_home import (
 )
 
 if TYPE_CHECKING:
-    import uuid
     from collections.abc import Iterable
 
     from lemely.core.history import PaperRecord
     from lemely.core.schemas import ExamMetadata
     from lemely.db.exam_calendar_repo import StudentExamCalendar
     from lemely.db.quiz_taking_repo import AssignedQuizRow
+    from lemely.db.student_home_repo import TeacherReplyRow
     from lemely.db.study_plan_repo import SessionView
     from lemely.db.xp_repo import StreakState, XpBreakdown
     from lemely.web.schemas_student import UploadRunDTO
@@ -270,27 +270,6 @@ def build_activity(
         )
     events.sort(key=lambda e: e.at, reverse=True)
     return events[:limit]
-
-
-class TeacherReplyRow(Protocol):
-    """Shape of ``lemely.db.student_home_repo.TeacherReplyRow`` (read-only attributes)."""
-
-    @property
-    def review_id(self) -> uuid.UUID: ...
-    @property
-    def attempt_id(self) -> uuid.UUID: ...
-    @property
-    def teacher_name(self) -> str: ...
-    @property
-    def question_id(self) -> str: ...
-    @property
-    def subject_code(self) -> str | None: ...
-    @property
-    def paper_number(self) -> int | None: ...
-    @property
-    def marks_added(self) -> int: ...
-    @property
-    def resolved_at(self) -> datetime: ...
 
 
 BREAK_DAYS = 3
