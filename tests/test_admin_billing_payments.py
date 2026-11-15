@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
+from structlog.testing import capture_logs
 
 import lemely.db.admin_payments_repo as payments_repo
 from lemely.db.admin_billing_repo import AuditAction
@@ -467,6 +468,28 @@ def test_a_payment_another_transaction_holds_is_409_not_500_and_leaves_no_audit(
     assert _post_reconcile(_client(sm, admin, paymob), payment).status_code == 200
 
 
+def test_an_order_inquiry_that_fails_is_502_and_the_audit_says_nothing_was_asked(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    student = add_user(sm, Role.student)
+    payment = add_payment(
+        sm, payer=student, status=PaymentStatus.pending, created_at=NOW - timedelta(hours=2)
+    )
+    paymob = FakePaymobClient()
+    paymob.inquiry_response = PaymobError("Paymob GET orders failed with HTTP 503")
+
+    resp = _post_reconcile(_client(sm, admin, paymob), payment)
+
+    assert resp.status_code == 502, resp.text
+    assert resp.json()["detail"]["code"] == "paymob_inquiry_failed"
+    [row] = audit_rows(sm, AuditAction.PAYMENT_RECONCILE)
+    assert (row.before["status"], row.after["status"], row.after["inquiry"]) == (
+        "pending",
+        "pending",
+        "failed",
+    )
+
+
 # -- settling refunds by inquiry ---------------------------------------------------------
 
 
@@ -579,9 +602,10 @@ def test_an_invisible_refund_waits_while_young_and_fails_after_sixty_minutes(
     assert resp.json()["status"] == "paid"  # nothing moved: a new refund is allowed again
 
 
-def test_an_unknown_to_paymob_transaction_counts_as_not_visible(
+def test_a_404_on_the_parent_transaction_is_an_inquiry_error_and_fails_nothing(
     sm: sessionmaker[Session], admin: uuid.UUID
 ) -> None:
+    """Paymob does not 404 a transaction it charged, so a 404 means wrong keys or mode."""
     student = add_user(sm, Role.student)
     payment = add_payment(sm, payer=student, paymob_txn_id=81)
     old = _add_refund(
@@ -590,9 +614,63 @@ def test_an_unknown_to_paymob_transaction_counts_as_not_visible(
     paymob = FakePaymobClient()
     paymob.transaction_result = None  # inquire_by_transaction answers None for a 404
 
-    _post_reconcile(_client(sm, admin, paymob), payment)
+    resp = _post_reconcile(_client(sm, admin, paymob), payment)
 
-    assert _refund_status(sm, old) is RefundStatus.failed
+    assert resp.status_code == 502
+    assert resp.json()["detail"]["code"] == "paymob_inquiry_failed"
+    assert _refund_status(sm, old) is RefundStatus.unknown
+
+
+def test_a_dashboard_refund_is_not_proof_that_an_unknown_console_refund_happened(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    """Paymob's total includes dashboard refunds (DV-19), so only a rise above the baseline
+    recorded when the refund was requested shows that this refund reached Paymob."""
+    student = add_user(sm, Role.student)
+    payment = add_payment(
+        sm,
+        payer=student,
+        amount_minor=10000,
+        paymob_txn_id=880201,
+        last_callback={"id": 880201, "refunded_amount_cents": 3000},  # a dashboard refund
+    )
+    grant(sm, student, units=500, payment_id=payment)
+    paymob = FakePaymobClient()
+    paymob.refund_result = PaymobError("Paymob POST refund timed out", timeout=True)
+    service = _service(sm, paymob)
+    view = service.refund(payment, amount_minor=3000, admin_user_id=admin, reason="console refund")
+    [row] = view.refunds
+    assert row.status is RefundStatus.unknown
+    client = _client(sm, admin, paymob)
+
+    paymob.transaction_result = {"id": 880201, "refunded_amount_cents": 3000}  # dashboard only
+    _post_reconcile(client, payment)
+    assert _refund_status(sm, row.id) is RefundStatus.unknown
+
+    paymob.transaction_result = {"id": 880201, "refunded_amount_cents": 6000}  # ours landed too
+    resp = _post_reconcile(client, payment)
+
+    assert _refund_status(sm, row.id) is RefundStatus.succeeded
+    assert resp.json()["status"] == "partially_refunded"
+
+
+def test_failing_a_refund_because_paymob_never_showed_it_raises_an_alert(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    student = add_user(sm, Role.student)
+    payment = add_payment(sm, payer=student, paymob_txn_id=82)
+    old = _add_refund(
+        sm, payment, admin, status=RefundStatus.requested, amount=100, age=timedelta(hours=2)
+    )
+    paymob = FakePaymobClient()
+    paymob.transaction_result = {"id": 82, "refunded_amount_cents": 0}
+
+    with capture_logs() as logs:
+        _post_reconcile(_client(sm, admin, paymob), payment)
+
+    [alert] = [e for e in logs if e["event"] == "admin_refund_marked_failed"]
+    assert alert["alert"] is True
+    assert (alert["refund_id"], alert["payment_id"]) == (str(old), str(payment))
 
 
 def test_a_stale_requested_refund_is_settled_like_unknown(
@@ -686,16 +764,30 @@ def test_a_refund_settled_by_someone_else_in_between_is_not_closed_twice(
     )
     service = _service(sm, FakePaymobClient())
 
-    service._close_refund(
-        refund,
-        outcome=RefundStatus.failed,
-        response={},
-        admin_user_id=admin,
-        reason="late duplicate",
-    )
+    with capture_logs() as logs:
+        service._close_refund(
+            refund,
+            outcome=RefundStatus.failed,
+            response={},
+            admin_user_id=admin,
+            reason="late duplicate",
+        )
+        service._close_refund(  # the same outcome again is a quiet no-op
+            refund,
+            outcome=RefundStatus.succeeded,
+            response={},
+            admin_user_id=admin,
+            reason="agreeing duplicate",
+        )
 
     assert _refund_status(sm, refund) is RefundStatus.succeeded
     assert audit_rows(sm, AuditAction.PAYMENT_REFUND_FAILED) == []
+    [conflict] = [e for e in logs if e["event"] == "admin_refund_outcome_conflict"]
+    assert (conflict["recorded"], conflict["dropped"], conflict["alert"]) == (
+        "succeeded",
+        "failed",
+        True,
+    )
 
 
 def test_a_payment_with_no_paymob_transaction_has_nothing_to_inquire(
