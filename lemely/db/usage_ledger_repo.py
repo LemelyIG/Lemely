@@ -164,6 +164,16 @@ class UsageLedger:
     def __init__(self, session: Session) -> None:
         self._session = session
 
+    @classmethod
+    def lock_owner(cls, session: Session, owner_user_id: uuid.UUID) -> None:
+        """Take the owner's ledger lock until the transaction ends.
+
+        The ledger's own writers take it too, and it is re-entrant within a transaction, so a
+        caller that reads a balance to audit a ledger write can take it first and read a
+        balance no concurrent write can change before that write.
+        """
+        cls(session)._lock_owners([owner_user_id])
+
     def issue_grant(
         self,
         *,

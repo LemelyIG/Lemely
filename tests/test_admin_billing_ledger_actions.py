@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from decimal import Decimal
 from threading import Barrier
+from time import sleep
 from typing import TYPE_CHECKING
 
 import pytest
@@ -15,10 +16,11 @@ from sqlalchemy import select
 
 from lemely.core.usage_types import GrantScope, Payer
 from lemely.db import admin_customer_repo
-from lemely.db.admin_billing_repo import AdminConflictError, AuditAction
+from lemely.db.admin_billing_repo import AdminConflictError, AuditAction, ReasonRequiredError
 from lemely.db.admin_customer_repo import AdminCustomerService
 from lemely.db.models.enums import Role
 from lemely.db.models.usage import GrantKind, UsageDebt, UsageGrant, UsageRate
+from lemely.db.usage_ledger_repo import UsageLedger
 from tests.admin_billing_db import (
     NOW,
     FakePaymobClient,
@@ -139,7 +141,7 @@ def test_grant_is_audited_and_a_replay_changes_nothing(
     assert row.target_id == student
     assert row.admin_user_id == admin
     assert (_before(row)["credits_available"], _after(row)["credits_available"]) == (0, 100)
-    assert _after(row)["idempotency_key"] == f"admin-grant:{student}:{body['requestId']}"
+    assert _after(row)["idempotency_key"] == f"admin-ledger:{body['requestId']}"
     assert (_after(row)["user_id"], _after(row)["units"], _after(row)["valid_days"]) == (
         str(student),
         100,
@@ -148,6 +150,7 @@ def test_grant_is_audited_and_a_replay_changes_nothing(
     [issued] = _grants_of(sm, student)
     assert (issued.kind, issued.visible, issued.units) == (GrantKind.adjustment, True, 100)
     assert issued.effective_at == NOW
+    assert issued.idempotency_key == f"admin-grant:{student}:{body['requestId']}"
     assert issued.expires_at == NOW + timedelta(days=30)
 
 
@@ -295,7 +298,7 @@ def test_adjust_moves_credits_both_ways(sm: sessionmaker[Session], admin: uuid.U
     assert down.json()["balance"]["creditsAvailable"] == 30
     assert [_after(r)["units"] for r in audit_rows(sm, AuditAction.CUSTOMER_ADJUST)] == [50, -20]
     assert all(
-        str(_after(r)["idempotency_key"]).startswith(f"admin-adjust:{student}:")
+        str(_after(r)["idempotency_key"]).startswith("admin-ledger:")
         for r in audit_rows(sm, AuditAction.CUSTOMER_ADJUST)
     )
 
@@ -490,3 +493,139 @@ def test_an_unknown_customer_is_404_with_no_audit_row(
     assert resp.status_code == 404
     assert resp.json()["detail"]["code"] == "customer_not_found"
     assert audit_count(sm) == 0
+
+
+# -- review follow-ups (M1-M5) ---------------------------------------------------
+
+
+def test_one_request_id_is_single_use_across_grant_and_adjust(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    student = add_user(sm, Role.student)
+    client = admin_client(sm, admin)
+    request_id = uuid.uuid4()
+    assert client.post(_url(student, "grant"), json=_grant_body(request_id)).status_code == 200
+
+    reused = client.post(
+        _url(student, "adjust"), json={"units": 5, "requestId": str(request_id), "reason": "again"}
+    )
+    first_adjust = uuid.uuid4()
+    assert (
+        client.post(
+            _url(student, "adjust"),
+            json={"units": 5, "requestId": str(first_adjust), "reason": "x y"},
+        ).status_code
+        == 200
+    )
+    reused_as_grant = client.post(_url(student, "grant"), json=_grant_body(first_adjust, units=5))
+
+    assert (reused.status_code, reused_as_grant.status_code) == (409, 409)
+    assert reused.json()["detail"]["code"] == "request_id_reused"
+    assert reused_as_grant.json()["detail"]["code"] == "request_id_reused"
+    assert len(audit_rows(sm, AuditAction.CUSTOMER_GRANT)) == 1
+    assert len(audit_rows(sm, AuditAction.CUSTOMER_ADJUST)) == 1
+
+
+def test_one_request_id_on_two_customers_at_once_writes_once(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    """The lock is on the request id, not the customer: both calls must meet on it."""
+    first, second = add_user(sm, Role.student), add_user(sm, Role.student)
+    request_id = uuid.uuid4()
+    barrier = Barrier(2)
+
+    def call(customer: uuid.UUID) -> str:
+        service = _service(sm)
+        barrier.wait(timeout=10)
+        try:
+            service.grant_credits(
+                customer,
+                units=100,
+                valid_days=30,
+                request_id=request_id,
+                admin_user_id=admin,
+                reason="race",
+            )
+        except AdminConflictError as exc:
+            return exc.code
+        return "ok"
+
+    with ThreadPoolExecutor(2) as pool:
+        outcomes = sorted(
+            f.result(timeout=30) for f in [pool.submit(call, first), pool.submit(call, second)]
+        )
+
+    assert outcomes == ["ok", "request_id_reused"]
+    assert len(audit_rows(sm, AuditAction.CUSTOMER_GRANT)) == 1
+    assert len(_grants_of(sm, first)) + len(_grants_of(sm, second)) == 1
+
+
+@pytest.mark.parametrize("action", ["grant", "adjust", "forgive"])
+def test_the_service_refuses_a_blank_reason_without_the_dto(
+    sm: sessionmaker[Session], admin: uuid.UUID, action: str
+) -> None:
+    student = _with_debt(sm, 3)
+    service = _service(sm)
+    with pytest.raises(ReasonRequiredError):
+        if action == "grant":
+            service.grant_credits(
+                student,
+                units=5,
+                valid_days=5,
+                request_id=uuid.uuid4(),
+                admin_user_id=admin,
+                reason=" ",
+            )
+        elif action == "adjust":
+            service.adjust(
+                student, units=5, request_id=uuid.uuid4(), admin_user_id=admin, reason=" "
+            )
+        else:
+            service.forgive_debt(student, units=None, admin_user_id=admin, reason=" ")
+    assert audit_count(sm) == 0
+    assert len(_grants_of(sm, student)) == 1
+
+
+def test_the_audit_before_is_read_under_the_owner_lock(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    """A write committed while the action waits for the lock lands in ``before``."""
+    student = add_user(sm, Role.student)
+    with ThreadPoolExecutor(1) as pool, sm.begin() as holder:
+        UsageLedger.lock_owner(holder, student)
+        future = pool.submit(
+            _service(sm).grant_credits,
+            student,
+            units=100,
+            valid_days=30,
+            request_id=uuid.uuid4(),
+            admin_user_id=admin,
+            reason="locked out",
+        )
+        sleep(1.0)
+        assert not future.done()
+        UsageLedger(holder).issue_grant(
+            owner_user_id=student,
+            kind=GrantKind.adjustment,
+            units=50,
+            idempotency_key=f"other:{uuid.uuid4()}",
+            expires_at=None,
+            visible=True,
+            effective_at=NOW,
+        )
+    future.result(timeout=30)
+    [row] = audit_rows(sm, AuditAction.CUSTOMER_GRANT)
+    assert (_before(row)["credits_available"], _after(row)["credits_available"]) == (50, 150)
+
+
+def test_a_clock_behind_the_first_forgive_still_deduplicates(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    student = _with_debt(sm, 5)
+    clock: list[object] = [NOW]
+    service = _service(sm, clock)
+    service.forgive_debt(student, units=2, admin_user_id=admin, reason="estimator bug")
+    clock[0] = NOW - timedelta(seconds=1)
+    detail = service.forgive_debt(student, units=2, admin_user_id=admin, reason="estimator bug")
+    assert detail.balance.outstanding_debt == 3
+    assert len(audit_rows(sm, AuditAction.CUSTOMER_FORGIVE_DEBT)) == 1

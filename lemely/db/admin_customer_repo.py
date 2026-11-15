@@ -32,7 +32,11 @@ from lemely.db.admin_billing_repo import (
     payment_views,
     require_reason,
 )
-from lemely.db.models.admin_audit import AdminAuditLog
+from lemely.db.models.admin_audit import (
+    HAS_IDEMPOTENCY_KEY_SQL,
+    IDEMPOTENCY_KEY_SQL,
+    AdminAuditLog,
+)
 from lemely.db.models.billing import Payment, PlanTier, Subscription, SubscriptionPeriod
 from lemely.db.models.team import TeacherMember, TeacherMemberKind
 from lemely.db.models.usage import (
@@ -75,6 +79,11 @@ MatchedOn = Literal["user_id", "payment_id", "paymob_order", "email", "name"]
 #: What Postgres or psycopg refuse in text: NUL, and a lone surrogate (not encodable as UTF-8);
 #: the other control characters are never part of an email, a name or an id.
 _REFUSED_CHARACTERS = re.compile("[\x00-\x1f\x7f\ud800-\udfff]")
+
+
+def _ledger_request_key(request_id: uuid.UUID) -> str:
+    """The audit ``idempotency_key`` of a grant or adjust: one id, once, for any customer."""
+    return f"admin-ledger:{request_id}"
 
 
 def _utcnow() -> datetime:
@@ -528,28 +537,41 @@ class AdminCustomerService:
             raise AdminNotFoundError("customer_not_found")
 
     @staticmethod
-    def _prior_request(
-        s: Session, action: AuditAction, request_id: uuid.UUID
-    ) -> AdminAuditLog | None:
-        """The audit row an earlier call with this ``request_id`` wrote, for any customer (DV-14).
+    def _prior_request(s: Session, request_id: uuid.UUID) -> AdminAuditLog | None:
+        """The ledger action an earlier call with this ``request_id`` wrote, for any customer.
 
-        The idempotency key is scoped by customer, so its index cannot see a request id reused
-        on another one; ``after.request_id`` is read across all targets instead.
+        Grant and adjust both store ``admin-ledger:{request_id}`` as the audit
+        ``idempotency_key``, so the unique partial index serves the lookup, one probe per
+        action (the index is per action). One request id is single-use across both (DV-14).
         """
-        return s.scalars(
-            select(AdminAuditLog)
-            .where(
-                AdminAuditLog.action == str(action),
-                AdminAuditLog.after["request_id"].as_string() == str(request_id),
-            )
-            .limit(1)
-        ).first()
+        for action in (AuditAction.CUSTOMER_GRANT, AuditAction.CUSTOMER_ADJUST):
+            row = s.scalars(
+                select(AdminAuditLog)
+                .where(
+                    AdminAuditLog.action == str(action),
+                    sa.text(HAS_IDEMPOTENCY_KEY_SQL),
+                    sa.literal_column(IDEMPOTENCY_KEY_SQL) == _ledger_request_key(request_id),
+                )
+                .limit(1)
+            ).first()
+            if row is not None:
+                return row
+        return None
 
     @staticmethod
-    def _same_request(prior: AdminAuditLog, user_id: uuid.UUID, payload: dict[str, object]) -> bool:
-        """True when ``prior`` was this very request; a different target or payload is a reuse."""
+    def _same_request(
+        prior: AdminAuditLog,
+        action: AuditAction,
+        user_id: uuid.UUID,
+        payload: dict[str, object],
+    ) -> bool:
+        """True when ``prior`` is this very request; other action, target or payload is a reuse."""
         after = prior.after or {}
-        return prior.target_id == user_id and all(after.get(k) == v for k, v in payload.items())
+        return (
+            prior.action == str(action)
+            and prior.target_id == user_id
+            and all(after.get(k) == v for k, v in payload.items())
+        )
 
     def grant_credits(
         self,
@@ -574,10 +596,11 @@ class AdminCustomerService:
         now = self._now()
         with self._sm.begin() as s:
             self._require_user(s, user_id)
-            lock_idempotency_key(s, f"admin-grant:{request_id}")
-            prior = self._prior_request(s, AuditAction.CUSTOMER_GRANT, request_id)
+            lock_idempotency_key(s, _ledger_request_key(request_id))
+            UsageLedger.lock_owner(s, user_id)
+            prior = self._prior_request(s, request_id)
             if prior is not None:
-                if not self._same_request(prior, user_id, payload):
+                if not self._same_request(prior, AuditAction.CUSTOMER_GRANT, user_id, payload):
                     raise AdminConflictError(
                         "request_id_reused", "This request id was used for a different grant."
                     )
@@ -605,7 +628,7 @@ class AdminCustomerService:
                         **payload,
                         "grant_id": issued.id,
                         "expires_at": issued.expires_at,
-                        "idempotency_key": key,
+                        "idempotency_key": _ledger_request_key(request_id),
                         "request_id": request_id,
                         "user_id": user_id,
                     },
@@ -633,10 +656,11 @@ class AdminCustomerService:
         now = self._now()
         with self._sm.begin() as s:
             self._require_user(s, user_id)
-            lock_idempotency_key(s, f"admin-adjust:{request_id}")
-            prior = self._prior_request(s, AuditAction.CUSTOMER_ADJUST, request_id)
+            lock_idempotency_key(s, _ledger_request_key(request_id))
+            UsageLedger.lock_owner(s, user_id)
+            prior = self._prior_request(s, request_id)
             if prior is not None:
-                if not self._same_request(prior, user_id, payload):
+                if not self._same_request(prior, AuditAction.CUSTOMER_ADJUST, user_id, payload):
                     raise AdminConflictError(
                         "request_id_reused", "This request id was used for a different adjustment."
                     )
@@ -660,7 +684,7 @@ class AdminCustomerService:
                     {
                         **asdict(balance_for(s, user_id, now=now)),
                         **payload,
-                        "idempotency_key": key,
+                        "idempotency_key": _ledger_request_key(request_id),
                         "request_id": request_id,
                         "user_id": user_id,
                     },
@@ -684,28 +708,39 @@ class AdminCustomerService:
         with self._sm.begin() as s:
             self._require_user(s, user_id)
             lock_idempotency_key(s, f"admin-forgive:{user_id}")
-            if self._forgiven_recently(s, user_id, admin_user_id, units, cleaned, now):
-                return self.detail(user_id)
-            before = asdict(balance_for(s, user_id, now=now))
-            forgiven = UsageLedger(s).forgive_debt(user_id, units=units, reason=cleaned, now=now)
-            if forgiven == 0:
-                raise AdminConflictError("no_outstanding_debt", "This account owes nothing.")
-            audited(
-                s,
-                admin_user_id,
-                AuditAction.CUSTOMER_FORGIVE_DEBT,
-                AuditTarget.USER,
-                user_id,
-                cleaned,
-                before,
-                {
-                    **asdict(balance_for(s, user_id, now=now)),
-                    "forgiven_units": forgiven,
-                    "requested_units": units,
-                    "forgiven_at": now,
-                },
-            )
+            UsageLedger.lock_owner(s, user_id)
+            if not self._forgiven_recently(s, user_id, admin_user_id, units, cleaned, now):
+                self._forgive(s, user_id, admin_user_id, units, cleaned, now)
         return self.detail(user_id)
+
+    @staticmethod
+    def _forgive(
+        s: Session,
+        user_id: uuid.UUID,
+        admin_user_id: uuid.UUID,
+        units: int | None,
+        cleaned: str,
+        now: datetime,
+    ) -> None:
+        before = asdict(balance_for(s, user_id, now=now))
+        forgiven = UsageLedger(s).forgive_debt(user_id, units=units, reason=cleaned, now=now)
+        if forgiven == 0:
+            raise AdminConflictError("no_outstanding_debt", "This account owes nothing.")
+        audited(
+            s,
+            admin_user_id,
+            AuditAction.CUSTOMER_FORGIVE_DEBT,
+            AuditTarget.USER,
+            user_id,
+            cleaned,
+            before,
+            {
+                **asdict(balance_for(s, user_id, now=now)),
+                "forgiven_units": forgiven,
+                "requested_units": units,
+                "forgiven_at": now,
+            },
+        )
 
     @staticmethod
     def _forgiven_recently(
@@ -733,7 +768,7 @@ class AdminCustomerService:
                 isinstance(at, str)
                 and row.reason == reason
                 and after.get("requested_units") == units
-                and timedelta(0) <= now - datetime.fromisoformat(at) < _FORGIVE_DEDUPE
+                and now - datetime.fromisoformat(at) < _FORGIVE_DEDUPE
             ):
                 return True
         return False
