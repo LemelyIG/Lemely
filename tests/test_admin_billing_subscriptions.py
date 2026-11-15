@@ -16,7 +16,7 @@ from lemely.db import admin_customer_repo
 from lemely.db.admin_billing_repo import AdminConflictError, AuditAction, ReasonRequiredError
 from lemely.db.admin_customer_repo import AdminCustomerService, expire_manual_subscriptions
 from lemely.db.admin_repo import PlatformAdminService, SubscriptionConflictError
-from lemely.db.models.billing import PlanTier, Subscription, SubscriptionPeriod
+from lemely.db.models.billing import PlanTier, PlanTierTerms, Subscription, SubscriptionPeriod
 from lemely.db.models.enums import Role, SubscriptionStatus
 from lemely.db.models.tutoring import EmailOutbox
 from lemely.db.models.usage import GrantKind, UsageEntry, UsageGrant, UsageGrantBalance
@@ -133,6 +133,35 @@ def test_manual_activation_creates_a_live_complimentary_plan(
         grant = session.get_one(UsageGrant, uuid.UUID(allowance["id"]))
         assert grant.subscription_period_id == period.id
         assert grant.idempotency_key == f"admin-activation:{stored.id}"
+
+
+def test_manual_activation_stamps_the_tiers_current_terms_version(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    """A tier already at terms v2 activates on v2, as a checkout does (not the column default)."""
+    student = add_user(sm, Role.student)
+    tier = add_plan_tier(sm)
+    with sm.begin() as session:
+        v1 = session.scalars(
+            sa.select(PlanTierTerms).where(
+                PlanTierTerms.plan_tier_id == tier, PlanTierTerms.terms_version == 1
+            )
+        ).one()
+        session.add(
+            PlanTierTerms(
+                plan_tier_id=tier,
+                terms_version=2,
+                price_minor=v1.price_minor + 1000,
+                extra_seat_price_minor=v1.extra_seat_price_minor,
+                allowance_units=v1.allowance_units,
+                included_seats=v1.included_seats,
+                seat_allowance_units=v1.seat_allowance_units,
+            )
+        )
+        session.flush()
+        session.get_one(PlanTier, tier).terms_version = 2
+    body = _activate(sm, admin, student, tier)
+    assert _subscription(sm, uuid.UUID(body["subscriptions"][0]["id"])).terms_version == 2
 
 
 def test_a_zero_allowance_tier_issues_no_grant(sm: sessionmaker[Session], admin: uuid.UUID) -> None:

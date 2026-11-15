@@ -864,6 +864,7 @@ class AdminCustomerService:
                 user_id=user_id,
                 payer_user_id=None,
                 plan_tier_id=tier.id,
+                terms_version=tier.terms_version,
                 status=SubscriptionStatus.active,
                 is_manually_activated=True,
                 activated_at=now,
