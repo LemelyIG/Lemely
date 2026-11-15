@@ -23,6 +23,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
 
+import structlog
 from sqlalchemy import func, select
 
 from lemely.db.admin_billing_repo import (
@@ -292,9 +293,25 @@ class AdminPaymentsService:
         else:
             outcome = classify_answer(answer)
             stored = redacted_response(answer)
-        self._close_refund(
-            refund_id, outcome=outcome, response=stored, admin_user_id=admin_user_id, reason=reason
-        )
+        try:
+            self._close_refund(
+                refund_id,
+                outcome=outcome,
+                response=stored,
+                admin_user_id=admin_user_id,
+                reason=reason,
+            )
+        except Exception:
+            # Paymob answered but the answer was not recorded: the row stays ``requested`` and
+            # blocks new refunds. Someone settles it by inquiry (Task 9 treats it like ``unknown``).
+            alerts.error(
+                "admin_refund_outcome_unrecorded",
+                alert=True,
+                refund_id=str(refund_id),
+                payment_id=str(payment_id),
+                outcome=outcome.value,
+            )
+            raise
         return self.payment_view(payment_id)
 
     def _open_refund(
@@ -437,7 +454,8 @@ class AdminPaymentsService:
             )
         nested = s.begin_nested()
         try:  # a dry run: the public APIs check and write, so the write is rolled back
-            self._reverse(s, payment)
+            with structlog.contextvars.bound_contextvars(dry_run=True):  # their logs are dropped
+                self._reverse(s, payment)
         except _ReverseUnavailableError as exc:
             raise AdminInvalidError("reverse_unavailable", str(exc)) from exc
         finally:
@@ -471,18 +489,30 @@ class AdminPaymentsService:
         raise _ReverseUnavailableError("This purchase has nothing to reverse.")
 
     def _reverse_seats(self, s: Session, payment: Payment, sub: Subscription) -> dict[str, object]:
+        """Remove only the seats this payment added, at the next renewal.
+
+        The target is what the teacher would hold without the purchase, ``held - quantity``, and
+        never above a reduction already scheduled: that one may already exclude these seats, and
+        undoing the purchase must not cut seats an older, unrefunded payment bought.
+        """
         if payment.dedupe_key is not None and payment.dedupe_key.startswith(
             RENEWAL_SEAT_DEDUPE_PREFIX
         ):
             raise _ReverseUnavailableError(
                 "A renewal seat charge paid for seats that already existed."
             )
+        if sub.current_period_start is None or payment.created_at < sub.current_period_start:
+            raise _ReverseUnavailableError("The seats were bought in an earlier period.")
         quantity = payment.seat_quantity or 0
         held = sub.extra_seats or 0
         if held <= 0 or quantity <= 0:
             raise _ReverseUnavailableError("No extra seats are held.")
-        base = min(held, sub.pending_extra_seats) if sub.pending_extra_seats is not None else held
-        target = max(0, base - quantity)
+        pending = sub.pending_extra_seats
+        target = max(0, held - quantity)
+        if pending is not None:
+            target = min(target, pending)
+        if pending is not None and target >= pending:
+            return {"reverse_effect": "already_scheduled", "pending_extra_seats": pending}
         try:
             MerchantChargeService(s, self._client, self._settings).schedule_seat_reduction(
                 subscription_id=sub.id,
@@ -497,31 +527,58 @@ class AdminPaymentsService:
     def _reverse_upgrade(
         self, s: Session, payment: Payment, sub: Subscription
     ) -> dict[str, object]:
-        """Go back to the tier the current period was billed on, at the next renewal.
+        """Go back to the tier this upgrade replaced, at the next renewal.
 
-        Recoverable only when the period's own payment names that tier and the tier still has the
-        terms version the period was billed on (a downgrade applies a tier's current terms).
+        That is the target of the latest earlier upgrade of the period, or the tier of the
+        period's own payment when there was none. Recoverable only when that tier still has the
+        terms the subscriber was billed on (a downgrade applies a tier's current terms): for the
+        period's payment, the version stamped on the period; for an earlier upgrade, no newer
+        version was written after that upgrade was paid.
         """
         if sub.plan_tier_id != payment.plan_tier_id:
             raise _ReverseUnavailableError("The upgrade is no longer the plan being billed.")
+        if sub.cancel_at_period_end:  # the plan ends at renewal anyway: nothing left to undo
+            return {"reverse_effect": "plan_ends_at_period_end"}
         period = current_period(s, sub)
         if period is None or payment.created_at < period.period_start:
             raise _ReverseUnavailableError("The upgrade belongs to an earlier period.")
-        paying = None if period.payment_id is None else s.get(Payment, period.payment_id)
-        previous = None if paying is None else paying.plan_tier_id
+        earlier = s.scalars(
+            select(Payment)
+            .where(
+                Payment.subscription_id == sub.id,
+                Payment.purpose == PaymentPurpose.upgrade_proration,
+                Payment.status.in_(
+                    (
+                        PaymentStatus.paid,
+                        PaymentStatus.partially_refunded,
+                        PaymentStatus.refunded,
+                        PaymentStatus.voided,
+                    )
+                ),
+                Payment.grant_units.is_(None),
+                Payment.id != payment.id,
+                Payment.paid_at >= period.period_start,
+                Payment.paid_at < payment.paid_at,
+            )
+            .order_by(Payment.paid_at.desc(), Payment.created_at.desc())
+            .limit(1)
+        ).first()
+        if earlier is not None:
+            previous, source = earlier.plan_tier_id, "previous_upgrade"
+            terms_ok = previous is not None and self._terms_unchanged_since(
+                s, previous, earlier.paid_at
+            )
+        else:
+            paying = None if period.payment_id is None else s.get(Payment, period.payment_id)
+            previous, source = None if paying is None else paying.plan_tier_id, "period_payment"
+            terms_ok = (
+                previous is not None
+                and period.terms_version is not None
+                and self._tier_has_terms(s, previous, period.terms_version)
+            )
         if previous is None or previous == payment.plan_tier_id:
             raise _ReverseUnavailableError("The tier billed before the upgrade is not recorded.")
-        tier = s.get(PlanTier, previous)
-        terms_known = period.terms_version is not None and (
-            s.scalar(
-                select(PlanTierTerms.plan_tier_id).where(
-                    PlanTierTerms.plan_tier_id == previous,
-                    PlanTierTerms.terms_version == period.terms_version,
-                )
-            )
-            is not None
-        )
-        if tier is None or not terms_known or tier.terms_version != period.terms_version:
+        if not terms_ok:
             raise _ReverseUnavailableError("The previous plan's terms have changed since.")
         try:
             SubscriptionService(s, self._client, self._settings).schedule_downgrade(
@@ -534,7 +591,37 @@ class AdminPaymentsService:
             raise _ReverseUnavailableError(
                 f"The previous plan cannot be restored now ({exc})."
             ) from exc
-        return {"reverse_effect": "downgrade_scheduled", "previous_plan_tier_id": previous}
+        return {
+            "reverse_effect": "downgrade_scheduled",
+            "previous_plan_tier_id": previous,
+            "previous_tier_source": source,
+        }
+
+    @staticmethod
+    def _tier_has_terms(s: Session, tier_id: uuid.UUID, terms_version: int) -> bool:
+        """True when ``tier_id`` is at ``terms_version`` now (a downgrade applies current terms)."""
+        tier = s.get(PlanTier, tier_id)
+        known = s.scalar(
+            select(PlanTierTerms.plan_tier_id).where(
+                PlanTierTerms.plan_tier_id == tier_id,
+                PlanTierTerms.terms_version == terms_version,
+            )
+        )
+        return tier is not None and known is not None and tier.terms_version == terms_version
+
+    @staticmethod
+    def _terms_unchanged_since(s: Session, tier_id: uuid.UUID, paid_at: datetime | None) -> bool:
+        """True when the tier's current terms were written no later than ``paid_at``."""
+        tier = s.get(PlanTier, tier_id)
+        if tier is None or paid_at is None:
+            return False
+        written = s.scalar(
+            select(PlanTierTerms.created_at).where(
+                PlanTierTerms.plan_tier_id == tier_id,
+                PlanTierTerms.terms_version == tier.terms_version,
+            )
+        )
+        return written is not None and written <= paid_at
 
     def _apply_success(
         self, s: Session, payment: Payment, refund: PaymentRefund
