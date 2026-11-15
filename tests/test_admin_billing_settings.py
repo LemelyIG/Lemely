@@ -451,6 +451,7 @@ def _set_rate(client: TestClient, currency: str = "EGP", **body: object) -> Resp
 
 def _clear_rate(client: TestClient, currency: str = "EGP", **body: object) -> Response:
     body.setdefault("expectedVersion", 1)
+    body.setdefault("confirmStopConversions", True)
     body.setdefault("reason", REASON)
     return client.post(f"{BASE}/credit-rates/{currency}/clear", json=body)
 
@@ -580,10 +581,32 @@ def test_a_non_numeric_rate_is_refused(client: TestClient, units: object) -> Non
     assert _set_rate(client, unitsPerMinor=units).status_code == 422
 
 
-def test_the_rate_cap_keeps_a_conversion_inside_bigint() -> None:
+def test_the_largest_rate_with_a_huge_amount_is_refused_cleanly_by_the_reader(
+    client: TestClient, sm: sessionmaker[Session]
+) -> None:
+    """``RATE_MAX`` times a payment past ``BIGINT`` is a clean refusal, not a ``DataError``."""
     from lemely.db.billing_settings_repo import RATE_MAX
+    from lemely.db.subscription_repo import credit_units_for_amount
 
-    assert Decimal(2**63 - 1) / RATE_MAX > Decimal(10**12)  # every BIGINT payment amount fits
+    assert _set_rate(client, unitsPerMinor=str(RATE_MAX)).status_code == 200
+    with sm() as session:
+        assert credit_units_for_amount(session, amount_minor=10**14, currency="EGP") is None
+        assert credit_units_for_amount(session, amount_minor=10**6, currency="EGP") == 10**11
+
+
+def test_the_defaults_module_equals_the_model_server_defaults() -> None:
+    """A drift would show on only one path (row created by the DB, or by ``ensure``)."""
+    columns = BillingSettings.__table__.c
+    expected = {
+        "credit_validity_months": billing_defaults.CREDIT_VALIDITY_MONTHS,
+        "grace_days": billing_defaults.GRACE_DAYS,
+        "max_extra_seats": billing_defaults.MAX_EXTRA_SEATS,
+        "price_change_notice_days": billing_defaults.PRICE_CHANGE_NOTICE_DAYS,
+    }
+    for name, value in expected.items():
+        default = columns[name].server_default
+        assert default is not None
+        assert str(default.arg) == str(value), name
 
 
 @pytest.mark.parametrize("currency", ["egp", "EG", "EGPP", "E1P", "ÉGP", "E_P"])
@@ -698,6 +721,46 @@ def test_two_creations_of_one_currency_give_one_success_and_one_409(
     assert len(stale) == 1, outcomes
     assert stale[0].code == "credit_rate_exists"
     assert len(_rate_rows(sm)) == 1
+
+
+def test_clearing_without_the_confirmation_is_409_and_keeps_the_rate(
+    client: TestClient, sm: sessionmaker[Session]
+) -> None:
+    assert _set_rate(client).status_code == 200
+    for extra in ({"confirmStopConversions": False}, {}):
+        body = {"expectedVersion": 1, "reason": REASON, **extra}
+        resp = client.post(f"{BASE}/credit-rates/EGP/clear", json=body)
+        assert resp.status_code == 409, resp.text
+        assert _error(resp)["code"] == "rate_clear_needs_confirm"
+        assert "fail closed" in _error(resp)["message"]
+    assert _rate_rows(sm) == [("EGP", Decimal("0.050000"), 1)]
+    assert audit_rows(sm, ACTION_CREDIT_RATE_CLEAR) == []
+
+
+def test_a_stale_writer_cannot_overwrite_a_cleared_and_recreated_rate(
+    client: TestClient, sm: sessionmaker[Session]
+) -> None:
+    """Both admins loaded version 1; one clears and recreates; the other's write is stale."""
+    assert _set_rate(client, unitsPerMinor="10").status_code == 200
+    assert _clear_rate(client, expectedVersion=1).status_code == 200
+    recreated = _set_rate(client, unitsPerMinor="1000")
+    assert recreated.status_code == 200
+    assert recreated.json()["version"] == 2
+    stale = _set_rate(client, unitsPerMinor="11", expectedVersion=1)
+    assert stale.status_code == 409
+    assert _error(stale)["code"] == "stale_write"
+    assert _clear_rate(client, expectedVersion=1).status_code == 409
+    assert _rate_rows(sm) == [("EGP", Decimal("1000.000000"), 2)]
+
+
+def test_a_recreated_rate_continues_past_every_earlier_version(client: TestClient) -> None:
+    assert _set_rate(client).status_code == 200
+    assert _set_rate(client, unitsPerMinor="0.1", expectedVersion=1).status_code == 200
+    assert _set_rate(client, unitsPerMinor="0.2", expectedVersion=2).status_code == 200
+    assert _clear_rate(client, expectedVersion=3).status_code == 200
+    assert _set_rate(client, unitsPerMinor="0.3").json()["version"] == 4
+    # another currency is unaffected
+    assert _set_rate(client, "USD", unitsPerMinor="5").json()["version"] == 1
 
 
 # --- authorisation ----------------------------------------------------------------------------

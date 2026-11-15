@@ -67,5 +67,8 @@ class CreditRateSet(ApiModel):
 
 
 class CreditRateClear(ApiModel):
+    """``confirmStopConversions`` must be ``true``: with no rate, conversions fail closed."""
+
     expectedVersion: StrictInt
+    confirmStopConversions: bool = False
     reason: Reason

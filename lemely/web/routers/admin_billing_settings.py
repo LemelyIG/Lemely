@@ -132,6 +132,7 @@ def clear_credit_rate(
             admin_id(auth),
             currency=currency,
             expected_version=body.expectedVersion,
+            confirm_stop_conversions=body.confirmStopConversions,
             reason=body.reason,
         )
     return CreditRatesDTO(rates=[credit_rate_dto(r) for r in rates])

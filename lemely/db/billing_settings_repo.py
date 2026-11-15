@@ -44,12 +44,14 @@ from lemely.db.admin_billing_repo import (
     AdminConflictError,
     AdminInvalidError,
     AdminNotFoundError,
+    AuditAction,
     AuditTarget,
     audited,
     lock_idempotency_key,
     require_reason,
     snapshot,
 )
+from lemely.db.models.admin_audit import AdminAuditLog
 from lemely.db.models.billing_ops import BillingSettings, CreditConversionRate
 
 if TYPE_CHECKING:
@@ -57,14 +59,14 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
-#: Audit action strings (``audited`` takes plain strings).
-ACTION_SETTINGS_UPDATE: Final = "catalogue.settings.update"
-ACTION_CREDIT_RATE_SET: Final = "catalogue.credit_rate.set"
-ACTION_CREDIT_RATE_CLEAR: Final = "catalogue.credit_rate.clear"
+#: The audit actions, members of ``AuditAction``.
+ACTION_SETTINGS_UPDATE: Final = AuditAction.BILLING_SETTINGS_UPDATE
+ACTION_CREDIT_RATE_SET: Final = AuditAction.CREDIT_RATE_SET
+ACTION_CREDIT_RATE_CLEAR: Final = AuditAction.CREDIT_RATE_CLEAR
 
 #: The audit target of the settings row: ``audit.target_id`` is a UUID, the row's key is ``1``.
 SETTINGS_TARGET_ID: Final = uuid.UUID(int=1)
-SETTINGS_TARGET_KIND: Final = "billing_settings"
+SETTINGS_TARGET_KIND: Final = AuditTarget.BILLING_SETTINGS
 
 INT_FIELDS: Final[Mapping[str, tuple[int, int]]] = {
     "credit_validity_months": (1, 120),
@@ -342,6 +344,26 @@ class BillingSettingsService:
             .execution_options(populate_existing=True)
         ).scalar_one_or_none()
 
+    def _highest_version_seen(self, currency: str) -> int:
+        """The highest version any set or clear of ``currency`` left in the audit log (0 if none).
+
+        Called under the per-currency advisory lock, so no other writer adds a row meanwhile.
+        """
+        versions = [
+            sa.cast(AdminAuditLog.before["version"].astext, sa.Integer),
+            sa.cast(AdminAuditLog.after["version"].astext, sa.Integer),
+        ]
+        highest = self._s.scalar(
+            sa.select(sa.func.max(sa.func.greatest(*versions))).where(
+                AdminAuditLog.action.in_((ACTION_CREDIT_RATE_SET, ACTION_CREDIT_RATE_CLEAR)),
+                sa.or_(
+                    AdminAuditLog.before["currency"].astext == currency,
+                    AdminAuditLog.after["currency"].astext == currency,
+                ),
+            )
+        )
+        return highest or 0
+
     def set_credit_rate(
         self,
         admin_id: uuid.UUID,
@@ -363,7 +385,7 @@ class BillingSettingsService:
             row = CreditConversionRate(
                 currency=currency,
                 units_per_minor=units_per_minor,
-                version=1,
+                version=self._highest_version_seen(currency) + 1,
                 updated_by=admin_id,
                 updated_at=self._now(),
             )
@@ -401,9 +423,14 @@ class BillingSettingsService:
         *,
         currency: str,
         expected_version: int,
+        confirm_stop_conversions: bool,
         reason: str,
     ) -> list[CreditRateView]:
-        """Delete the rate of ``currency``; the other currencies are returned."""
+        """Delete the rate of ``currency``; the other currencies are returned.
+
+        Without ``confirm_stop_conversions`` the call is refused (409 ``rate_clear_needs_confirm``):
+        with no rate, every conversion in that currency fails closed.
+        """
         require_reason(reason)
         validate_currency(currency)
         row = self._locked_rate(currency)
@@ -411,6 +438,13 @@ class BillingSettingsService:
             raise AdminNotFoundError("credit_rate_not_set", f"No {currency} rate is set.")
         if row.version != expected_version:
             raise _stale(f"The {currency} rate")
+        if not confirm_stop_conversions:
+            raise AdminConflictError(
+                "rate_clear_needs_confirm",
+                f"Clearing the {currency} rate stops credit conversions in {currency}: a payment "
+                "that needs converting will fail closed and grant nothing. Send "
+                "confirmStopConversions: true to clear it.",
+            )
         before = snapshot(row, _RATE_AUDIT)
         row_id = row.id
         self._s.delete(row)
