@@ -31,6 +31,7 @@ from lemely.db.models.billing import (
     PlanTier,
     Subscription,
 )
+from lemely.db.models.billing_ops import SEED_BILLING_SETTINGS_SQL
 from lemely.db.models.enums import PlanInterval, SubscriptionStatus
 from lemely.db.models.team import (
     CapPeriod,
@@ -209,6 +210,17 @@ class _AutoPlanId(enum.Enum):
 
 
 _plan_ids = itertools.count(5001)
+
+
+def ensure_billing_settings(sm: sessionmaker[Session]) -> None:
+    """Make sure the singleton ``billing_settings`` row exists, with its shipped defaults.
+
+    ``create_all`` inserts it once, but the suites' ``emptied_after`` truncates ``users``
+    ``CASCADE`` and the row references ``users``. A test that reads an admin setting (the seat
+    ceiling, the credit validity) calls this first. An existing row is left as it is.
+    """
+    with sm.begin() as session:
+        session.execute(sa.text(SEED_BILLING_SETTINGS_SQL))
 
 
 def seed_tier(
@@ -484,6 +496,7 @@ __all__ = [
     "T0",
     "FakePaymobClient",
     "charge",
+    "ensure_billing_settings",
     "grants_of",
     "link_parent",
     "paymob_settings",

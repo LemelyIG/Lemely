@@ -62,6 +62,7 @@ from tests.paymob_fixtures import (
 from tests.subscription_fixtures import (
     T0,
     FakePaymobClient,
+    ensure_billing_settings,
     grants_of,
     paymob_settings,
     seed_debt,
@@ -94,8 +95,10 @@ def pg_sessionmaker(_database: sessionmaker[Session]) -> Iterator[sessionmaker[S
     """The module's database, emptied after each test.
 
     Credit packs, conversion rates and ``paymob_events`` (deduped by transaction id) do not hang
-    off ``users``, so they are cleared here too.
+    off ``users``, so they are cleared here too. The seat ceiling a first checkout reads lives in
+    ``billing_settings``, which ``emptied_after`` truncates, so it is put back before each test.
     """
+    ensure_billing_settings(_database)
     yield from emptied_after(_database)
     with _database.begin() as session:
         session.execute(

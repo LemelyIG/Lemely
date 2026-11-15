@@ -23,6 +23,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_FLOOR, Decimal
+from functools import partial
 from typing import TYPE_CHECKING, ClassVar, Final
 
 import sqlalchemy as sa
@@ -36,7 +37,6 @@ from sqlalchemy.exc import IntegrityError
 from lemely.core.subscription_rules import (
     AMOUNT_SYNC_WINDOW,
     GRACE_PERIOD,
-    MAX_EXTRA_SEATS_AT_CHECKOUT,
     PAYMOB_RETRIAL_DAYS,
     STALE_CHECKOUT_AFTER,
     expected_renewal_amount_minor,
@@ -586,6 +586,24 @@ def _shed_excess_seats(
 
 #: The largest value ``usage_grants.units`` (a ``BIGINT``) holds.
 _BIGINT_MAX: Final = 2**63 - 1
+
+
+def _extra_seat_ceiling(session: Session) -> int:
+    """The most extra seats one subscription may hold: ``billing_settings.max_extra_seats``.
+
+    Fails closed: ``create_all`` and the migration both insert the row, so a missing one is a
+    damaged database, and no constant stands in for it. A checkout is refused
+    (:class:`CheckoutUnavailable`, alerted) before anything is written. ``merchant_charge_repo``
+    reads the same setting for seat purchases (``seat_ceiling``); it imports this module, so the
+    read cannot be shared from there.
+    """
+    configured = session.scalar(
+        select(BillingSettings.max_extra_seats).where(BillingSettings.id == 1)
+    )
+    if configured is None:
+        alerts.error("seat_ceiling_setting_missing", alert=True)
+        raise CheckoutUnavailable("The seat ceiling setting is missing")
+    return int(configured)
 
 
 def _credit_units(session: Session, *, amount_minor: int, currency: str) -> int:
@@ -1461,7 +1479,8 @@ class SubscriptionService:
         commits the pending subscription and its payment before calling Paymob, and again after.
 
         Raises:
-            CheckoutUnavailable: Paymob is not configured (nothing is written), or Paymob failed.
+            CheckoutUnavailable: Paymob is not configured, or the admin seat ceiling setting is
+                missing (alerted; nothing is written either way), or Paymob failed.
                 After a failure the pending subscription and its payment stay committed: a
                 definite rejection marks the payment ``failed`` (anyone's next checkout replaces
                 it), an unknown outcome leaves it ``created`` (only the same payer's replaces it).
@@ -1472,7 +1491,7 @@ class SubscriptionService:
                 another audience than the beneficiary's role.
             PlanModeMismatch: the tier's plan was created under the other Paymob key mode.
             InvalidExtraSeats: extra seats on a student tier, on a tier with no seat price, or
-                outside ``0..MAX_EXTRA_SEATS_AT_CHECKOUT``.
+                outside ``0..billing_settings.max_extra_seats``.
             SeatsInsufficient: a teacher holds more active seats than the plan would cover (UD-5).
             AlreadySubscribed: the beneficiary already has a live subscription.
             PhoneRequired: the payer has no valid phone (UD-11, raised by ``billing_data_for``).
@@ -1485,7 +1504,7 @@ class SubscriptionService:
             raise UnknownPayer(str(payer_user_id))
         beneficiary = self._beneficiary_for(payer, beneficiary_user_id)
         tier = self._sellable_tier(plan_tier_id, beneficiary, now=now)
-        if not 0 <= extra_seats <= MAX_EXTRA_SEATS_AT_CHECKOUT or (
+        if not 0 <= extra_seats <= _extra_seat_ceiling(session) or (
             extra_seats > 0
             and (tier.audience is not PlanAudience.teacher or tier.extra_seat_price_minor == 0)
         ):
@@ -2504,6 +2523,256 @@ class SubscriptionService:
         )
         log.info("subscription_cancelled_at_period_end", subscription_id=str(subscription.id))
         return True
+
+    # -- daily drift check (spec §5.2) ---------------------------------------------------
+
+    def check_drift(self, *, now: datetime, limit: int = SUBSCRIPTION_SWEEP_BATCH) -> int:
+        """Compare Paymob-linked subscriptions with Paymob and repair what webhooks missed.
+
+        Candidates, at most ``limit`` and least recently updated first: linked plans that are
+        live, and linked ``expired`` or ``cancelled`` rows whose Paymob cancel is not stamped
+        (a lapsed plan, a superseded checkout, a refused reactivation: DV-27). Complimentary rows
+        have no Paymob id and are never selected (R15). Per row, Paymob is read first with no
+        lock held (``GET subscriptions/{id}``, plus ``last-transaction`` for a live row); a
+        ``PaymobError`` on a read skips that row until tomorrow. The row is then locked
+        (:meth:`_lock_for_sweep`, so a row someone else holds is left to them), re-checked and
+        repaired, in its own transaction (:meth:`_sweep_one`). Repairs:
+
+        * a renewal whose webhook was lost, through :meth:`_apply_successful_charge` (DV-12),
+          also when a later failure webhook was judged stale and ignored: Paymob's last charge
+          is newer than anything recorded, so it is applied, once;
+        * a cancel or suspension made in Paymob, mirrored as a cancel at period end (UD-4 (b)),
+          unless it is our own (``cancel_at_period_end`` with the Paymob cancel stamped);
+        * an amount Paymob holds that is not :meth:`next_renewal_amount`, put back through
+          :meth:`sync_renewal_amount` (DV-18), never by a direct PUT;
+        * a Paymob subscription still open after the plan ended: cancelled and stamped, or just
+          stamped when Paymob already reports it cancelled.
+
+        Returns how many rows were repaired. The session must hold no uncommitted work: every
+        row commits.
+
+        Raises:
+            ValueError: ``limit`` is below 1.
+        """
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
+        S = Subscription
+        rows = self._session.execute(
+            select(S.id, S.paymob_subscription_id, S.status)
+            .where(
+                S.paymob_subscription_id.is_not(None),
+                sa.or_(
+                    S.status.in_(PLAN_LIVE_STATUSES),
+                    sa.and_(
+                        S.status.in_((SubscriptionStatus.expired, SubscriptionStatus.cancelled)),
+                        S.paymob_cancelled_at.is_(None),
+                    ),
+                ),
+            )
+            .order_by(S.updated_at, S.id)
+            .limit(limit)
+        ).all()
+        repaired = 0
+        for subscription_id, paymob_id, status in rows:
+            if paymob_id is None:
+                continue
+            reads = self._read_for_drift(
+                subscription_id, paymob_id, live=status in PLAN_LIVE_STATUSES
+            )
+            if reads is None:
+                continue
+            remote, txn = reads
+            repaired += self._sweep_one(
+                subscription_id,
+                partial(self._repair_drift, paymob_id=paymob_id, remote=remote, txn=txn),
+                now,
+            )
+        return repaired
+
+    def _read_for_drift(
+        self, subscription_id: uuid.UUID, paymob_id: int, *, live: bool
+    ) -> tuple[JsonMap, JsonMap | None] | None:
+        """Paymob's subscription (and, for a live row, last charge), or ``None`` to skip the row.
+
+        No lock is held. A failed read, or a subscription body that names another id, skips the
+        row (logged); the next pass reads it again.
+        """
+        try:
+            remote = self._client.get_subscription(paymob_id)
+            txn = self._client.last_transaction(paymob_id) if live else None
+        except PaymobError as exc:
+            log.warning(
+                "subscription_drift_read_failed",
+                subscription_id=str(subscription_id),
+                status_code=exc.status_code,
+                exc_info=True,
+            )
+            return None
+        if _strict_int(remote.get("id")) != paymob_id:
+            log.warning("paymob_subscription_remote_mismatch", paymob_subscription_id=paymob_id)
+            return None
+        return remote, txn
+
+    def _repair_drift(
+        self,
+        subscription: Subscription,
+        now: datetime,
+        *,
+        paymob_id: int,
+        remote: JsonMap,
+        txn: JsonMap | None,
+    ) -> bool:
+        """Sweep step: repair one row from what Paymob said, re-checked under the row lock.
+
+        The row is judged on its state now, not the one the candidates saw: a webhook may have
+        ended or revived it since. A row that was ended when ``txn`` was not read and is live
+        now waits for tomorrow's pass.
+        """
+        if subscription.paymob_subscription_id != paymob_id:
+            return False
+        if subscription.status in (SubscriptionStatus.expired, SubscriptionStatus.cancelled):
+            return self._repair_ended(subscription, remote, now)
+        if subscription.status not in PLAN_LIVE_STATUSES or txn is None:
+            return False
+        return self._repair_live(subscription, remote, txn, now)
+
+    def _repair_ended(self, subscription: Subscription, remote: JsonMap, now: datetime) -> bool:
+        """An ended plan must not keep a Paymob subscription that will charge again (DV-27)."""
+        if subscription.paymob_cancelled_at is not None:
+            return False
+        if remote.get("state") == "canceled":
+            subscription.paymob_cancelled_at = now
+            log.warning(
+                "subscription_drift_repaired", subscription_id=str(subscription.id), kind="stamped"
+            )
+            return True
+        repaired = self._cancel_at_paymob(subscription, now=now)
+        if repaired:
+            log.warning(
+                "subscription_drift_repaired",
+                subscription_id=str(subscription.id),
+                kind="cancelled",
+            )
+        return repaired
+
+    def _repair_live(
+        self, subscription: Subscription, remote: JsonMap, txn: JsonMap, now: datetime
+    ) -> bool:
+        """Apply a missed charge, mirror a Paymob cancel or suspension, put the amount back."""
+        repaired = self._apply_successful_charge(
+            subscription,
+            txn,
+            now=now,
+            initial_transaction=_strict_int(remote.get("initial_transaction")),
+        )
+        if repaired:
+            log.warning(
+                "subscription_drift_repaired", subscription_id=str(subscription.id), kind="renewal"
+            )
+        state = remote.get("state")
+        if state == "canceled":
+            if subscription.cancel_at_period_end and subscription.paymob_cancelled_at is not None:
+                return repaired  # our own cancel, already pushed: expected, not drift
+            self._on_canceled(subscription, RemoteState(remote, txn), now)
+            log.warning(
+                "subscription_drift_repaired", subscription_id=str(subscription.id), kind="canceled"
+            )
+            return True
+        if state == "suspended":
+            before = subscription.suspended_at
+            self._on_suspended(subscription, RemoteState(remote, txn), now)
+            if subscription.suspended_at != before:
+                log.warning(
+                    "subscription_drift_repaired",
+                    subscription_id=str(subscription.id),
+                    kind="suspended",
+                )
+                return True
+            return repaired
+        return self._repair_amount(subscription, remote, now) or repaired
+
+    def _repair_amount(self, subscription: Subscription, remote: JsonMap, now: datetime) -> bool:
+        """Put an amount Paymob holds back to :meth:`next_renewal_amount`, once (DV-18).
+
+        The stamp is first set to what Paymob reports, so the helper sees a difference and sends
+        the PUT, and keeps the replaced amount for a charge Paymob made before it landed. Sent:
+        the helper stamps the expected amount. An unknown outcome keeps the reported amount as
+        the stamp and the durable uncertain mark, so tomorrow (or the amount sweep) sends it
+        again. Nothing sent (fixed-amount path, period over): the stamp goes back as it was.
+        """
+        remote_amount = _strict_int(remote.get("amount_cents"))
+        if (
+            subscription.status is not SubscriptionStatus.active
+            or subscription.cancel_at_period_end
+            or remote_amount is None
+            or remote_amount == self.next_renewal_amount(subscription)
+        ):
+            return False
+        stamped = subscription.paymob_amount_minor
+        subscription.paymob_amount_minor = remote_amount
+        outcome = self.sync_renewal_amount(subscription, now=now)
+        if outcome is AmountPush.SENT:
+            log.warning(
+                "subscription_drift_repaired", subscription_id=str(subscription.id), kind="amount"
+            )
+            return True
+        if outcome is not AmountPush.UNKNOWN_OUTCOME:
+            subscription.paymob_amount_minor = stamped
+        return False
+
+    # -- refunds (UD-6) ----------------------------------------------------------------
+
+    def on_payment_refunded(self, payment_id: uuid.UUID, *, full: bool, now: datetime) -> None:
+        """A subscription payment was refunded (Phase 07's admin refund calls this, UD-6 (a)).
+
+        A partial refund has no effect. A full refund claws back the unspent, unheld part of the
+        period allowance that payment bought (spent units stay spent) and ends the plan at once:
+        ``cancelled``, with no notice, and the Paymob cancel left to the sweeps (the row is then
+        a cancel candidate, DV-15). A payment that is not a subscription charge, or an unknown
+        one, is ignored. Idempotent: the ledger refunds a grant once and an ended plan stays
+        ended. Seat allowances are not touched. The caller commits; no Paymob call is made.
+        """
+        if not full:
+            return
+        session = self._session
+        payment = session.scalars(
+            select(Payment)
+            .where(Payment.id == payment_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).one_or_none()
+        if (
+            payment is None
+            or payment.subscription_id is None
+            or payment.purpose
+            not in (PaymentPurpose.subscription_first, PaymentPurpose.subscription_renewal)
+        ):
+            log.info("subscription_refund_ignored", payment_id=str(payment_id))
+            return
+        subscription = self._lock(payment.subscription_id)
+        ledger = UsageLedger(session)
+        grant_ids = session.scalars(
+            select(UsageGrant.id)
+            .where(
+                UsageGrant.payment_id == payment.id, UsageGrant.kind == GrantKind.period_allowance
+            )
+            .order_by(UsageGrant.id)
+        ).all()
+        clawed = sum(ledger.claw_back_grant(g, reason="refund", now=now) for g in grant_ids)
+        if subscription.status in PLAN_LIVE_STATUSES:
+            subscription.status = SubscriptionStatus.cancelled
+            subscription.grace_until = None
+            subscription.suspended_at = None
+            subscription.pending_plan_tier_id = None
+            subscription.pending_extra_seats = None
+            _clear_amount_marks(subscription)
+            _bump(subscription)
+        log.info(
+            "subscription_payment_refunded",
+            subscription_id=str(subscription.id),
+            payment_id=str(payment.id),
+            clawed_back_units=clawed,
+        )
 
     def _lock(self, subscription_id: uuid.UUID) -> Subscription:
         """The subscription, locked and re-read, or :class:`SubscriptionNotFound`."""

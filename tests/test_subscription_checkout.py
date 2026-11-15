@@ -55,6 +55,7 @@ from lemely.io.paymob.client import PaymobError
 from tests.subscription_fixtures import (
     T0,
     FakePaymobClient,
+    ensure_billing_settings,
     link_parent,
     paymob_settings,
     seed_first_payment,
@@ -87,7 +88,12 @@ def _fresh_alert_memo() -> None:
 
 @pytest.fixture
 def pg_sessionmaker(_database: sessionmaker[Session]) -> Iterator[sessionmaker[Session]]:
-    """The module's database, emptied after each test so row counts start from zero."""
+    """The module's database, emptied after each test so row counts start from zero.
+
+    The seat ceiling a checkout reads lives in ``billing_settings``, which ``emptied_after``
+    truncates, so it is put back before each test.
+    """
+    ensure_billing_settings(_database)
     yield from emptied_after(_database)
 
 
