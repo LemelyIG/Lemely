@@ -7,10 +7,15 @@ live in ``schemas_admin_billing`` because the customer view and the problem queu
 
 from __future__ import annotations
 
+from datetime import datetime  # noqa: TC003 - pydantic field type
+from typing import Literal
+
 from lemely.web.schemas_admin import ApiModel
 from lemely.web.schemas_admin_billing import (  # noqa: TC001 - pydantic field types
+    AdminPaymentRowDTO,
     PositiveMoney,
     Reason,
+    RefundDTO,
 )
 
 
@@ -23,3 +28,34 @@ class AdminRefundRequestDTO(ApiModel):
     amountMinor: PositiveMoney | None = None
     reverseChange: bool = False
     reason: Reason
+
+
+WebhookKind = Literal["transaction", "token", "subscription"]
+
+
+class AdminPaymentsPageDTO(ApiModel):
+    items: list[AdminPaymentRowDTO]
+    nextCursor: str | None
+
+
+class WebhookFailureDTO(ApiModel):
+    """A callback Paymob sent that failed its HMAC check. No body is stored.
+
+    ``remoteAddr`` is the *reported* address (taken from ``X-Forwarded-For``, so a caller can
+    choose it): show it as plain text under that label, never as a verified source.
+    """
+
+    id: str
+    kind: WebhookKind
+    reason: str
+    remoteAddr: str | None
+    receivedAt: datetime
+
+
+class ProblemQueueDTO(ApiModel):
+    mismatches: list[AdminPaymentRowDTO]
+    stalePending: list[AdminPaymentRowDTO]
+    missingCallbacks: list[AdminPaymentRowDTO]
+    hmacFailures: list[WebhookFailureDTO]
+    hmacFailures24h: int
+    refundsNeedingAttention: list[RefundDTO]

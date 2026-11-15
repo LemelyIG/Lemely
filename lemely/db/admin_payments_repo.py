@@ -1,4 +1,4 @@
-"""Admin payments (spec §6 refunds, §8 area 3): refund and void.
+"""Admin payments (spec §6 refunds, §8 area 3): refund, void, list, problem queue, reconcile.
 
 **Refunds follow spec §6 "insert our own refund row before calling Paymob".** Transaction 1
 locks the payment, refuses while an earlier refund is unresolved, writes a ``requested`` row and
@@ -15,17 +15,27 @@ the payment, then the refund row, and records the outcome:
   it by inquiry. A refund or void is never retried (audit I6, spec §6).
 
 A crash between the two transactions leaves ``requested``, which blocks new refunds the same way.
+
+**Reconcile settles what is unresolved** by one inquiry on the parent transaction (the Bearer
+inquiry, ``inquire_by_transaction``). A refund that Paymob shows is ``succeeded``. One it does not
+show stays pending while the row is younger than 60 minutes (UD-3), then becomes ``failed``. A
+``requested`` row is settled only once it is older than the stuck threshold, which sits above the
+Paymob client timeout so cleanup cannot race a refund call still in flight.
 """
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Final
 
+import sqlalchemy as sa
 import structlog
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select, tuple_
 
+from lemely.core.keyset import CursorError, decode_cursor, encode_cursor
 from lemely.db.admin_billing_repo import (
     AdminConflictError,
     AdminInvalidError,
@@ -33,12 +43,18 @@ from lemely.db.admin_billing_repo import (
     AuditAction,
     AuditTarget,
     PaymentView,
+    PaymobCallError,
     alerts,
     audited,
     payment_views,
     require_reason,
 )
-from lemely.db.billing_repo import _outcome_unknown
+from lemely.db.billing_repo import (
+    BillingService,
+    PaymentBusyError,
+    PaymentNotFoundError,
+    _outcome_unknown,
+)
 from lemely.db.merchant_charge_repo import (
     RENEWAL_SEAT_DEDUPE_PREFIX,
     MerchantChargeError,
@@ -52,11 +68,17 @@ from lemely.db.models.billing import (
     Payment,
     PaymentPurpose,
     PaymentStatus,
+    PaymobEvent,
     PlanTier,
     PlanTierTerms,
     Subscription,
 )
-from lemely.db.models.billing_ops import PaymentRefund, RefundKind, RefundStatus
+from lemely.db.models.billing_ops import (
+    PaymentRefund,
+    PaymobWebhookFailure,
+    RefundKind,
+    RefundStatus,
+)
 from lemely.db.models.enums import SubscriptionStatus
 from lemely.db.models.usage import GrantKind, UsageEntry, UsageEntryKind, UsageGrant
 from lemely.db.subscription_repo import (
@@ -67,14 +89,26 @@ from lemely.db.usage_ledger_repo import UsageLedger
 from lemely.io.paymob.client import PaymobError
 
 if TYPE_CHECKING:
-    import uuid
     from collections.abc import Callable
 
     from sqlalchemy.orm import Session, sessionmaker
+    from sqlalchemy.sql import Select
 
     from lemely.io.paymob.client import PaymobClient
     from lemely.runtime.config import PaymobSettings
 
+_PAYMENTS_CURSOR: Final = "admin.billing.payments"
+#: ``created``/``pending`` for longer than this is a problem (spec §8 "pending over an hour").
+STALE_PENDING_AFTER: Final = timedelta(hours=1)
+#: A paid payment with no callback after this long is listed as a missing callback (DV-28).
+CALLBACK_GRACE: Final = timedelta(minutes=15)
+HMAC_WINDOW: Final = timedelta(days=7)
+#: An in-flight refund older than this needs attention, and reconcile may settle it. It must stay
+#: above the Paymob client timeout; ``AdminPaymentsService.stuck_after`` enforces the margin.
+REFUND_STUCK_AFTER: Final = timedelta(minutes=10)
+#: UD-3 (b): an unclear refund stays pending this long, then fails.
+REFUND_UNCLEAR_FOR: Final = timedelta(minutes=60)
+_QUEUE_LIMIT = 100
 _REFUNDABLE: Final = frozenset({PaymentStatus.paid, PaymentStatus.partially_refunded})
 _IN_FLIGHT: Final = frozenset({RefundStatus.requested, RefundStatus.unknown})
 _CLAWBACK_PURPOSES: Final = frozenset({PaymentPurpose.credit_pack, PaymentPurpose.auto_topup})
@@ -96,7 +130,33 @@ _RANK: Final = {
     PaymentStatus.voided: 3,
 }
 #: What of Paymob's answer is kept. Nothing else is stored (no card data, no tokens).
+_INQUIRY_KEPT: Final = (
+    "id",
+    "success",
+    "pending",
+    "is_voided",
+    "is_refunded",
+    "refunded_amount_cents",
+)
 _KEPT: Final = ("id", "success", "pending", "amount_cents", "is_refund", "is_void", "created_at")
+
+
+@dataclass(frozen=True, slots=True)
+class PaymentPage:
+    items: list[PaymentView]
+    next_cursor: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProblemQueue:
+    mismatches: list[PaymentView]
+    stale_pending: list[PaymentView]
+    missing_callbacks: list[PaymentView]
+    hmac_failures: list[PaymobWebhookFailure]
+    hmac_failures_24h: int
+    refunds_needing_attention: list[PaymentRefund]
+    refund_currency: dict[uuid.UUID, str]
+    """The currency of each such refund's payment, keyed by payment id (R28)."""
 
 
 def _utcnow() -> datetime:
@@ -211,7 +271,7 @@ def _committed_refunded(s: Session, view: PaymentView) -> int:
 
 
 class AdminPaymentsService:
-    """Refund and void (this task); list, problem queue and reconcile arrive with Task 9."""
+    """Refund and void, the payment list, the problem queue and manual reconcile."""
 
     def __init__(
         self,
@@ -405,7 +465,8 @@ class AdminPaymentsService:
     ) -> None:
         """Record Paymob's answer (payment locked first, then the refund row) and audit it.
 
-        Task 9's reconcile reuses this to settle an ``unknown`` row.
+        Reconcile reuses this to settle an ``unknown`` or stale ``requested`` row; a row that is
+        no longer in flight is left alone.
         """
         with self._sm.begin() as s:
             payment_id = s.scalars(
@@ -414,6 +475,8 @@ class AdminPaymentsService:
             payment = s.get(Payment, payment_id, with_for_update=True)
             refund = s.get(PaymentRefund, refund_id, with_for_update=True)
             assert payment is not None and refund is not None  # noqa: S101 - rows written by _open_refund
+            if refund.status not in _IN_FLIGHT:
+                return  # settled meanwhile (a second reconcile): never closed or clawed back twice
             before = {"status": payment.status, "refund_status": refund.status}
             refund.status = outcome
             refund.paymob_response = dict(response)
@@ -444,6 +507,271 @@ class AdminPaymentsService:
                     **effect,
                 },
             )
+
+    # -- list, problem queue, reconcile --------------------------------------------
+
+    def stuck_after(self) -> timedelta:
+        """How old an in-flight refund must be before it needs attention or reconcile settles it.
+
+        Never below three Paymob client timeouts, so a refund call still running is left alone.
+        """
+        return max(REFUND_STUCK_AFTER, timedelta(seconds=3 * self._settings.timeout_seconds))
+
+    def list_payments(
+        self,
+        *,
+        status: PaymentStatus | None,
+        purpose: PaymentPurpose | None,
+        user_id: uuid.UUID | None,
+        start: datetime | None,
+        end: datetime | None,
+        cursor: str | None,
+        limit: int,
+    ) -> PaymentPage:
+        """Newest first, keyset-paged on ``(created_at, id)`` (a tie never splits a page)."""
+        stmt = select(Payment)
+        if status is not None:
+            stmt = stmt.where(Payment.status == status)
+        if purpose is not None:
+            stmt = stmt.where(Payment.purpose == purpose)
+        if user_id is not None:
+            stmt = stmt.where(
+                or_(Payment.payer_user_id == user_id, Payment.beneficiary_user_id == user_id)
+            )
+        if start is not None:
+            stmt = stmt.where(Payment.created_at >= start)
+        if end is not None:
+            stmt = stmt.where(Payment.created_at < end)
+        if cursor is not None:
+            try:
+                created, last_id = decode_cursor(
+                    cursor, endpoint=_PAYMENTS_CURSOR, types=(datetime, uuid.UUID)
+                )
+            except CursorError as exc:
+                raise AdminInvalidError("bad_cursor", str(exc)) from exc
+            stmt = stmt.where(
+                tuple_(Payment.created_at, Payment.id) < tuple_(created, last_id)  # type: ignore[arg-type]
+            )
+        with self._sm() as s:
+            rows = list(
+                s.scalars(
+                    stmt.order_by(Payment.created_at.desc(), Payment.id.desc()).limit(limit + 1)
+                )
+            )
+            page = rows[:limit]
+            next_cursor = (
+                encode_cursor(_PAYMENTS_CURSOR, [page[-1].created_at, page[-1].id])
+                if len(rows) > limit
+                else None
+            )
+            return PaymentPage(items=payment_views(s, page), next_cursor=next_cursor)
+
+    def problems(self) -> ProblemQueue:
+        """Everything an admin should look at today (spec §8 area 3), each list bounded."""
+        now = self._now()
+        with self._sm() as s:
+
+            def views(stmt: Select[tuple[Payment]]) -> list[PaymentView]:
+                return payment_views(s, list(s.scalars(stmt.limit(_QUEUE_LIMIT))))
+
+            mismatches = views(
+                select(Payment)
+                .where(Payment.status == PaymentStatus.failed_mismatch)
+                .order_by(Payment.created_at.desc(), Payment.id)
+            )
+            stale = views(
+                select(Payment)
+                .where(
+                    Payment.status.in_((PaymentStatus.created, PaymentStatus.pending)),
+                    Payment.created_at < now - STALE_PENDING_AFTER,
+                )
+                .order_by(Payment.created_at, Payment.id)
+            )
+            # A renewal is charged by Paymob's scheduler and reported on the subscription
+            # webhook, so it has no transaction callback of its own. An open payment whose
+            # callback was refused for its integration is stamped (T2 M6) yet still waits for a
+            # person, so it is listed through the refusal event instead of the stamp.
+            refused = (
+                select(PaymobEvent.id)
+                .where(
+                    PaymobEvent.dedupe_key.like("rejected\\_integration:%", escape="\\"),
+                    or_(
+                        PaymobEvent.payload["order"]["merchant_order_id"].astext
+                        == Payment.special_reference,
+                        PaymobEvent.payload["order"]["id"].astext
+                        == sa.cast(Payment.paymob_order_id, sa.Text),
+                    ),
+                )
+                .exists()
+            )
+            missing = views(
+                select(Payment)
+                .where(
+                    or_(
+                        (Payment.status == PaymentStatus.paid)
+                        & (Payment.purpose != PaymentPurpose.subscription_renewal)
+                        & (Payment.paid_at < now - CALLBACK_GRACE)
+                        & Payment.callback_received_at.is_(None),
+                        Payment.status.in_((PaymentStatus.created, PaymentStatus.pending))
+                        & refused,
+                    )
+                )
+                .order_by(func.coalesce(Payment.paid_at, Payment.created_at).desc(), Payment.id)
+            )
+            failures = list(
+                s.scalars(
+                    select(PaymobWebhookFailure)
+                    .where(PaymobWebhookFailure.received_at >= now - HMAC_WINDOW)
+                    .order_by(PaymobWebhookFailure.received_at.desc(), PaymobWebhookFailure.id)
+                    .limit(_QUEUE_LIMIT)
+                )
+            )
+            failures_24h = int(
+                s.scalar(
+                    select(func.count())
+                    .select_from(PaymobWebhookFailure)
+                    .where(PaymobWebhookFailure.received_at >= now - timedelta(hours=24))
+                )
+                or 0
+            )
+            stuck = list(
+                s.scalars(
+                    select(PaymentRefund)
+                    .where(
+                        PaymentRefund.status.in_(tuple(_IN_FLIGHT)),
+                        PaymentRefund.created_at < now - self.stuck_after(),
+                    )
+                    .order_by(PaymentRefund.created_at, PaymentRefund.id)
+                    .limit(_QUEUE_LIMIT)
+                )
+            )
+            currency = {
+                pid: cur
+                for pid, cur in s.execute(
+                    select(Payment.id, Payment.currency).where(
+                        Payment.id.in_({r.payment_id for r in stuck})
+                    )
+                )
+            }
+            return ProblemQueue(mismatches, stale, missing, failures, failures_24h, stuck, currency)
+
+    def reconcile(
+        self, payment_id: uuid.UUID, *, admin_user_id: uuid.UUID, reason: str
+    ) -> PaymentView:
+        """Inquire Paymob for one payment now, then settle its unresolved refunds by inquiry.
+
+        The payment part commits in its own transaction first. ``reconcile_payment_now`` takes a
+        ``NOWAIT`` lock and a busy row aborts the whole transaction, so the audit row is written
+        after it, never before (a busy row writes nothing and answers 409). An inquiry failure
+        while settling refunds is 502 and leaves them as they were.
+        """
+        require_reason(reason)
+        with self._sm.begin() as s:
+            payment = s.get(Payment, payment_id)
+            if payment is None:
+                raise AdminNotFoundError("payment_not_found")
+            before = payment.status
+            try:
+                status = BillingService(s, self._client, self._settings).reconcile_payment_now(
+                    payment_id, now=self._now()
+                )
+            except PaymentBusyError as exc:
+                raise AdminConflictError(
+                    "reconcile_in_progress",
+                    "Another process is working on this payment; try again in a moment.",
+                ) from exc
+            except PaymentNotFoundError as exc:
+                raise AdminNotFoundError("payment_not_found") from exc
+            audited(
+                s,
+                admin_user_id,
+                AuditAction.PAYMENT_RECONCILE,
+                AuditTarget.PAYMENT,
+                payment_id,
+                reason,
+                {"status": before},
+                {"status": status},
+            )
+        self._settle_refunds(payment_id, admin_user_id=admin_user_id, reason=reason)
+        return self.payment_view(payment_id)
+
+    @staticmethod
+    def _kept_inquiry(seen: Mapping[str, object]) -> dict[str, object]:
+        """The scalar fields of Paymob's answer worth keeping on the refund row."""
+        return {
+            key: seen[key]
+            for key in _INQUIRY_KEPT
+            if key in seen and isinstance(seen[key], str | int | float | bool | None)
+        }
+
+    def _settle_refunds(
+        self, payment_id: uuid.UUID, *, admin_user_id: uuid.UUID, reason: str
+    ) -> int:
+        """Settle ``unknown`` and stale ``requested`` refunds from Paymob's view; returns how many.
+
+        One inquiry on the parent transaction answers every row. A refund Paymob shows
+        (``refunded_amount_cents`` at least the succeeded total before it plus its amount; a void
+        by ``is_voided``) is ``succeeded``. One it does not show waits while the row is younger than
+        60 minutes (UD-3) and then fails. A ``requested`` row is a live call until it is stuck.
+        """
+        now = self._now()
+        with self._sm() as s:
+            txn = s.scalar(select(Payment.paymob_txn_id).where(Payment.id == payment_id))
+            rows = list(
+                s.scalars(
+                    select(PaymentRefund)
+                    .where(PaymentRefund.payment_id == payment_id)
+                    .order_by(PaymentRefund.created_at, PaymentRefund.id)
+                )
+            )
+        stuck_before = now - self.stuck_after()
+        open_rows = [
+            r
+            for r in rows
+            if r.status is RefundStatus.unknown
+            or (r.status is RefundStatus.requested and r.created_at < stuck_before)
+        ]
+        if not open_rows or txn is None:
+            return 0
+        try:
+            seen = self._client.inquire_by_transaction(int(txn)) or {}
+        except PaymobError as exc:
+            raise PaymobCallError(
+                "paymob_inquiry_failed", "Paymob could not be asked about this payment."
+            ) from exc
+        settled = 0
+        succeeded = sum(
+            r.amount_minor
+            for r in rows
+            if r.status is RefundStatus.succeeded and r.kind is RefundKind.refund
+        )
+        for refund in open_rows:
+            if refund.kind is RefundKind.void:
+                visible = seen.get("is_voided") is True
+            else:
+                reported = seen.get("refunded_amount_cents")
+                visible = (
+                    isinstance(reported, int)
+                    and not isinstance(reported, bool)
+                    and reported >= succeeded + refund.amount_minor
+                )
+            if visible:
+                outcome = RefundStatus.succeeded
+            elif now - refund.created_at >= REFUND_UNCLEAR_FOR:
+                outcome = RefundStatus.failed
+            else:
+                continue  # UD-3 (b): keep it pending and ask again at the next reconcile
+            self._close_refund(
+                refund.id,
+                outcome=outcome,
+                response={"inquiry": self._kept_inquiry(seen)},
+                admin_user_id=admin_user_id,
+                reason=reason,
+            )
+            settled += 1
+            if outcome is RefundStatus.succeeded and refund.kind is RefundKind.refund:
+                succeeded += refund.amount_minor
+        return settled
 
     # -- what a refund undoes ------------------------------------------------------
 
@@ -771,7 +1099,14 @@ class AdminPaymentsService:
 
 
 __all__ = [
+    "CALLBACK_GRACE",
+    "HMAC_WINDOW",
+    "REFUND_STUCK_AFTER",
+    "REFUND_UNCLEAR_FOR",
+    "STALE_PENDING_AFTER",
     "AdminPaymentsService",
+    "PaymentPage",
+    "ProblemQueue",
     "classify_answer",
     "classify_error",
     "redacted_error",
