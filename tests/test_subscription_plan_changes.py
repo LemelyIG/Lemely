@@ -98,12 +98,24 @@ def _sub(sm: sessionmaker[Session], sid: uuid.UUID) -> Subscription:
         return row
 
 
+def _idle_charges(client: FakePaymobClient) -> FakePaymobClient:
+    """Script an unsuccessful last charge for every subscription the test did not script.
+
+    The sweep reads Paymob's last charge before it cancels an ended row (N-1); a charge that is
+    not a success changes nothing, so these tests keep testing the cancel.
+    """
+    for paymob_id in (*range(1, 60), 4321):
+        client.last_transactions.setdefault(paymob_id, charge(9_000 + paymob_id, 1, success=False))
+    return client
+
+
 def _sweep(
     sm: sessionmaker[Session],
     now: datetime,
     client: FakePaymobClient,
     **kwargs: Any,
 ) -> int:
+    _idle_charges(client)
     with sm() as session:
         return _svc(session, client).apply_period_end_changes(now=now, **kwargs)
 
@@ -940,6 +952,7 @@ def test_the_fallback_path_never_puts_an_amount(pg_sessionmaker: sessionmaker[Se
 def _sweep_with(
     sm: sessionmaker[Session], client: FakePaymobClient, settings: dict[str, Any]
 ) -> int:
+    _idle_charges(client)
     with sm() as session:
         return _svc(session, client, **settings).apply_period_end_changes(now=NOW)
 

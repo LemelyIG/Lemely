@@ -694,6 +694,105 @@ def test_a_manual_activation_that_ended_is_never_selected(
     assert client.calls == []
 
 
+# -- the period-end sweep also records a lost charge before it cancels (N-1) ---------------
+
+
+def _sweep(sm: sessionmaker[Session], client: FakePaymobClient, *, now: Any = DAY) -> int:
+    with sm() as session:
+        return SubscriptionService(session, client, paymob_settings()).apply_period_end_changes(
+            now=now
+        )
+
+
+def test_the_sweep_records_a_lost_late_charge_instead_of_cancelling_first(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    sid = _linked(sm, status=SubscriptionStatus.expired)
+    client = _client(last=charge(888, 10_000, created_at=END + timedelta(hours=1)))
+    assert _sweep(sm, client) == 1
+    assert "last_transaction" in client.names()
+    assert "cancel_subscription" not in client.names()
+    row = _sub(sm, sid)
+    assert (row.status, row.paymob_cancelled_at) == (SubscriptionStatus.active, None)
+    assert len(_renewals(sm, sid)) == 1
+
+
+def test_the_sweep_keeps_a_late_charge_on_a_cancelled_plan_and_cancels_next_time(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    sid = _linked(sm, status=SubscriptionStatus.cancelled)
+    client = _client(last=charge(888, 10_000, created_at=END + timedelta(hours=1)))
+    assert _sweep(sm, client) == 1
+    assert len(_renewals(sm, sid)) == 1
+    assert _sub(sm, sid).paymob_cancelled_at is None
+    assert "cancel_subscription" not in client.names()
+    assert _sweep(sm, client, now=DAY + timedelta(hours=1)) == 1
+    assert _sub(sm, sid).paymob_cancelled_at == DAY + timedelta(hours=1)
+    assert len(_renewals(sm, sid)) == 1
+
+
+def test_the_sweep_leaves_an_ended_row_alone_when_paymob_cannot_be_read(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    sid = _linked(sm, status=SubscriptionStatus.expired)
+    client = _client()
+    client.fail["last_transaction"] = PaymobError("down", status_code=503)
+    assert _sweep(sm, client) == 0
+    assert "cancel_subscription" not in client.names()
+    assert _sub(sm, sid).paymob_cancelled_at is None
+
+
+# -- a kept charge is not also underpaid (N-3), a pending PUT is marked (N-4) ---------------
+
+
+def test_a_charge_kept_on_a_cancelled_plan_alerts_only_as_kept(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    _linked(sm, status=SubscriptionStatus.cancelled, paymob_amount_minor=5_000)
+    client = _client(last=charge(888, 5_000, created_at=END + timedelta(hours=1)))
+    with capture_logs() as logs:
+        _drift(sm, client)
+    names = [log["event"] for log in logs if log.get("alert")]
+    assert names.count("subscription_charge_on_ended_subscription") == 1
+    assert "subscription_renewal_underpaid" not in names
+
+
+def test_a_pending_put_is_marked_in_the_first_transaction(
+    pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """N-4: a crash between the two transactions leaves the amount sweep to send the PUT."""
+    sm = pg_sessionmaker
+    sid = _linked(sm)
+    client = _client(amount=12_345, last=charge(888, 10_000, created_at=END - timedelta(hours=1)))
+
+    def die(*_args: object, **_kwargs: object) -> bool:
+        raise KeyboardInterrupt  # the process dies after the first commit
+
+    monkeypatch.setattr(SubscriptionService, "_repair_amount", die)
+    with pytest.raises(KeyboardInterrupt):
+        _drift(sm, client)
+    monkeypatch.undo()
+    row = _sub(sm, sid)
+    assert len(_renewals(sm, sid)) == 1  # the renewal is committed
+    assert row.amount_sync_uncertain_at == DAY  # and the owed PUT is on record
+    assert client.calls_to("update_subscription") == []
+    assert _sweep(sm, client, now=DAY + timedelta(hours=1)) == 1  # the amount sweep sends it
+    [put] = client.calls_to("update_subscription")
+    assert put["amount_cents"] == 10_000
+    assert _sub(sm, sid).amount_sync_uncertain_at is None  # cleared when the PUT confirmed
+
+
+def test_an_amount_in_sync_is_not_marked(pg_sessionmaker: sessionmaker[Session]) -> None:
+    sm = pg_sessionmaker
+    sid = _linked(sm, period_end=DAY + timedelta(days=1))
+    assert _drift(sm, _client()) == 0
+    assert _sub(sm, sid).amount_sync_uncertain_at is None
+
+
 # -- underpaid renewals and refused PUTs (I-4, I-5) --------------------------------------
 
 
@@ -1343,16 +1442,33 @@ def test_refunding_a_period_that_has_not_started_does_not_end_the_plan_now(
     assert alert.get("alert") is True
 
 
-def test_refunding_the_period_in_force_during_an_early_charge_ends_the_plan(
+def test_refunding_the_period_in_force_while_a_later_one_is_paid_ends_nothing(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
+    """N-2: ending the plan would strand the paid next period; it is left to a person."""
     sm = pg_sessionmaker
-    _, sid, _, now = _early_renewal(sm)
+    student, sid, renewal, now = _early_renewal(sm)
     first = _first_payment_of(sm, sid)
     with capture_logs() as logs:
         _refund_at(sm, first, now)
-    assert _sub(sm, sid).status is SubscriptionStatus.cancelled
+    row = _sub(sm, sid)
+    assert (row.status, row.cancel_at_period_end) == (SubscriptionStatus.active, False)
+    assert _remaining(sm, student) == 100  # nothing taken back
+    [alert] = [log for log in logs if log["event"] == "subscription_refund_with_later_paid_period"]
+    assert alert.get("alert") is True
     assert not any(log["event"] == "subscription_old_period_refunded" for log in logs)
+    with sm() as session:
+        kept = session.get(Payment, renewal)
+        assert kept is not None and kept.paid_at is not None
+
+
+def test_refunding_the_newest_period_in_force_still_ends_the_plan(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    _, sid, renewal, _ = _early_renewal(sm)
+    _refund_at(sm, renewal, END + timedelta(hours=1))  # N+1 has started: it is the one in force
+    assert _sub(sm, sid).status is SubscriptionStatus.cancelled
 
 
 def test_a_refund_of_a_charge_that_bought_no_period_changes_nothing(

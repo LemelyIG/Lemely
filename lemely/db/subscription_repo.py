@@ -2066,7 +2066,15 @@ class SubscriptionService:
                 alert=True,
             )
             return False
-        if amount < expected and not via_previous:
+        granted = _settle_renewal(
+            session,
+            subscription,
+            payment,
+            charged_at=charged_at,
+            now=now,
+            amount_updatable=self._settings.subscription_amount_updatable,
+        )
+        if granted and amount < expected and not via_previous:
             # Accepted at the stamp, which lags what is now owed (an upgrade or seats not yet at
             # Paymob, or a PUT whose outcome is unknown): never silent, someone collects the rest.
             alerts.error(
@@ -2078,14 +2086,6 @@ class SubscriptionService:
                 stamped_minor=stamped,
                 alert=True,
             )
-        granted = _settle_renewal(
-            session,
-            subscription,
-            payment,
-            charged_at=charged_at,
-            now=now,
-            amount_updatable=self._settings.subscription_amount_updatable,
-        )
         if granted and via_previous:
             # The period was paid at the replaced amount, but Paymob now holds the stamped one:
             # the grant stamped the charge, and the stamp must keep saying what Paymob will bill.
@@ -2444,8 +2444,51 @@ class SubscriptionService:
             now,
             limit,
         )
-        changed += sum(self._sweep_one(sid, self._push_cancel, now) for sid in cancel_ended)
+        for sid in cancel_ended:
+            changed += self._cancel_ended_one(sid, now)
         return changed
+
+    def _cancel_ended_one(self, subscription_id: uuid.UUID, now: datetime) -> int:
+        """Cancel one ended row's Paymob subscription, after checking it took no money (N-1).
+
+        Paymob is read first with no lock held (the subscription and its last charge), as the
+        drift check does. A paid charge Lemely never recorded is applied before anything is
+        cancelled (:meth:`_repair_ended`, the one rule of the webhook path, UD-2 (c)), and the
+        cancel waits for the next pass. A failed read leaves the row for the next pass.
+        """
+        linked_id = self._session.scalar(
+            select(Subscription.paymob_subscription_id).where(Subscription.id == subscription_id)
+        )
+        if linked_id is None:
+            return 0
+        reads = self._read_for_drift(subscription_id, linked_id)
+        if reads is None:
+            return 0
+        remote, txn = reads
+        return self._sweep_one(
+            subscription_id,
+            partial(self._cancel_ended, paymob_id=linked_id, remote=remote, txn=txn),
+            now,
+        )
+
+    def _cancel_ended(
+        self,
+        subscription: Subscription,
+        now: datetime,
+        *,
+        paymob_id: int,
+        remote: JsonMap,
+        txn: JsonMap,
+    ) -> bool:
+        """Sweep step: record a paid late charge, else cancel (with the retry backoff)."""
+        if subscription.paymob_subscription_id != paymob_id:
+            return False
+        _, recorded = self._apply_missed_charge(subscription, remote, txn, now)
+        if recorded:
+            return True
+        if subscription.status not in (SubscriptionStatus.expired, SubscriptionStatus.cancelled):
+            return False
+        return self._push_cancel(subscription, now)
 
     def _cancel_candidates(
         self, condition: sa.ColumnElement[bool], now: datetime, limit: int
@@ -2574,18 +2617,24 @@ class SubscriptionService:
         live, and linked ``expired`` or ``cancelled`` rows whose Paymob cancel is not stamped
         (a lapsed plan, a superseded checkout, a refused reactivation: DV-27). Complimentary rows
         have no Paymob id and are never selected (R15). Per row, Paymob is read first with no
-        lock held (``GET subscriptions/{id}``, plus ``last-transaction`` for a live row); a
-        ``PaymobError`` on a read skips that row until tomorrow. The row is then locked
-        (:meth:`_lock_for_sweep`, so a row someone else holds is left to them), re-checked and
-        repaired, in its own transaction (:meth:`_sweep_one`). Repairs:
+        lock held (``GET subscriptions/{id}`` and ``last-transaction``, for ended rows too); a
+        ``PaymobError`` on a read skips that row (stamped, so it goes to the back). The row is then
+        locked (:meth:`_lock_for_sweep`, so a row someone else holds is left to them),
+        re-checked and repaired, in its own transaction (:meth:`_sweep_one`). Repairs:
 
-        * a renewal whose webhook was lost, through :meth:`_apply_successful_charge` (DV-12),
-          also when a later failure webhook was judged stale and ignored: Paymob's last charge
-          is newer than anything recorded, so it is applied, once;
+        * a paid charge whose webhook was lost, on a live or an ended row, through
+          :meth:`_apply_successful_charge` (DV-12; UD-2 (c) for an ended one), also when a later
+          failure webhook was judged stale and ignored: Paymob's last charge is newer than
+          anything recorded, so it is applied, once, and an ended row is not cancelled in that
+          pass;
         * a cancel or suspension made in Paymob, mirrored as a cancel at period end (UD-4 (b)),
           unless it is our own (``cancel_at_period_end`` with the Paymob cancel stamped);
         * an amount Paymob holds that is not :meth:`next_renewal_amount`, put back through
-          :meth:`sync_renewal_amount` (DV-18), never by a direct PUT;
+          :meth:`sync_renewal_amount` (DV-18), never by a direct PUT. The first transaction marks
+          ``amount_sync_uncertain_at`` and the PUT runs in a second one, so its refusal or a
+          crash between them costs only the PUT (the amount sweep repeats it);
+        * a ``next_billing`` that disagrees with our period end is only alerted, never applied
+          (M8), once per period;
         * a Paymob subscription still open after the plan ended: cancelled and stamped, or just
           stamped when Paymob already reports it cancelled.
 
@@ -2872,7 +2921,31 @@ class SubscriptionService:
             return repaired
         if not repaired:
             self._note_next_billing(subscription, remote, now)
+        self._mark_put_pending(subscription, remote, now)
         return repaired
+
+    def _mark_put_pending(self, subscription: Subscription, remote: JsonMap, now: datetime) -> None:
+        """Record, in this transaction, that an amount PUT is owed (N-4).
+
+        The PUT itself runs in a second transaction (:meth:`_repair_amount`). Until it confirms,
+        ``amount_sync_uncertain_at`` says Paymob's amount is not what Lemely expects, so a
+        crash between the two, or a row another instance holds, is picked up by the amount sweep
+        and the next drift pass instead of waiting for the row to cycle back. The PUT helper
+        clears the mark when it succeeds.
+        """
+        remote_amount = _strict_int(remote.get("amount_cents"))
+        if (
+            subscription.status is SubscriptionStatus.active
+            and not subscription.cancel_at_period_end
+            and self._settings.subscription_amount_updatable
+            and subscription.current_period_end is not None
+            and subscription.current_period_end > now
+            and remote_amount is not None
+            and remote_amount != self.next_renewal_amount(subscription)
+            and subscription.amount_sync_uncertain_at is None
+        ):
+            subscription.amount_sync_uncertain_at = now
+            _bump(subscription)
 
     def _note_next_billing(
         self, subscription: Subscription, remote: JsonMap, now: datetime
@@ -2970,8 +3043,10 @@ class SubscriptionService:
         ended. A full refund of an older period's payment changes nothing and is alerted
         ``subscription_old_period_refunded``; one of an early-charged period that has not started
         claws back that period's grant only and is alerted ``subscription_future_period_refunded``;
-        both for manual handling. Seat allowances are not
-        touched. The caller commits; no Paymob call is made.
+        both for manual handling. So is a full refund of the period in force while a later
+        period is already paid: it ends nothing, takes nothing back and alerts
+        ``subscription_refund_with_later_paid_period`` (effect ``none``, manual). Seat allowances
+        are not touched. The caller commits; no Paymob call is made.
         """
         if not full:
             return
@@ -3020,6 +3095,25 @@ class SubscriptionService:
                 UsageLedger(session).claw_back_grant(grant_id, reason="refund", now=now)
             alerts.error(
                 "subscription_future_period_refunded",
+                subscription_id=str(subscription.id),
+                payment_id=str(payment.id),
+                alert=True,
+            )
+            return
+        later_paid = session.scalar(
+            select(SubscriptionPeriod.id)
+            .where(
+                SubscriptionPeriod.subscription_id == subscription.id,
+                SubscriptionPeriod.period_start > paid_period.period_start,
+            )
+            .limit(1)
+        )
+        if later_paid is not None and paid_period.id == in_force:
+            # The month in force is refunded but a later one is already paid (an early charge):
+            # ending the plan would strand that payment and its grant. Nothing is ended or taken
+            # back; someone settles both payments by hand.
+            alerts.error(
+                "subscription_refund_with_later_paid_period",
                 subscription_id=str(subscription.id),
                 payment_id=str(payment.id),
                 alert=True,
