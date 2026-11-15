@@ -389,6 +389,7 @@ class CatalogueSnapshot:
     usage_estimators: list[UsageEstimator]
     tier_counts: Mapping[uuid.UUID, TierCounts] = field(default_factory=dict)
     auto_topup_counts: Mapping[uuid.UUID, int] = field(default_factory=dict)
+    auto_topup_cap_below_price_counts: Mapping[uuid.UUID, int] = field(default_factory=dict)
     price_change_notice_days: int = _DEFAULT_NOTICE_DAYS
 
 
@@ -534,6 +535,24 @@ def _auto_topup_counts(session: Session) -> dict[uuid.UUID, int]:
     return {pack_id: count for pack_id, count in rows}
 
 
+def _auto_topup_cap_below_price_counts(session: Session) -> dict[uuid.UUID, int]:
+    """Enabled auto top-up settings per pack whose monthly cap is below the pack's price now.
+
+    Phase 06 never queues such a top-up (the cap check), so the setting stays armed and idle until
+    the customer raises the cap. One grouped query.
+    """
+    rows = session.execute(
+        select(AutoTopupSettings.credit_pack_id, sa.func.count())
+        .join(CreditPack, CreditPack.id == AutoTopupSettings.credit_pack_id)
+        .where(
+            AutoTopupSettings.enabled.is_(True),
+            AutoTopupSettings.monthly_cap_minor < CreditPack.price_minor,
+        )
+        .group_by(AutoTopupSettings.credit_pack_id)
+    )
+    return {pack_id: count for pack_id, count in rows}
+
+
 class AdminCatalogueService:
     """Plan tiers, credit packs, free allowances, usage rates and estimators (spec §8 area 1).
 
@@ -574,6 +593,11 @@ class AdminCatalogueService:
         with self._sm() as s:
             return _auto_topup_counts(s)
 
+    def auto_topup_cap_below_price_counts(self) -> Mapping[uuid.UUID, int]:
+        """Enabled auto top-ups per pack with a monthly cap below the pack price (one query)."""
+        with self._sm() as s:
+            return _auto_topup_cap_below_price_counts(s)
+
     def tier_counts(self) -> Mapping[uuid.UUID, TierCounts]:
         """Live and not-yet-moved subscriber counts per tier (one grouped query)."""
         with self._sm() as s:
@@ -605,6 +629,7 @@ class AdminCatalogueService:
                 ),
                 tier_counts=_tier_counts(s),
                 auto_topup_counts=_auto_topup_counts(s),
+                auto_topup_cap_below_price_counts=_auto_topup_cap_below_price_counts(s),
                 price_change_notice_days=s.scalar(select(BillingSettings.price_change_notice_days))
                 or _DEFAULT_NOTICE_DAYS,
             )
@@ -838,6 +863,7 @@ class AdminCatalogueService:
                 setattr(pack, name, value)
             pack.version += 1
             s.flush()
+            # UD13-B (a): auto top-ups keep charging the new price, held to each customer's cap.
             audited(
                 s,
                 admin_user_id,
@@ -846,7 +872,13 @@ class AdminCatalogueService:
                 pack.id,
                 reason,
                 before,
-                snapshot(pack, _CREDIT_PACK_AUDIT),
+                {
+                    **snapshot(pack, _CREDIT_PACK_AUDIT),
+                    "autoTopupsAffected": _auto_topup_counts(s).get(pack.id, 0),
+                    "autoTopupsCapBelowPrice": _auto_topup_cap_below_price_counts(s).get(
+                        pack.id, 0
+                    ),
+                },
             )
             return pack
 

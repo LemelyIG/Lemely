@@ -87,7 +87,9 @@ def plan_tier_dto(t: PlanTier, key_mode: str, counts: TierCounts | None = None) 
     )
 
 
-def credit_pack_dto(p: CreditPack, auto_topup_count: int = 0) -> CreditPackDTO:
+def credit_pack_dto(
+    p: CreditPack, auto_topup_count: int = 0, cap_below_price_count: int = 0
+) -> CreditPackDTO:
     return CreditPackDTO(
         id=str(p.id),
         code=p.code,
@@ -98,6 +100,7 @@ def credit_pack_dto(p: CreditPack, auto_topup_count: int = 0) -> CreditPackDTO:
         isActive=p.is_active,
         version=p.version,
         autoTopupCount=auto_topup_count,
+        autoTopupCapBelowPriceCount=cap_below_price_count,
     )
 
 
@@ -149,7 +152,12 @@ def get_catalogue(service: CatalogueService) -> AdminCatalogueDTO:
     return AdminCatalogueDTO(
         planTiers=[plan_tier_dto(t, mode, snap.tier_counts.get(t.id)) for t in snap.plan_tiers],
         creditPacks=[
-            credit_pack_dto(p, snap.auto_topup_counts.get(p.id, 0)) for p in snap.credit_packs
+            credit_pack_dto(
+                p,
+                snap.auto_topup_counts.get(p.id, 0),
+                snap.auto_topup_cap_below_price_counts.get(p.id, 0),
+            )
+            for p in snap.credit_packs
         ],
         freeAllowances=[free_allowance_dto(f) for f in snap.free_allowances],
         usageRates=[usage_rate_dto(r) for r in snap.usage_rates],
@@ -251,7 +259,11 @@ def update_pack(
             reason=body.reason,
             expected_version=body.expectedVersion,
         )
-    return credit_pack_dto(pack, service.auto_topup_counts().get(pack.id, 0))
+    return credit_pack_dto(
+        pack,
+        service.auto_topup_counts().get(pack.id, 0),
+        service.auto_topup_cap_below_price_counts().get(pack.id, 0),
+    )
 
 
 @router.put("/free-allowances", response_model=FreeAllowanceDTO)

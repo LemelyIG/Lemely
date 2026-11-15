@@ -84,6 +84,7 @@ class CreditPackDTO(ApiModel):
     isActive: bool
     version: int
     autoTopupCount: int
+    autoTopupCapBelowPriceCount: int = 0
 
 
 class FreeAllowanceDTO(ApiModel):
