@@ -9,7 +9,10 @@ nothing here without changing them.
 # mypy: disallow-any-explicit=False
 from __future__ import annotations
 
+import uuid  # noqa: TC003 - pydantic reads the type at runtime
 from datetime import datetime  # noqa: TC003 - pydantic reads the type at runtime
+
+from pydantic import Field
 
 from lemely.web.schemas import ApiModel
 from lemely.web.schemas_billing import (
@@ -72,3 +75,44 @@ class BillingSummaryDTO(ApiModel):
     credits: CreditsViewDTO
     debtUnits: int
     seats: SeatsViewDTO | None
+
+
+# -- subscription checkout and plan changes (Phase 05, T11) ---------------------------------------
+
+
+class SubscriptionCheckoutRequestDTO(ApiModel):
+    """Body for ``POST /api/billing/subscriptions/checkout``; the price is never client-sent."""
+
+    planTierId: uuid.UUID
+    beneficiaryId: uuid.UUID | None = None
+    extraSeats: int = Field(default=0, ge=0, le=200)
+
+
+class SubscriptionCheckoutDTO(ApiModel):
+    subscriptionId: str
+    paymentId: str
+    checkoutUrl: str
+
+
+class DowngradeRequestDTO(ApiModel):
+    planTierId: uuid.UUID
+
+
+class SubscriptionDTO(ApiModel):
+    id: str
+    beneficiaryUserId: str
+    isPayer: bool
+    planTierId: str
+    planCode: str
+    planName: str
+    status: str
+    currentPeriodStart: datetime | None
+    currentPeriodEnd: datetime | None
+    graceUntil: datetime | None
+    cancelAtPeriodEnd: bool
+    pendingPlanTierId: str | None
+    extraSeats: int
+
+
+class SubscriptionListDTO(ApiModel):
+    subscriptions: list[SubscriptionDTO]

@@ -17,6 +17,7 @@ from lemely.io.paymob.client import PaymobClient
 from lemely.web.billing_jobs import reconcile_pending_payments
 from lemely.web.deps import get_settings
 from lemely.web.ratelimit import SlidingWindowLimiter
+from lemely.web.subscription_deps import SubscriptionDeps
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -38,6 +39,23 @@ def get_billing_sessionmaker() -> sessionmaker[Session]:
     return get_sessionmaker(get_settings())
 
 
+@lru_cache(maxsize=1)
+def get_subscription_deps() -> SubscriptionDeps:
+    """The subscription routes' collaborators (Paymob billing Phase 05)."""
+    return SubscriptionDeps(get_billing_sessionmaker(), get_paymob_client(), get_settings().paymob)
+
+
+def get_subscription_jobs() -> SubscriptionDeps | None:
+    """The sweeper's subscription collaborators, or ``None`` when Paymob is unconfigured.
+
+    Mirrors :func:`get_billing_reconcile_job`: with no checkout configured there is nothing to
+    sweep against, and the sweeper registers no subscription job.
+    """
+    if not get_settings().paymob.checkout_configured:
+        return None
+    return get_subscription_deps()
+
+
 #: Checkout creation (spec §7): 5 per user per minute. A real buyer needs one; a
 #: retry after a declined card needs a second. Each checkout also costs a Paymob
 #: intention, so this bounds what one account can make Paymob do.
@@ -50,6 +68,41 @@ def get_checkout_limiter() -> SlidingWindowLimiter:
     """Per-user limiter for ``POST /api/billing/checkout/*`` (keyed by user id)."""
     return SlidingWindowLimiter(
         limit=_CHECKOUT_LIMIT, window_seconds=_CHECKOUT_WINDOW_SECONDS, clock=time.monotonic
+    )
+
+
+#: Subscription checkout: 10 per user per 10 minutes. Each one costs a Paymob intention and
+#: replaces the payer's unpaid one, so this bounds what a single account can make Paymob do
+#: while leaving room for a declined card and a retry.
+_SUBSCRIPTION_CHECKOUT_LIMIT = 10
+_SUBSCRIPTION_CHECKOUT_WINDOW_SECONDS = 600.0
+
+
+@lru_cache(maxsize=1)
+def get_subscription_checkout_limiter() -> SlidingWindowLimiter:
+    """Per-user limiter for ``POST /api/billing/subscriptions/checkout`` (keyed by user id)."""
+    return SlidingWindowLimiter(
+        limit=_SUBSCRIPTION_CHECKOUT_LIMIT,
+        window_seconds=_SUBSCRIPTION_CHECKOUT_WINDOW_SECONDS,
+        clock=time.monotonic,
+    )
+
+
+#: Subscription webhook: 30 deliveries per Paymob subscription id per minute, counted only for a
+#: delivery whose HMAC verified. A real subscription sends a handful of callbacks per charge;
+#: this bounds the Paymob re-fetch a replayed (genuinely signed) body can trigger. Keyed by the
+#: signed id, never by IP, which would throttle Paymob itself.
+_SUBSCRIPTION_WEBHOOK_LIMIT = 30
+_SUBSCRIPTION_WEBHOOK_WINDOW_SECONDS = 60.0
+
+
+@lru_cache(maxsize=1)
+def get_subscription_webhook_limiter() -> SlidingWindowLimiter:
+    """Per-subscription limiter for ``POST /api/webhooks/paymob/subscription``."""
+    return SlidingWindowLimiter(
+        limit=_SUBSCRIPTION_WEBHOOK_LIMIT,
+        window_seconds=_SUBSCRIPTION_WEBHOOK_WINDOW_SECONDS,
+        clock=time.monotonic,
     )
 
 
@@ -146,6 +199,9 @@ def reset_billing_singletons() -> None:
         get_checkout_limiter.cache_clear()
         get_public_catalogue_limiter.cache_clear()
         get_public_catalogue_cache.cache_clear()
+        get_subscription_deps.cache_clear()
+        get_subscription_checkout_limiter.cache_clear()
+        get_subscription_webhook_limiter.cache_clear()
 
 
 __all__ = [
@@ -156,5 +212,9 @@ __all__ = [
     "get_paymob_client",
     "get_public_catalogue_cache",
     "get_public_catalogue_limiter",
+    "get_subscription_checkout_limiter",
+    "get_subscription_deps",
+    "get_subscription_jobs",
+    "get_subscription_webhook_limiter",
     "reset_billing_singletons",
 ]

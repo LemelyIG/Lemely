@@ -48,13 +48,26 @@ from starlette.responses import JSONResponse
 
 from lemely.db.billing_observability_repo import record_webhook_failure
 from lemely.db.billing_repo import BillingService, MalformedCallback
-from lemely.io.paymob.client import PaymobClient  # noqa: TC001 - FastAPI reads the type at runtime
-from lemely.io.paymob.hmac import verify_token_hmac, verify_transaction_hmac
+from lemely.db.subscription_repo import MalformedWebhook, parse_subscription_webhook
+from lemely.io.paymob.client import PaymobClient, PaymobError
+from lemely.io.paymob.hmac import (
+    verify_subscription_hmac,
+    verify_token_hmac,
+    verify_transaction_hmac,
+)
 from lemely.runtime.config import Settings  # noqa: TC001 - FastAPI reads the type at runtime
 from lemely.web.deps import get_settings
-from lemely.web.deps_billing import get_billing_sessionmaker, get_paymob_client
+from lemely.web.deps_billing import (
+    get_billing_sessionmaker,
+    get_paymob_client,
+    get_subscription_deps,
+    get_subscription_webhook_limiter,
+)
 from lemely.web.ratelimit import SlidingWindowLimiter
 from lemely.web.routers.client_errors import _client_ip
+from lemely.web.subscription_deps import (
+    SubscriptionDeps,  # noqa: TC001 - FastAPI reads the type at runtime
+)
 
 log = structlog.get_logger(__name__)
 
@@ -68,6 +81,9 @@ _VERIFIERS = {"TRANSACTION": verify_transaction_hmac, "TOKEN": verify_token_hmac
 
 # The ``paymob_webhook_failures.kind`` each verified callback type is filed under.
 _FAILURE_KINDS: Final = {"TRANSACTION": "transaction", "TOKEN": "token"}
+
+# The kind of a refused subscription callback (it has no ``type``; its own route files it).
+_SUBSCRIPTION_FAILURE_KIND: Final = "subscription"
 
 # One alert line per minute when the failure writer's own cap drops rows, so a flood of bad
 # signatures is visible without the log growing with it. Process-local, like the writer's cap.
@@ -214,6 +230,101 @@ def paymob_transaction_callback(
             "paymob_callback_failed",
             callback_type=kind,
             obj_id=str(obj.get("id"))[:40],
+            error_type=type(exc).__name__,
+        )
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, "Callback could not be processed"
+        ) from None
+    return {"status": "ok"}
+
+
+@router.post("/subscription", response_model=None)
+def paymob_subscription_webhook(
+    request: Request,
+    secret: Annotated[str, Depends(_hmac_secret)],
+    body: Annotated[dict[str, object], Depends(_callback_body)],
+    deps: Annotated[SubscriptionDeps, Depends(get_subscription_deps)],
+    limiter: Annotated[SlidingWindowLimiter, Depends(get_subscription_webhook_limiter)],
+) -> dict[str, str] | JSONResponse:
+    """Verify and apply a Paymob subscription callback (spec §5.2, §6; DV-21).
+
+    The HMAC is in the body and signs only the trigger and the subscription id. Order: secret
+    (503 when unset, via ``_hmac_secret``, so a body signed with the string ``"None"`` never
+    passes), size (413) and JSON (400) in ``_callback_body``, parse (400), HMAC (401: logged,
+    nothing stored, a ``subscription`` failure row written after the response), the per-id
+    limiter (429), then one ``begin()`` transaction. Nothing touches the database before the
+    HMAC has verified. A signed body the service calls malformed is 400; a Paymob outage while
+    re-fetching state is 503 with the transaction rolled back, so Paymob's retry is processed;
+    anything else is 500 (type only in the log). Duplicates and unknown subscriptions are 200
+    no-ops.
+    """
+    try:
+        trigger, paymob_id = parse_subscription_webhook(body)
+    except MalformedWebhook as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Callback is not a subscription event"
+        ) from exc
+    received = body.get("hmac")
+    if not verify_subscription_hmac(
+        trigger, paymob_id, received if isinstance(received, str) else "", secret
+    ):
+        log.error(
+            "paymob_subscription_hmac_mismatch",
+            paymob_subscription_id=paymob_id,
+            trigger_type=trigger[:40],
+            hmac_present=isinstance(received, str) and bool(received),
+        )
+        return JSONResponse(
+            {"detail": "HMAC verification failed"},
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            background=BackgroundTask(
+                _record_hmac_failure,
+                deps.sessionmaker,
+                kind=_SUBSCRIPTION_FAILURE_KIND,
+                hmac_present=isinstance(received, str) and bool(received),
+                remote_addr=_client_ip(request),
+                now=_utcnow(),
+            ),
+        )
+    # After the HMAC on purpose: an unauthenticated caller must not be able to spend a real
+    # subscription's allowance of deliveries, nor reach the Paymob re-fetch.
+    key = str(paymob_id)
+    if not limiter.allow(key):
+        retry = limiter.retry_after(key)
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"Too many callbacks; retry in {retry}s.",
+            headers={"Retry-After": str(retry)},
+        )
+    try:
+        with deps.sessionmaker.begin() as session:
+            deps.service(session).apply_renewal_webhook(body, now=datetime.now(UTC))
+    except MalformedWebhook as exc:
+        log.error(
+            "paymob_subscription_webhook_malformed",
+            paymob_subscription_id=paymob_id,
+            trigger_type=trigger[:40],
+            reason=str(exc)[:120],
+        )
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Callback is not a subscription event"
+        ) from exc
+    except PaymobError as exc:
+        # Rolled back and nothing stored: Paymob retries and the retry is processed afresh.
+        log.warning(
+            "paymob_subscription_webhook_deferred",
+            paymob_subscription_id=paymob_id,
+            trigger_type=trigger[:40],
+            error_type=type(exc).__name__,
+        )
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "Paymob is unavailable; retry"
+        ) from None
+    except Exception as exc:
+        log.error(
+            "paymob_subscription_webhook_failed",
+            paymob_subscription_id=paymob_id,
+            trigger_type=trigger[:40],
             error_type=type(exc).__name__,
         )
         raise HTTPException(

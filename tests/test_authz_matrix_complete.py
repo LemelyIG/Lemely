@@ -257,7 +257,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # tests/test_web_tutoring_authz_parent_sharing.py).
     ("GET", "/api/parent/children/{child_id}/tutor-grants"): PARENT,
     ("GET", "/api/parent/children/{child_id}/tutor-access-log"): PARENT,
-    # ── PUBLIC (18) ────────────────────
+    # ── PUBLIC (19) ────────────────────
     ("POST", "/api/auth/login"): PUBLIC,
     # spec §4: the child-issued parent signup, replacing the retired
     # `/api/auth/otp/*` pair. Public by the same necessity as `/auth/signup`
@@ -309,6 +309,10 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # no Lemely token; the HMAC in the query string is the only authenticity
     # check (401 on mismatch, inside the handler). tests/test_web_paymob_webhooks.py.
     ("POST", "/api/webhooks/paymob/transaction"): PUBLIC,
+    # Billing phase 05: the subscription callback is public for the same reason. The HMAC is in
+    # the body and signs the trigger and subscription id; 401 on mismatch, 503 while the secret
+    # is unset, checked before any database work (tests/test_web_subscriptions.py).
+    ("POST", "/api/webhooks/paymob/subscription"): PUBLIC,
     # ── STUDENT_OR_PARENT (6) ────────────────────
     # Tutoring SP1-SP2 (SPEC §c.1, row 10). SP2 also needs a verified email.
     ("GET", "/api/tutors"): STUDENT_OR_PARENT,
@@ -327,7 +331,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/tutoring/blocks"): STUDENT_OR_TEACHER,
     ("POST", "/api/tutoring/blocks"): STUDENT_OR_TEACHER,
     ("DELETE", "/api/tutoring/blocks/{counterpart_id}"): STUDENT_OR_TEACHER,
-    # ── TUTORING_PARTY (7) ────────────────────
+    # ── TUTORING_PARTY (11) ────────────────────
     # Tutoring R1 (SPEC §c.1): target visibility (O12, O19) is object-level.
     ("POST", "/api/tutoring/reports"): TUTORING_PARTY,
     # Billing (spec 2026-11-02 §5.5, §7): the same three roles buy and pay.
@@ -342,6 +346,13 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/billing/cards"): TUTORING_PARTY,
     # Index R3: object-level; a parent sees only a linked child (tests/test_web_billing_summary.py).
     ("GET", "/api/billing/summary"): TUTORING_PARTY,
+    # Billing phase 05: role half only. Checkout is capped per user and priced on the server, a
+    # parent buys only for a linked child, and change/cancel are payer-only with one 404 for a
+    # beneficiary, a stranger and an assistant (tests/test_web_subscriptions.py IDOR cases).
+    ("POST", "/api/billing/subscriptions/checkout"): TUTORING_PARTY,
+    ("GET", "/api/billing/subscriptions"): TUTORING_PARTY,
+    ("POST", "/api/billing/subscriptions/{subscription_id}/downgrade"): TUTORING_PARTY,
+    ("POST", "/api/billing/subscriptions/{subscription_id}/cancel"): TUTORING_PARTY,
     # ── AUTH_ANY (23) ────────────────────
     # Billing phase 04: usage estimate, meter and history answer only about the caller.
     ("POST", "/api/usage/estimate"): AUTH_ANY,
@@ -770,8 +781,8 @@ def test_the_sweeps_actually_cover_the_surface() -> None:
     # password-reset/confirm) + /api/health + invite preview + PR 1 chunk C's
     # client-error sink + the three public tutoring routes (P1 directory, P2
     # card, P3 areas) + the landing page contact form + the public pricing catalogue
-    # + the Paymob webhook.
-    assert len(_NON_PUBLIC) == len(ROUTES) - 18
+    # + the two Paymob webhooks (transaction, subscription).
+    assert len(_NON_PUBLIC) == len(ROUTES) - 19
     assert len(_ROLE_GATED) > 300
     assert len(_REPRESENTATIVE) == 9
     assert len(_REAL_TOKEN_CASES) >= 20

@@ -2275,6 +2275,29 @@ class SubscriptionService:
             raise SubscriptionNotFound(f"unknown subscription {subscription_id}")
         return subscription
 
+    def list_for_user(self, user_id: uuid.UUID) -> list[tuple[Subscription, PlanTier]]:
+        """Subscriptions the user pays for or benefits from, newest first (DV-31).
+
+        A parent sees what they pay for and never a child's self-paid plan; a child sees the plan
+        a parent pays for (spec §7). Abandoned checkouts (expired without ever activating) are
+        left out. Read-only: no lock, the caller owns the session.
+        """
+        rows = self._session.execute(
+            select(Subscription, PlanTier)
+            .join(PlanTier, PlanTier.id == Subscription.plan_tier_id)
+            .where(
+                sa.or_(Subscription.payer_user_id == user_id, Subscription.user_id == user_id),
+                sa.not_(
+                    sa.and_(
+                        Subscription.status == SubscriptionStatus.expired,
+                        Subscription.activated_at.is_(None),
+                    )
+                ),
+            )
+            .order_by(Subscription.created_at.desc(), Subscription.id)
+        ).all()
+        return [(subscription, tier) for subscription, tier in rows]
+
     def next_renewal_amount(self, subscription: Subscription) -> int:
         """What Paymob will charge at the next renewal, pending changes included (index R6).
 

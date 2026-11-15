@@ -51,8 +51,9 @@ from lemely.db.billing_repo import (
     saved_cards_for,
 )
 from lemely.db.billing_summary import build_billing_summary, is_linked_student
-from lemely.db.models.billing import PlanAudience, PlanTier
+from lemely.db.models.billing import PlanAudience, PlanTier, Subscription
 from lemely.db.models.enums import Role
+from lemely.db.subscription_repo import SeatsInsufficient, SubscriptionError
 from lemely.io.paymob.client import PaymobClient  # noqa: TC001 - FastAPI reads the type at runtime
 from lemely.runtime.config import Settings  # noqa: TC001 - FastAPI reads the type at runtime
 from lemely.web.deps import AuthContext, get_settings, require_role
@@ -63,6 +64,8 @@ from lemely.web.deps_billing import (
     get_paymob_client,
     get_public_catalogue_cache,
     get_public_catalogue_limiter,
+    get_subscription_checkout_limiter,
+    get_subscription_deps,
 )
 from lemely.web.phone_http import checkout_phone_required
 from lemely.web.ratelimit import (
@@ -88,11 +91,19 @@ from lemely.web.schemas_subscriptions import (
     BillingSummaryDTO,
     CreditLotDTO,
     CreditsViewDTO,
+    DowngradeRequestDTO,
     SavedCardViewDTO,
     SeatsViewDTO,
+    SubscriptionCheckoutDTO,
+    SubscriptionCheckoutRequestDTO,
+    SubscriptionDTO,
+    SubscriptionListDTO,
     SubscriptionViewDTO,
     SummaryBeneficiaryDTO,
     UsageMeterViewDTO,
+)
+from lemely.web.subscription_deps import (
+    SubscriptionDeps,  # noqa: TC001 - FastAPI reads the type at runtime
 )
 
 require_billing_party: Final = require_role(Role.student, Role.parent, Role.teacher)
@@ -420,3 +431,175 @@ def get_billing_summary(
                 else None
             ),
         )
+
+
+# -- subscriptions (Phase 05, spec §5.1-§5.3, §7) -----------------------------------------------
+
+#: The HTTP status of each ``SubscriptionError`` code a route here can raise. A code missing from
+#: this map answers 400, so a new error is mapped on purpose (``tests/test_web_subscriptions.py``).
+_STATUS_FOR_CODE: Final = {
+    "already_subscribed": status.HTTP_409_CONFLICT,
+    "seats_insufficient": status.HTTP_409_CONFLICT,
+    "downgrade_unavailable": status.HTTP_409_CONFLICT,
+    "plan_mode_mismatch": status.HTTP_409_CONFLICT,
+    "not_linked_parent": status.HTTP_403_FORBIDDEN,
+    "subscription_not_found": status.HTTP_404_NOT_FOUND,
+    "plan_not_purchasable": status.HTTP_422_UNPROCESSABLE_CONTENT,
+    "invalid_extra_seats": status.HTTP_422_UNPROCESSABLE_CONTENT,
+    "invalid_plan_change": status.HTTP_422_UNPROCESSABLE_CONTENT,
+}
+
+
+def _subscription_error(exc: SubscriptionError) -> HTTPException:
+    """The refusal as ``{"error": code, "message": text}``; seats add ``inUse`` and ``capacity``."""
+    detail: dict[str, object] = {"error": exc.code, "message": str(exc)}
+    if isinstance(exc, SeatsInsufficient):
+        detail |= {"inUse": exc.in_use, "capacity": exc.capacity}
+    return HTTPException(_STATUS_FOR_CODE.get(exc.code, status.HTTP_400_BAD_REQUEST), detail)
+
+
+def _payments_unavailable() -> HTTPException:
+    return HTTPException(
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+        {"error": "payments_unavailable", "message": _UNAVAILABLE},
+    )
+
+
+def _subscription_dto(
+    subscription: Subscription, tier: PlanTier, viewer: uuid.UUID
+) -> SubscriptionDTO:
+    pending = subscription.pending_plan_tier_id
+    return SubscriptionDTO(
+        id=str(subscription.id),
+        beneficiaryUserId=str(subscription.user_id),
+        isPayer=subscription.payer_user_id == viewer,
+        planTierId=str(tier.id),
+        planCode=tier.code,
+        planName=tier.name,
+        status=subscription.status.value,
+        currentPeriodStart=subscription.current_period_start,
+        currentPeriodEnd=subscription.current_period_end,
+        graceUntil=subscription.grace_until,
+        cancelAtPeriodEnd=bool(subscription.cancel_at_period_end),
+        pendingPlanTierId=str(pending) if pending is not None else None,
+        extraSeats=subscription.extra_seats or 0,
+    )
+
+
+def _changed_subscription(
+    session: Session, subscription: Subscription, viewer: uuid.UUID
+) -> SubscriptionDTO:
+    tier = session.get(PlanTier, subscription.plan_tier_id)
+    if tier is None:  # the FK makes this unreachable; a corrupt row must not 500 the payer
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown subscription")
+    return _subscription_dto(subscription, tier, viewer)
+
+
+@router.post(
+    "/subscriptions/checkout",
+    response_model=SubscriptionCheckoutDTO,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_subscription_checkout(
+    body: SubscriptionCheckoutRequestDTO,
+    auth: Annotated[AuthContext, Depends(require_billing_party)],
+    deps: Annotated[SubscriptionDeps, Depends(get_subscription_deps)],
+    limiter: Annotated[SlidingWindowLimiter, Depends(get_subscription_checkout_limiter)],
+) -> SubscriptionCheckoutDTO:
+    """Start a card subscription; the browser then redirects to ``checkoutUrl`` (spec §5.1).
+
+    The price comes from ``plan_tiers`` on the server; a student or teacher buys only for
+    themselves and a parent only for a linked child (the service checks the link).
+    """
+    if not limiter.allow(auth.user_id):
+        retry = limiter.retry_after(auth.user_id)
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            {"error": "rate_limited", "message": f"Too many checkout attempts; retry in {retry}s."},
+            headers={"Retry-After": str(retry)},
+        )
+    payer = uuid.UUID(auth.user_id)
+    beneficiary = _requested_beneficiary(auth, payer, body.beneficiaryId)
+    try:
+        # No ``session.begin()``: Phase 02's intention checkout commits inside the call (spec §6).
+        # A refusal raises before that commit, so closing the session rolls the attempt back.
+        with deps.sessionmaker() as session:
+            result = deps.service(session).create_subscription_checkout(
+                payer_user_id=payer,
+                plan_tier_id=body.planTierId,
+                beneficiary_user_id=beneficiary,
+                extra_seats=body.extraSeats,
+                now=datetime.now(UTC),
+            )
+            session.commit()
+    except SubscriptionError as exc:
+        raise _subscription_error(exc) from exc
+    except UnknownPayer as exc:
+        # A valid token whose user row is gone: refuse, and do not echo the id.
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Billing is not available") from exc
+    except PhoneRequired as exc:
+        raise checkout_phone_required() from exc
+    except CheckoutUnavailable as exc:
+        raise _payments_unavailable() from exc
+    return SubscriptionCheckoutDTO(
+        subscriptionId=str(result.subscription_id),
+        paymentId=str(result.payment_id),
+        checkoutUrl=result.checkout_url,
+    )
+
+
+@router.get("/subscriptions", response_model=SubscriptionListDTO)
+def list_subscriptions(
+    auth: Annotated[AuthContext, Depends(require_billing_party)],
+    deps: Annotated[SubscriptionDeps, Depends(get_subscription_deps)],
+) -> SubscriptionListDTO:
+    """The caller's subscriptions as payer or beneficiary, newest first (DV-31)."""
+    viewer = uuid.UUID(auth.user_id)
+    with deps.sessionmaker() as session:
+        rows = deps.service(session).list_for_user(viewer)
+        return SubscriptionListDTO(
+            subscriptions=[_subscription_dto(sub, tier, viewer) for sub, tier in rows]
+        )
+
+
+@router.post("/subscriptions/{subscription_id}/downgrade", response_model=SubscriptionDTO)
+def downgrade_subscription(
+    subscription_id: uuid.UUID,
+    body: DowngradeRequestDTO,
+    auth: Annotated[AuthContext, Depends(require_billing_party)],
+    deps: Annotated[SubscriptionDeps, Depends(get_subscription_deps)],
+) -> SubscriptionDTO:
+    """Schedule a downgrade for the period end; the payer only, anyone else gets 404 (§5.3)."""
+    viewer = uuid.UUID(auth.user_id)
+    try:
+        with deps.sessionmaker.begin() as session:
+            subscription = deps.service(session).schedule_downgrade(
+                subscription_id,
+                actor_user_id=viewer,
+                plan_tier_id=body.planTierId,
+                now=datetime.now(UTC),
+            )
+            return _changed_subscription(session, subscription, viewer)
+    except SubscriptionError as exc:
+        raise _subscription_error(exc) from exc
+
+
+@router.post("/subscriptions/{subscription_id}/cancel", response_model=SubscriptionDTO)
+def cancel_subscription(
+    subscription_id: uuid.UUID,
+    auth: Annotated[AuthContext, Depends(require_billing_party)],
+    deps: Annotated[SubscriptionDeps, Depends(get_subscription_deps)],
+) -> SubscriptionDTO:
+    """Cancel at the period end; access continues until then. The payer only (spec §5.3).
+
+    Always the payer-checked ``schedule_cancel``: the system cancel is never reachable here.
+    """
+    viewer = uuid.UUID(auth.user_id)
+    try:
+        with deps.sessionmaker.begin() as session:
+            subscription = deps.service(session).schedule_cancel(
+                subscription_id, actor_user_id=viewer, now=datetime.now(UTC)
+            )
+            return _changed_subscription(session, subscription, viewer)
+    except SubscriptionError as exc:
+        raise _subscription_error(exc) from exc

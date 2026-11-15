@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import lemely.db.subscription_repo  # noqa: F401  (registers the subscription paid handlers)
 from lemely.db.billing_repo import BillingService
 
 if TYPE_CHECKING:
