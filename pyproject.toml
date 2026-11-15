@@ -400,6 +400,7 @@ module = [
   "lemely.web.schemas_billing",
   "lemely.web.schemas_admin_billing",
   "lemely.web.schemas_admin_billing_customers",
+  "lemely.web.schemas_admin_billing_health",
   "lemely.web.schemas_team",
   "lemely.web.schemas_usage",
   "lemely.io.notify_email",

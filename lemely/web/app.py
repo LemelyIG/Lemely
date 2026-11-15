@@ -26,6 +26,7 @@ from lemely.web.routers import (
     admin,
     admin_billing,
     admin_billing_customers,
+    admin_billing_health,
     admin_billing_payments,
     admin_tutor_sanctions,
     admin_tutoring_moderation,
@@ -217,6 +218,7 @@ def create_app() -> FastAPI:
     app.include_router(admin.router)
     app.include_router(admin_billing.router)
     app.include_router(admin_billing_customers.router)
+    app.include_router(admin_billing_health.router)
     app.include_router(admin_billing_payments.router)
     app.include_router(invites.router)
     app.include_router(teacher_team.router)
