@@ -551,8 +551,10 @@ class Sweeper:
     #: seats too (DV-22). ``deps.get_sweeper`` sets it; tests that build a sweeper for
     #: notifications alone keep the jobs they had.
     seat_allowances: bool = False
-    #: Once-a-day memo for the drift check (an optimisation, like the zone memos).
-    billing_day_memo: ZoneDateMemo = field(default_factory=ZoneDateMemo)
+    #: Collaborators for the local part of ``subscriptions.expire_overdue`` when Paymob is not
+    #: configured: the row still expires and stops granting seat allowance, and the Paymob cancel
+    #: is left to the failed-cancel retry once Paymob is configured (DV-32).
+    expiry: SubscriptionDeps | None = None
 
     def sweep_once(self) -> dict[str, int | None]:
         """Run every job given (notifications, purge, email, billing, usage, subscription, seat)."""
@@ -646,22 +648,24 @@ class Sweeper:
         # DV-32: an expired teacher plan grants no new month, and a seat leaving at month end
         # is released before the new month's grant, so the order below is load-bearing.
         subscriptions = self.subscriptions
+        expiry = subscriptions or self.expiry
+        if expiry is not None:
+            jobs.append(
+                (
+                    "subscriptions.expire_overdue",
+                    lambda: expire_overdue_job(expiry, now=moment),
+                )
+            )
         if subscriptions is not None:
             jobs.extend(
                 [
-                    (
-                        "subscriptions.expire_overdue",
-                        lambda: expire_overdue_job(subscriptions, now=moment),
-                    ),
                     (
                         "subscriptions.period_end",
                         lambda: period_end_job(subscriptions, now=moment),
                     ),
                     (
                         "subscriptions.drift_check",
-                        lambda: drift_check_job(
-                            subscriptions, now=moment, memo=self.billing_day_memo
-                        ),
+                        lambda: drift_check_job(subscriptions, now=moment),
                     ),
                 ]
             )

@@ -8,8 +8,7 @@ replica, changes nothing twice.
 
 from __future__ import annotations
 
-from datetime import UTC
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING
 
 from lemely.db.seat_allowance_repo import grant_monthly_seat_allowances
 from lemely.db.teacher_team_repo import TeacherTeamService
@@ -19,11 +18,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session, sessionmaker
 
-    from lemely.web.scheduled_notifications import ZoneDateMemo
     from lemely.web.subscription_deps import SubscriptionDeps
-
-#: Memo key for the once-a-day drift check (an optimisation; repairs are idempotent).
-DRIFT_MEMO_KEY: Final = "subscriptions.drift_check"
 
 
 def expire_overdue_job(deps: SubscriptionDeps, *, now: datetime) -> int:
@@ -38,19 +33,14 @@ def period_end_job(deps: SubscriptionDeps, *, now: datetime) -> int:
         return deps.service(session).apply_period_end_changes(now=now)
 
 
-def drift_check_job(deps: SubscriptionDeps, *, now: datetime, memo: ZoneDateMemo) -> int:
-    """Run the drift check once per UTC day per process; a pass that throws is retried.
+def drift_check_job(deps: SubscriptionDeps, *, now: datetime) -> int:
+    """Run the drift check; the database, not the process, makes it once a row a UTC day.
 
-    The memo is marked only after the check returns, so an exception leaves the day open for
-    the next tick.
+    ``check_drift`` takes only rows not yet checked on ``now``'s UTC day, so calling it every
+    tick drains any backlog over successive ticks and costs one indexed query when none is left.
     """
-    day = now.astimezone(UTC).date()
-    if memo.is_done(DRIFT_MEMO_KEY, day):
-        return 0
     with deps.sessionmaker() as session:
-        repaired = deps.service(session).check_drift(now=now)
-    memo.mark_done(DRIFT_MEMO_KEY, day)
-    return repaired
+        return deps.service(session).check_drift(now=now)
 
 
 def release_due_seats_job(sm: sessionmaker[Session], *, now: datetime) -> int:
@@ -65,7 +55,6 @@ def monthly_seat_allowance_job(sm: sessionmaker[Session], *, now: datetime) -> i
 
 
 __all__ = [
-    "DRIFT_MEMO_KEY",
     "drift_check_job",
     "expire_overdue_job",
     "monthly_seat_allowance_job",

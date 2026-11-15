@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
 BILLING_JOB_NAMES: Final = (
+    "admin.expire_manual_subscriptions",
     "billing.prune_webhook_failures",
     "billing.reconcile_pending",
     "seats.monthly_allowance",

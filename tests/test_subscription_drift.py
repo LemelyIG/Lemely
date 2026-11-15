@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import threading
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -69,6 +69,7 @@ PID = 4321
 FIRST_TXN = 700 + PID
 END = T0 + timedelta(days=30)
 DAY = END + timedelta(hours=6)
+TOMORROW = DAY + timedelta(days=1)
 
 
 @pytest.fixture(scope="module")
@@ -134,14 +135,17 @@ def _drift(
     *,
     limit: int | None = None,
     settings_overrides: dict[str, Any] | None = None,
+    now: datetime = DAY,
 ) -> int:
+    """One drift pass at ``now``; a row is checked once a UTC day, so a second pass on the
+    same day passes the next day's ``now`` (``TOMORROW``)."""
     with sm() as session:
         service = SubscriptionService(
             session, client, paymob_settings(**(settings_overrides or {}))
         )
         if limit is None:
-            return service.check_drift(now=DAY)
-        return service.check_drift(now=DAY, limit=limit)
+            return service.check_drift(now=now)
+        return service.check_drift(now=now, limit=limit)
 
 
 def _sub(sm: sessionmaker[Session], sid: uuid.UUID) -> Subscription:
@@ -308,7 +312,7 @@ def test_amount_drift_is_put_back_through_the_one_helper(
 def test_an_unknown_outcome_put_is_left_for_tomorrow(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    sid = _linked(pg_sessionmaker, period_end=DAY + timedelta(days=1))
+    sid = _linked(pg_sessionmaker, period_end=DAY + timedelta(days=2))  # still running tomorrow
     client = _client(amount=12_345)
     client.fail["update_subscription"] = PaymobError("timeout", timeout=True)
     assert _drift(pg_sessionmaker, client) == 0  # not repaired yet
@@ -318,7 +322,7 @@ def test_an_unknown_outcome_put_is_left_for_tomorrow(
     assert len(client.calls_to("update_subscription")) == 1
 
     del client.fail["update_subscription"]
-    assert _drift(pg_sessionmaker, client) == 1
+    assert _drift(pg_sessionmaker, client, now=TOMORROW) == 1
     row = _sub(pg_sessionmaker, sid)
     assert (row.paymob_amount_minor, row.amount_sync_uncertain_at) == (10_000, None)
     assert len(client.calls_to("update_subscription")) == 2
@@ -441,8 +445,8 @@ def test_a_lost_late_charge_on_a_cancelled_plan_is_kept_for_a_refund_before_the_
     row = _sub(sm, sid)
     assert (row.status, row.paymob_cancelled_at) == (SubscriptionStatus.cancelled, None)
     assert "cancel_subscription" not in client.names()  # not in the pass that found the money
-    assert _drift(sm, client) == 1  # the next pass cancels it
-    assert _sub(sm, sid).paymob_cancelled_at == DAY
+    assert _drift(sm, client, now=TOMORROW) == 1  # the next day's pass cancels it
+    assert _sub(sm, sid).paymob_cancelled_at == TOMORROW
     assert len(_renewals(sm, sid)) == 1
 
 
@@ -1123,7 +1127,7 @@ def test_a_disagreement_is_alerted_again_for_the_next_period(
             row = session.get(Subscription, sid)
             assert row is not None
             row.current_period_end = DAY + timedelta(days=3)  # a renewal moved the period
-        _drift(sm, client)
+        _drift(sm, client, now=TOMORROW)
     assert len(_disagreements(logs)) == 2
 
 

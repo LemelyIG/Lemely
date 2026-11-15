@@ -2635,7 +2635,8 @@ class SubscriptionService:
     def check_drift(self, *, now: datetime, limit: int = SUBSCRIPTION_SWEEP_BATCH) -> int:
         """Compare Paymob-linked subscriptions with Paymob and repair what webhooks missed.
 
-        Candidates, at most ``limit`` and least recently checked first (``drift_checked_at``,
+        Candidates, at most ``limit`` and not yet checked on ``now``'s UTC day, least recently
+        checked first (``drift_checked_at``,
         never-checked rows first, so rows in sync cannot crowd the rest out): linked plans that are
         live, and linked ``expired`` or ``cancelled`` rows whose Paymob cancel is not stamped
         (a lapsed plan, a superseded checkout, a refused reactivation: DV-27). Complimentary rows
@@ -2676,10 +2677,19 @@ class SubscriptionService:
         S = Subscription
         linked = set(self._link_unlinked(now, limit))
         repaired = len(linked)
+        today = now.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
         rows = self._session.execute(
             select(S.id, S.paymob_subscription_id)
             .where(
                 S.paymob_subscription_id.is_not(None),
+                # Once a row a UTC day, held in the database (replica- and restart-safe): the
+                # sweeper calls this every tick, so any backlog drains over successive ticks.
+                # A row linked a moment ago was stamped by the link: it is checked in this pass.
+                sa.or_(
+                    S.drift_checked_at.is_(None),
+                    S.drift_checked_at < today,
+                    S.id.in_(linked),
+                ),
                 sa.or_(
                     S.status.in_(PLAN_LIVE_STATUSES),
                     sa.and_(

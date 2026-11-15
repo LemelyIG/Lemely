@@ -855,7 +855,11 @@ def get_sweeper() -> Sweeper:
     opens no connection (the engine is lazy), and neither does the storage
     backend it carries for the purge job.
     """
-    from lemely.web.deps_billing import get_billing_reconcile_job, get_subscription_jobs
+    from lemely.web.deps_billing import (
+        get_billing_reconcile_job,
+        get_subscription_deps,
+        get_subscription_jobs,
+    )
 
     settings = get_settings()
     return Sweeper(
@@ -870,6 +874,7 @@ def get_sweeper() -> Sweeper:
         email_daily_cap=settings.tutoring.email_daily_cap,
         billing_reconcile=get_billing_reconcile_job(),
         subscriptions=get_subscription_jobs(),
+        expiry=get_subscription_deps(),
         seat_allowances=True,
         usage_metering=settings.usage.enforce,
         job_recorder=JobRunRecorder(get_sessionmaker(settings)),
