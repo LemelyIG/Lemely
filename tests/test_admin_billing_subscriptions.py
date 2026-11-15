@@ -18,9 +18,10 @@ from lemely.db.admin_customer_repo import AdminCustomerService, expire_manual_su
 from lemely.db.admin_repo import PlatformAdminService, SubscriptionConflictError
 from lemely.db.models.billing import PlanTier, Subscription, SubscriptionPeriod
 from lemely.db.models.enums import Role, SubscriptionStatus
-from lemely.db.models.usage import UsageEntry, UsageGrant, UsageGrantBalance
+from lemely.db.models.usage import GrantKind, UsageEntry, UsageGrant, UsageGrantBalance
 from lemely.db.subscription_repo import SubscriptionService
 from lemely.db.usage_ledger_repo import UsageLedger
+from lemely.io.paymob.client import PaymobError
 from lemely.web import create_app
 from lemely.web.deps import AuthContext, get_auth_context
 from lemely.web.deps_billing import get_billing_sessionmaker
@@ -660,3 +661,210 @@ def test_the_paymob_sweeps_never_touch_a_complimentary_row(sm: sessionmaker[Sess
         SubscriptionService(session, paymob, PAYMOB_SETTINGS).check_drift(now=NOW)
     assert _subscription(sm, sub).status is SubscriptionStatus.past_due
     assert paymob.calls == []
+
+
+# -- cancel a Paymob-billed plan (Part B) ------------------------------------------
+
+
+def _billed(sm: sessionmaker[Session], *, grant_units: int = 0) -> tuple[uuid.UUID, uuid.UUID]:
+    """A live Paymob-billed plan and its payer; an optional period allowance grant."""
+    student = add_user(sm, Role.student)
+    sub = add_subscription(sm, student, add_plan_tier(sm), paymob_subscription_id=7001)
+    if grant_units:
+        with sm.begin() as session:
+            period = session.scalars(
+                sa.select(SubscriptionPeriod).where(SubscriptionPeriod.subscription_id == sub)
+            ).one()
+            UsageLedger(session).issue_grant(
+                owner_user_id=student,
+                kind=GrantKind.period_allowance,
+                units=grant_units,
+                idempotency_key=f"seed:{sub}",
+                expires_at=period.period_end,
+                visible=False,
+                effective_at=period.period_start,
+                subscription_period_id=period.id,
+            )
+    return sub, student
+
+
+def _post_cancel(client: TestClient, sub: uuid.UUID, when: str) -> Any:
+    return client.post(
+        f"/api/admin/billing/subscriptions/{sub}/cancel", json={"when": when, "reason": "asked"}
+    )
+
+
+def test_cancel_at_period_end_of_a_paymob_plan_goes_through_phase_05(
+    sm: sessionmaker[Session], admin: uuid.UUID, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sub, payer = _billed(sm)
+    seen: list[uuid.UUID] = []
+    real = SubscriptionService.schedule_cancel
+
+    def spy(
+        self: SubscriptionService,
+        subscription_id: uuid.UUID,
+        *,
+        actor_user_id: uuid.UUID,
+        now: datetime,
+    ) -> Subscription:
+        seen.append(actor_user_id)
+        return real(self, subscription_id, actor_user_id=actor_user_id, now=now)
+
+    monkeypatch.setattr(SubscriptionService, "schedule_cancel", spy)
+    paymob = FakePaymobClient()
+    resp = _post_cancel(admin_client(sm, admin, paymob=paymob), sub, "period_end")
+    assert resp.status_code == 200, resp.text
+    assert seen == [payer]  # Phase 05 locks on the payer, not the admin
+    assert paymob.calls == []  # nothing goes to Paymob: the sweep pushes it
+    row = _subscription(sm, sub)
+    assert (row.cancel_at_period_end, row.status) == (True, SubscriptionStatus.active)
+    [audit] = audit_rows(sm, AuditAction.SUBSCRIPTION_CANCEL)
+    assert audit.after is not None
+    assert audit.after["when"] == "period_end"
+    assert audit.after["cancel_at_period_end"] is True
+
+
+def test_a_manual_row_with_a_paymob_id_cannot_be_scheduled_and_changes_nothing(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    student = add_user(sm, Role.student)
+    sub = add_subscription(sm, student, add_plan_tier(sm), manual=True, paymob_subscription_id=7002)
+    resp = _post_cancel(admin_client(sm, admin), sub, "period_end")
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "not_live"
+    assert audit_rows(sm, AuditAction.SUBSCRIPTION_CANCEL) == []
+    assert _subscription(sm, sub).cancel_at_period_end is False
+
+
+def test_cancel_now_cancels_at_paymob_first_then_ends_the_row_and_the_allowance(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    sub, _ = _billed(sm, grant_units=1000)
+    paymob = FakePaymobClient()
+    resp = _post_cancel(admin_client(sm, admin, paymob=paymob), sub, "now")
+    assert resp.status_code == 200, resp.text
+    assert paymob.calls == [("cancel_subscription", {"subscription_id": 7001})]
+    row = _subscription(sm, sub)
+    assert (row.status, row.current_period_end, row.paymob_cancelled_at) == (
+        SubscriptionStatus.cancelled,
+        NOW,
+        NOW,
+    )
+    assert resp.json()["balance"]["allowanceAvailable"] == 0
+    [audit] = audit_rows(sm, AuditAction.SUBSCRIPTION_CANCEL)
+    assert audit.after is not None
+    assert (audit.after["when"], audit.after["unspent_allowance_units"]) == ("now", 1000)
+    assert len(audit.after["ended_grant_ids"]) == 1  # type: ignore[arg-type]
+    assert audit.after["paymob_cancelled"] is True
+
+
+def test_paymob_is_called_with_no_database_transaction_open(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    sub, _ = _billed(sm)
+    idle: list[int] = []
+
+    class Probing(FakePaymobClient):
+        def cancel_subscription(self, subscription_id: int) -> object:
+            with sm() as probe:
+                idle.append(
+                    probe.scalar(
+                        sa.text(
+                            "SELECT count(*) FROM pg_stat_activity"
+                            " WHERE datname = current_database()"
+                            " AND state LIKE 'idle in transaction%' AND pid <> pg_backend_pid()"
+                        )
+                    )
+                    or 0
+                )
+            return super().cancel_subscription(subscription_id)
+
+    resp = _post_cancel(admin_client(sm, admin, paymob=Probing()), sub, "now")
+    assert resp.status_code == 200, resp.text
+    assert idle == [0]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        PaymobError("gateway", status_code=503),
+        PaymobError("boom", status_code=500),
+        PaymobError("no answer"),
+        PaymobError("deadline", timeout=True),
+    ],
+    ids=["503", "500", "no-answer", "timeout"],
+)
+def test_an_unknown_paymob_outcome_is_502_and_changes_nothing(
+    sm: sessionmaker[Session], admin: uuid.UUID, failure: PaymobError
+) -> None:
+    """A 5xx or a missing answer may have cancelled it: nothing is written or read back."""
+    sub, _ = _billed(sm, grant_units=500)
+    paymob = FakePaymobClient()
+    paymob.cancel_result = failure
+    paymob.subscription_result = {"state": "canceled"}  # a wrongly definite reading would end it
+    resp = _post_cancel(admin_client(sm, admin, paymob=paymob), sub, "now")
+    assert resp.status_code == 502
+    assert resp.json()["detail"]["code"] == "paymob_cancel_failed"
+    row = _subscription(sm, sub)
+    assert (row.status, row.paymob_cancelled_at) == (SubscriptionStatus.active, None)
+    assert audit_rows(sm, AuditAction.SUBSCRIPTION_CANCEL) == []
+    assert [c[0] for c in paymob.calls] == ["cancel_subscription"]
+    with sm() as session:
+        assert session.scalars(sa.select(UsageGrant.expires_at)).one() != NOW
+
+
+def test_a_refusal_where_paymob_already_shows_canceled_ends_the_plan(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    sub, _ = _billed(sm)
+    paymob = FakePaymobClient()
+    paymob.cancel_result = PaymobError("already", status_code=400)
+    paymob.subscription_result = {"state": "canceled"}
+    resp = _post_cancel(admin_client(sm, admin, paymob=paymob), sub, "now")
+    assert resp.status_code == 200, resp.text
+    assert [c[0] for c in paymob.calls] == ["cancel_subscription", "get_subscription"]
+    row = _subscription(sm, sub)
+    assert (row.status, row.paymob_cancelled_at) == (SubscriptionStatus.cancelled, NOW)
+    assert len(audit_rows(sm, AuditAction.SUBSCRIPTION_CANCEL)) == 1
+
+
+@pytest.mark.parametrize(
+    "readback",
+    [
+        {"state": "active"},
+        PaymobError("down", status_code=503),
+        PaymobError("gone", status_code=404),
+    ],
+    ids=["still-active", "read-5xx", "read-404"],
+)
+def test_a_refusal_that_paymob_does_not_confirm_is_502_and_changes_nothing(
+    sm: sessionmaker[Session], admin: uuid.UUID, readback: object
+) -> None:
+    sub, _ = _billed(sm)
+    paymob = FakePaymobClient()
+    paymob.cancel_result = PaymobError("refused", status_code=422)
+    paymob.subscription_result = readback  # type: ignore[assignment]
+    resp = _post_cancel(admin_client(sm, admin, paymob=paymob), sub, "now")
+    assert resp.status_code == 502
+    assert _subscription(sm, sub).status is SubscriptionStatus.active
+    assert audit_rows(sm, AuditAction.SUBSCRIPTION_CANCEL) == []
+
+
+def test_a_row_that_changed_while_paymob_was_called_is_409_and_records_the_cancel(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    sub, _ = _billed(sm)
+
+    class Racing(FakePaymobClient):
+        def cancel_subscription(self, subscription_id: int) -> object:
+            with sm.begin() as other:  # a webhook ends the plan while we were at Paymob
+                other.get_one(Subscription, sub).status = SubscriptionStatus.expired
+            return super().cancel_subscription(subscription_id)
+
+    resp = _post_cancel(admin_client(sm, admin, paymob=Racing()), sub, "now")
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "not_live"
+    row = _subscription(sm, sub)
+    assert (row.status, row.paymob_cancelled_at) == (SubscriptionStatus.expired, NOW)
+    assert audit_rows(sm, AuditAction.SUBSCRIPTION_CANCEL) == []

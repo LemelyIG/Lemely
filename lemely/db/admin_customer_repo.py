@@ -28,12 +28,14 @@ from lemely.db.admin_billing_repo import (
     AuditAction,
     AuditTarget,
     PaymentView,
+    PaymobCallError,
     audited,
     lock_idempotency_key,
     payment_views,
     require_reason,
     snapshot,
 )
+from lemely.db.billing_repo import _outcome_unknown
 from lemely.db.models.admin_audit import (
     HAS_IDEMPOTENCY_KEY_SQL,
     IDEMPOTENCY_KEY_SQL,
@@ -58,7 +60,9 @@ from lemely.db.models.usage import (
     UsageRate,
 )
 from lemely.db.models.users import ParentChildLink, User
+from lemely.db.subscription_repo import InvalidPlanChange, SubscriptionNotFound, SubscriptionService
 from lemely.db.usage_ledger_repo import GrantAlreadyExpired, UsageLedger
+from lemely.io.paymob.client import PaymobError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -972,23 +976,38 @@ class AdminCustomerService:
 
         A complimentary plan is ours alone: ``period_end`` sets ``cancel_at_period_end`` for
         :func:`expire_manual_subscriptions`, ``now`` ends it and cuts the current period's
-        allowance (UD-2). A Paymob-billed plan is refused here until Part B.
+        allowance (UD-2). A Paymob-billed plan cancels at period end through Phase 05's
+        ``schedule_cancel`` (the sweep tells Paymob), and ``now`` cancels at Paymob first with no
+        transaction open (:meth:`_cancel_at_paymob_now`).
         """
         require_reason(reason)
         now = self._now()
+        with self._sm() as s:  # a plain read, closed before any Paymob call
+            sub = s.get(Subscription, subscription_id)
+            if sub is None:
+                raise AdminNotFoundError("subscription_not_found")
+            if sub.status not in LIVE_SUBSCRIPTION_STATUSES:
+                raise AdminConflictError("not_live", "Only a live plan can be cancelled.")
+            paymob_id = sub.paymob_subscription_id
+        if paymob_id is not None and when == "now":
+            return self._cancel_at_paymob_now(
+                subscription_id, paymob_id, admin_user_id=admin_user_id, reason=reason, now=now
+            )
         with self._sm.begin() as s:
             sub = s.get(Subscription, subscription_id, with_for_update=True)
             if sub is None:
                 raise AdminNotFoundError("subscription_not_found")
             if sub.status not in LIVE_SUBSCRIPTION_STATUSES:
                 raise AdminConflictError("not_live", "Only a live plan can be cancelled.")
-            if sub.paymob_subscription_id is not None:
+            if (sub.paymob_subscription_id is None) != (paymob_id is None):
                 raise AdminConflictError(
-                    "paymob_cancel_pending", "Cancelling a Paymob-billed plan is not available yet."
+                    "subscription_changed", "The plan changed while you were looking; reload it."
                 )
             before = snapshot(sub, _SUBSCRIPTION_AUDIT)
             extra: dict[str, object] = {"when": when}
-            if when == "now":
+            if paymob_id is not None:
+                self._schedule_paymob_cancel(s, sub, now)
+            elif when == "now":
                 sub.status = SubscriptionStatus.cancelled
                 sub.cancel_at_period_end = False
                 sub.current_period_end = now
@@ -1008,6 +1027,110 @@ class AdminCustomerService:
             )
             user_id = sub.user_id
         return self.detail(user_id)
+
+    def _schedule_paymob_cancel(self, s: Session, sub: Subscription, now: datetime) -> None:
+        """Phase 05's period-end cancel; the payer is its actor (it locks on the payer)."""
+        service = SubscriptionService(s, self._client, self._settings)
+        try:
+            if sub.payer_user_id is None:
+                service.schedule_cancel_as_system(sub.id, now=now)
+            else:
+                service.schedule_cancel(sub.id, actor_user_id=sub.payer_user_id, now=now)
+        except (InvalidPlanChange, SubscriptionNotFound) as exc:
+            raise AdminConflictError("not_live", "There is no live card plan to cancel.") from exc
+
+    def _cancel_at_paymob_now(
+        self,
+        subscription_id: uuid.UUID,
+        paymob_id: int,
+        *,
+        admin_user_id: uuid.UUID,
+        reason: str,
+        now: datetime,
+    ) -> CustomerDetail:
+        """Cancel at Paymob with no transaction open, then end the row under its lock.
+
+        Nothing is written when Paymob did not definitely cancel (:meth:`_paymob_cancel`). When
+        it did but the row stopped being live meanwhile (a webhook, the sweep), the cancel is
+        recorded on the row (``paymob_cancelled_at``) and the answer is 409 ``not_live``.
+        """
+        self._paymob_cancel(subscription_id, paymob_id)
+        stale = False
+        with self._sm.begin() as s:
+            sub = s.get(Subscription, subscription_id, with_for_update=True)
+            if sub is None:
+                raise AdminNotFoundError("subscription_not_found")
+            if sub.status not in LIVE_SUBSCRIPTION_STATUSES:
+                if sub.paymob_cancelled_at is None:
+                    sub.paymob_cancelled_at = now
+                stale = True
+            else:
+                before = snapshot(sub, _SUBSCRIPTION_AUDIT)
+                sub.status = SubscriptionStatus.cancelled
+                sub.cancel_at_period_end = False
+                sub.current_period_end = now
+                sub.paymob_cancelled_at = now
+                ended = self._end_period_allowance(s, sub.id, now)
+                s.flush()
+                audited(
+                    s,
+                    admin_user_id,
+                    AuditAction.SUBSCRIPTION_CANCEL,
+                    AuditTarget.SUBSCRIPTION,
+                    sub.id,
+                    reason,
+                    before,
+                    {
+                        **snapshot(sub, _SUBSCRIPTION_AUDIT),
+                        "when": "now",
+                        "paymob_cancelled": True,
+                        **ended,
+                    },
+                )
+            user_id = sub.user_id
+        if stale:
+            raise AdminConflictError(
+                "not_live", "The plan ended while Paymob was cancelling it; Paymob is cancelled."
+            )
+        return self.detail(user_id)
+
+    def _paymob_cancel(self, subscription_id: uuid.UUID, paymob_id: int) -> None:
+        """Cancel at Paymob; return only when the subscription is known to be cancelled there.
+
+        A 5xx, no answer or a timeout may have cancelled it (``_outcome_unknown``), so it is
+        refused as unknown with no read-back and no blind retry: the admin refreshes and decides.
+        A definite 4xx is read back, and only Paymob reporting ``canceled`` counts as done.
+        """
+        try:
+            self._client.cancel_subscription(paymob_id)
+            return
+        except PaymobError as exc:
+            self._log_cancel_failure(subscription_id, exc)
+            if _outcome_unknown(exc):
+                raise PaymobCallError(
+                    "paymob_cancel_failed",
+                    "Paymob did not confirm the cancel. Nothing was changed; check Paymob first.",
+                ) from exc
+        try:
+            remote = self._client.get_subscription(paymob_id)
+        except PaymobError as exc:
+            self._log_cancel_failure(subscription_id, exc)
+            raise PaymobCallError(
+                "paymob_cancel_failed", "Paymob refused the cancel. Nothing was changed."
+            ) from exc
+        if remote.get("state") != "canceled":
+            raise PaymobCallError(
+                "paymob_cancel_failed", "Paymob refused the cancel. Nothing was changed."
+            )
+
+    @staticmethod
+    def _log_cancel_failure(subscription_id: uuid.UUID, exc: PaymobError) -> None:
+        alerts.warning(
+            "admin_paymob_cancel_failed",
+            subscription_id=str(subscription_id),
+            status_code=exc.status_code,
+            error_type=type(exc).__name__,
+        )
 
     @staticmethod
     def _latest_period(s: Session, subscription_id: uuid.UUID) -> SubscriptionPeriod | None:
