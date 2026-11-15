@@ -44,6 +44,8 @@ from lemely.db.merchant_charge_repo import (
     MerchantChargeError,
     MerchantChargeService,
     current_period,
+    current_terms,
+    is_upgrade,
 )
 from lemely.db.models.admin_audit import AdminAuditLog
 from lemely.db.models.billing import (
@@ -508,7 +510,8 @@ class AdminPaymentsService:
         if held <= 0 or quantity <= 0:
             raise _ReverseUnavailableError("No extra seats are held.")
         pending = sub.pending_extra_seats
-        target = max(0, held - quantity)
+        # Seats earlier reverses of this period already scheduled away count as gone too.
+        target = max(0, held - self._seats_already_reversed(s, sub, payment) - quantity)
         if pending is not None:
             target = min(target, pending)
         if pending is not None and target >= pending:
@@ -523,6 +526,31 @@ class AdminPaymentsService:
         except (MerchantChargeError, SubscriptionError) as exc:
             raise _ReverseUnavailableError(f"The seats cannot be removed now ({exc}).") from exc
         return {"reverse_effect": "seat_reduction_scheduled", "pending_extra_seats": target}
+
+    @staticmethod
+    def _seats_already_reversed(s: Session, sub: Subscription, payment: Payment) -> int:
+        """Seats other purchases of this period gave back through a reverse that took effect."""
+        applied = (
+            select(AdminAuditLog.target_id)
+            .where(
+                AdminAuditLog.action == AuditAction.PAYMENT_REFUND_SUCCEEDED.value,
+                AdminAuditLog.target_kind == AuditTarget.PAYMENT.value,
+                AdminAuditLog.after["reverse_effect"].astext.in_(
+                    ("seat_reduction_scheduled", "already_scheduled")
+                ),
+            )
+            .scalar_subquery()
+        )
+        total = s.scalar(
+            select(func.coalesce(func.sum(Payment.seat_quantity), 0)).where(
+                Payment.subscription_id == sub.id,
+                Payment.purpose == PaymentPurpose.extra_seats,
+                Payment.id != payment.id,
+                Payment.created_at >= sub.current_period_start,
+                Payment.id.in_(applied),
+            )
+        )
+        return int(total or 0)
 
     def _reverse_upgrade(
         self, s: Session, payment: Payment, sub: Subscription
@@ -542,6 +570,13 @@ class AdminPaymentsService:
         period = current_period(s, sub)
         if period is None or payment.created_at < period.period_start:
             raise _ReverseUnavailableError("The upgrade belongs to an earlier period.")
+        paying = None if period.payment_id is None else s.get(Payment, period.payment_id)
+        base = None if paying is None else paying.plan_tier_id
+        if base is None:
+            raise _ReverseUnavailableError("The tier billed before the upgrade is not recorded.")
+        # Walk the period's upgrades in the order they were paid. Only one that is an upgrade over
+        # the tier then billed can have moved the tier: a paid one that was never applied (no
+        # credit rate to convert it) does not extend the chain.
         earlier = s.scalars(
             select(Payment)
             .where(
@@ -560,26 +595,35 @@ class AdminPaymentsService:
                 Payment.paid_at >= period.period_start,
                 Payment.paid_at < payment.paid_at,
             )
-            .order_by(Payment.paid_at.desc(), Payment.created_at.desc())
-            .limit(1)
-        ).first()
-        if earlier is not None:
-            previous, source = earlier.plan_tier_id, "previous_upgrade"
-            terms_ok = previous is not None and self._terms_unchanged_since(
-                s, previous, earlier.paid_at
-            )
+            .order_by(Payment.paid_at, Payment.created_at)
+        ).all()
+        previous: uuid.UUID = base
+        applied: Payment | None = None
+        for candidate in earlier:
+            if candidate.plan_tier_id is not None and self._is_upgrade_over(
+                s, previous, candidate.plan_tier_id
+            ):
+                previous, applied = candidate.plan_tier_id, candidate
+        if payment.plan_tier_id is None or not self._is_upgrade_over(
+            s, previous, payment.plan_tier_id
+        ):
+            raise _ReverseUnavailableError("The upgrade chain of this period cannot be proven.")
+        if applied is not None:
+            source = "previous_upgrade"
+            terms_ok = self._terms_unchanged_since(s, previous, applied.paid_at)
         else:
-            paying = None if period.payment_id is None else s.get(Payment, period.payment_id)
-            previous, source = None if paying is None else paying.plan_tier_id, "period_payment"
-            terms_ok = (
-                previous is not None
-                and period.terms_version is not None
-                and self._tier_has_terms(s, previous, period.terms_version)
+            source = "period_payment"
+            terms_ok = period.terms_version is not None and self._tier_has_terms(
+                s, previous, period.terms_version
             )
-        if previous is None or previous == payment.plan_tier_id:
-            raise _ReverseUnavailableError("The tier billed before the upgrade is not recorded.")
         if not terms_ok:
             raise _ReverseUnavailableError("The previous plan's terms have changed since.")
+        pending = sub.pending_plan_tier_id
+        if pending is not None and self._renewal_price(s, pending) <= self._renewal_price(
+            s, previous
+        ):
+            # The payer already chose a plan that costs no more: never replace it with a dearer one.
+            return {"reverse_effect": "already_scheduled", "pending_plan_tier_id": pending}
         try:
             SubscriptionService(s, self._client, self._settings).schedule_downgrade(
                 sub.id,
@@ -596,6 +640,20 @@ class AdminPaymentsService:
             "previous_plan_tier_id": previous,
             "previous_tier_source": source,
         }
+
+    @staticmethod
+    def _is_upgrade_over(s: Session, old_id: uuid.UUID, new_id: uuid.UUID) -> bool:
+        old, new = s.get(PlanTier, old_id), s.get(PlanTier, new_id)
+        return (
+            old is not None
+            and new is not None
+            and is_upgrade(old, current_terms(s, old), new, current_terms(s, new))
+        )
+
+    @staticmethod
+    def _renewal_price(s: Session, tier_id: uuid.UUID) -> int:
+        tier = s.get(PlanTier, tier_id)
+        return 0 if tier is None else int(current_terms(s, tier).price_minor)
 
     @staticmethod
     def _tier_has_terms(s: Session, tier_id: uuid.UUID, terms_version: int) -> bool:

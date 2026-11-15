@@ -1401,3 +1401,123 @@ def test_the_seat_reverse_that_succeeds_logs_the_schedule_once_for_real(
         assert _reversing(_client(sm, admin), w["payment"]).status_code == 200
     scheduled = [e for e in logs if e["event"] == "seat_reduction_scheduled"]
     assert [bool(e.get("dry_run")) for e in scheduled] == [True, False]
+
+
+# -- re-review fixes (N1, N2, N3) ----------------------------------------------------------------
+
+
+def _second_seat_purchase(sm: sessionmaker[Session], w: dict[str, Any], bought: int) -> uuid.UUID:
+    pid = add_payment(
+        sm,
+        payer=w["teacher"],
+        purpose=PaymentPurpose.credit_pack,
+        amount_minor=10000,
+        paymob_txn_id=uuid.uuid4().int % 10**12,
+    )
+    with sm.begin() as session:
+        row = session.get(Payment, pid)
+        assert row is not None
+        row.purpose = PaymentPurpose.extra_seats
+        row.credit_pack_id = None
+        row.subscription_id = w["sub"]
+        row.seat_quantity = bought
+        row.plan_tier_id = w["tier"]
+    return pid
+
+
+def test_two_seat_purchases_reversed_one_after_the_other_end_at_the_older_seats(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    """3 older seats + A (2) + B (2) = 7 held. Reverse A, then B: renewal keeps 3."""
+    w = _teacher_with_seats(sm, held=7, bought=2)
+    b = _second_seat_purchase(sm, w, 2)
+    assert _reversing(_client(sm, admin), w["payment"]).status_code == 200
+    assert _sub_row(sm, w["sub"]).pending_extra_seats == 5
+    assert _reversing(_client(sm, admin), b).status_code == 200
+    assert _sub_row(sm, w["sub"]).pending_extra_seats == 3
+    effects = [
+        a.after["reverse_effect"] for a in audit_rows(sm, AuditAction.PAYMENT_REFUND_SUCCEEDED)
+    ]  # type: ignore[index]
+    assert effects == ["seat_reduction_scheduled", "seat_reduction_scheduled"]
+
+
+def test_the_payers_own_reduction_then_two_reverses_never_rises(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _teacher_with_seats(sm, held=7, bought=2)
+    b = _second_seat_purchase(sm, w, 2)
+    _pending_seats(sm, w["sub"], 6)  # the payer cut one seat first
+    assert _reversing(_client(sm, admin), w["payment"]).status_code == 200
+    assert _sub_row(sm, w["sub"]).pending_extra_seats == 5
+    assert _reversing(_client(sm, admin), b).status_code == 200
+    assert _sub_row(sm, w["sub"]).pending_extra_seats == 3
+
+
+def test_a_reverse_that_did_not_take_effect_is_not_counted_for_the_next_one(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _teacher_with_seats(sm, held=7, bought=2)
+    b = _second_seat_purchase(sm, w, 2)
+    assert (
+        _refund(_client(sm, admin), w["payment"]).status_code == 200
+    )  # money only: A's seats stay
+    assert _reversing(_client(sm, admin), b).status_code == 200
+    assert _sub_row(sm, w["sub"]).pending_extra_seats == 5
+
+
+def test_an_upgrade_that_never_moved_the_tier_is_not_the_previous_upgrade(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    """basic -> plus -> (stale lite checkout, paid, never applied) -> pro: reverse pro = plus."""
+    w = _upgraded(sm)
+    future = datetime.now(UTC) + timedelta(minutes=5)
+    pro_payment = _third_tier_upgrade(sm, w, first_paid_at=future)
+    lite = add_plan_tier(sm, code=f"student_lite_{uuid.uuid4().hex[:6]}", price_minor=15000)
+    stale = add_payment(
+        sm,
+        payer=w["student"],
+        amount_minor=1000,
+        paymob_txn_id=9,
+        paid_at=future + timedelta(minutes=30),
+        created_at=NOW - timedelta(days=2),
+    )
+    with sm.begin() as session:
+        row = session.get(Payment, stale)
+        assert row is not None
+        row.purpose = PaymentPurpose.upgrade_proration
+        row.credit_pack_id = None
+        row.subscription_id = w["sub"]
+        row.plan_tier_id = lite
+    resp = _reversing(_client(sm, admin), pro_payment)
+    assert resp.status_code == 200, resp.text
+    assert _sub_row(sm, w["sub"]).pending_plan_tier_id == w["target"]  # plus, not lite
+
+
+def test_the_reverse_never_replaces_a_cheaper_downgrade_the_payer_scheduled(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _upgraded(sm)
+    lite = add_plan_tier(sm, code=f"student_lite_{uuid.uuid4().hex[:6]}", price_minor=5000)
+    with sm.begin() as session:
+        sub = session.get(Subscription, w["sub"])
+        assert sub is not None
+        sub.pending_plan_tier_id = lite
+    assert _reversing(_client(sm, admin), w["upgrade"]).status_code == 200
+    assert _sub_row(sm, w["sub"]).pending_plan_tier_id == lite
+    [done] = audit_rows(sm, AuditAction.PAYMENT_REFUND_SUCCEEDED)
+    assert done.after["reverse_effect"] == "already_scheduled"  # type: ignore[index]
+    assert done.after["pending_plan_tier_id"] == str(lite)  # type: ignore[index]
+
+
+def test_the_reverse_replaces_a_dearer_scheduled_downgrade_with_the_previous_tier(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    """basic (10000) -> plus (20000); the payer scheduled mid (15000): the reverse goes to basic."""
+    w = _upgraded(sm)
+    mid = add_plan_tier(sm, code=f"student_mid_{uuid.uuid4().hex[:6]}", price_minor=15000)
+    with sm.begin() as session:
+        sub = session.get(Subscription, w["sub"])
+        assert sub is not None
+        sub.pending_plan_tier_id = mid
+    assert _reversing(_client(sm, admin), w["upgrade"]).status_code == 200
+    assert _sub_row(sm, w["sub"]).pending_plan_tier_id == w["previous"]
