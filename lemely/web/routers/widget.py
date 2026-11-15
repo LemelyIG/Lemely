@@ -50,6 +50,11 @@ from lemely.web.schemas_widget import StudentWidgetDTO, WidgetNextSessionDTO
 router = APIRouter(prefix="/api/student/widget", dependencies=[Depends(require_role(Role.student))])
 
 
+def _utcnow() -> datetime:
+    """The wall clock, as a module function so tests can pin it to their services' clock."""
+    return datetime.now(UTC)
+
+
 def _next_session(
     user_id: str,
     subject_codes: list[str],
@@ -100,7 +105,7 @@ def get_student_widget(
     # needs the codes to look up a plan per subject, and `list_enrolments`
     # issues one extra query per row (paper numbers) this route never reads.
     subject_codes = profile_service.list_enrolled_subject_codes(auth.user_id)
-    today = datetime.now(UTC).date()
+    today = _utcnow().date()
     return StudentWidgetDTO(
         streak=profile.streak.current_length,
         nextSession=_next_session(auth.user_id, subject_codes, study_plan_service, today),
