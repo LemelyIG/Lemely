@@ -196,10 +196,14 @@ class ManualActivationRequestDTO(ApiModel):
 
 
 class AdminExtendRequestDTO(ApiModel):
+    """``requestId`` is optional: with one, a retried request changes nothing the second time."""
+
     days: Annotated[int, Field(gt=0, le=366)]
     reason: Reason
+    requestId: uuid.UUID | None = None
 
 
 class AdminCancelRequestDTO(ApiModel):
     when: Literal["period_end", "now"]
     reason: Reason
+    requestId: uuid.UUID | None = None

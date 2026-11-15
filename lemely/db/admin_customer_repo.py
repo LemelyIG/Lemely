@@ -35,6 +35,7 @@ from lemely.db.admin_billing_repo import (
     require_reason,
     snapshot,
 )
+from lemely.db.billing_notices import enqueue_subscription_notice
 from lemely.db.billing_repo import _outcome_unknown
 from lemely.db.models.admin_audit import (
     HAS_IDEMPOTENCY_KEY_SQL,
@@ -117,6 +118,11 @@ _REFUSED_CHARACTERS = re.compile("[\x00-\x1f\x7f\ud800-\udfff]")
 def _ledger_request_key(request_id: uuid.UUID) -> str:
     """The audit ``idempotency_key`` of a grant or adjust: one id, once, for any customer."""
     return f"admin-ledger:{request_id}"
+
+
+def _subscription_request_key(request_id: uuid.UUID) -> str:
+    """The audit ``idempotency_key`` of an extend or cancel: one request id, once (like grant)."""
+    return f"admin-subscription:{request_id}"
 
 
 def _utcnow() -> datetime:
@@ -899,13 +905,21 @@ class AdminCustomerService:
         return self.detail(user_id)
 
     def extend_subscription(
-        self, subscription_id: uuid.UUID, *, days: int, admin_user_id: uuid.UUID, reason: str
+        self,
+        subscription_id: uuid.UUID,
+        *,
+        days: int,
+        admin_user_id: uuid.UUID,
+        reason: str,
+        request_id: uuid.UUID | None = None,
     ) -> CustomerDetail:
         """Push a complimentary plan's period end, and its allowance expiry, out by ``days``.
 
         Only a live complimentary plan extends: Paymob owns the date of a billed one. The
         allowance moves through ``UsageLedger.extend_grant_expiry`` (never a direct write), so a
-        grant already lapsed but not yet swept is still extended.
+        grant already lapsed but not yet swept is still extended. With a ``request_id`` a replay
+        of the same request changes nothing and the same id for another request is 409
+        ``request_id_reused``.
         """
         require_reason(reason)
         now = self._now()
@@ -913,56 +927,113 @@ class AdminCustomerService:
             sub = s.get(Subscription, subscription_id, with_for_update=True)
             if sub is None:
                 raise AdminNotFoundError("subscription_not_found")
-            if sub.paymob_subscription_id is not None:
-                raise AdminConflictError(
-                    "paymob_billed", "Grant credits instead; Paymob owns the date."
+            if self._replayed(
+                s, request_id, AuditAction.SUBSCRIPTION_EXTEND, subscription_id, {"days": days}
+            ):
+                user_id = sub.user_id
+            else:
+                if sub.paymob_subscription_id is not None:
+                    raise AdminConflictError(
+                        "paymob_billed", "Grant credits instead; Paymob owns the date."
+                    )
+                if not sub.is_manually_activated or sub.status is not SubscriptionStatus.active:
+                    raise AdminConflictError(
+                        "not_extendable", "Only live complimentary plans extend."
+                    )
+                if sub.current_period_end is None:
+                    raise AdminConflictError("open_ended", "This plan has no end to extend.")
+                new_end = sub.current_period_end + timedelta(days=days)
+                if new_end <= now:
+                    raise AdminInvalidError(
+                        "extension_in_the_past", "The new end would still be in the past."
+                    )
+                before = snapshot(sub, _SUBSCRIPTION_AUDIT)
+                sub.current_period_end = new_end
+                latest = self._latest_period(s, sub.id)
+                extended: list[uuid.UUID] = []
+                if latest is not None:
+                    latest.period_end = new_end
+                    ledger = UsageLedger(s)
+                    for grant in self._period_grants(s, latest.id):
+                        try:
+                            ledger.extend_grant_expiry(
+                                grant.id,
+                                expires_at=new_end,
+                                now=now,
+                                issued_expires_at=grant.expires_at,
+                            )
+                        except GrantAlreadyExpired as exc:
+                            raise AdminConflictError(
+                                "grant_expired",
+                                "The allowance already expired; grant credits instead.",
+                            ) from exc
+                        extended.append(grant.id)
+                s.flush()
+                audited(
+                    s,
+                    admin_user_id,
+                    AuditAction.SUBSCRIPTION_EXTEND,
+                    AuditTarget.SUBSCRIPTION,
+                    sub.id,
+                    reason,
+                    before,
+                    {
+                        **snapshot(sub, _SUBSCRIPTION_AUDIT),
+                        "days": days,
+                        "extended_grant_ids": extended,
+                        **self._request_fields(request_id),
+                    },
                 )
-            if not sub.is_manually_activated or sub.status is not SubscriptionStatus.active:
-                raise AdminConflictError("not_extendable", "Only live complimentary plans extend.")
-            if sub.current_period_end is None:
-                raise AdminConflictError("open_ended", "This plan has no end to extend.")
-            new_end = sub.current_period_end + timedelta(days=days)
-            if new_end <= now:
-                raise AdminInvalidError(
-                    "extension_in_the_past", "The new end would still be in the past."
-                )
-            before = snapshot(sub, _SUBSCRIPTION_AUDIT)
-            sub.current_period_end = new_end
-            latest = self._latest_period(s, sub.id)
-            extended: list[uuid.UUID] = []
-            if latest is not None:
-                latest.period_end = new_end
-                ledger = UsageLedger(s)
-                for grant in self._period_grants(s, latest.id):
-                    try:
-                        ledger.extend_grant_expiry(
-                            grant.id,
-                            expires_at=new_end,
-                            now=now,
-                            issued_expires_at=grant.expires_at,
-                        )
-                    except GrantAlreadyExpired as exc:
-                        raise AdminConflictError(
-                            "grant_expired", "The allowance already expired; grant credits instead."
-                        ) from exc
-                    extended.append(grant.id)
-            s.flush()
-            audited(
-                s,
-                admin_user_id,
-                AuditAction.SUBSCRIPTION_EXTEND,
-                AuditTarget.SUBSCRIPTION,
-                sub.id,
-                reason,
-                before,
-                {
-                    **snapshot(sub, _SUBSCRIPTION_AUDIT),
-                    "days": days,
-                    "extended_grant_ids": extended,
-                },
-            )
-            user_id = sub.user_id
+                user_id = sub.user_id
         return self.detail(user_id)
+
+    @staticmethod
+    def _request_fields(request_id: uuid.UUID | None) -> dict[str, object]:
+        if request_id is None:
+            return {}
+        return {"idempotency_key": _subscription_request_key(request_id), "request_id": request_id}
+
+    @staticmethod
+    def _replayed(
+        s: Session,
+        request_id: uuid.UUID | None,
+        action: AuditAction,
+        subscription_id: uuid.UUID,
+        payload: dict[str, object],
+    ) -> bool:
+        """True when this very request was already applied; another request's id is a 409.
+
+        Takes the request's advisory lock first, so two identical requests serialise on it and
+        the second finds the first's audit row. One probe per action: the unique partial index
+        on the key is per action. The id is single-use across extend and cancel.
+        """
+        if request_id is None:
+            return False
+        key = _subscription_request_key(request_id)
+        lock_idempotency_key(s, key)
+        for candidate in (AuditAction.SUBSCRIPTION_EXTEND, AuditAction.SUBSCRIPTION_CANCEL):
+            prior = s.scalars(
+                select(AdminAuditLog)
+                .where(
+                    AdminAuditLog.action == str(candidate),
+                    sa.text(HAS_IDEMPOTENCY_KEY_SQL),
+                    sa.literal_column(IDEMPOTENCY_KEY_SQL) == key,
+                )
+                .limit(1)
+            ).first()
+            if prior is None:
+                continue
+            after = prior.after or {}
+            if (
+                prior.action == str(action)
+                and prior.target_id == subscription_id
+                and all(after.get(k) == v for k, v in payload.items())
+            ):
+                return True
+            raise AdminConflictError(
+                "request_id_reused", "This request id was used for a different request."
+            )
+        return False
 
     def cancel_subscription(
         self,
@@ -971,71 +1042,136 @@ class AdminCustomerService:
         when: Literal["period_end", "now"],
         admin_user_id: uuid.UUID,
         reason: str,
+        request_id: uuid.UUID | None = None,
     ) -> CustomerDetail:
         """Cancel a live plan at its period end, or now.
 
         A complimentary plan is ours alone: ``period_end`` sets ``cancel_at_period_end`` for
         :func:`expire_manual_subscriptions`, ``now`` ends it and cuts the current period's
         allowance (UD-2). A Paymob-billed plan cancels at period end through Phase 05's
-        ``schedule_cancel`` (the sweep tells Paymob), and ``now`` cancels at Paymob first with no
-        transaction open (:meth:`_cancel_at_paymob_now`).
+        ``schedule_cancel_as_system`` (the sweep tells Paymob; the admin is in the audit row),
+        and ``now`` cancels at Paymob first with no transaction open
+        (:meth:`_cancel_at_paymob_now`). A ``period_end`` that changes nothing (already
+        scheduled) writes no audit row. With a ``request_id`` a replay changes nothing.
         """
         require_reason(reason)
         now = self._now()
-        with self._sm() as s:  # a plain read, closed before any Paymob call
+        payload: dict[str, object] = {"when": when}
+        with self._sm.begin() as s:  # a short read, closed before any Paymob call
             sub = s.get(Subscription, subscription_id)
             if sub is None:
                 raise AdminNotFoundError("subscription_not_found")
+            if self._replayed(
+                s, request_id, AuditAction.SUBSCRIPTION_CANCEL, subscription_id, payload
+            ):
+                return self.detail(sub.user_id)
             if sub.status not in LIVE_SUBSCRIPTION_STATUSES:
                 raise AdminConflictError("not_live", "Only a live plan can be cancelled.")
             paymob_id = sub.paymob_subscription_id
         if paymob_id is not None and when == "now":
             return self._cancel_at_paymob_now(
-                subscription_id, paymob_id, admin_user_id=admin_user_id, reason=reason, now=now
+                subscription_id,
+                paymob_id,
+                admin_user_id=admin_user_id,
+                reason=reason,
+                now=now,
+                request_id=request_id,
             )
         with self._sm.begin() as s:
             sub = s.get(Subscription, subscription_id, with_for_update=True)
             if sub is None:
                 raise AdminNotFoundError("subscription_not_found")
-            if sub.status not in LIVE_SUBSCRIPTION_STATUSES:
-                raise AdminConflictError("not_live", "Only a live plan can be cancelled.")
-            if (sub.paymob_subscription_id is None) != (paymob_id is None):
-                raise AdminConflictError(
-                    "subscription_changed", "The plan changed while you were looking; reload it."
-                )
-            before = snapshot(sub, _SUBSCRIPTION_AUDIT)
-            extra: dict[str, object] = {"when": when}
-            if paymob_id is not None:
-                self._schedule_paymob_cancel(s, sub, now)
-            elif when == "now":
-                sub.status = SubscriptionStatus.cancelled
-                sub.cancel_at_period_end = False
-                sub.current_period_end = now
-                extra.update(self._end_period_allowance(s, sub.id, now))
-            else:
-                sub.cancel_at_period_end = True
-            s.flush()
-            audited(
-                s,
-                admin_user_id,
-                AuditAction.SUBSCRIPTION_CANCEL,
-                AuditTarget.SUBSCRIPTION,
-                sub.id,
-                reason,
-                before,
-                {**snapshot(sub, _SUBSCRIPTION_AUDIT), **extra},
-            )
             user_id = sub.user_id
+            if self._replayed(
+                s, request_id, AuditAction.SUBSCRIPTION_CANCEL, subscription_id, payload
+            ):
+                pass
+            else:
+                self._cancel_locked(
+                    s,
+                    sub,
+                    when=when,
+                    paymob_id=paymob_id,
+                    admin_user_id=admin_user_id,
+                    reason=reason,
+                    now=now,
+                    request_id=request_id,
+                )
         return self.detail(user_id)
 
+    def _cancel_locked(
+        self,
+        s: Session,
+        sub: Subscription,
+        *,
+        when: Literal["period_end", "now"],
+        paymob_id: int | None,
+        admin_user_id: uuid.UUID,
+        reason: str,
+        now: datetime,
+        request_id: uuid.UUID | None,
+    ) -> None:
+        """The local cancel (complimentary, or a Paymob plan at period end) under the row lock."""
+        if sub.status not in LIVE_SUBSCRIPTION_STATUSES:
+            raise AdminConflictError("not_live", "Only a live plan can be cancelled.")
+        if (sub.paymob_subscription_id is None) != (paymob_id is None):
+            raise AdminConflictError(
+                "subscription_changed", "The plan changed while you were looking; reload it."
+            )
+        before = snapshot(sub, _SUBSCRIPTION_AUDIT)
+        marks = (sub.cancel_at_period_end, sub.pending_plan_tier_id, sub.suspended_at)
+        extra: dict[str, object] = {"when": when}
+        if paymob_id is not None:
+            self._schedule_paymob_cancel(s, sub, now)
+        elif when == "now":
+            sub.status = SubscriptionStatus.cancelled
+            sub.cancel_at_period_end = False
+            sub.current_period_end = now
+            self._end_plan(s, sub, now)
+            extra.update(self._end_period_allowance(s, sub.id, now))
+        else:
+            sub.cancel_at_period_end = True
+        s.flush()
+        if when == "period_end" and marks == (
+            sub.cancel_at_period_end,
+            sub.pending_plan_tier_id,
+            sub.suspended_at,
+        ):
+            return  # already scheduled: nothing changed, so nothing to audit
+        audited(
+            s,
+            admin_user_id,
+            AuditAction.SUBSCRIPTION_CANCEL,
+            AuditTarget.SUBSCRIPTION,
+            sub.id,
+            reason,
+            before,
+            {**snapshot(sub, _SUBSCRIPTION_AUDIT), **extra, **self._request_fields(request_id)},
+        )
+
+    @staticmethod
+    def _end_plan(s: Session, sub: Subscription, now: datetime) -> None:
+        """What Phase 05 does when a plan ends: clear its working markers, tell the payer.
+
+        ``grace_until``, ``suspended_at`` and the amount marks mean nothing on an ended row, and
+        a resume or a drift check must find none. The ``cancelled`` notice goes to the payer
+        (none for a complimentary plan, which has no payer).
+        """
+        sub.grace_until = None
+        sub.suspended_at = None
+        sub.previous_amount_minor = None
+        sub.amount_replaced_at = None
+        sub.amount_sync_uncertain_at = None
+        if sa.inspect(Subscription).version_id_col is None:
+            sub.version = (sub.version or 0) + 1
+        enqueue_subscription_notice(s, subscription=sub, notice="cancelled", effective_at=now)
+
     def _schedule_paymob_cancel(self, s: Session, sub: Subscription, now: datetime) -> None:
-        """Phase 05's period-end cancel; the payer is its actor (it locks on the payer)."""
-        service = SubscriptionService(s, self._client, self._settings)
+        """Phase 05's period-end cancel on the platform's behalf; the audit row names the admin."""
         try:
-            if sub.payer_user_id is None:
-                service.schedule_cancel_as_system(sub.id, now=now)
-            else:
-                service.schedule_cancel(sub.id, actor_user_id=sub.payer_user_id, now=now)
+            SubscriptionService(s, self._client, self._settings).schedule_cancel_as_system(
+                sub.id, now=now
+            )
         except (InvalidPlanChange, SubscriptionNotFound) as exc:
             raise AdminConflictError("not_live", "There is no live card plan to cancel.") from exc
 
@@ -1047,63 +1183,73 @@ class AdminCustomerService:
         admin_user_id: uuid.UUID,
         reason: str,
         now: datetime,
+        request_id: uuid.UUID | None,
     ) -> CustomerDetail:
         """Cancel at Paymob with no transaction open, then end the row under its lock.
 
         Nothing is written when Paymob did not definitely cancel (:meth:`_paymob_cancel`). When
         it did but the row stopped being live meanwhile (a webhook, the sweep), the cancel is
-        recorded on the row (``paymob_cancelled_at``) and the answer is 409 ``not_live``.
+        recorded on the row (``paymob_cancelled_at``) and in an audit row, and the answer is
+        409 ``not_live``.
         """
-        self._paymob_cancel(subscription_id, paymob_id)
+        gone = self._paymob_cancel(subscription_id, paymob_id)
         stale = False
         with self._sm.begin() as s:
             sub = s.get(Subscription, subscription_id, with_for_update=True)
             if sub is None:
                 raise AdminNotFoundError("subscription_not_found")
+            user_id = sub.user_id
+            payload: dict[str, object] = {"when": "now"}
+            if self._replayed(
+                s, request_id, AuditAction.SUBSCRIPTION_CANCEL, subscription_id, payload
+            ):
+                return self.detail(user_id)
+            before = snapshot(sub, _SUBSCRIPTION_AUDIT)
+            fields: dict[str, object] = {"when": "now", "paymob_cancelled": True}
+            if gone:
+                fields["paymob_missing"] = True
             if sub.status not in LIVE_SUBSCRIPTION_STATUSES:
                 if sub.paymob_cancelled_at is None:
                     sub.paymob_cancelled_at = now
                 stale = True
+                fields["row_changed_meanwhile"] = True
             else:
-                before = snapshot(sub, _SUBSCRIPTION_AUDIT)
                 sub.status = SubscriptionStatus.cancelled
                 sub.cancel_at_period_end = False
                 sub.current_period_end = now
                 sub.paymob_cancelled_at = now
-                ended = self._end_period_allowance(s, sub.id, now)
-                s.flush()
-                audited(
-                    s,
-                    admin_user_id,
-                    AuditAction.SUBSCRIPTION_CANCEL,
-                    AuditTarget.SUBSCRIPTION,
-                    sub.id,
-                    reason,
-                    before,
-                    {
-                        **snapshot(sub, _SUBSCRIPTION_AUDIT),
-                        "when": "now",
-                        "paymob_cancelled": True,
-                        **ended,
-                    },
-                )
-            user_id = sub.user_id
+                self._end_plan(s, sub, now)
+                fields.update(self._end_period_allowance(s, sub.id, now))
+                fields.update(self._request_fields(request_id))
+            s.flush()
+            audited(
+                s,
+                admin_user_id,
+                AuditAction.SUBSCRIPTION_CANCEL,
+                AuditTarget.SUBSCRIPTION,
+                sub.id,
+                reason,
+                before,
+                {**snapshot(sub, _SUBSCRIPTION_AUDIT), **fields},
+            )
         if stale:
             raise AdminConflictError(
                 "not_live", "The plan ended while Paymob was cancelling it; Paymob is cancelled."
             )
         return self.detail(user_id)
 
-    def _paymob_cancel(self, subscription_id: uuid.UUID, paymob_id: int) -> None:
+    def _paymob_cancel(self, subscription_id: uuid.UUID, paymob_id: int) -> bool:
         """Cancel at Paymob; return only when the subscription is known to be cancelled there.
 
-        A 5xx, no answer or a timeout may have cancelled it (``_outcome_unknown``), so it is
-        refused as unknown with no read-back and no blind retry: the admin refreshes and decides.
-        A definite 4xx is read back, and only Paymob reporting ``canceled`` counts as done.
+        ``True`` means Paymob no longer has the subscription (404 on the cancel and on the
+        read-back, as Phase 05 treats it): the row ends and ``subscription_paymob_missing`` is
+        alerted. A 5xx, no answer or a timeout may have cancelled it (``_outcome_unknown``), so
+        it is refused as unknown with no read-back and no blind retry: the admin refreshes and
+        decides. A definite 4xx is read back, and only ``canceled`` counts as done.
         """
         try:
             self._client.cancel_subscription(paymob_id)
-            return
+            return False
         except PaymobError as exc:
             self._log_cancel_failure(subscription_id, exc)
             if _outcome_unknown(exc):
@@ -1111,10 +1257,19 @@ class AdminCustomerService:
                     "paymob_cancel_failed",
                     "Paymob did not confirm the cancel. Nothing was changed; check Paymob first.",
                 ) from exc
+            cancel_status = exc.status_code
         try:
             remote = self._client.get_subscription(paymob_id)
         except PaymobError as exc:
             self._log_cancel_failure(subscription_id, exc)
+            if cancel_status == 404 and exc.status_code == 404:
+                alerts.error(
+                    "subscription_paymob_missing",
+                    subscription_id=str(subscription_id),
+                    paymob_subscription_id=paymob_id,
+                    alert=True,
+                )
+                return True
             raise PaymobCallError(
                 "paymob_cancel_failed", "Paymob refused the cancel. Nothing was changed."
             ) from exc
@@ -1122,6 +1277,7 @@ class AdminCustomerService:
             raise PaymobCallError(
                 "paymob_cancel_failed", "Paymob refused the cancel. Nothing was changed."
             )
+        return False
 
     @staticmethod
     def _log_cancel_failure(subscription_id: uuid.UUID, exc: PaymobError) -> None:

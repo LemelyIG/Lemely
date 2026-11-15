@@ -298,7 +298,11 @@ def extend_subscription(
     with mapped_errors():
         return customer_detail_dto(
             service.extend_subscription(
-                subscription_id, days=body.days, admin_user_id=admin_id(auth), reason=body.reason
+                subscription_id,
+                days=body.days,
+                admin_user_id=admin_id(auth),
+                reason=body.reason,
+                request_id=body.requestId,
             )
         )
 
@@ -313,6 +317,10 @@ def cancel_subscription(
     with mapped_errors():
         return customer_detail_dto(
             service.cancel_subscription(
-                subscription_id, when=body.when, admin_user_id=admin_id(auth), reason=body.reason
+                subscription_id,
+                when=body.when,
+                admin_user_id=admin_id(auth),
+                reason=body.reason,
+                request_id=body.requestId,
             )
         )
