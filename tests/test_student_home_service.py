@@ -2,22 +2,39 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+import uuid
+from datetime import UTC, date, datetime, timedelta
 
 from lemely.core.history import PaperRecord
 from lemely.core.schemas import ExamMetadata, WeakArea
+from lemely.db.exam_calendar_repo import ExamDateRow, StudentExamCalendar, StudentExamEntry
+from lemely.db.models.enums import QuizSubmissionStatus, XpSource
+from lemely.db.quiz_taking_repo import AssignedQuizRow
+from lemely.db.study_plan_repo import SessionView
+from lemely.db.xp_repo import StreakState, XpBreakdown
 from lemely.io.det.profiles import get_profile
-from lemely.web.schemas_student_home import TeacherReplyDTO
+from lemely.web.schemas_student import UploadRunDTO
+from lemely.web.schemas_student_home import TeacherReplyDTO, TodayDTO
 from lemely.web.services.student_home import (
+    HomeInputs,
+    back_moment,
     build_activity,
     build_floor,
+    build_goals,
+    build_home,
+    build_homework,
     build_recent_papers,
     build_stats,
+    build_today_sessions,
+    build_week,
     build_win_back,
     focus_question,
+    marking_moment,
     next_boundary,
+    next_exam_on,
     paper_moment,
     question_label,
+    streak_moments,
 )
 
 NOW = datetime(2026, 11, 12, 15, 0, tzinfo=UTC)
@@ -209,3 +226,209 @@ def test_activity_merges_papers_practice_and_teacher_replies_newest_first() -> N
 def test_question_label_adds_q_once() -> None:
     assert question_label("7") == "Q7"
     assert question_label("Q4b") == "Q4b"
+
+
+# ── time-derived builders ─────────────────────────────────────────────────
+
+TODAY = date(2026, 11, 12)  # a Thursday
+MONDAY = date(2026, 11, 9)
+
+
+def _bd(**xp: int) -> XpBreakdown:
+    by_source = dict.fromkeys(XpSource, 0)
+    for name, amount in xp.items():
+        by_source[XpSource[name]] = amount
+    return XpBreakdown(total=sum(by_source.values()), by_source=by_source)
+
+
+def _streak(current: int = 9, last: date | None = TODAY, freezes: int = 0) -> StreakState:
+    return StreakState(
+        current_length=current, longest_length=14, last_active_on=last, freezes_available=freezes
+    )
+
+
+def _session(day: date, topic: str, *, done: bool = False, code: str = "0580") -> SessionView:
+    return SessionView(
+        id=uuid.uuid4(),
+        date=day,
+        topic=topic,
+        activity_type=None,  # type: ignore[arg-type]
+        duration_minutes=10,
+        focus="",
+        completed_at=NOW if done else None,
+        subject_code=code,
+    )
+
+
+def test_goals_read_todays_xp_by_source_and_this_weeks_papers() -> None:
+    goals = build_goals(_bd(quiz_completed=20), _bd(paper_corrected=50))
+    assert goals == TodayDTO(practice=True, flashcards=False, paperThisWeek=True)
+    assert build_goals(_bd(study_session_completed=5), _bd()).practice is True
+
+
+def test_week_marks_done_days_labels_and_today() -> None:
+    sessions = [
+        _session(MONDAY, "Vectors"),
+        _session(MONDAY, "Second"),
+        _session(date(2026, 11, 13), "Paper 4"),
+    ]
+    xp = {MONDAY: 10, date(2026, 11, 10): 5, date(2026, 11, 14): 30}
+    week = build_week(MONDAY, TODAY, xp, sessions)
+    assert len(week) == 7
+    assert week[0].label == "Vectors"
+    assert [d.done for d in week] == [True, True, False, False, False, False, False]
+    assert [d.isToday for d in week].index(True) == 3
+    assert week[4].label == "Paper 4"
+
+
+def test_today_sessions_only_today() -> None:
+    rows = build_today_sessions(
+        [_session(TODAY, "Vectors", done=True), _session(MONDAY, "x")], TODAY
+    )
+    assert [(r.topic, r.done, r.minutes) for r in rows] == [("Vectors", True, 10)]
+
+
+def test_streak_at_risk_needs_evening_a_gap_today_and_no_freeze() -> None:
+    goals = TodayDTO(practice=False, flashcards=False, paperThisWeek=True)
+    yesterday = date(2026, 11, 11)
+    at_risk = streak_moments(_streak(last=yesterday), goals, TODAY, 18)
+    assert [(m.kind, m.streakDays) for m in at_risk] == [("streakAtRisk", 9)]
+    assert streak_moments(_streak(last=yesterday), goals, TODAY, 10) == []
+    assert streak_moments(_streak(last=yesterday, freezes=1), goals, TODAY, 20) == []
+    assert streak_moments(_streak(current=1, last=yesterday), goals, TODAY, 20) == []
+    assert streak_moments(_streak(last=TODAY), goals, TODAY, 20) == []
+
+
+def test_goal_done_when_all_three_goals_are_met() -> None:
+    goals = TodayDTO(practice=True, flashcards=True, paperThisWeek=True)
+    assert [m.kind for m in streak_moments(_streak(current=10), goals, TODAY, 20)] == ["goalDone"]
+
+
+def test_back_after_break_from_three_days_away() -> None:
+    back = back_moment(_streak(current=0, last=date(2026, 11, 6)), TODAY)
+    assert back is not None
+    assert back.daysAway == 6
+    assert back_moment(_streak(last=date(2026, 11, 10)), TODAY) is None
+    assert back_moment(_streak(last=None), TODAY) is None
+
+
+def test_marking_moment_only_for_a_live_run() -> None:
+    run = UploadRunDTO(
+        paperId="p1", status="processing", filename="phys.pdf", startedAt=NOW, stale=False
+    )
+    moment = marking_moment(run)
+    assert moment is not None
+    assert (moment.paperId, moment.filename, moment.stale) == ("p1", "phys.pdf", False)
+    done = UploadRunDTO(paperId="p1", status="complete", filename=None, startedAt=None, stale=False)
+    assert marking_moment(done) is None
+    assert marking_moment(None) is None
+
+
+def test_next_exam_is_the_earliest_future_date() -> None:
+    def row(day: date) -> ExamDateRow:
+        return ExamDateRow(
+            paper_variant="2",
+            exam_date=day,
+            starts_at_local=None,
+            duration_minutes=None,
+            source="t",
+        )
+
+    calendar = StudentExamCalendar(
+        availability="ok",  # type: ignore[arg-type]
+        entries=[
+            StudentExamEntry(
+                subject_code="0580",
+                session_month=None,
+                session_year=None,
+                paper_number=4,
+                availability="dated",  # type: ignore[arg-type]
+                dates=[row(date(2026, 11, 1)), row(date(2027, 5, 10)), row(date(2027, 5, 3))],
+            )
+        ],
+    )
+    assert next_exam_on(calendar, TODAY) == date(2027, 5, 3)
+    assert next_exam_on(StudentExamCalendar(availability="ok", entries=[]), TODAY) is None  # type: ignore[arg-type]
+
+
+def _assigned(**overrides: object) -> AssignedQuizRow:
+    base: dict[str, object] = {
+        "assignment_id": uuid.uuid4(),
+        "quiz_title": "Trigonometry set",
+        "subject_code": "0580",
+        "class_name": "10B",
+        "teacher_name": "Ms. Hanna",
+        "assigned_at": NOW - timedelta(days=1),
+        "due_at": NOW + timedelta(days=2),
+        "closes_at": None,
+        "question_count": 12,
+        "time_limit_minutes": None,
+        "submission_status": QuizSubmissionStatus.not_started,
+        "is_open": True,
+        "is_overdue": False,
+    }
+    base.update(overrides)
+    return AssignedQuizRow(**base)  # type: ignore[arg-type]
+
+
+def test_homework_is_open_teacher_work_due_soonest_first() -> None:
+    rows = [
+        _assigned(quiz_title="Later", due_at=NOW + timedelta(days=5)),
+        _assigned(quiz_title="Soon", due_at=NOW + timedelta(days=1)),
+        _assigned(quiz_title="Mine", teacher_name=None),
+        _assigned(quiz_title="Done", submission_status=QuizSubmissionStatus.submitted),
+        _assigned(quiz_title="Closed", is_open=False),
+        _assigned(quiz_title="No date", due_at=None),
+    ]
+    assert [h.title for h in build_homework(rows)] == ["Soon", "Later", "No date"]
+
+
+def _inputs(**overrides: object) -> HomeInputs:
+    base: dict[str, object] = {
+        "student_name": "Mariam Adel",
+        "records": [],
+        "now": NOW,
+        "local_date": TODAY,
+        "local_hour": 15,
+        "week_start": MONDAY,
+        "streak": _streak(current=0, last=None),
+        "today_xp": _bd(),
+        "week_xp": _bd(),
+        "week_xp_by_day": {},
+        "sessions": [],
+        "calendar": None,
+        "assigned": [],
+        "active_run": None,
+        "teacher_replies": [],
+        "class_count": 0,
+    }
+    base.update(overrides)
+    return HomeInputs(**base)  # type: ignore[arg-type]
+
+
+def test_build_home_for_a_new_student_is_neutral_and_never_needs_boundaries() -> None:
+    def refuse(_metadata: ExamMetadata) -> dict[str, float]:
+        raise AssertionError("no papers, no boundaries")
+
+    home = build_home(_inputs(), refuse)
+    assert home.moments == []
+    assert home.floor == []
+    assert home.stats.papersMarked == 0
+    assert home.lastPaperAt is None
+    assert len(home.week) == 7
+    assert home.nextExamOn is None
+
+
+def test_build_home_orders_moments_marking_paper_reply_streak_back() -> None:
+    run = UploadRunDTO(paperId="u1", status="processing", filename=None, startedAt=NOW, stale=False)
+    home = build_home(
+        _inputs(
+            records=[_paper(grade="B")],
+            active_run=run,
+            streak=_streak(current=0, last=date(2026, 11, 6)),
+        ),
+        _boundaries,
+    )
+    assert [m.kind for m in home.moments] == ["marking", "result", "backAfterBreak"]
+    # 61/80 = 76% against BOUNDARIES -> B
+    assert home.floor[0].grade == "B"

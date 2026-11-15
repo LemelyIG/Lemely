@@ -11,26 +11,47 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
+from typing import TYPE_CHECKING, Protocol
 
 from lemely.core.history import is_grade_bearing
+from lemely.db.models.enums import QuizSubmissionStatus, XpSource
 from lemely.io.det.profiles import get_profile
 from lemely.web.routers.student import _grade_for
 from lemely.web.schemas_student_home import (
     ActivityDTO,
+    BackMomentDTO,
     BestGradeDTO,
     FloorSubjectDTO,
     HomeStatsDTO,
+    HomeworkDTO,
+    MarkingMomentDTO,
+    MomentDTO,
     PaperMomentDTO,
+    PlanSessionDTO,
     RecentPaperDTO,
+    StreakDTO,
+    StreakMomentDTO,
+    StudentHomeDTO,
     TeacherReplyDTO,
+    TeacherReplyMomentDTO,
+    TodayDTO,
+    WeekDayDTO,
     WinBackTopicDTO,
 )
 
 if TYPE_CHECKING:
+    import uuid
+    from collections.abc import Iterable
+
     from lemely.core.history import PaperRecord
     from lemely.core.schemas import ExamMetadata
+    from lemely.db.exam_calendar_repo import StudentExamCalendar
+    from lemely.db.quiz_taking_repo import AssignedQuizRow
+    from lemely.db.study_plan_repo import SessionView
+    from lemely.db.xp_repo import StreakState, XpBreakdown
+    from lemely.web.schemas_student import UploadRunDTO
 
 BoundariesFor = Callable[["ExamMetadata"], dict[str, float]]
 
@@ -249,3 +270,252 @@ def build_activity(
         )
     events.sort(key=lambda e: e.at, reverse=True)
     return events[:limit]
+
+
+class TeacherReplyRow(Protocol):
+    """Shape of ``lemely.db.student_home_repo.TeacherReplyRow`` (read-only attributes)."""
+
+    @property
+    def review_id(self) -> uuid.UUID: ...
+    @property
+    def attempt_id(self) -> uuid.UUID: ...
+    @property
+    def teacher_name(self) -> str: ...
+    @property
+    def question_id(self) -> str: ...
+    @property
+    def subject_code(self) -> str | None: ...
+    @property
+    def paper_number(self) -> int | None: ...
+    @property
+    def marks_added(self) -> int: ...
+    @property
+    def resolved_at(self) -> datetime: ...
+
+
+BREAK_DAYS = 3
+STREAK_RISK_HOUR = 17
+_OPEN_SUBMISSION = frozenset({QuizSubmissionStatus.not_started, QuizSubmissionStatus.in_progress})
+_LIVE_RUN = frozenset({"pending", "processing"})
+
+
+def build_goals(today: XpBreakdown, week: XpBreakdown) -> TodayDTO:
+    """Today's three goals from XP already earned: practice, flashcards, a paper this week."""
+    practice = (
+        today.by_source.get(XpSource.quiz_completed, 0) > 0
+        or today.by_source.get(XpSource.study_session_completed, 0) > 0
+    )
+    return TodayDTO(
+        practice=practice,
+        flashcards=today.by_source.get(XpSource.flashcard_reviewed, 0) > 0,
+        paperThisWeek=week.by_source.get(XpSource.paper_corrected, 0) > 0,
+    )
+
+
+def build_today_sessions(sessions: Iterable[SessionView], local_date: date) -> list[PlanSessionDTO]:
+    """Study-plan sessions scheduled for today, across subjects."""
+    return [
+        PlanSessionDTO(
+            sessionId=str(s.id),
+            subjectCode=s.subject_code,
+            topic=s.topic,
+            minutes=s.duration_minutes,
+            done=s.completed_at is not None,
+        )
+        for s in sessions
+        if s.date == local_date
+    ]
+
+
+def build_week(
+    week_start: date,
+    local_date: date,
+    xp_by_day: dict[date, int],
+    sessions: Sequence[SessionView],
+) -> list[WeekDayDTO]:
+    """Mon-Sun: a day is done when it earned XP; its label is its first planned topic."""
+    labels: dict[date, str] = {}
+    for session in sorted(sessions, key=lambda s: s.date):
+        labels.setdefault(session.date, session.topic)
+    days: list[WeekDayDTO] = []
+    for offset in range(7):
+        day = week_start + timedelta(days=offset)
+        days.append(
+            WeekDayDTO(
+                day=day,
+                label=labels.get(day),
+                done=day <= local_date and xp_by_day.get(day, 0) > 0,
+                isToday=day == local_date,
+            )
+        )
+    return days
+
+
+def streak_dto(streak: StreakState) -> StreakDTO:
+    return StreakDTO(
+        current=streak.current_length,
+        longest=streak.longest_length,
+        lastActiveOn=streak.last_active_on,
+        freezesAvailable=streak.freezes_available,
+    )
+
+
+def streak_moments(
+    streak: StreakState, goals: TodayDTO, local_date: date, local_hour: int
+) -> list[StreakMomentDTO]:
+    """``goalDone`` when all three goals are met, else ``streakAtRisk`` when it applies.
+
+    At risk means: a streak of two days or more, last active yesterday, nothing
+    earned yet today, it is evening in the student's own zone, and no freeze is
+    saved. A saved freeze covers the day on its own, so warning about it would
+    be the leverage the Profile screen promised never to use.
+    """
+    if goals.practice and goals.flashcards and goals.paperThisWeek:
+        return [StreakMomentDTO(kind="goalDone", streakDays=streak.current_length)]
+    at_risk = (
+        streak.current_length >= 2
+        and streak.freezes_available == 0
+        and streak.last_active_on == local_date - timedelta(days=1)
+        and local_hour >= STREAK_RISK_HOUR
+    )
+    if at_risk:
+        return [StreakMomentDTO(kind="streakAtRisk", streakDays=streak.current_length)]
+    return []
+
+
+def back_moment(streak: StreakState, local_date: date) -> BackMomentDTO | None:
+    """Back after a break: three or more days since the last XP."""
+    if streak.last_active_on is None:
+        return None
+    away = (local_date - streak.last_active_on).days
+    return BackMomentDTO(daysAway=away) if away >= BREAK_DAYS else None
+
+
+def marking_moment(run: UploadRunDTO | None) -> MarkingMomentDTO | None:
+    """A paper is being marked right now."""
+    if run is None or run.status not in _LIVE_RUN:
+        return None
+    return MarkingMomentDTO(
+        paperId=run.paperId, filename=run.filename, startedAt=run.startedAt, stale=run.stale
+    )
+
+
+def next_exam_on(calendar: StudentExamCalendar, local_date: date) -> date | None:
+    """The earliest exam date still ahead, across every declared paper and variant."""
+    upcoming = [
+        row.exam_date
+        for entry in calendar.entries
+        for row in entry.dates
+        if row.exam_date >= local_date
+    ]
+    return min(upcoming, default=None)
+
+
+def build_homework(rows: Sequence[AssignedQuizRow], *, limit: int = 3) -> list[HomeworkDTO]:
+    """Open, unsubmitted work a teacher set, due soonest first."""
+    open_rows = [
+        r
+        for r in rows
+        if r.teacher_name is not None and r.is_open and r.submission_status in _OPEN_SUBMISSION
+    ]
+    far = datetime.max.replace(tzinfo=UTC)
+    open_rows.sort(key=lambda r: (r.due_at or far, r.assigned_at))
+    return [
+        HomeworkDTO(
+            assignmentId=str(r.assignment_id),
+            title=r.quiz_title,
+            subjectCode=r.subject_code,
+            teacherName=r.teacher_name or "",
+            dueAt=r.due_at,
+            questionCount=r.question_count,
+            isOverdue=r.is_overdue,
+        )
+        for r in open_rows[:limit]
+    ]
+
+
+def build_teacher_replies(
+    rows: Sequence[TeacherReplyRow], index: dict[str, int]
+) -> list[TeacherReplyDTO]:
+    """Teacher replies, each linked to its result when the paper is in history."""
+    return [
+        TeacherReplyDTO(
+            reviewId=str(row.review_id),
+            teacherName=row.teacher_name,
+            questionId=row.question_id,
+            subjectCode=row.subject_code,
+            subjectName=subject_name(row.subject_code) if row.subject_code else None,
+            paperNumber=row.paper_number,
+            marksAdded=row.marks_added,
+            paperId=str(index[str(row.attempt_id)]) if str(row.attempt_id) in index else None,
+            resolvedAt=row.resolved_at,
+        )
+        for row in rows
+    ]
+
+
+@dataclass(frozen=True, slots=True)
+class HomeInputs:
+    """Everything the router gathered for one request."""
+
+    student_name: str
+    records: Sequence[PaperRecord]
+    now: datetime
+    local_date: date
+    local_hour: int
+    week_start: date
+    streak: StreakState
+    today_xp: XpBreakdown
+    week_xp: XpBreakdown
+    week_xp_by_day: dict[date, int]
+    sessions: Sequence[SessionView]
+    calendar: StudentExamCalendar | None
+    assigned: Sequence[AssignedQuizRow]
+    active_run: UploadRunDTO | None
+    teacher_replies: Sequence[TeacherReplyRow]
+    class_count: int
+
+
+def build_home(inputs: HomeInputs, boundaries_for: BoundariesFor) -> StudentHomeDTO:
+    """Assemble the whole payload. The client picks the stage moment from ``moments``."""
+    records = inputs.records
+    papers = indexed_papers(records)
+    replies = build_teacher_replies(inputs.teacher_replies, attempt_index(records))
+    goals = build_goals(inputs.today_xp, inputs.week_xp)
+
+    moments: list[MomentDTO] = []
+    marking = marking_moment(inputs.active_run)
+    if marking is not None:
+        moments.append(marking)
+    paper = paper_moment(records, inputs.now)
+    if paper is not None:
+        moments.append(paper)
+    if replies:
+        moments.append(TeacherReplyMomentDTO(reply=replies[0]))
+    moments.extend(streak_moments(inputs.streak, goals, inputs.local_date, inputs.local_hour))
+    back = back_moment(inputs.streak, inputs.local_date)
+    if back is not None:
+        moments.append(back)
+
+    return StudentHomeDTO(
+        studentName=inputs.student_name,
+        localDate=inputs.local_date,
+        localHour=inputs.local_hour,
+        moments=moments,
+        goals=goals,
+        todaySessions=build_today_sessions(inputs.sessions, inputs.local_date),
+        week=build_week(
+            inputs.week_start, inputs.local_date, inputs.week_xp_by_day, inputs.sessions
+        ),
+        streak=streak_dto(inputs.streak),
+        nextExamOn=next_exam_on(inputs.calendar, inputs.local_date) if inputs.calendar else None,
+        floor=build_floor(records, boundaries_for) if papers else [],
+        winBack=build_win_back(records),
+        recentPapers=build_recent_papers(records),
+        lastPaperAt=recorded_at(papers[-1][1]) if papers else None,
+        teacherReplies=replies,
+        homework=build_homework(inputs.assigned),
+        classCount=inputs.class_count,
+        stats=build_stats(records),
+        activity=build_activity(records, replies),
+    )
