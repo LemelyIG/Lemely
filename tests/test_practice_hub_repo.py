@@ -19,18 +19,30 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.db.base import Base
 from lemely.db.models import User
+from lemely.db.models.academic import MarkScheme, Paper, Subject
 from lemely.db.models.attempts import Attempt
+from lemely.db.models.catalogue import SyllabusPaper
 from lemely.db.models.enums import (
     AttemptOrigin,
+    DifficultySource,
+    ExamBoard,
     QuestionDifficulty,
+    QuestionSource,
     QuizKind,
     QuizQuestionStatus,
     QuizStatus,
     QuizSubmissionStatus,
     Role,
+    SessionMonth,
 )
 from lemely.db.models.quizzes import Quiz, QuizAnswer, QuizAssignment, QuizQuestion, QuizSubmission
-from lemely.db.practice_hub_repo import RUNS_LIMIT_MAX, PracticeHubService
+from lemely.db.practice_hub_repo import (
+    RUNS_LIMIT_MAX,
+    PastPaperUnavailableError,
+    PracticeHubService,
+)
+from lemely.db.practice_repo import PracticeNotFoundError
+from lemely.db.question_bank_repo import NewBankQuestion, QuestionBankService
 from lemely.runtime.config import DatabaseSettings
 
 if TYPE_CHECKING:
@@ -294,3 +306,206 @@ def test_limit_is_honoured_and_bounded(
         service.runs(student, limit=0)
     with pytest.raises(ValueError, match="limit"):
         service.runs(student, limit=RUNS_LIMIT_MAX + 1)
+
+
+def _paper(
+    sm: sessionmaker[Session],
+    *,
+    number: int,
+    variant: int,
+    month: SessionMonth,
+    year: int,
+    scheme_max: int | None = None,
+) -> uuid.UUID:
+    with sm.begin() as session:
+        if session.scalars(sa.select(Subject).where(Subject.code == "0625")).first() is None:
+            session.add(Subject(code="0625", name="Physics", board=ExamBoard.caie))
+            session.flush()
+        paper = Paper(
+            board=ExamBoard.caie,
+            subject_code="0625",
+            session_month=month,
+            session_year=year,
+            paper_number=number,
+            paper_variant=variant,
+        )
+        session.add(paper)
+        session.flush()
+        if scheme_max is not None:
+            session.add(MarkScheme(paper_id=paper.id, maximum_mark=scheme_max, parsed_payload={}))
+        return paper.id
+
+
+def _bank(
+    sm: sessionmaker[Session],
+    paper_id: uuid.UUID,
+    refs: list[int],
+    *,
+    prefix: str = "0625_s23_qp_41",
+) -> None:
+    QuestionBankService(sm).add_questions(
+        [
+            NewBankQuestion(
+                subject_code="0625",
+                source=QuestionSource.past_paper,
+                difficulty="standard",
+                difficulty_source=DifficultySource.inferred_from_marks,
+                question_type="short",
+                prompt=f"Calculate the speed in part {ref}.",
+                total_marks=3,
+                topic="1 Motion",
+                source_question_id=f"{prefix}#{ref}",
+                paper_id=paper_id,
+            )
+            for ref in refs
+        ]
+    )
+
+
+def _timing(sm: sessionmaker[Session], *, number: int, minutes: int, total: int) -> None:
+    with sm.begin() as session:
+        session.add(
+            SyllabusPaper(
+                board=ExamBoard.caie,
+                subject_code="0625",
+                paper_number=number,
+                name=f"Paper {number}",
+                duration_minutes=minutes,
+                total_marks=total,
+                practical=False,
+                source_document="0625 syllabus",
+                source_url="https://example.org/0625.pdf",
+                syllabus_version="2023-2025",
+            )
+        )
+
+
+def _paper_attempt(
+    sm: sessionmaker[Session], student: uuid.UUID, paper_id: uuid.UUID, awarded: int, maximum: int
+) -> None:
+    with sm.begin() as session:
+        session.add(
+            Attempt(
+                user_id=student,
+                paper_id=paper_id,
+                subject_code="0625",
+                awarded_marks=awarded,
+                maximum_marks=maximum,
+                percentage=100.0 * awarded / maximum,
+                recorded_at=T0,
+                origin=AttemptOrigin.past_paper,
+            )
+        )
+
+
+def test_past_papers_lists_servable_or_attempted_papers_in_order(
+    service: PracticeHubService, sm: sessionmaker[Session]
+) -> None:
+    student = _user(sm)
+    p41 = _paper(sm, number=4, variant=1, month=SessionMonth.may_june, year=2023, scheme_max=80)
+    p42 = _paper(sm, number=4, variant=2, month=SessionMonth.oct_nov, year=2023)
+    p21 = _paper(sm, number=2, variant=1, month=SessionMonth.may_june, year=2023)
+    _paper(
+        sm, number=3, variant=1, month=SessionMonth.may_june, year=2023
+    )  # no rows, no attempt: hidden
+    _bank(sm, p41, [1, 2, 3])
+    _bank(sm, p42, [1], prefix="0625_w23_qp_42")
+    _paper_attempt(sm, student, p21, 41, 70)
+    _timing(sm, number=4, minutes=75, total=80)
+
+    rows = service.past_papers(student, "0625")
+
+    assert [r.paper_id for r in rows] == [p42, p41, p21]
+    first, second, third = rows
+    assert (first.code, first.session_label) == ("0625/42", "Oct/Nov 2023")
+    assert first.duration_minutes == 75
+    assert first.total_marks == 80  # from the syllabus when there is no mark scheme
+    assert second.question_count == 3
+    assert second.total_marks == 80
+    assert (third.code, third.question_count, third.duration_minutes) == ("0625/21", 0, None)
+    assert (third.awarded_marks, third.maximum_marks) == (41, 70)
+    assert first.awarded_marks is None
+
+
+def test_past_papers_ignore_another_students_attempt(
+    service: PracticeHubService, sm: sessionmaker[Session]
+) -> None:
+    student = _user(sm)
+    other = _user(sm)
+    p21 = _paper(sm, number=2, variant=1, month=SessionMonth.may_june, year=2023)
+    _paper_attempt(sm, other, p21, 41, 70)
+    assert service.past_papers(student, "0625") == []
+
+
+def test_inactive_bank_rows_do_not_make_a_paper_printable(
+    service: PracticeHubService, sm: sessionmaker[Session]
+) -> None:
+    student = _user(sm)
+    p41 = _paper(sm, number=4, variant=1, month=SessionMonth.may_june, year=2023)
+    _bank(sm, p41, [1])
+    with sm.begin() as session:
+        session.execute(sa.text("UPDATE question_bank SET is_active = false"))
+    assert service.past_papers(student, "0625") == []
+
+
+def test_create_from_paper_keeps_question_order_and_titles_the_set(
+    service: PracticeHubService, sm: sessionmaker[Session]
+) -> None:
+    student = _user(sm)
+    p41 = _paper(sm, number=4, variant=1, month=SessionMonth.may_june, year=2023)
+    _bank(sm, p41, [10, 2, 1])
+    _timing(sm, number=4, minutes=75, total=80)
+
+    created = service.create_from_paper(student, p41, timed=True)
+
+    assert created.question_count == 3
+    assert created.requested_count == 3
+    assert created.reason is None
+    with sm() as session:
+        quiz = session.get(Quiz, created.quiz_id)
+        assert quiz is not None
+        assert quiz.kind == QuizKind.practice
+        assert quiz.student_id == student
+        assert quiz.title == "0625/41 · May/June 2023"
+        assert quiz.time_limit_minutes == 75
+        prompts = session.scalars(
+            sa.select(QuizQuestion.prompt)
+            .where(QuizQuestion.quiz_id == quiz.id)
+            .order_by(QuizQuestion.position)
+        ).all()
+    assert prompts == [
+        "Calculate the speed in part 1.",
+        "Calculate the speed in part 2.",
+        "Calculate the speed in part 10.",
+    ]
+    # The new set shows up in Recent straight away.
+    assert service.runs(student)[0].assignment_id == created.assignment_id
+
+
+def test_create_from_paper_untimed_has_no_limit(
+    service: PracticeHubService, sm: sessionmaker[Session]
+) -> None:
+    student = _user(sm)
+    p41 = _paper(sm, number=4, variant=1, month=SessionMonth.may_june, year=2023)
+    _bank(sm, p41, [1])
+    _timing(sm, number=4, minutes=75, total=80)
+    created = service.create_from_paper(student, p41, timed=False)
+    with sm() as session:
+        quiz = session.get(Quiz, created.quiz_id)
+        assert quiz is not None
+        assert quiz.time_limit_minutes is None
+
+
+def test_create_from_unknown_paper_is_not_found(
+    service: PracticeHubService, sm: sessionmaker[Session]
+) -> None:
+    with pytest.raises(PracticeNotFoundError):
+        service.create_from_paper(_user(sm), uuid.uuid4(), timed=False)
+
+
+def test_create_from_paper_with_nothing_servable_is_refused(
+    service: PracticeHubService, sm: sessionmaker[Session]
+) -> None:
+    p21 = _paper(sm, number=2, variant=1, month=SessionMonth.may_june, year=2023)
+    with pytest.raises(PastPaperUnavailableError):
+        service.create_from_paper(_user(sm), p21, timed=False)
