@@ -82,6 +82,8 @@ def test_goal_line_is_the_a_star_line_in_raw_marks_for_an_exact_boundary() -> No
     assert goal.source == "exact"
     assert goal.sourceLabel == "May/Jun 2024 boundary"
 
+    # 85.625% of 80 = 68.5 -> 69 (Python's round() would give 68).
+
 
 def test_goal_line_rounds_half_up_not_to_even() -> None:
     # 72.5% of 80 = 58.0; 85.625% of 80 = 68.5 -> 69 (Python's round() would give 68).

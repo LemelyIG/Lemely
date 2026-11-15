@@ -144,6 +144,7 @@ from lemely.web.services.grading import (
     extract_answers,
     grade_paper,
 )
+from lemely.web.subject_paths import attempt_dto, goal_line, marks_to_win, paper_code_label
 from lemely.web.tutoring_http import NO_STORE
 from lemely.web.tutoring_notify import send_after_commit
 from lemely.web.upload_utils import check_scan_geometry, check_upload_cap, safe_upload_name
@@ -381,6 +382,8 @@ def student_subject(
     Data-backed: per-paper breakdown bars (percentage per recorded paper),
     weighted mean, predicted grade + boundary, per-topic accuracy tiles, and the
     paper-history table. 404 when the student has no papers for ``code``.
+    Each paper also carries its attempts in marks and its own A* line
+    (redesign L2).
 
     Every number here except the topic map is a paper claim, so the paper
     surfaces read grade-bearing records only (``docs/quiz-model.md`` §5) —
@@ -410,13 +413,16 @@ def student_subject(
     boundaries, _ = boundary_store.resolve(records[-1].metadata)
     delta = round(records[-1].percentage - records[0].percentage)
 
-    # One breakdown card per distinct paper number, each bar a recorded attempt.
-    by_paper: dict[int, list[PaperRecord]] = {}
-    for record in records:
-        by_paper.setdefault(record.metadata.paper_number, []).append(record)
+    # One breakdown per distinct paper number. Each attempt keeps its FULL-history
+    # index (the result route's address); each paper resolves its own boundary
+    # from its latest attempt, so Paper 2 and Paper 4 get their own A* lines.
+    by_paper: dict[int, list[tuple[int, PaperRecord]]] = {}
+    for index, record in indexed_records:
+        by_paper.setdefault(record.metadata.paper_number, []).append((index, record))
 
     breakdowns: list[PaperBreakdownDTO] = []
-    for paper_number, attempts in sorted(by_paper.items()):
+    for paper_number, indexed_attempts in sorted(by_paper.items()):
+        attempts = [record for _, record in indexed_attempts]
         bars = [
             PaperBarDTO(
                 value=round(a.percentage),
@@ -427,25 +433,34 @@ def student_subject(
         ]
         mean_pct = round(sum(a.percentage for a in attempts) / len(attempts))
         latest = attempts[-1]
+        paper_boundaries, paper_source = boundary_store.resolve(latest.metadata)
+        goal = goal_line(paper_boundaries, paper_source, latest.metadata, latest.maximum_marks)
         breakdowns.append(
             PaperBreakdownDTO(
                 title=f"Paper {paper_number}",
                 sub=f"{latest.maximum_marks} marks",
                 mean=f"{mean_pct}%",
-                boundary="",
+                boundary=f"{goal.grade} line {goal.marks}/{goal.outOf}" if goal else "",
                 position=f"{latest.awarded_marks}/{latest.maximum_marks} - {latest.grade}",
                 positionOk=latest.grade in {"A*", "A", "B"},
                 bars=bars,
+                paperNumber=paper_number,
+                outOf=latest.maximum_marks,
+                goal=goal,
+                attempts=[attempt_dto(index, record) for index, record in indexed_attempts],
             )
         )
 
     weaknesses = _subject_weaknesses([record for _, record in all_subject_records])
+    to_win = marks_to_win(records)
     topic_map = [
         TopicTileDTO(
             name=area.topic,
             acc=f"{round(area.accuracy * 100.0)}%",
             color=_bar_color(area.accuracy * 100.0),
             weak=area.accuracy < 0.70,
+            accuracy=round(area.accuracy * 100.0),
+            marksToWin=to_win.get(area.topic, 0),
         )
         for area in sorted(weaknesses.weak_areas, key=lambda a: a.accuracy)
     ]
@@ -460,6 +475,11 @@ def student_subject(
             grade=record.grade,
             gradeColor=_bar_color(record.percentage),
             tab=f"p{record.metadata.paper_number}",
+            awarded=record.awarded_marks,
+            maximum=record.maximum_marks,
+            recordedAt=record.recorded_at,
+            paperNumber=record.metadata.paper_number,
+            label=paper_code_label(record.metadata),
         )
         for index, record in reversed(indexed_records)
     ]

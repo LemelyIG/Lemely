@@ -153,7 +153,14 @@ class PaperAttemptDTO(ApiModel):
 
 
 class PaperBreakdownDTO(ApiModel):
-    """Per-paper breakdown card (mirrors ``PaperBreakdown``)."""
+    """Per-paper breakdown (mirrors ``PaperBreakdown``).
+
+    ``title``/``sub``/``mean``/``position``/``positionOk``/``bars`` are the
+    pre-redesign card fields, unchanged. Redesign L2 adds the steps path:
+    ``attempts`` (grade-bearing, oldest first, in marks), ``outOf`` (the latest
+    attempt's maximum) and ``goal`` (the A* line from the boundary table).
+    ``boundary`` is now the goal in words, e.g. ``"A* line 68/80"``.
+    """
 
     title: str
     sub: str
@@ -162,6 +169,10 @@ class PaperBreakdownDTO(ApiModel):
     position: str
     positionOk: bool
     bars: list[PaperBarDTO]
+    paperNumber: int
+    outOf: int
+    goal: GoalLineDTO | None
+    attempts: list[PaperAttemptDTO]
 
 
 class PaperHistoryRowDTO(ApiModel):
@@ -171,6 +182,10 @@ class PaperHistoryRowDTO(ApiModel):
     :class:`~lemely.core.history.StudentHistory.records` — the same addressing
     scheme ``GET /api/student/result/{paper_id}`` uses — so a row can be passed
     straight through as ``paper_id`` to look up its full result.
+
+    ``awarded``/``maximum``/``recordedAt``/``paperNumber``/``label`` (L2) are
+    the structured form of ``marks``/``paper``, so the client never parses a
+    display string.
     """
 
     id: str
@@ -181,15 +196,27 @@ class PaperHistoryRowDTO(ApiModel):
     grade: str
     gradeColor: VizColor
     tab: str
+    awarded: int
+    maximum: int
+    recordedAt: str
+    paperNumber: int
+    label: str
 
 
 class TopicTileDTO(ApiModel):
-    """A tile in the topic map (mirrors ``TopicTile``)."""
+    """A tile in the topic map (mirrors ``TopicTile``).
+
+    ``accuracy`` is ``acc`` as an integer 0-100. ``marksToWin`` is the mean
+    marks lost per grade-bearing paper that tested the topic (0 when only a
+    quiz did) - see :func:`lemely.web.subject_paths.marks_to_win`.
+    """
 
     name: str
     acc: str
     color: VizColor
     weak: bool
+    accuracy: int
+    marksToWin: int
 
 
 class SubjectHeaderDTO(ApiModel):
