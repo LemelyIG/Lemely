@@ -31,5 +31,5 @@ export function RowAction({
       </button>
     )
   }
-  return <div className={className}>{children}</div>
+  return <div className={className} aria-current={current}>{children}</div>
 }

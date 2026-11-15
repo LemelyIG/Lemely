@@ -193,7 +193,11 @@ button.rd-step { cursor: pointer; }
   border: 0; background: none; cursor: pointer; text-decoration: none;
   font: 700 14px var(--font-sans); color: var(--md-primary);
 }
+.rd-lnk:hover { text-decoration: underline; text-underline-offset: 3px; }
+.rd-h2link:hover { color: var(--md-primary); }
 .rd-lnk:active, .rd-h2link:active { transform: scale(0.97); }
+.rd-lnk:active { color: color-mix(in oklch, var(--md-primary) 80%, var(--md-on-surface)); }
+.rd-h2link:active { color: color-mix(in oklch, var(--md-primary) 80%, var(--md-on-surface)); }
 .rd-lnk:focus-visible, .rd-h2link:focus-visible { outline: 2.5px solid var(--md-primary); outline-offset: 2px; border-radius: 10px; }
 .rd-hairrows { list-style: none; margin: 0; padding: 0; display: grid; }
 .rd-hairrow-item + .rd-hairrow-item { border-top: 1px solid var(--md-outline-variant); }
@@ -209,7 +213,7 @@ a.rd-hairrow:hover, button.rd-hairrow:hover, button.rd-rank:hover {
 }
 a.rd-hairrow:active, button.rd-hairrow:active, button.rd-rank:active { transform: scale(0.985); }
 .rd-hairrow:focus-visible, .rd-rank:focus-visible { outline: 2.5px solid var(--md-primary); outline-offset: 2px; border-radius: 14px; }
-.rd-selected, .rd-selected:hover { background: var(--md-primary-container); border-radius: 14px; padding-inline: 8px; }
+a.rd-hairrow:hover .rd-at > b, button.rd-hairrow:hover .rd-at > b, button.rd-rank:hover .rd-at > b { color: var(--md-primary); }
 @media (forced-colors: active) { .rd-selected { outline: 2px solid Highlight; } }
 .rd-hr-lead { flex: none; width: 36px; display: grid; place-items: center; }
 .rd-hr-trail { flex: none; }
@@ -218,6 +222,9 @@ a.rd-hairrow:active, button.rd-hairrow:active, button.rd-rank:active { transform
 .rd-at > span { font: 400 13px/1.35 var(--font-sans); color: var(--md-on-surface-variant); }
 .rd-chev { flex: none; color: var(--md-on-surface-variant); }
 .rd-rank { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto 64px; align-items: center; gap: 10px; min-height: 60px; padding: 10px 0; }
+/* Selected must follow and outrank the base padding and the (0,2,1) hover fill. */
+.rd-hairrow.rd-selected, .rd-rank.rd-selected,
+a.rd-hairrow.rd-selected:hover, button.rd-hairrow.rd-selected:hover, button.rd-rank.rd-selected:hover { background: var(--md-primary-container); border-radius: 14px; padding-inline: 8px; }
 .rd-rank-bar { grid-template-columns: 24px minmax(0, 1fr) 96px 64px; }
 .rd-rank-n { font: 700 14px var(--font-mono); color: var(--md-on-surface-variant); text-align: center; }
 .rd-rank-m { position: relative; display: grid; justify-items: end; }

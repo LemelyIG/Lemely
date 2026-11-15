@@ -51,7 +51,7 @@ describe("HairRows / HairRow", () => {
         createElement(HairRow, { key: "b", title: "Static" }),
       ]),
     )
-    expect(out).toMatch(/^<ul class="rd-hairrows" aria-label="Papers">/)
+    expect(out).toMatch(/^<ul class="rd-hairrows" role="list" aria-label="Papers">/)
     expect(out.match(/<li class="rd-hairrow-item">/g)).toHaveLength(2)
     expect(out).toMatch(/<a class="rd-hairrow"[^>]*href="\/r\/1"/)
     expect(out.match(/rd-chev/g)).toHaveLength(1)
@@ -119,5 +119,74 @@ describe("SubjectDot contrast", () => {
         }
       }
     })
+  }
+})
+
+/* ---- cascade: a selected row keeps its padding and fill, hovered or not ---- */
+const REDESIGN_CSS = readFileSync(
+  join(fileURLToPath(new URL("../../../", import.meta.url)), "src/components/redesign/redesign.css"),
+  "utf8",
+)
+
+interface CssRule { selector: string; props: string[]; order: number }
+
+function parseFlatRules(css: string): CssRule[] {
+  const flat = css.replace(/\/\*[\s\S]*?\*\//g, "").replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, "")
+  const rules: CssRule[] = []
+  let order = 0
+  for (const m of flat.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const props = m[2].split(";").map((d) => d.split(":")[0].trim()).filter(Boolean)
+    for (const sel of m[1].split(",")) rules.push({ selector: sel.trim(), props, order: order++ })
+  }
+  return rules
+}
+
+/** Specificity of a single compound selector (no combinators), or null when it has combinators. */
+function compound(sel: string) {
+  if (/[\s>+~]/.test(sel)) return null
+  const tag = /^[a-z][a-z0-9]*/i.exec(sel)?.[0]
+  const classes = [...sel.matchAll(/\.([\w-]+)/g)].map((x) => x[1])
+  const pseudos = [...sel.matchAll(/:([\w-]+)/g)].map((x) => x[1])
+  return { tag, classes, pseudos, spec: [0, classes.length + pseudos.length, tag ? 1 : 0] as const }
+}
+
+function winner(rules: CssRule[], el: { tag: string; classes: string[]; hover: boolean }, prop: RegExp) {
+  let best: { rule: CssRule; spec: readonly number[] } | undefined
+  for (const rule of rules) {
+    if (!rule.props.some((p) => prop.test(p))) continue
+    const c = compound(rule.selector)
+    if (!c) continue
+    if (c.tag && c.tag !== el.tag) continue
+    if (!c.classes.every((k) => el.classes.includes(k))) continue
+    if (!c.pseudos.every((p) => p === "hover" && el.hover)) continue
+    const beats =
+      !best ||
+      c.spec[0] > best.spec[0] ||
+      (c.spec[0] === best.spec[0] && (c.spec[1] > best.spec[1] || (c.spec[1] === best.spec[1] && (c.spec[2] > best.spec[2] || (c.spec[2] === best.spec[2] && rule.order > best.rule.order)))))
+    if (beats) best = { rule, spec: c.spec }
+  }
+  return best?.rule.selector
+}
+
+describe("selected row cascade", () => {
+  const rules = parseFlatRules(REDESIGN_CSS)
+  const els = [
+    { tag: "button", classes: ["rd-rank", "rd-selected"] },
+    { tag: "button", classes: ["rd-rank", "rd-rank-bar", "rd-selected"] },
+    { tag: "button", classes: ["rd-hairrow", "rd-selected"] },
+    { tag: "a", classes: ["rd-hairrow", "rd-selected"] },
+    { tag: "div", classes: ["rd-hairrow", "rd-selected"] },
+  ]
+  for (const el of els) {
+    for (const hover of [false, true]) {
+      const name = `${el.tag}.${el.classes.join(".")}${hover ? ":hover" : ""}`
+      if (hover && el.tag === "div") continue
+      it(`${name}: padding-inline comes from a selected rule`, () => {
+        expect(winner(rules, { ...el, hover }, /^padding(-inline)?$/)).toContain("rd-selected")
+      })
+      it(`${name}: the fill comes from a selected rule`, () => {
+        expect(winner(rules, { ...el, hover }, /^background(-color)?$/)).toContain("rd-selected")
+      })
+    }
   }
 })

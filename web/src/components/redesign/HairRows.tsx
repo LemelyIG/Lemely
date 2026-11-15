@@ -7,7 +7,7 @@ import "./redesign.css"
 
 export function HairRows({ children, "aria-label": ariaLabel }: { children?: ReactNode; "aria-label"?: string }) {
   return (
-    <ul className="rd-hairrows" aria-label={ariaLabel}>
+    <ul className="rd-hairrows" role="list" aria-label={ariaLabel}>
       {children}
     </ul>
   )
@@ -28,12 +28,12 @@ export function HairRow({ leading, title, sub, trailing, to, onClick, selected }
   return (
     <li className="rd-hairrow-item">
       <RowAction to={to} onClick={onClick} selected={selected} className={cn("rd-hairrow", selected && "rd-selected")}>
-        {leading !== undefined ? <span className="rd-hr-lead">{leading}</span> : null}
+        {leading !== undefined && leading !== null && leading !== "" ? <span className="rd-hr-lead">{leading}</span> : null}
         <span className="rd-at">
           <b>{title}</b>
-          {sub !== undefined ? <span>{sub}</span> : null}
+          {sub !== undefined && sub !== null && sub !== "" ? <span>{sub}</span> : null}
         </span>
-        {trailing !== undefined ? <span className="rd-hr-trail">{trailing}</span> : null}
+        {trailing !== undefined && trailing !== null && trailing !== "" ? <span className="rd-hr-trail">{trailing}</span> : null}
         {to || onClick ? <Chevron /> : null}
       </RowAction>
     </li>
