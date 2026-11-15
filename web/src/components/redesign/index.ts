@@ -2,3 +2,5 @@
 export { Binny, type BinnyMood, type BinnyMotion, type BinnyProps } from "./Binny"
 export { BinnyLine, type BinnyLineProps } from "./BinnyLine"
 export { type TopicState, MASTERY, TOPIC_STATE_LABEL, topicState } from "./topics"
+export { GoldRing, type GoldRingProps } from "./GoldRing"
+export { KeyRing, type KeyRingProps } from "./KeyRing"

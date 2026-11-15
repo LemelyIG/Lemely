@@ -100,3 +100,18 @@
   75% { translate: var(--rd-roam, 48px) 0; }
   87.5% { translate: calc(var(--rd-roam, 48px) * 0.5) -18px; }
 }
+
+/* ── GoldRing, KeyRing (h4.js ring4, t.css .gring2, h5.js ringLv) ───────── */
+.rd-goldring, .rd-keyring { position: relative; display: inline-grid; place-items: center; flex: none; }
+.rd-goldring svg, .rd-keyring svg { position: absolute; inset: 0; }
+.rd-ring-track { stroke: var(--md-surface-container-highest); }
+.rd-ring-gold { stroke: var(--md-tertiary); }
+.rd-ring-partial { stroke: var(--md-outline); }
+.rd-ring-tone-tide { stroke: var(--md-inverse-primary); }
+.rd-ring-tone-gold { stroke: var(--md-tertiary); }
+.rd-ring-tone-ok { stroke: var(--md-success); }
+.rd-ring-tone-warn { stroke: var(--md-error); }
+.rd-ring-center { position: relative; font: 700 14px/1 var(--font-mono); color: var(--md-on-surface); }
+.rd-keyring .rd-ring-center { font: 800 28px/1 var(--font-display); color: var(--md-primary); }
+.rd-keyring[data-tone="warn"] .rd-ring-center { color: var(--md-error); }
+.rd-keyring[data-tone="neutral"] .rd-ring-center { color: var(--md-on-surface-variant); }
