@@ -11,8 +11,8 @@ import pytest
 import sqlalchemy as sa
 
 from lemely.core.usage_types import GrantScope, Payer
-from lemely.db.admin_billing_repo import PaymentView, audited, payment_views
-from lemely.db.admin_customer_repo import escape_like
+from lemely.db.admin_billing_repo import AdminInvalidError, PaymentView, audited, payment_views
+from lemely.db.admin_customer_repo import AdminCustomerService, escape_like
 from lemely.db.models.billing import Payment, PaymentStatus
 from lemely.db.models.billing_ops import PaymentRefund, RefundKind, RefundStatus
 from lemely.db.models.enums import Role
@@ -27,6 +27,7 @@ from lemely.db.models.users import ParentChildLink
 from lemely.db.usage_ledger_repo import UsageLedger
 from tests.admin_billing_db import (
     NOW,
+    FakePaymobClient,
     add_payment,
     add_plan_tier,
     add_rate,
@@ -38,6 +39,7 @@ from tests.admin_billing_db import (
     grant,
     metered_job,
 )
+from tests.paymob_fixtures import PAYMOB_SETTINGS
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -266,6 +268,24 @@ def test_the_limit_caps_hits_across_every_kind_of_match(
     add_user(sm, Role.student, email="other@example.com", display_name="ZQ Three")
     assert len(_search(sm, world["admin"], "zq")) == 3
     assert len(_search(sm, world["admin"], "zq", limit=2)) == 2
+
+
+@pytest.mark.parametrize("bad", ["ab\x00cd", "ab\x01cd", "ab\x7fcd", "ab\ncd"])
+def test_search_text_postgres_would_refuse_is_422(
+    sm: sessionmaker[Session], world: dict[str, uuid.UUID], bad: str
+) -> None:
+    resp = admin_client(sm, world["admin"]).get(URL, params={"q": bad})
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"]["code"] == "query_invalid"
+
+
+def test_a_lone_surrogate_is_refused_by_the_service(
+    sm: sessionmaker[Session], world: dict[str, uuid.UUID]
+) -> None:
+    """HTTP cannot carry one, but the service must not hand it to the driver."""
+    with pytest.raises(AdminInvalidError) as err:
+        AdminCustomerService(sm, FakePaymobClient(), PAYMOB_SETTINGS).search("ab\ud800cd")  # type: ignore[arg-type]
+    assert err.value.code == "query_invalid"
 
 
 def test_search_query_bounds(sm: sessionmaker[Session], world: dict[str, uuid.UUID]) -> None:
@@ -545,6 +565,23 @@ def test_failed_unknown_and_void_attempts_do_not_count_as_refunded(
     assert len(row["refunds"]) == 5
     assert {r["paymentId"] for r in row["refunds"]} == {str(pid)}
     assert {r["currency"] for r in row["refunds"]} == {"EGP"}
+
+
+def test_the_detail_balance_is_the_sum_of_the_listed_grants(
+    sm: sessionmaker[Session], world: dict[str, uuid.UUID]
+) -> None:
+    """The balance and the grants beside it come from the same rows (they cannot disagree)."""
+    student = world["student"]
+    grant(sm, student, units=40, effective_at=NOW + timedelta(days=1))  # not usable yet
+    grant(sm, student, units=60, kind=GrantKind.adjustment, visible=True)
+    body = admin_client(sm, world["admin"]).get(f"{URL}/{student}").json()
+    now_iso = NOW.isoformat()
+    usable = [g for g in body["grants"] if g["effectiveAt"] <= now_iso]
+    credits = sum(g["remaining"] - g["held"] for g in usable if g["visible"])
+    allowance = sum(g["remaining"] - g["held"] for g in usable if not g["visible"])
+    assert body["balance"]["creditsAvailable"] == credits == 360
+    assert body["balance"]["allowanceAvailable"] == allowance == 996
+    assert len(body["grants"]) == 4  # the future grant is listed but not counted
 
 
 # -- bounds -------------------------------------------------------------------------

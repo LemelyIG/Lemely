@@ -10,6 +10,7 @@ Every list is bounded (DV-31) so one busy account cannot make the page unbounded
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -33,7 +34,7 @@ from lemely.db.models.usage import UsageDebt, UsageGrant, UsageGrantBalance, Usa
 from lemely.db.models.users import ParentChildLink, User
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
     from decimal import Decimal
 
     from sqlalchemy.orm import InstrumentedAttribute, Session, sessionmaker
@@ -54,6 +55,11 @@ _MAX_ORDER_ID = 2**63 - 1
 MatchedOn = Literal["user_id", "payment_id", "paymob_order", "email", "name"]
 
 
+#: What Postgres or psycopg refuse in text: NUL, and a lone surrogate (not encodable as UTF-8);
+#: the other control characters are never part of an email, a name or an id.
+_REFUSED_CHARACTERS = re.compile("[\x00-\x1f\x7f\ud800-\udfff]")
+
+
 def _utcnow() -> datetime:
     return datetime.now(UTC)
 
@@ -64,6 +70,28 @@ class BalanceView:
     credits_available: int
     seat_available: int
     outstanding_debt: int
+
+
+def _split_available(rows: Iterable[tuple[bool, uuid.UUID | None, int]]) -> tuple[int, int, int]:
+    """``(allowance, credits, seat)`` from ``(visible, teacher_member_id, available)`` rows."""
+    allowance = credits = seat = 0
+    for visible, member_id, available in rows:
+        if member_id is not None:
+            seat += available
+        elif visible:
+            credits += available
+        else:
+            allowance += available
+    return allowance, credits, seat
+
+
+def _open_debt(session: Session, user_id: uuid.UUID) -> int:
+    debt = session.scalar(
+        select(sa.func.coalesce(sa.func.sum(UsageDebt.outstanding), 0)).where(
+            UsageDebt.owner_user_id == user_id
+        )
+    )
+    return int(debt or 0)
 
 
 def balance_for(session: Session, user_id: uuid.UUID, *, now: datetime) -> BalanceView:
@@ -86,20 +114,24 @@ def balance_for(session: Session, user_id: uuid.UUID, *, now: datetime) -> Balan
             or_(UsageGrant.expires_at.is_(None), UsageGrant.expires_at > now),
         )
     ).all()
-    allowance = credits = seat = 0
-    for visible, member_id, available in rows:
-        if member_id is not None:
-            seat += int(available)
-        elif visible:
-            credits += int(available)
-        else:
-            allowance += int(available)
-    debt = session.scalar(
-        select(sa.func.coalesce(sa.func.sum(UsageDebt.outstanding), 0)).where(
-            UsageDebt.owner_user_id == user_id
-        )
+    allowance, credits, seat = _split_available((v, m, int(a)) for v, m, a in rows)
+    return BalanceView(allowance, credits, seat, _open_debt(session, user_id))
+
+
+def balance_from_grants(
+    session: Session, user_id: uuid.UUID, usable: Iterable[GrantView], *, now: datetime
+) -> BalanceView:
+    """The same figures as :func:`balance_for`, from grant rows the caller already read.
+
+    Used by the detail so the balance is the sum of the grants listed beside it. Debt is the
+    one extra read (the listed debts are bounded, the total is not).
+    """
+    allowance, credits, seat = _split_available(
+        (g.grant.visible, g.grant.teacher_member_id, g.remaining - g.held)
+        for g in usable
+        if g.grant.effective_at <= now
     )
-    return BalanceView(allowance, credits, seat, int(debt or 0))
+    return BalanceView(allowance, credits, seat, _open_debt(session, user_id))
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,6 +236,10 @@ class AdminCustomerService:
         term = q.strip()
         if len(term) < 2:
             raise AdminInvalidError("query_too_short", "Type at least two characters.")
+        if _REFUSED_CHARACTERS.search(term):
+            raise AdminInvalidError(
+                "query_invalid", "The search text has characters that cannot be searched."
+            )
         hits: dict[uuid.UUID, CustomerHit] = {}
 
         def add(users: list[User], matched_on: MatchedOn) -> None:
@@ -327,9 +363,8 @@ class AdminCustomerService:
                 .order_by(UsageGrant.expires_at.desc(), UsageGrant.id)
                 .limit(_CLOSED_GRANTS)
             ).all()
-            grants = [
-                GrantView(g, int(remaining), int(held)) for g, remaining, held in (*usable, *closed)
-            ]
+            usable_views = [GrantView(g, int(r), int(h)) for g, r, h in usable]
+            grants = [*usable_views, *(GrantView(g, int(r), int(h)) for g, r, h in closed)]
             debts = list(
                 s.scalars(
                     select(UsageDebt)
@@ -449,7 +484,7 @@ class AdminCustomerService:
             )
             return CustomerDetail(
                 user=user,
-                balance=balance_for(s, user_id, now=now),
+                balance=balance_from_grants(s, user_id, usable_views, now=now),
                 subscriptions=[
                     SubscriptionView(
                         x, tiers[x.plan_tier_id].code, tiers[x.plan_tier_id].name, periods[x.id]
@@ -488,5 +523,6 @@ __all__ = [
     "SubscriptionView",
     "actual_units",
     "balance_for",
+    "balance_from_grants",
     "escape_like",
 ]
