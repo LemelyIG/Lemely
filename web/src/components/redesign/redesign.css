@@ -115,3 +115,69 @@
 .rd-keyring .rd-ring-center { font: 800 28px/1 var(--font-display); color: var(--md-primary); }
 .rd-keyring[data-tone="warn"] .rd-ring-center { color: var(--md-error); }
 .rd-keyring[data-tone="neutral"] .rd-ring-center { color: var(--md-on-surface-variant); }
+
+/* ── StepsPath (t.css .gp2 / .gp2t / .gp2l / .stp, final overrides) ────── */
+.rd-steps { display: grid; gap: 8px; }
+.rd-steps-track {
+  display: grid;
+  grid-template-columns: repeat(var(--n, 5), minmax(0, 1fr));
+  align-items: end;
+  gap: 8px;
+  height: 108px;
+  margin-top: 4px;
+  border-bottom: 2px solid color-mix(in oklch, var(--md-on-surface-variant) 70%, transparent);
+}
+.rd-step {
+  --c: var(--md-outline);
+  justify-self: center;
+  width: min(100%, 64px);
+  height: var(--h, 34%);
+  min-height: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 0 0;
+  border: 0;
+  border-radius: 14px 14px 4px 4px;
+  background: color-mix(in oklch, var(--c) 22%, var(--md-surface-container-lowest));
+  transform-origin: bottom;
+  font: inherit;
+  transition: translate 0.2s var(--ease-out), filter 0.2s;
+}
+.rd-step b { font: 800 22px/1 var(--font-display); color: color-mix(in oklch, var(--c), black 40%); }
+.rd-step[data-current] { background: var(--c); }
+.rd-step[data-current] b { color: white; font-size: 28px; }
+.rd-step[data-goal] {
+  background: color-mix(in oklch, var(--grade-a-star) 12%, var(--md-surface-container-lowest));
+  box-shadow: inset 0 0 0 2px color-mix(in oklch, var(--grade-a-star) 40%, var(--md-surface-container-lowest));
+}
+.rd-step[data-goal] b { color: var(--grade-a-star); }
+.rd-step[data-goal] span { font: 600 12px var(--font-sans); white-space: nowrap; color: var(--grade-a-star); }
+.rd-step[data-ghost] { background: transparent; box-shadow: inset 0 0 0 2px color-mix(in oklch, var(--md-on-surface-variant) 70%, transparent); }
+:root[data-theme="dark"] .rd-step:not([data-ghost], [data-goal]) { box-shadow: inset 0 0 0 2px color-mix(in oklch, var(--c) 55%, white); }
+:root[data-theme="dark"] .rd-step:not([data-current], [data-ghost], [data-goal]) b { color: color-mix(in oklch, var(--c) 35%, var(--md-on-surface)); }
+:root[data-theme="dark"] .rd-step[data-goal] b,
+:root[data-theme="dark"] .rd-step[data-goal] span,
+:root[data-theme="dark"] .rd-steps-labels [data-goal],
+:root[data-theme="dark"] .rd-steps-labels [data-goal] b { color: color-mix(in oklch, var(--grade-a-star) 40%, var(--md-on-surface)); }
+:root[data-theme="dark"] .rd-step[data-goal] { box-shadow: inset 0 0 0 2px color-mix(in oklch, var(--grade-a-star) 55%, white); }
+button.rd-step { cursor: pointer; }
+.rd-step:focus-visible { outline: 2.5px solid var(--md-primary); outline-offset: 2px; }
+.rd-steps-labels {
+  display: grid;
+  grid-template-columns: repeat(var(--n, 5), minmax(0, 1fr));
+  text-align: center;
+  font: 500 12px var(--font-sans);
+  color: var(--md-on-surface-variant);
+}
+.rd-steps-labels > span { display: grid; gap: 1px; }
+.rd-steps-labels b { font: 600 12.5px var(--font-mono); color: var(--md-on-surface); }
+.rd-steps-labels [data-current] b { font-weight: 800; }
+.rd-steps-labels [data-goal], .rd-steps-labels [data-goal] b { color: var(--grade-a-star); font-weight: 600; }
+.rd-steps-labels [data-ghost] { align-self: end; color: var(--md-on-surface-variant); }
+@media (prefers-reduced-motion: no-preference) {
+  .rd-step:not([data-ghost]) { animation: rd-grow 0.7s var(--ease-out) calc(var(--i, 0) * 60ms) both; }
+  button.rd-step:hover { translate: 0 -3px; filter: saturate(1.15); }
+}
+@keyframes rd-grow { from { transform: scaleY(0.4); } }
