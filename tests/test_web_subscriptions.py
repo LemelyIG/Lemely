@@ -471,6 +471,9 @@ def test_only_the_payer_can_change_a_plan_and_everyone_else_gets_one_identical_4
     parent = seed_user(pg_sessionmaker, Role.parent)
     child = seed_user(pg_sessionmaker, Role.student)
     stranger = seed_user(pg_sessionmaker, Role.student)
+    other_parent = seed_user(pg_sessionmaker, Role.parent)
+    linked_not_payer = seed_user(pg_sessionmaker, Role.parent)
+    link_parent(pg_sessionmaker, parent_id=linked_not_payer, child_id=child)
     lead = seed_user(pg_sessionmaker, Role.teacher)
     helper = seed_user(pg_sessionmaker, Role.teacher)
     add_assistant(pg_sessionmaker, teacher_id=lead, assistant_id=helper)
@@ -505,6 +508,13 @@ def test_only_the_payer_can_change_a_plan_and_everyone_else_gets_one_identical_4
         (leads, stranger, Role.teacher, {}),
         (leads, helper, Role.teacher, {ACTING: str(lead)}),
         (uuid.uuid4(), parent, Role.parent, {}),
+        # Every role the routes admit, aimed at a subscription that EXISTS and is not theirs:
+        # a parent unrelated to it, a parent linked to the child who is not the payer, and a
+        # student or parent aimed at a teacher's plan.
+        (kids, other_parent, Role.parent, {}),
+        (kids, linked_not_payer, Role.parent, {}),
+        (leads, other_parent, Role.parent, {}),
+        (leads, stranger, Role.student, {}),
     ):
         http = h.as_user(user, role)
         for method, path, payload in (
@@ -539,22 +549,45 @@ def test_a_manual_activation_cannot_be_cancelled_by_a_user(
     assert (r.status_code, _error(r)) == (422, "invalid_plan_change")
 
 
+@pytest.mark.parametrize("role", [Role.student, Role.parent, Role.teacher])
 def test_the_cancel_route_never_reaches_the_system_cancel(
+    pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch, role: Role
+) -> None:
+    """The system cancel has no payer check; no role the route admits may reach it.
+
+    A student, a parent and a teacher each aim at a subscription that exists and belongs to
+    someone else: the answer is the payer-checked 404 and the row is untouched.
+    """
+    owner = seed_user(pg_sessionmaker, Role.teacher)
+    tier = seed_tier(pg_sessionmaker, audience=PlanAudience.teacher, included_seats=5)
+    sid = seed_subscription(
+        pg_sessionmaker, user_id=owner, tier_id=tier, payer_id=owner, paymob_subscription_id=PID
+    )
+    actor = seed_user(pg_sessionmaker, role)
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("schedule_cancel_as_system must not be reachable from a route")
+
+    monkeypatch.setattr(SubscriptionService, "schedule_cancel_as_system", forbidden)
+    r = Harness(pg_sessionmaker).as_user(actor, role).post(f"{BILLING}/subscriptions/{sid}/cancel")
+    assert (r.status_code, _error(r)) == (404, "subscription_not_found")
+    with pg_sessionmaker() as session:
+        sub = session.get(Subscription, sid)
+        assert sub is not None
+        assert sub.cancel_at_period_end is False
+
+
+def test_the_payer_still_cancels_without_the_system_cancel(
     pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A user's cancel is the payer-checked one; the system path is not exposed on any route."""
     teacher, sid, _, _ = _teacher_with_plan(pg_sessionmaker)
 
     def forbidden(*args: object, **kwargs: object) -> None:
         raise AssertionError("schedule_cancel_as_system must not be reachable from a route")
 
     monkeypatch.setattr(SubscriptionService, "schedule_cancel_as_system", forbidden)
-    r = (
-        Harness(pg_sessionmaker)
-        .as_user(teacher, Role.teacher)
-        .post(f"{BILLING}/subscriptions/{sid}/cancel")
-    )
-    assert r.status_code == 200
+    http = Harness(pg_sessionmaker).as_user(teacher, Role.teacher)
+    assert http.post(f"{BILLING}/subscriptions/{sid}/cancel").status_code == 200
 
 
 # -- webhook ---------------------------------------------------------------------------------
@@ -626,6 +659,20 @@ def test_a_forged_hmac_is_401_and_stores_no_event(pg_sessionmaker: sessionmaker[
     assert forged["hmac"] not in repr(logs)
 
 
+def test_the_mismatch_log_names_only_a_known_trigger(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The trigger of an unauthenticated body is attacker text: it is logged only if known."""
+    h = Harness(pg_sessionmaker)
+    with capture_logs() as logs:
+        for trigger in ("suspended", "evil\nINJECTED " + "x" * 80):
+            forged = subscription_webhook(trigger, PID, secret="wrong")
+            assert h.http.post(WEBHOOK, json=forged).status_code == 401
+    seen = [e["trigger_type"] for e in logs if e["event"] == "paymob_subscription_hmac_mismatch"]
+    assert seen == ["suspended", "unknown"]
+    assert "INJECTED" not in repr(logs)
+
+
 def test_the_hmac_is_checked_before_any_database_work(
     pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -638,6 +685,39 @@ def test_the_hmac_is_checked_before_any_database_work(
     h = Harness(pg_sessionmaker)
     forged = subscription_webhook("Successful Transaction", PID, secret="wrong")
     assert h.http.post(WEBHOOK, json=forged).status_code == 401
+
+
+def test_a_forged_callback_checks_out_no_database_connection_to_decide_the_401(
+    pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Any DB access before the HMAC check (a read, a lock, a session) takes a pool checkout.
+
+    The after-response failure row is stubbed out, since it is the one write that follows the 401.
+    """
+    monkeypatch.setattr(paymob_webhooks, "record_webhook_failure", lambda sm, **kw: True)
+    checkouts: list[str] = []
+    engine = pg_sessionmaker.kw["bind"]
+
+    def on_checkout(*args: object) -> None:
+        checkouts.append("checkout")
+
+    def on_execute(*args: object) -> None:
+        checkouts.append("execute")
+
+    sa.event.listen(engine, "checkout", on_checkout)
+    sa.event.listen(engine, "before_cursor_execute", on_execute)
+    try:
+        h = Harness(pg_sessionmaker)
+        for trigger in ("Successful Transaction", "canceled", "suspended"):
+            forged = subscription_webhook(trigger, PID, secret="wrong")
+            assert h.http.post(WEBHOOK, json=forged).status_code == 401
+        missing = subscription_webhook("canceled", PID)
+        del missing["hmac"]
+        assert h.http.post(WEBHOOK, json=missing).status_code == 401
+    finally:
+        sa.event.remove(engine, "checkout", on_checkout)
+        sa.event.remove(engine, "before_cursor_execute", on_execute)
+    assert checkouts == []
 
 
 def test_a_refused_callback_is_recorded_as_kind_subscription_after_the_401(
@@ -751,7 +831,11 @@ def test_the_service_rejecting_a_signed_body_as_malformed_is_400(
 
     monkeypatch.setattr(SubscriptionService, "apply_renewal_webhook", malformed)
     h = Harness(pg_sessionmaker)
-    assert h.http.post(WEBHOOK, json=subscription_webhook("canceled", PID)).status_code == 400
+    with capture_logs() as logs:
+        r = h.http.post(WEBHOOK, json=subscription_webhook("canceled", PID))
+    assert r.status_code == 400
+    (event,) = [e for e in logs if e["event"] == "paymob_subscription_webhook_malformed"]
+    assert event["alert"] is True  # a signed body we cannot read is a Paymob format change
 
 
 def test_paymob_down_is_503_and_nothing_is_stored_so_the_retry_is_processed(
@@ -791,6 +875,7 @@ def test_an_unexpected_failure_is_500_with_no_message_echo_and_rolls_back(
     assert "hunter2" not in repr(logs)
     (event,) = [e for e in logs if e["event"] == "paymob_subscription_webhook_failed"]
     assert event["error_type"] == "RuntimeError"
+    assert event["alert"] is True
     assert _events(pg_sessionmaker) == 0
 
 
@@ -807,6 +892,7 @@ def test_a_paymob_failure_is_logged_by_type_only(
     assert "abc123" not in repr(logs)
     (event,) = [e for e in logs if e["event"] == "paymob_subscription_webhook_deferred"]
     assert event["error_type"] == "PaymobError"
+    assert "alert" not in event  # Paymob being down is retried by Paymob; a rate alert watches it
 
 
 def test_the_thirty_first_delivery_for_one_id_in_a_minute_is_429(
@@ -821,9 +907,14 @@ def test_the_thirty_first_delivery_for_one_id_in_a_minute_is_429(
         for n in range(30):
             body = subscription_webhook("canceled", PID, paymob_request_id=f"r-{n}")
             assert h.http.post(WEBHOOK, json=body).status_code == 200
-        r = h.http.post(WEBHOOK, json=subscription_webhook("canceled", PID))
+        with capture_logs() as logs:
+            r = h.http.post(WEBHOOK, json=subscription_webhook("canceled", PID))
         assert r.status_code == 429
         assert int(r.headers["Retry-After"]) > 0
+        (event,) = [e for e in logs if e["event"] == "paymob_subscription_webhook_rate_limited"]
+        assert event["log_level"] == "warning"
+        assert event["paymob_subscription_id"] == PID
+        assert event["trigger_type"] == "canceled"
         # Per subscription id: another id is unaffected.
         assert (
             h.http.post(WEBHOOK, json=subscription_webhook("canceled", PID + 1)).status_code == 200

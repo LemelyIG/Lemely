@@ -48,7 +48,17 @@ from starlette.responses import JSONResponse
 
 from lemely.db.billing_observability_repo import record_webhook_failure
 from lemely.db.billing_repo import BillingService, MalformedCallback
-from lemely.db.subscription_repo import MalformedWebhook, parse_subscription_webhook
+from lemely.db.subscription_repo import (
+    TRIGGER_CANCELED,
+    TRIGGER_CREATED,
+    TRIGGER_FAILED,
+    TRIGGER_OVERDUE,
+    TRIGGER_RESUMED,
+    TRIGGER_SUCCESS,
+    TRIGGER_SUSPENDED,
+    MalformedWebhook,
+    parse_subscription_webhook,
+)
 from lemely.io.paymob.client import PaymobClient, PaymobError
 from lemely.io.paymob.hmac import (
     verify_subscription_hmac,
@@ -84,6 +94,20 @@ _FAILURE_KINDS: Final = {"TRANSACTION": "transaction", "TOKEN": "token"}
 
 # The kind of a refused subscription callback (it has no ``type``; its own route files it).
 _SUBSCRIPTION_FAILURE_KIND: Final = "subscription"
+
+# The triggers Paymob documents. An unsigned body can carry any text as its trigger, so the
+# refusal log names it only when it is one of these.
+_KNOWN_TRIGGERS: Final = frozenset(
+    {
+        TRIGGER_CREATED,
+        TRIGGER_SUCCESS,
+        TRIGGER_FAILED,
+        TRIGGER_OVERDUE,
+        TRIGGER_CANCELED,
+        TRIGGER_SUSPENDED,
+        TRIGGER_RESUMED,
+    }
+)
 
 # One alert line per minute when the failure writer's own cap drops rows, so a flood of bad
 # signatures is visible without the log growing with it. Process-local, like the writer's cap.
@@ -271,7 +295,7 @@ def paymob_subscription_webhook(
         log.error(
             "paymob_subscription_hmac_mismatch",
             paymob_subscription_id=paymob_id,
-            trigger_type=trigger[:40],
+            trigger_type=trigger if trigger in _KNOWN_TRIGGERS else "unknown",
             hmac_present=isinstance(received, str) and bool(received),
         )
         return JSONResponse(
@@ -291,6 +315,14 @@ def paymob_subscription_webhook(
     key = str(paymob_id)
     if not limiter.allow(key):
         retry = limiter.retry_after(key)
+        # A signed delivery is being dropped: Paymob's retry policy is undocumented, so this
+        # may be the only copy of a trigger. Leave a trace (id and trigger only).
+        log.warning(
+            "paymob_subscription_webhook_rate_limited",
+            paymob_subscription_id=paymob_id,
+            trigger_type=trigger[:40],
+            retry_after=retry,
+        )
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
             f"Too many callbacks; retry in {retry}s.",
@@ -302,6 +334,7 @@ def paymob_subscription_webhook(
     except MalformedWebhook as exc:
         log.error(
             "paymob_subscription_webhook_malformed",
+            alert=True,
             paymob_subscription_id=paymob_id,
             trigger_type=trigger[:40],
             reason=str(exc)[:120],
@@ -323,6 +356,7 @@ def paymob_subscription_webhook(
     except Exception as exc:
         log.error(
             "paymob_subscription_webhook_failed",
+            alert=True,
             paymob_subscription_id=paymob_id,
             trigger_type=trigger[:40],
             error_type=type(exc).__name__,
