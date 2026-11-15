@@ -50,4 +50,14 @@ describe("KeyRing", () => {
     expect(none).toMatch(/data-tone="neutral"/)
     expect(none).not.toContain("stroke-dasharray")
   })
+  it("draws no arc at value 0 (no round-cap dot) but keeps the tone on the centre", () => {
+    for (const value of [0, -1, Number.NaN]) {
+      const out = renderToStaticMarkup(createElement(KeyRing, { value, tone: "warn", center: "0%", label: "Confidence 0%" }))
+      expect(out).not.toContain("stroke-dasharray")
+      expect(out).not.toContain("rd-ring-tone-warn")
+      expect(out).toMatch(/data-tone="warn"/)
+    }
+    const some = renderToStaticMarkup(createElement(KeyRing, { value: 0.01, tone: "warn", center: "1%", label: "Confidence 1%" }))
+    expect(some).toContain("stroke-dasharray")
+  })
 })

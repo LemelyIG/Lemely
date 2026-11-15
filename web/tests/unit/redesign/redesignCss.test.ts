@@ -50,3 +50,16 @@ describe("redesign.css motion rule", () => {
     expect(dark![1]).toMatch(/--rd-bn-face:\s*var\(--md-on-primary\)/)
   })
 })
+
+describe("redesign.css ring colours", () => {
+  const css = readFileSync(CSS_PATH, "utf8").replace(/\/\*[\s\S]*?\*\//g, "")
+  const rule = (sel: string) => css.match(new RegExp(`${sel.replace(/\./g, "\\.")}\\s*\\{([^}]*)\\}`))?.[1] ?? ""
+  it("keeps the default KeyRing arc on --md-primary (inverse-primary inverts to the surface in dark)", () => {
+    expect(rule(".rd-ring-tone-tide")).toContain("var(--md-primary)")
+    expect(css).not.toMatch(/rd-ring-[a-z-]+\s*\{[^}]*--md-inverse-primary/)
+  })
+  it("keeps partial GoldRing progress above the track, not on --md-outline", () => {
+    expect(rule(".rd-ring-partial")).toContain("color-mix(in oklch, var(--md-on-surface-variant) 70%, var(--md-surface-container-highest))")
+    expect(rule(".rd-ring-partial")).not.toContain("--md-outline")
+  })
+})

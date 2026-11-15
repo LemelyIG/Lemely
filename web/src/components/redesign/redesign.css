@@ -106,8 +106,8 @@
 .rd-goldring svg, .rd-keyring svg { position: absolute; inset: 0; }
 .rd-ring-track { stroke: var(--md-surface-container-highest); }
 .rd-ring-gold { stroke: var(--md-tertiary); }
-.rd-ring-partial { stroke: var(--md-outline); }
-.rd-ring-tone-tide { stroke: var(--md-inverse-primary); }
+.rd-ring-partial { stroke: color-mix(in oklch, var(--md-on-surface-variant) 70%, var(--md-surface-container-highest)); }
+.rd-ring-tone-tide { stroke: var(--md-primary); }
 .rd-ring-tone-gold { stroke: var(--md-tertiary); }
 .rd-ring-tone-ok { stroke: var(--md-success); }
 .rd-ring-tone-warn { stroke: var(--md-error); }
