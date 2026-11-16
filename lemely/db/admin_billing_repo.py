@@ -1119,7 +1119,11 @@ CREDIT_PURCHASE_PURPOSES: Final = frozenset({PaymentPurpose.credit_pack, Payment
 
 
 def is_renewal_seat_charge(payment: Payment) -> bool:
-    """A queued renewal seat charge: it pays for seats that already exist, so no reverse applies."""
+    """A queued renewal seat charge: it pays for seats that already exist.
+
+    No seat reverse applies to it. Its credits can still be taken back when it was converted to
+    credits (UD-3).
+    """
     key = payment.dedupe_key
     return key is not None and key.startswith(RENEWAL_SEAT_DEDUPE_PREFIX)
 

@@ -791,20 +791,24 @@ def _sub_status(sm: sessionmaker[Session], sub: uuid.UUID) -> SubscriptionStatus
         return row.status
 
 
+@pytest.mark.parametrize("reverse", [False, True])
 @pytest.mark.parametrize(
     "purpose", [PaymentPurpose.subscription_first, PaymentPurpose.subscription_renewal]
 )
 def test_a_full_refund_of_the_latest_period_ends_the_plan_and_claws_back(
-    sm: sessionmaker[Session], admin: uuid.UUID, purpose: PaymentPurpose
+    sm: sessionmaker[Session], admin: uuid.UUID, purpose: PaymentPurpose, reverse: bool
 ) -> None:
     w = _subscribed(sm, purpose=purpose)
-    body = _refund(_client(sm, admin), w["payment"]).json()
+    client = _client(sm, admin)
+    body = (_reversing if reverse else _refund)(client, w["payment"]).json()
     assert body["status"] == "refunded"
     assert body["refunds"][0]["clawedBackUnits"] == 1000
     assert _sub_status(sm, w["sub"]) is SubscriptionStatus.cancelled
     [done] = audit_rows(sm, AuditAction.PAYMENT_REFUND_SUCCEEDED)
     assert done.after["subscription_effect"] == "plan_ended"  # type: ignore[index]
     assert "pending_phase05" not in str(done.after)
+    # A reverse on a refund that did end the plan adds nothing and says so (not "nothing_ended").
+    assert done.after.get("reverse_effect") == ("same_as_full_refund" if reverse else None)  # type: ignore[union-attr]
 
 
 def test_a_partial_refund_of_a_subscription_payment_changes_nothing(
