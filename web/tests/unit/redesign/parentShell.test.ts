@@ -16,7 +16,7 @@ describe("parent portal uses the shared shell", () => {
     expect(shell).toContain('portal="parent"')
     // The rail pill spans the rail (mock rail2 .kid is full width).
     expect(shell).toContain('lead: <ChildSwitcher className="w-full" />')
-    expect(shell).toContain('<ChildSwitcher className="shell-lg:hidden" />')
+    expect(shell).toContain('<ChildSwitcher className="shell-lg:hidden max-phone:ms-auto" />')
   })
   it("the switcher pill never hides the child's name; below 414px it caps the pill and truncates the name", () => {
     const pill = read("portals/parent/ChildSwitcher.tsx")

@@ -29,6 +29,8 @@ describe("the student shell wires it", () => {
     const { readFileSync } = await import("node:fs")
     const src = readFileSync(new URL("../../../src/portals/student/shell.tsx", import.meta.url), "utf8")
     expect(src).toContain("underDialogActive({ to, end }, pagePath, location.pathname)")
-    expect(src.match(/active: [^}]*under\(/g)).toHaveLength(4)
+    expect(src.match(/active: [^}]*under\(/g)).toHaveLength(5) // four sidebar rows and the bottom tabs
+    // The phone bottom tabs follow the same rule, so a fresh /student/settings lights Home there too.
+    expect(src).toContain("active: sectionActive(tab.id) ?? under(tab.to, tab.end)")
   })
 })

@@ -111,6 +111,5 @@ describe("student phone top bar on iOS: the title clears every action", () => {
     // The title insets in index.css reserve three 44px actions per side: the trailing group may never exceed three.
     const css = read("index.css")
     expect(css).toContain("--native-title-inset-ios: 144px")
-    expect(144).toBeGreaterThanOrEqual(3 * 44)
   })
 })

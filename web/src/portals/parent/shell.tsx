@@ -119,7 +119,8 @@ export function ParentShell() {
         titleLevel,
         backFallback: childId ? tabs[0].to : "/parent",
         navLabel: "Open parent navigation",
-        actions: <ChildSwitcher className="shell-lg:hidden" />,
+        // max-phone:ms-auto: below 414px the compact title is hidden (display none drops its me-auto), so the pill takes the margin and the actions stay at the trailing edge.
+        actions: <ChildSwitcher className="shell-lg:hidden max-phone:ms-auto" />,
         notifications: PARENT_NOTIFICATIONS_PANEL,
         settingsTo: SETTINGS_TO,
         account: { links: PARENT_ACCOUNT_LINKS, detail: null },

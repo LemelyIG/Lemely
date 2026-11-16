@@ -223,7 +223,7 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
           label: tab.label,
           icon: <tab.icon size={22} aria-hidden="true" />,
           activeIcon: <tab.icon size={22} weight="fill" aria-hidden="true" />,
-          active: sectionActive(tab.id),
+          active: sectionActive(tab.id) ?? under(tab.to, tab.end),
           prefetch: tab.id === "scan" ? prefetchCorrectPaper.onPointerEnter : undefined,
         }),
       )}
