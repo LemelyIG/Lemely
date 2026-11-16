@@ -1113,25 +1113,6 @@ def _callback_refunded(last_callback: Mapping[str, object] | None) -> int:
     return 0
 
 
-@dataclass(frozen=True, slots=True)
-class PaymentView:
-    """A payment with its refund attempts, oldest first (DV-19).
-
-    ``reverse_effects`` holds, per refund id, the outcome of a requested reverse that has been
-    applied (read from the audit row that closed the refund; nothing else stores it).
-    """
-
-    payment: Payment
-    refunds: list[PaymentRefund] = field(default_factory=list)
-
-    @property
-    def refunded_minor(self) -> int:
-        """Money already returned: the larger of our succeeded refunds and Paymob's total.
-
-        A refund made in the Paymob dashboard leaves no ``payment_refunds`` row; Phase 02
-        records it in ``last_callback.refunded_amount_cents``.
-        """
-        console = sum(
 #: Purposes that buy credits by design. Their ``grant_units`` is the purchase itself, not a
 #: conversion of a payment that bought nothing (UD-3).
 CREDIT_PURCHASE_PURPOSES: Final = frozenset({PaymentPurpose.credit_pack, PaymentPurpose.auto_topup})
@@ -1149,12 +1130,16 @@ class ReverseEffect:
     reason: str | None = None
 
 
-            r.amount_minor
-            for r in self.refunds
-            if r.status is RefundStatus.succeeded and r.kind is RefundKind.refund
-        )
-        return max(console, _callback_refunded(self.payment.last_callback))
+@dataclass(frozen=True, slots=True)
+class PaymentView:
+    """A payment with its refund attempts, oldest first (DV-19).
 
+    ``reverse_effects`` holds, per refund id, the outcome of a requested reverse that has been
+    applied (read from the audit row that closed the refund; nothing else stores it).
+    """
+
+    payment: Payment
+    refunds: list[PaymentRefund] = field(default_factory=list)
     reverse_effects: Mapping[uuid.UUID, ReverseEffect] = field(default_factory=dict)
 
     @property
@@ -1168,6 +1153,21 @@ class ReverseEffect:
         if payment.purpose in CREDIT_PURCHASE_PURPOSES:
             return None
         return payment.grant_units
+
+    @property
+    def refunded_minor(self) -> int:
+        """Money already returned: the larger of our succeeded refunds and Paymob's total.
+
+        A refund made in the Paymob dashboard leaves no ``payment_refunds`` row; Phase 02
+        records it in ``last_callback.refunded_amount_cents``.
+        """
+        console = sum(
+            r.amount_minor
+            for r in self.refunds
+            if r.status is RefundStatus.succeeded and r.kind is RefundKind.refund
+        )
+        return max(console, _callback_refunded(self.payment.last_callback))
+
 
 def payment_views(session: Session, payments: Sequence[Payment]) -> list[PaymentView]:
     """Attach refunds to ``payments`` in one query, keeping the input order."""
@@ -1224,6 +1224,7 @@ def _reverse_effects(
 
 __all__ = [
     "CREDIT_PACK_MUTABLE",
+    "CREDIT_PURCHASE_PURPOSES",
     "PLAN_TIER_MUTABLE",
     "SIGNUP_PREFIX",
     "AdminBillingError",
@@ -1239,8 +1240,8 @@ __all__ = [
     "PaymentView",
     "PaymobCallError",
     "PlanTierFields",
-    "CREDIT_PURCHASE_PURPOSES",
     "ReasonRequiredError",
+    "ReverseEffect",
     "already_applied",
     "audited",
     "idempotency_lookup",
@@ -1251,4 +1252,3 @@ __all__ = [
     "snapshot",
     "to_jsonable",
 ]
-    "ReverseEffect",
