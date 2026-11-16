@@ -43,8 +43,83 @@ export interface MarkState {
   raw: number
 }
 
-export function initialMarkState(points: readonly MarkPoint[], lemely: number | null): MarkState {
-  return { ticked: points.filter((p) => p.awarded).map((p) => p.markPointId), touched: false, raw: lemely ?? 0 }
+const clampMark = (n: number, max: number | null): number => Math.min(max ?? Number.POSITIVE_INFINITY, Math.max(0, n))
+
+const capOf = (max: number | null): number => max ?? Number.POSITIVE_INFINITY
+
+/** A tick set the either/or and pool rules allow: one member of an alt group,
+ * and a pool never needs more than its cap (the last added may overshoot it). */
+function validSet(points: readonly MarkPoint[], ticked: readonly string[], max: number | null): boolean {
+  const on = new Set(ticked)
+  if (computed(points, ticked) > capOf(max)) return false
+  for (const g of groupPoints(points)) {
+    if (!g.key) continue
+    const members = g.points.filter((p) => on.has(p.markPointId))
+    if (g.kind === "alternative") {
+      if (members.length > 1) return false
+    } else if (members.length > 0) {
+      const sum = members.reduce((x, p) => x + p.tariff, 0)
+      if (sum - Math.min(...members.map((p) => p.tariff)) >= g.maxMarks) return false
+    }
+  }
+  return true
+}
+
+/**
+ * One tick change that moves the group-capped total by exactly `delta` (+1 or
+ * -1): add or drop a single point, else swap one for another. Null when no
+ * such change exists. The ticks are the source of truth, so every step is
+ * one real mark and none is dead.
+ */
+function move(points: readonly MarkPoint[], ticked: readonly string[], max: number | null, delta: 1 | -1): string[] | null {
+  const want = computed(points, ticked) + delta
+  const off = points.filter((p) => !ticked.includes(p.markPointId))
+  const tryNext = (next: string[]) => (computed(points, next) === want && validSet(points, next, max) ? next : null)
+  if (delta > 0) {
+    for (const a of off) {
+      const hit = tryNext([...ticked, a.markPointId])
+      if (hit) return hit
+    }
+  } else {
+    for (let i = ticked.length - 1; i >= 0; i--) {
+      const hit = tryNext(ticked.filter((_, j) => j !== i))
+      if (hit) return hit
+    }
+  }
+  for (let i = ticked.length - 1; i >= 0; i--) {
+    for (const a of off) {
+      const hit = tryNext([...ticked.filter((_, j) => j !== i), a.markPointId])
+      if (hit) return hit
+    }
+  }
+  return null
+}
+
+/**
+ * Starts from Lemely's own mark, clamped to [0, max]. Its ticks are kept when
+ * they agree; when they disagree with its total (often why the answer is
+ * here) the ticks are nudged, latest first, until they add up to that total,
+ * so the stepper and the ticks always tell one story.
+ */
+export function initialMarkState(points: readonly MarkPoint[], lemely: number | null, max: number | null = null): MarkState {
+  const raw = clampMark(lemely ?? 0, max)
+  if (points.length === 0) return { ticked: [], touched: false, raw }
+  let ticked: string[] = []
+  for (const p of points) {
+    if (!p.awarded) continue
+    const next = [...ticked, p.markPointId]
+    if (validSet(points, next, max) && computed(points, next) > computed(points, ticked)) ticked = next
+  }
+  if (lemely != null) {
+    for (let i = 0; i < 500; i++) {
+      const diff = computed(points, ticked) - raw
+      if (diff === 0) break
+      const next = move(points, ticked, max, diff > 0 ? -1 : 1)
+      if (!next) break
+      ticked = next
+    }
+  }
+  return { ticked, touched: false, raw }
 }
 
 function computed(points: readonly MarkPoint[], ticked: readonly string[]): number {
@@ -55,22 +130,15 @@ function computed(points: readonly MarkPoint[], ticked: readonly string[]): numb
   }, 0)
 }
 
-/**
- * Untouched, the total is Lemely's own mark even when its ticks don't add up
- * to it (that disagreement is often why the answer is here). The first tick
- * or step hands the total to the ticks.
- */
-export function totalOf(points: readonly MarkPoint[], s: MarkState, max: number | null, lemely: number | null): number {
-  const cap = max ?? Number.POSITIVE_INFINITY
-  if (points.length === 0) return Math.min(cap, Math.max(0, s.raw))
-  if (!s.touched && lemely != null) return lemely
-  return Math.min(cap, computed(points, s.ticked))
+/** The ticks decide the total (or the raw number when there are no points), clamped to [0, max]. */
+export function totalOf(points: readonly MarkPoint[], s: MarkState, max: number | null, _lemely?: number | null): number {
+  return clampMark(points.length === 0 ? s.raw : computed(points, s.ticked), max)
 }
 
 export function isBlocked(points: readonly MarkPoint[], s: MarkState, id: string, max: number | null): boolean {
   if (s.ticked.includes(id)) return false
   const point = points.find((p) => p.markPointId === id)
-  if (!point) return true
+  if (!point) return false
   if (point.groupKey) {
     const members = points.filter((p) => p.groupKey === point.groupKey)
     const tickedMembers = members.filter((p) => s.ticked.includes(p.markPointId))
@@ -83,43 +151,47 @@ export function isBlocked(points: readonly MarkPoint[], s: MarkState, id: string
 
 export function toggleTick(points: readonly MarkPoint[], s: MarkState, id: string, max: number | null): MarkState {
   if (s.ticked.includes(id)) return { ...s, touched: true, ticked: s.ticked.filter((x) => x !== id) }
-  if (isBlocked(points, s, id, max)) return s
+  if (!points.some((p) => p.markPointId === id) || isBlocked(points, s, id, max)) return s
   return { ...s, touched: true, ticked: [...s.ticked, id] }
 }
 
+/** One mark up. With an unknown maximum the stepper is off and this is a no-op. */
 export function stepUp(points: readonly MarkPoint[], s: MarkState, max: number | null): MarkState {
-  if (points.length === 0) return { ...s, touched: true, raw: Math.min(max ?? Number.POSITIVE_INFINITY, s.raw + 1) }
-  const next = points.find((p) => !isBlocked(points, s, p.markPointId, max) && !s.ticked.includes(p.markPointId))
-  return next ? { ...s, touched: true, ticked: [...s.ticked, next.markPointId] } : s
+  if (max == null) return s
+  if (points.length === 0) return s.raw >= max ? s : { ...s, touched: true, raw: s.raw + 1 }
+  const next = move(points, s.ticked, max, 1)
+  return next ? { ...s, touched: true, ticked: next } : s
 }
 
-export function stepDown(points: readonly MarkPoint[], s: MarkState): MarkState {
-  if (points.length === 0) return { ...s, touched: true, raw: Math.max(0, s.raw - 1) }
-  if (s.ticked.length === 0) return s
-  return { ...s, touched: true, ticked: s.ticked.slice(0, -1) }
+/** One mark down. With an unknown maximum the stepper is off and this is a no-op. */
+export function stepDown(points: readonly MarkPoint[], s: MarkState, max: number | null): MarkState {
+  if (max == null) return s
+  if (points.length === 0) return s.raw <= 0 ? s : { ...s, touched: true, raw: s.raw - 1 }
+  const next = move(points, s.ticked, max, -1)
+  return next ? { ...s, touched: true, ticked: next } : s
 }
 
 export function canStep(
   points: readonly MarkPoint[],
   s: MarkState,
   max: number | null,
-  lemely: number | null,
+  _lemely?: number | null,
 ): { down: boolean; up: boolean } {
-  const total = totalOf(points, s, max, lemely)
-  if (points.length === 0) return { down: total > 0, up: max == null || total < max }
-  const up = (max == null || total < max) && points.some((p) => !s.ticked.includes(p.markPointId) && !isBlocked(points, s, p.markPointId, max))
-  return { down: s.ticked.length > 0, up }
+  if (max == null) return { down: false, up: false }
+  if (points.length === 0) return { down: s.raw > 0, up: s.raw < max }
+  return { down: move(points, s.ticked, max, -1) != null, up: move(points, s.ticked, max, 1) != null }
 }
 
 export function deltaLine(total: number, lemely: number | null): string {
-  if (lemely == null || total === lemely) return "as marked by Lemely"
+  if (lemely == null) return "Lemely gave no mark"
+  if (total === lemely) return "as marked by Lemely"
   const d = total - lemely
   return `${d > 0 ? "+" : "−"}${Math.abs(d)} from Lemely`
 }
 
 export function primaryActionLabel(total: number, max: number | null, lemely: number | null): string {
-  const verb = lemely == null || total === lemely ? "Accept" : "Save"
-  return `${verb} ${total}/${max ?? "–"}`
+  const verb = lemely != null && total === lemely ? "Accept" : "Save"
+  return max == null ? `${verb} ${total}` : `${verb} ${total}/${max}`
 }
 
 /** I14/I15: on accept-as-is the note is stored internally, never shown to the student. */
@@ -166,7 +238,7 @@ export function resolveBody(a: {
   const note = a.note.trim() || undefined
   const total = totalOf(a.points, a.state, a.max, a.lemely)
   const body: ResolveReviewRequest = {}
-  if (a.canAdjust && a.lemely != null && total !== a.lemely) {
+  if (a.canAdjust && total !== a.lemely) {
     body.overrideMarks = total
     const breakdown = breakdownOf(a.points, a.state)
     if (breakdown) body.breakdown = breakdown
