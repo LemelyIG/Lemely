@@ -58,7 +58,7 @@ test.describe("F1 student shell", () => {
     // The top bar's menu button opens the sheet: subject tree plus the More group.
     const menu = page.getByRole("button", { name: "Open student navigation" })
     await expect(menu).toHaveAttribute("aria-haspopup", "dialog")
-    await expect(nav.getByRole("link", { name: "Scan a paper" })).toHaveAttribute("data-emphasis", "true")
+    await expect(nav.getByRole("link", { name: "Scan a paper" }).locator("[data-emphasis]")).toHaveAttribute("data-emphasis", "true")
     await menu.click()
     const sheet = page.getByRole("dialog")
     await expect(sheet).toBeVisible()
