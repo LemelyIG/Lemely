@@ -429,5 +429,29 @@ class RenderRefusedTests(unittest.TestCase):
         self.assertEqual(exc.args, ("m", "page_too_large", {"width_px": 1.0}))
 
 
+def test_outline_box_png_draws_the_outline_around_the_box_and_leaves_the_rest() -> None:
+    import io as _io
+
+    from PIL import Image
+
+    from lemely.io.scan_render import PAGE_OUTLINE_RGB, outline_box_png
+
+    blank = Image.new("RGB", (1000, 500), (255, 255, 255))
+    buf = _io.BytesIO()
+    blank.save(buf, format="PNG")
+    # box = [ymin, xmin, ymax, xmax] on a 0-1000 grid -> x 200..400, y 50..150 px
+    out = Image.open(_io.BytesIO(outline_box_png(buf.getvalue(), [100, 200, 300, 400]))).convert(
+        "RGB"
+    )
+
+    assert out.size == (1000, 500)
+    stroke = max(3, round(500 / 220))
+    pad = stroke * 2
+    left_edge = (200 - pad + stroke // 2, 100)
+    assert out.getpixel(left_edge) == PAGE_OUTLINE_RGB
+    assert out.getpixel((300, 100)) == (255, 255, 255), "the box interior stays untouched"
+    assert out.getpixel((800, 400)) == (255, 255, 255), "the page outside stays untouched"
+
+
 if __name__ == "__main__":
     unittest.main()

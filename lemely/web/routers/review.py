@@ -392,12 +392,133 @@ def _require_renderable_box(box: SourceBox, *, item_id: str) -> None:
 #: (#260). Named by dotted path: the worker imports them in its child.
 CROP_PDF_TARGET = "lemely.io.scan_render.crop_pdf_scan"
 CROP_IMAGE_TARGET = "lemely.io.scan_render.crop_image_scan"
+PAGE_PDF_TARGET = "lemely.io.scan_render.page_pdf_scan"
+PAGE_IMAGE_TARGET = "lemely.io.scan_render.page_image_scan"
 
 #: The log event for each :class:`RenderRefused` reason the crop can meet.
 _RENDER_REFUSED_EVENTS = {
-    "page_out_of_range": "review_crop_page_out_of_range",
-    "page_too_large": "review_crop_page_too_large",
+    "page_out_of_range": "page_out_of_range",
+    "page_too_large": "page_too_large",
 }
+
+
+def _render_item_scan(
+    item_id: str,
+    auth: AuthContext,
+    settings: Settings,
+    service: ReviewService,
+    storage: StorageBackend,
+    *,
+    pdf_target: str,
+    image_target: str,
+    event: str,
+) -> Response:
+    """Shared body of the crop and page routes: one ownership check, one render path.
+
+    ``event`` prefixes every log line (``review_crop`` / ``review_page``) so the
+    crop's existing events keep their exact names. Every docstring paragraph of
+    :func:`get_review_item_crop` about authorization, the uniform 404 and
+    ``no-store`` applies to both routes.
+    """
+    try:
+        object_path, box = service.get_item_crop_source(auth.user_id, auth.role, item_id)
+    except ReviewError as exc:
+        _raise_for(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # One spelling of the id in everything this request emits. The lookup logs the
+    # canonical form; logging the caller's raw path string here as well would make
+    # a single request carry two spellings of one id, for no reason other than that
+    # nobody normalised it -- and a reader joining the two lines pays for that.
+    # `uuid.UUID` cannot raise: the lookup above already parsed this same value.
+    logged_id = str(uuid.UUID(item_id))
+
+    _require_renderable_box(box, item_id=logged_id)
+
+    try:
+        data = storage.download(settings.storage.bucket, object_path)
+    except StorageObjectNotFoundError:
+        # A stored scan is not forever (GCS lifecycle, a cleared dev
+        # filesystem). 404 with the same body as every other absence; the
+        # reason is here in the log, where "the object expired" and "this item
+        # never had a box" need different operational responses.
+        log.warning(f"{event}_object_missing", item_id=logged_id, object_path=object_path)
+        # Canonicalised (see `logged_id`) so this body is byte-identical to the
+        # one the lookup's own absences produce, whatever spelling of the id the
+        # caller sent — a difference there would be the oracle this collapse
+        # exists to close.
+        raise HTTPException(
+            status_code=404, detail=CROP_ABSENT_DETAIL.format(item_id=logged_id)
+        ) from None
+
+    try:
+        # Sniffed from the bytes, not from ``uploads.content_type``, the same
+        # way ``rasterise_scan_to_pages`` dispatches, and through the same
+        # ``looks_like_pdf``. Anything that is not a PDF is decoded the way
+        # extraction decoded it (see ``scan_render.crop_image_scan``).
+        #
+        # Inside this ``try``: everything PIL does is PIL raising, and
+        # ``Image.open`` enforces its own ``MAX_IMAGE_PIXELS`` ceiling. Left
+        # outside, a page large enough to trip it escaped as a 500 instead of
+        # the 422 every other unrenderable scan gets.
+        #
+        # Rendered in the interactive worker (#260), which passes arguments by
+        # position only. ``crop_image_scan`` takes ``page`` by keyword, and an
+        # image has one page, so its page bound is checked here, from the box
+        # alone, and the worker crops page 0 (its default).
+        timeout = sandbox.sandbox_settings().crop_timeout_seconds
+        target: str
+        args: tuple[object, ...]
+        if looks_like_pdf(data):
+            target, args = pdf_target, (data, box.page, list(box.box))
+        else:
+            require_page_in_range(box.page, 1)
+            target, args = image_target, (data, list(box.box))
+        crop = sandbox.INTERACTIVE_WORKER.call(target, *args, timeout=timeout, result_type=bytes)
+    except RenderRefused as exc:
+        # The refusal's message is the user's; its reason picks the log event.
+        # ``page`` is the stored box's, which the render does not echo back.
+        log.warning(
+            f"{event}_{_RENDER_REFUSED_EVENTS.get(exc.reason, 'render_refused')}",
+            item_id=logged_id,
+            page=box.page,
+            **exc.fields,
+        )
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ScanRejectedError as exc:
+        log.warning(
+            f"{event}_scan_rejected",
+            item_id=logged_id,
+            page=box.page,
+            reason=exc.reason,
+            detail=str(exc),
+        )
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except sandbox.SandboxFailure as exc:
+        # Timeout, memory, a crashed child or an unexpected error in it: a fixed
+        # 422. No worker to render in: 503. The failure itself goes to the log.
+        raise sandbox_failure_to_http(
+            exc, event=f"{event}_render_failed", item_id=logged_id
+        ) from exc
+    except Exception as exc:
+        # The in-process path (sandbox disabled), where the renderer's own
+        # exceptions arrive unchanged. A scan that cannot be rendered is not a
+        # server fault — it is a stored file that is not the document type it
+        # claimed to be, or one whose page geometry no renderer will accept.
+        # The renderer's own message is for the log; the client gets a fixed one.
+        log.warning(f"{event}_render_failed", item_id=logged_id, error=str(exc))
+        raise HTTPException(status_code=422, detail=SANDBOX_FAILED_DETAIL) from exc
+
+    # Never stored. The bytes do not change for an item id, but who may see
+    # them does: a student leaves a class, a teacher signs out of a shared
+    # school computer. The browser cache is keyed by URL, not by the bearer
+    # token, so a cached crop would reopen with no authorization check at all.
+    return Response(
+        content=crop,
+        media_type="image/png",
+        headers={"Cache-Control": "private, no-store"},
+    )
 
 
 @router.get(
@@ -440,104 +561,47 @@ def get_review_item_crop(
     absences is evaluated, so an out-of-scope caller learns nothing about
     scans at all (triage F9; the broader 403-vs-404 question is #248).
     """
-    try:
-        object_path, box = service.get_item_crop_source(auth.user_id, auth.role, item_id)
-    except ReviewError as exc:
-        _raise_for(exc)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _render_item_scan(
+        item_id,
+        auth,
+        settings,
+        service,
+        storage,
+        pdf_target=CROP_PDF_TARGET,
+        image_target=CROP_IMAGE_TARGET,
+        event="review_crop",
+    )
 
-    # One spelling of the id in everything this request emits. The lookup logs the
-    # canonical form; logging the caller's raw path string here as well would make
-    # a single request carry two spellings of one id, for no reason other than that
-    # nobody normalised it -- and a reader joining the two lines pays for that.
-    # `uuid.UUID` cannot raise: the lookup above already parsed this same value.
-    logged_id = str(uuid.UUID(item_id))
 
-    _require_renderable_box(box, item_id=logged_id)
+@router.get(
+    "/{item_id}/page",
+    responses={
+        200: {"content": {"image/png": {}}, "description": "The whole page, answer outlined"}
+    },
+)
+def get_review_item_page(
+    item_id: str,
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    settings: Annotated[Settings, Depends(get_settings)],
+    service: Annotated[ReviewService, Depends(get_review_service)],
+    storage: Annotated[StorageBackend, Depends(get_storage_backend)],
+) -> Response:
+    """The whole page this answer is on, with its region outlined (L5 "Whole page").
 
-    try:
-        data = storage.download(settings.storage.bucket, object_path)
-    except StorageObjectNotFoundError:
-        # A stored scan is not forever (GCS lifecycle, a cleared dev
-        # filesystem). 404 with the same body as every other absence; the
-        # reason is here in the log, where "the object expired" and "this item
-        # never had a box" need different operational responses.
-        log.warning("review_crop_object_missing", item_id=logged_id, object_path=object_path)
-        # Canonicalised (see `logged_id`) so this body is byte-identical to the
-        # one the lookup's own absences produce, whatever spelling of the id the
-        # caller sent — a difference there would be the oracle this collapse
-        # exists to close.
-        raise HTTPException(
-            status_code=404, detail=CROP_ABSENT_DETAIL.format(item_id=logged_id)
-        ) from None
-
-    try:
-        # Sniffed from the bytes, not from ``uploads.content_type``, the same
-        # way ``rasterise_scan_to_pages`` dispatches, and through the same
-        # ``looks_like_pdf``. Anything that is not a PDF is decoded the way
-        # extraction decoded it (see ``scan_render.crop_image_scan``).
-        #
-        # Inside this ``try``: everything PIL does is PIL raising, and
-        # ``Image.open`` enforces its own ``MAX_IMAGE_PIXELS`` ceiling. Left
-        # outside, a page large enough to trip it escaped as a 500 instead of
-        # the 422 every other unrenderable scan gets.
-        #
-        # Rendered in the interactive worker (#260), which passes arguments by
-        # position only. ``crop_image_scan`` takes ``page`` by keyword, and an
-        # image has one page, so its page bound is checked here, from the box
-        # alone, and the worker crops page 0 (its default).
-        timeout = sandbox.sandbox_settings().crop_timeout_seconds
-        target: str
-        args: tuple[object, ...]
-        if looks_like_pdf(data):
-            target, args = CROP_PDF_TARGET, (data, box.page, list(box.box))
-        else:
-            require_page_in_range(box.page, 1)
-            target, args = CROP_IMAGE_TARGET, (data, list(box.box))
-        crop = sandbox.INTERACTIVE_WORKER.call(target, *args, timeout=timeout, result_type=bytes)
-    except RenderRefused as exc:
-        # The refusal's message is the user's; its reason picks the log event.
-        # ``page`` is the stored box's, which the render does not echo back.
-        log.warning(
-            _RENDER_REFUSED_EVENTS.get(exc.reason, "review_crop_render_refused"),
-            item_id=logged_id,
-            page=box.page,
-            **exc.fields,
-        )
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except ScanRejectedError as exc:
-        log.warning(
-            "review_crop_scan_rejected",
-            item_id=logged_id,
-            page=box.page,
-            reason=exc.reason,
-            detail=str(exc),
-        )
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except sandbox.SandboxFailure as exc:
-        # Timeout, memory, a crashed child or an unexpected error in it: a fixed
-        # 422. No worker to render in: 503. The failure itself goes to the log.
-        raise sandbox_failure_to_http(
-            exc, event="review_crop_render_failed", item_id=logged_id
-        ) from exc
-    except Exception as exc:
-        # The in-process path (sandbox disabled), where the renderer's own
-        # exceptions arrive unchanged. A scan that cannot be rendered is not a
-        # server fault — it is a stored file that is not the document type it
-        # claimed to be, or one whose page geometry no renderer will accept.
-        # The renderer's own message is for the log; the client gets a fixed one.
-        log.warning("review_crop_render_failed", item_id=logged_id, error=str(exc))
-        raise HTTPException(status_code=422, detail=SANDBOX_FAILED_DETAIL) from exc
-
-    # Never stored. The bytes do not change for an item id, but who may see
-    # them does: a student leaves a class, a teacher signs out of a shared
-    # school computer. The browser cache is keyed by URL, not by the bearer
-    # token, so a cached crop would reopen with no authorization check at all.
-    return Response(
-        content=crop,
-        media_type="image/png",
-        headers={"Cache-Control": "private, no-store"},
+    Same ownership rule, absences, status codes, sandbox and ``no-store`` as
+    :func:`get_review_item_crop`: both go through :func:`_render_item_scan` and
+    :meth:`ReviewService.get_item_crop_source`. The box is drawn server-side so
+    the client still never receives coordinates.
+    """
+    return _render_item_scan(
+        item_id,
+        auth,
+        settings,
+        service,
+        storage,
+        pdf_target=PAGE_PDF_TARGET,
+        image_target=PAGE_IMAGE_TARGET,
+        event="review_page",
     )
 
 

@@ -4378,3 +4378,134 @@ def test_l5_cursor_with_non_finite_sort_value_is_a_422(
     forged = base64.urlsafe_b64encode("|".join(parts).encode()).decode()
     resp = client.get("/api/teacher/review", params={"sort": "lost", "limit": 1, "cursor": forged})
     assert resp.status_code == 422
+
+
+def _outline_pixels(image: Image.Image) -> int:
+    from lemely.io.scan_render import PAGE_OUTLINE_RGB
+
+    tr, tg, tb = PAGE_OUTLINE_RGB
+    colours = image.getcolors(maxcolors=image.width * image.height) or []
+    return sum(
+        n for n, (r, g, b) in colours if abs(r - tr) < 12 and abs(g - tg) < 12 and abs(b - tb) < 12
+    )
+
+
+def test_l5_page_route_refuses_a_caller_who_cannot_see_the_student(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    intruder = _seed_user(pg_sessionmaker, Role.teacher)
+    owner, item_id = _seed_boxed_review_item(
+        pg_sessionmaker, class_service, storage=storage_backend, scan=_synthetic_scan()
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+
+    _auth_as(client, intruder, Role.teacher)
+    detail = client.get(f"/api/teacher/review/{item_id}")
+    denied = client.get(f"/api/teacher/review/{item_id}/page")
+    assert denied.status_code == detail.status_code
+    assert not denied.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+    _auth_as(client, owner, Role.teacher)
+    allowed = client.get(f"/api/teacher/review/{item_id}/page")
+    assert allowed.status_code == 200
+    assert allowed.headers["content-type"] == "image/png"
+    assert allowed.headers["cache-control"] == "private, no-store"
+
+
+def test_l5_page_route_serves_the_whole_page_with_the_answer_outlined(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker, class_service, storage=storage_backend, scan=_synthetic_scan()
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    resp = client.get(f"/api/teacher/review/{item_id}/page")
+    assert resp.status_code == 200
+    got = Image.open(io.BytesIO(resp.content)).convert("RGB")
+    page_aspect = _PAGE_WIDTH_PT / _PAGE_HEIGHT_PT
+    assert abs(got.width / got.height - page_aspect) < 0.02 * page_aspect, (
+        "this is the page, not a crop"
+    )
+    reddish, bluish, _ = _colour_counts(got)
+    assert reddish > 0, "the answer region is on the page"
+    assert bluish > 0, "the rest of the page is there too"
+    assert _outline_pixels(got) > 200, "the answer is outlined"
+
+
+def test_l5_page_route_404s_like_the_crop_for_a_boxless_item(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker, class_service, storage=storage_backend, scan=_synthetic_scan(), page=None
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+    crop = client.get(f"/api/teacher/review/{item_id}/crop")
+    page = client.get(f"/api/teacher/review/{item_id}/page")
+    assert page.status_code == crop.status_code == 404
+    assert page.json() == crop.json()
+
+
+def test_l5_page_route_404s_when_the_stored_object_has_gone(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker,
+        class_service,
+        storage=storage_backend,
+        scan=_synthetic_scan(),
+        store_object=False,
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+    assert client.get(f"/api/teacher/review/{item_id}/page").status_code == 404
+
+
+def test_l5_page_route_serves_an_upright_image_scan(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    scan = _synthetic_image_scan()
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker,
+        class_service,
+        storage=storage_backend,
+        scan=scan,
+        page=0,
+        content_type="image/png",
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    resp = client.get(f"/api/teacher/review/{item_id}/page")
+    assert resp.status_code == 200
+    got = Image.open(io.BytesIO(resp.content)).convert("RGB")
+    source = Image.open(io.BytesIO(scan))
+    assert abs(got.width / got.height - source.width / source.height) < 0.02
+    assert _outline_pixels(got) > 100
