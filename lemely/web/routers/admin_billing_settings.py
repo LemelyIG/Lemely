@@ -8,6 +8,8 @@ sends the ``version`` they read, a stale one is 409 ``stale_write``.
 
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends
@@ -18,10 +20,16 @@ from lemely.db.billing_settings_repo import (
     BillingSettingsView,
     CreditRateView,
 )
+from lemely.db.llm_price_repo import LlmPriceService, LlmPriceView
 from lemely.db.models.enums import Role
 from lemely.db.session import get_sessionmaker
+from lemely.io.gemini import code_price_models, code_price_row
+from lemely.io.llm.pricing import CLAUDE_PRICE_SOURCES, PriceRow
+from lemely.io.providers import is_anthropic_model
+from lemely.runtime.config import Settings  # noqa: TC001 - FastAPI resolves the dependency type
 from lemely.web.admin_billing_common import AdminAuth, admin_id, mapped_errors, optional_id
 from lemely.web.deps import get_settings, require_role
+from lemely.web.llm_price_refresh import refresh_after_commit
 from lemely.web.schemas_admin_billing_settings import (
     BillingSettingsDTO,
     BillingSettingsUpdate,
@@ -29,10 +37,19 @@ from lemely.web.schemas_admin_billing_settings import (
     CreditRateDTO,
     CreditRatesDTO,
     CreditRateSet,
+    LlmCodeDefaultDTO,
+    LlmModelDTO,
+    LlmModelsDTO,
+    LlmPriceClear,
+    LlmPriceDTO,
+    LlmPriceSet,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from sqlalchemy.orm import Session, sessionmaker
+
 
 router = APIRouter(
     prefix="/api/admin/billing",
@@ -46,11 +63,36 @@ def get_billing_settings_service() -> Iterator[BillingSettingsService]:
     The handler turns a service error into an ``HTTPException``, which reaches this generator and
     rolls the transaction back, audit row and all. Tests override this dependency.
     """
-    with get_sessionmaker(get_settings()).begin() as session:
+    factory = get_sessionmaker(get_settings())
+    with factory.begin() as session:
         yield BillingSettingsService(session)
+    # Committed: a changed container-hour price reaches this process now (UD13-D, DV-6). A refused
+    # request raised above and never gets here.
+    refresh_after_commit(factory)
 
 
 SettingsService = Annotated[BillingSettingsService, Depends(get_billing_settings_service)]
+
+
+def llm_price_scope(factory: sessionmaker[Session]) -> Iterator[LlmPriceService]:
+    """One price service on one transaction; after a committed write, refresh this process.
+
+    The other instances pick the change up from the ``billing.llm_price_refresh`` job within 60
+    seconds. A refused request raises inside the ``with``, rolls back and never refreshes.
+    """
+    with factory.begin() as session:
+        service = LlmPriceService(session)
+        yield service
+    if service.wrote:
+        refresh_after_commit(factory)
+
+
+def get_llm_price_service() -> Iterator[LlmPriceService]:
+    """The price service of this request. Tests override this dependency."""
+    yield from llm_price_scope(get_sessionmaker(get_settings()))
+
+
+PriceService = Annotated[LlmPriceService, Depends(get_llm_price_service)]
 
 
 def settings_dto(view: BillingSettingsView) -> BillingSettingsDTO:
@@ -136,3 +178,145 @@ def clear_credit_rate(
             reason=body.reason,
         )
     return CreditRatesDTO(rates=[credit_rate_dto(r) for r in rates])
+
+
+_PER_MTOK = Decimal(1000)
+
+
+def _mtok(per_1k: float | None) -> str | None:
+    """A per-1k float rate as a per-million-token decimal string (``0.0001`` becomes ``0.1``)."""
+    if per_1k is None:
+        return None
+    return format((Decimal(repr(per_1k)) * _PER_MTOK).normalize(), "f")
+
+
+def _default_dto(row: PriceRow, *, source: str, read_on: date | None) -> LlmCodeDefaultDTO:
+    tier = row.tier2
+    return LlmCodeDefaultDTO(
+        inputUsdPerMtok=_mtok(row.input) or "0",
+        outputUsdPerMtok=_mtok(row.output) or "0",
+        cachedInputUsdPerMtok=_mtok(row.cached_input),
+        cacheWrite5mUsdPerMtok=_mtok(row.cache_write_5m),
+        cacheWrite1hUsdPerMtok=_mtok(row.cache_write_1h),
+        tiered=tier is not None,
+        tierThresholdTokens=row.tier_threshold_tokens if tier is not None else None,
+        tier2InputUsdPerMtok=_mtok(tier.input) if tier is not None else None,
+        tier2OutputUsdPerMtok=_mtok(tier.output) if tier is not None else None,
+        source=source,
+        readOn=read_on,
+    )
+
+
+def _decimal_text(value: Decimal | None) -> str | None:
+    return None if value is None else format(value, "f")
+
+
+def llm_price_dto(view: LlmPriceView) -> LlmPriceDTO:
+    return LlmPriceDTO(
+        model=view.model,
+        inputUsdPerMtok=format(view.input_usd_per_mtok, "f"),
+        outputUsdPerMtok=format(view.output_usd_per_mtok, "f"),
+        cachedInputUsdPerMtok=_decimal_text(view.cached_input_usd_per_mtok),
+        cacheWrite5mUsdPerMtok=_decimal_text(view.cache_write_5m_usd_per_mtok),
+        cacheWrite1hUsdPerMtok=_decimal_text(view.cache_write_1h_usd_per_mtok),
+        tierThresholdTokens=view.tier_threshold_tokens,
+        tier2InputUsdPerMtok=_decimal_text(view.tier2_input_usd_per_mtok),
+        tier2OutputUsdPerMtok=_decimal_text(view.tier2_output_usd_per_mtok),
+        version=view.version,
+        updatedAt=view.updated_at,
+        updatedBy=optional_id(view.updated_by),
+    )
+
+
+def _model_rows(service: LlmPriceService, settings: Settings, *, today: date) -> list[LlmModelDTO]:
+    """Code table keys, config keys, models seen in the last 30 days and overrides, by name."""
+    overrides = {view.model: view for view in service.list()}
+    seen = service.seen()
+    config = settings.gemini.pricing
+    names = {*code_price_models(today), *config, *seen, *overrides}
+    rows: list[LlmModelDTO] = []
+    for name in sorted(names):
+        default: LlmCodeDefaultDTO | None = None
+        if name in config:
+            rate = config[name]
+            default = _default_dto(
+                PriceRow(float(rate[0]), float(rate[0]), float(rate[1])),
+                source="config",
+                read_on=None,
+            )
+        else:
+            code_row = code_price_row(name, today)
+            if code_row is not None:
+                url, read_on = CLAUDE_PRICE_SOURCES.get(
+                    name, ("built-in table, lemely.io.gemini", None)
+                )
+                default = _default_dto(code_row, source=url, read_on=read_on)
+        override = overrides.get(name)
+        rows.append(
+            LlmModelDTO(
+                model=name,
+                provider="anthropic" if is_anthropic_model(name) else "gemini",
+                codeDefault=default,
+                override=None if override is None else llm_price_dto(override),
+                seenInLast30Days=name in seen,
+            )
+        )
+    return rows
+
+
+def _models_body(service: LlmPriceService, settings: Settings) -> LlmModelsDTO:
+    return LlmModelsDTO(models=_model_rows(service, settings, today=datetime.now(UTC).date()))
+
+
+@router.get("/llm-prices", response_model=LlmModelsDTO)
+def read_llm_prices(
+    service: PriceService, settings: Annotated[Settings, Depends(get_settings)]
+) -> LlmModelsDTO:
+    return _models_body(service, settings)
+
+
+def _rates(body: LlmPriceSet) -> dict[str, object]:
+    return {
+        "input_usd_per_mtok": body.inputUsdPerMtok,
+        "output_usd_per_mtok": body.outputUsdPerMtok,
+        "cached_input_usd_per_mtok": body.cachedInputUsdPerMtok,
+        "cache_write_5m_usd_per_mtok": body.cacheWrite5mUsdPerMtok,
+        "cache_write_1h_usd_per_mtok": body.cacheWrite1hUsdPerMtok,
+        "tier_threshold_tokens": body.tierThresholdTokens,
+        "tier2_input_usd_per_mtok": body.tier2InputUsdPerMtok,
+        "tier2_output_usd_per_mtok": body.tier2OutputUsdPerMtok,
+    }
+
+
+@router.put("/llm-prices/{model}", response_model=LlmPriceDTO)
+def set_llm_price(
+    model: str, body: LlmPriceSet, auth: AdminAuth, service: PriceService
+) -> LlmPriceDTO:
+    with mapped_errors():
+        return llm_price_dto(
+            service.set_price(
+                admin_id(auth),
+                model=model,
+                rates=_rates(body),
+                expected_version=body.expectedVersion,
+                reason=body.reason,
+            )
+        )
+
+
+@router.post("/llm-prices/{model}/clear", response_model=LlmModelsDTO)
+def clear_llm_price(
+    model: str,
+    body: LlmPriceClear,
+    auth: AdminAuth,
+    service: PriceService,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> LlmModelsDTO:
+    with mapped_errors():
+        service.clear_price(
+            admin_id(auth),
+            model=model,
+            expected_version=body.expectedVersion,
+            reason=body.reason,
+        )
+    return _models_body(service, settings)

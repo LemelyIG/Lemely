@@ -9,7 +9,7 @@ string or number; ``null`` clears the two optional decimals.
 
 from __future__ import annotations
 
-from datetime import datetime  # noqa: TC003 - pydantic resolves annotations at runtime
+from datetime import date, datetime  # noqa: TC003 - pydantic resolves annotations at runtime
 from decimal import Decimal  # noqa: TC003 - pydantic resolves annotations at runtime
 from typing import Annotated
 
@@ -71,4 +71,74 @@ class CreditRateClear(ApiModel):
 
     expectedVersion: StrictInt
     confirmStopConversions: bool = False
+    reason: Reason
+
+
+class LlmPriceDTO(ApiModel):
+    """An admin price override. USD per million tokens, as exact decimal strings."""
+
+    model: str
+    inputUsdPerMtok: str
+    outputUsdPerMtok: str
+    cachedInputUsdPerMtok: str | None
+    cacheWrite5mUsdPerMtok: str | None
+    cacheWrite1hUsdPerMtok: str | None
+    tierThresholdTokens: int | None
+    tier2InputUsdPerMtok: str | None
+    tier2OutputUsdPerMtok: str | None
+    version: int
+    updatedAt: datetime
+    updatedBy: str | None
+
+
+class LlmCodeDefaultDTO(ApiModel):
+    """The price a model has with no override: the config rate if set, else the code table's."""
+
+    inputUsdPerMtok: str
+    outputUsdPerMtok: str
+    cachedInputUsdPerMtok: str | None
+    cacheWrite5mUsdPerMtok: str | None
+    cacheWrite1hUsdPerMtok: str | None
+    tiered: bool
+    tierThresholdTokens: int | None
+    tier2InputUsdPerMtok: str | None
+    tier2OutputUsdPerMtok: str | None
+    #: ``config`` for a ``gemini.pricing`` entry, else where the code table's rate was read.
+    source: str
+    readOn: date | None
+
+
+class LlmModelDTO(ApiModel):
+    model: str
+    provider: str
+    codeDefault: LlmCodeDefaultDTO | None
+    override: LlmPriceDTO | None
+    seenInLast30Days: bool
+
+
+class LlmModelsDTO(ApiModel):
+    models: list[LlmModelDTO]
+
+
+class LlmPriceSet(ApiModel):
+    """``expectedVersion`` is ``null`` to create an override, the version read to replace one.
+
+    Every field but the model is a full replacement: an optional price left ``null`` is cleared.
+    The ranges are checked by ``Override`` (above 0, at most 1000 USD per million tokens).
+    """
+
+    inputUsdPerMtok: Decimal
+    outputUsdPerMtok: Decimal
+    cachedInputUsdPerMtok: Decimal | None = None
+    cacheWrite5mUsdPerMtok: Decimal | None = None
+    cacheWrite1hUsdPerMtok: Decimal | None = None
+    tierThresholdTokens: StrictInt | None = None
+    tier2InputUsdPerMtok: Decimal | None = None
+    tier2OutputUsdPerMtok: Decimal | None = None
+    expectedVersion: StrictInt | None
+    reason: Reason
+
+
+class LlmPriceClear(ApiModel):
+    expectedVersion: StrictInt
     reason: Reason

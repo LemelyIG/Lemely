@@ -17,7 +17,8 @@ below is the same as the database CHECK and as what the runtime consumers accept
 * ``price_change_notice_days`` 7-90 (UD13-G);
 * ``margin_egp_per_usd`` greater than 0 up to 10000 with at most 4 decimals (the margin report's
   own ``egpPerUsd`` bound, ``NUMERIC(12, 4)``);
-* ``code_execution_usd_per_hour`` 0 up to 1000 with at most 6 decimals (``NUMERIC(10, 6)``);
+* ``code_execution_usd_per_hour`` greater than 0 up to 100 with at most 6 decimals
+  (``NUMERIC(10, 6)``). Zero is refused: it would bill code execution for nothing (T19, UD13-D);
 * a conversion rate greater than 0 up to 100000 with at most 6 decimals. The cap keeps
   ``amount_minor x rate`` inside ``BIGINT`` for every payment the database can hold (Phase 05
   UD-12 review M-1).
@@ -53,6 +54,7 @@ from lemely.db.admin_billing_repo import (
 )
 from lemely.db.models.admin_audit import AdminAuditLog
 from lemely.db.models.billing_ops import BillingSettings, CreditConversionRate
+from lemely.io.llm.price_overrides import CODE_EXECUTION_HOUR_MAX
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -77,7 +79,7 @@ INT_FIELDS: Final[Mapping[str, tuple[int, int]]] = {
 #: ``(lowest allowed, highest allowed, most decimal places, lowest is allowed)``.
 DECIMAL_FIELDS: Final[Mapping[str, tuple[Decimal, Decimal, int, bool]]] = {
     "margin_egp_per_usd": (Decimal(0), Decimal(10_000), 4, False),
-    "code_execution_usd_per_hour": (Decimal(0), Decimal(1_000), 6, True),
+    "code_execution_usd_per_hour": (Decimal(0), CODE_EXECUTION_HOUR_MAX, 6, False),
 }
 SETTING_FIELDS: Final = (*INT_FIELDS, *DECIMAL_FIELDS)
 #: The wire name of each setting; error messages name the field as the admin sent it.

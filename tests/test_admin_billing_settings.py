@@ -298,11 +298,14 @@ def test_an_integer_setting_cannot_be_null(client: TestClient, sm: sessionmaker[
         ("marginEgpPerUsd", "10000.0001", False),
         ("marginEgpPerUsd", "10.00001", False),
         ("marginEgpPerUsd", "1e999", False),
-        ("codeExecutionUsdPerHour", "0", True),
-        ("codeExecutionUsdPerHour", "1000", True),
+        # T19 (UD13-D): the container hour is a price, so 0 would bill code execution for
+        # nothing; it must be above 0 and at most 100.
+        ("codeExecutionUsdPerHour", "0", False),
+        ("codeExecutionUsdPerHour", "100", True),
         ("codeExecutionUsdPerHour", "0.000001", True),
         ("codeExecutionUsdPerHour", "-0.000001", False),
-        ("codeExecutionUsdPerHour", "1000.000001", False),
+        ("codeExecutionUsdPerHour", "100.000001", False),
+        ("codeExecutionUsdPerHour", "1000", False),
         ("codeExecutionUsdPerHour", "0.0000001", False),
     ],
 )

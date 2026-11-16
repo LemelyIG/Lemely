@@ -51,6 +51,7 @@ from lemely.db.models.study_plan import StudyPlan as DbStudyPlan
 from lemely.db.models.study_plan import StudyPlanSession
 from lemely.db.models.users import User
 from lemely.db.xp_repo import DEFAULT_ZONE, resolve_zone
+from lemely.web.llm_price_refresh import refresh_prices
 from lemely.web.notify import notify_safely
 from lemely.web.purge import purge_expired_papers, purge_expired_teacher_papers
 from lemely.web.subscription_jobs import (
@@ -638,6 +639,8 @@ class Sweeper:
                     lambda: prune_webhook_failures(self.sessionmaker, now=moment),
                 )
             )
+            # UD13-D, DV-6: other instances pick up an admin AI price change within a minute.
+            jobs.append(("billing.llm_price_refresh", lambda: refresh_prices(self.sessionmaker)))
         if self.usage_metering:
             jobs.extend(
                 usage_jobs(

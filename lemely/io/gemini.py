@@ -30,12 +30,13 @@ from tenacity import (
 )
 
 from lemely.io.cost_ledger import CostLedger
+from lemely.io.llm import price_overrides
 from lemely.io.llm.cost_meter import record_llm_cost, usd_decimal
 from lemely.io.llm.errors import CapTruncatedError as _CapTruncatedError
 from lemely.io.llm.errors import TransientCallError as _TransientError
 from lemely.io.llm.gemini_provider import GeminiProvider
 from lemely.io.llm.model_costs import record_model_cost
-from lemely.io.llm.pricing import PriceRow, claude_row, row_cost
+from lemely.io.llm.pricing import CLAUDE_PRICING, PriceRow, claude_row, code_claude_row, row_cost
 from lemely.io.llm.request import (
     LEGACY_CLAUDE_CACHE_PLAN,
     CachePlan,
@@ -462,7 +463,7 @@ def _resolve_pricing(
 ) -> tuple[float, float]:
     """Return (input_usd_per_1k, output_usd_per_1k) for the given model.
 
-    Checks user-configured overrides first. Then resolves the 3.8/3.6-flash promotional rate (US-026 — see `FLASH_3X_PROMO_END_DATE`) for
+    Checks an admin price override first (UD13-D), then user-configured overrides. Then resolves the 3.8/3.6-flash promotional rate (US-026 — see `FLASH_3X_PROMO_END_DATE`) for
     "today" and merges it into a COPY of `_DEFAULT_PRICING` under those two
     exact keys, so the length-descending substring match below is the ONLY
     matching mechanism in this function — a promo model can never shadow, or
@@ -475,6 +476,10 @@ def _resolve_pricing(
     as a default), so `mock.patch("lemely.io.gemini._today", ...)` reaches
     this function too.
     """
+    override = price_overrides.resolve(model, None)
+    if override is not None:
+        # An admin override (UD13-D) wins over config and the table; flat input/output only.
+        return (override.input, override.output)
     user = settings.gemini.pricing
     if model in user:
         p = user[model]
@@ -519,21 +524,32 @@ def price_row(model: str, settings: Settings, *, on: date) -> PriceRow:
     rate, so its cached tokens bill at its input rate.
     """
     user = settings.gemini.pricing
+    config_row: PriceRow | None = None
     if model in user:
         p = user[model]
-        return PriceRow(float(p[0]), float(p[0]), float(p[1]))
+        config_row = PriceRow(float(p[0]), float(p[0]), float(p[1]))
+    row = price_overrides.resolve(model, code_price_row(model, on), config_row=config_row)
+    if row is None:
+        raise UnpricedModelError(model)
+    return row
+
+
+def code_price_models(on: date) -> list[str]:
+    """Every model id the built-in tables price as of ``on`` (Claude rows, Gemini rows)."""
+    return sorted({*CLAUDE_PRICING, *_dated_pricing_table(on)})
+
+
+def code_price_row(model: str, on: date) -> PriceRow | None:
+    """The built-in table's row for ``model`` as of ``on`` (no override, no config), or None."""
     if is_anthropic_model(model):
-        row = claude_row(model)
-        if row is None:
-            raise UnpricedModelError(model)
-        return row
+        return code_claude_row(model)
     table = _dated_pricing_table(on)
     cached_table = _dated_cached_table(on)
     for key in sorted(table, key=len, reverse=True):
         if key in model:
             in_price, out_price = table[key]
             return PriceRow(in_price, cached_table.get(key, in_price), out_price)
-    raise UnpricedModelError(model)
+    return None
 
 
 def _row_cost(row: PriceRow, *, input_tokens: int, cached_tokens: int, output_tokens: int) -> float:
@@ -774,6 +790,7 @@ def fallback_pricing_status(
         f"{tag}={model}"
         for tag, model in configured_models.items()
         if model not in user_pricing
+        and not price_overrides.has_override(model)
         and not any(key in model for key in pricing_table)
         and claude_row(model) is None
     )

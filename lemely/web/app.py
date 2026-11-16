@@ -9,6 +9,7 @@ endpoints are added.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import re
 from contextlib import asynccontextmanager
@@ -18,10 +19,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from lemely import __version__
+from lemely.db.session import get_sessionmaker
 from lemely.io.model_table import configured_models
 from lemely.runtime.config import anthropic_key_missing_tags, log_marking_flags
 from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 from lemely.web.deps import get_settings, get_sweeper
+from lemely.web.llm_price_refresh import refresh_prices
 from lemely.web.routers import (
     admin,
     admin_billing,
@@ -154,6 +157,10 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
             "those calls will fail until it is configured",
             ", ".join(missing_claude),
         )
+    # UD13-D: the admin AI price overrides are installed before the first call is priced; a failure
+    # is logged and the code and config prices apply until the 60 s job succeeds.
+    with contextlib.suppress(Exception):
+        await asyncio.to_thread(refresh_prices, get_sessionmaker(settings))
     stop = asyncio.Event()
     task: asyncio.Task[None] | None = None
     if settings.notifications.sweeper_enabled:
