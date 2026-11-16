@@ -109,7 +109,7 @@ export function initials(name: string): string {
     .join("")
 }
 
-function plural(n: number, word: string): string {
+export function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? "" : "s"}`
 }
 
@@ -195,7 +195,7 @@ function momentStage(m: HomeMoment, home: StudentHome): StageVm {
     case "marking": {
       const progress =
         m.questionsTotal != null && m.questionsDone != null
-          ? `Marking your paper. ${m.questionsDone} of ${m.questionsTotal} questions done.`
+          ? `Marking your paper. ${m.questionsDone} of ${plural(m.questionsTotal, "question")} done.`
           : "Marking your paper now."
       const line = m.stale ? "Still marking. This one's taking a while." : progress
       return stage(`marking:${m.paperId}`, "marking", "thinking", line, {
@@ -238,7 +238,7 @@ function momentStage(m: HomeMoment, home: StudentHome): StageVm {
         `backAfterBreak:${home.localDate}`,
         "backAfterBreak",
         "wink",
-        `There you are. ${m.daysAway} days off is fine. Ease back in with five minutes.`,
+        `There you are. ${plural(m.daysAway, "day")} off is fine. Ease back in with five minutes.`,
         { label: "5-minute warm-up", to: practiceTarget(home) },
       )
   }
@@ -388,7 +388,7 @@ export function alsoRows(home: StudentHome, current: StageVm, layout: "phone" | 
         kind: "scan",
         leading: { type: "icon", icon: "camera" },
         title: "Scan your next paper",
-        sub: `Your last one was ${days} days ago`,
+        sub: `Your last one was ${plural(days, "day")} ago`,
         to: homeRoutes.scan,
       })
     }

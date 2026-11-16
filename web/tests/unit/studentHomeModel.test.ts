@@ -127,6 +127,13 @@ describe("stage", () => {
     expect(s.action).toEqual({ label: "See the answer", to: "/student/result/5" })
   })
 
+  it("counts of one never read as a plural", () => {
+    const one = pickStage(makeHome({ moments: [{ kind: "backAfterBreak", daysAway: 1 }] }), NONE)
+    expect(one.line).toBe("There you are. 1 day off is fine. Ease back in with five minutes.")
+    const m = pickStage(makeHome({ moments: [{ ...marking, questionsDone: 0, questionsTotal: 1 }] }), NONE)
+    expect(m.line).toBe("Marking your paper. 0 of 1 question done.")
+  })
+
   it("falls back to today's session, then the top topic (morning), then scan", () => {
     const withSession = makeHome({
       todaySessions: [{ sessionId: "s1", subjectCode: "0625", topic: "Waves", minutes: 15, done: false }],

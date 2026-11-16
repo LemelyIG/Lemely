@@ -1,0 +1,128 @@
+import { describe, expect, it } from "vitest"
+import {
+  accountRows,
+  activityVm,
+  deriveBadges,
+  displayName,
+  levelLine,
+  ordinal,
+  peopleVm,
+  statsVm,
+  streakLine,
+  streakStrip,
+  subjectsVm,
+} from "@/portals/student/home/me/meModel"
+import type { XpProfile } from "@/lib/xpTypes"
+import { makeHome } from "./studentHomeFixture"
+
+function xp(overrides: Partial<XpProfile> = {}): XpProfile {
+  return {
+    totalXp: 2240,
+    level: 7,
+    levelStartXp: 2000,
+    nextLevelXp: 2500,
+    streak: { current: 9, longest: 14, lastActiveOn: "2026-11-12", freezesAvailable: 1 },
+    week: { total: 0, start: "2026-11-09", end: "2026-11-15", bySource: [] },
+    calendar: [
+      { day: "2026-11-12", xp: 30 },
+      { day: "2026-11-11", xp: 10 },
+    ],
+    calendarStart: "2026-10-16",
+    calendarEnd: "2026-11-12",
+    ...overrides,
+  } as XpProfile
+}
+
+describe("Me view model", () => {
+  it("names the student with the live fallback chain", () => {
+    expect(displayName({ displayName: "Mariam Adel", email: "m@x.com" })).toBe("Mariam Adel")
+    expect(displayName({ displayName: null, email: "mariam@x.com" })).toBe("mariam")
+    expect(displayName(undefined)).toBe("You")
+  })
+
+  it("level line reads the server's curve, never computes one", () => {
+    expect(levelLine(xp())).toBe("Level 7 · 260 XP to level 8")
+  })
+
+  it("14-day streak strip ends today", () => {
+    const strip = streakStrip(xp())
+    expect(strip).toHaveLength(14)
+    expect(strip[13]).toEqual({ day: "2026-11-12", on: true, now: true })
+    expect(strip[12]).toEqual({ day: "2026-11-11", on: true, now: false })
+    expect(strip[11]!.on).toBe(false)
+    expect(streakLine(xp())).toEqual({ main: "9-day streak", best: "best 14" })
+    expect(streakLine(xp({ streak: { current: 0, longest: 0, lastActiveOn: null, freezesAvailable: 0 } }))).toEqual({
+      main: "No streak yet",
+      best: null,
+    })
+  })
+
+  it("stats", () => {
+    expect(statsVm(makeHome())).toEqual([
+      { value: "22", label: "papers marked", to: "/student/subject/0580", grade: null },
+      { value: "+64", label: "marks won back", to: "/student/practice/0580?topic=Vectors", grade: null },
+      { value: "A", label: "best grade", to: "/student/subject/0580", grade: "A" },
+    ])
+    const fresh = makeHome({ stats: { papersMarked: 0, marksWonBack: 0, bestGrade: null }, recentPapers: [], floor: [], winBack: [] })
+    expect(statsVm(fresh).map((s) => s.value)).toEqual(["0", "0", "–"])
+  })
+
+  it("badges are derived from real data only", () => {
+    const badges = deriveBadges(makeHome(), xp())
+    expect(badges.map((b) => [b.id, b.earned])).toEqual([
+      ["first-paper", true],
+      ["streak-7", true],
+      ["grade-up", true],
+      ["streak-30", false],
+      ["a-star", false],
+    ])
+    const none = deriveBadges(
+      makeHome({ stats: { papersMarked: 0, marksWonBack: 0, bestGrade: null }, floor: [] }),
+      xp({ streak: { current: 0, longest: 0, lastActiveOn: null, freezesAvailable: 0 } }),
+    )
+    expect(none.every((b) => !b.earned)).toBe(true)
+  })
+
+  it("people doors", () => {
+    expect(ordinal(1)).toBe("1st")
+    expect(ordinal(3)).toBe("3rd")
+    expect(ordinal(11)).toBe("11th")
+    expect(ordinal(22)).toBe("22nd")
+    const doors = peopleVm({ classes: 2, rank: 3, friends: 4, parents: 1 })
+    expect(doors.map((d) => [d.label, d.sub, d.to])).toEqual([
+      ["Classes", "2 classes", "/student/classes"],
+      ["Standings", "3rd", "/student/board"],
+      ["Friends", "4 friends", "/student/friends"],
+      ["Parents", "1 linked", "/student/parents"],
+    ])
+    expect(peopleVm({ classes: undefined, rank: null, friends: 0, parents: 0 }).map((d) => d.sub)).toEqual([
+      null,
+      "Not ranked yet",
+      "Add a friend",
+      "Invite a parent",
+    ])
+  })
+
+  it("subjects and activity", () => {
+    expect(subjectsVm(makeHome())[2]).toEqual({
+      grade: "B",
+      title: "Additional Mathematics",
+      sub: "0606 · 2 papers · 9 pts to A",
+      to: "/student/subject/0606",
+    })
+    const home = makeHome({ activity: [{ kind: "paper", title: "Paper marked", sub: "Mathematics P4 · B", at: "2026-11-10T10:00:00+00:00" }] })
+    expect(activityVm(home)).toEqual([{ kind: "paper", title: "Paper marked", sub: "Mathematics P4 · B", when: "2 days ago" }])
+  })
+
+  it("account rows keep tutoring, placement, settings, notifications and recently deleted", () => {
+    const rows = accountRows({ deletedCount: 2, placementCode: "0580" })
+    expect(rows.map((r) => [r.label, r.sub, r.to])).toEqual([
+      ["Tutoring", "Book a session", "/student/tutors"],
+      ["Placement test", "Find your starting level", "/student/placement/0580"],
+      ["Profile and settings", null, "/student/settings"],
+      ["Notifications", null, "/student/notifications"],
+      ["Recently deleted", "2 papers", "/student/recently-deleted"],
+    ])
+    expect(accountRows({ deletedCount: 0, placementCode: null }).map((r) => r.label)).not.toContain("Placement test")
+  })
+})
