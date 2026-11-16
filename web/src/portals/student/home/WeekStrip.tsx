@@ -13,7 +13,7 @@ export function WeekStrip({ days, className }: { days: HomeVm["week"]; className
             to={d.to}
             aria-label={d.ariaLabel}
             aria-current={d.isToday ? "date" : undefined}
-            className={cn("grid min-h-11 justify-items-center gap-[5px] rounded-chip py-1.5 text-[12px] font-semibold", FOCUS, d.isToday ? "text-primary" : "text-on-surface-variant")}
+            className={cn("grid min-h-11 min-w-11 justify-items-center gap-[5px] rounded-chip py-1.5 text-[12px] font-semibold", FOCUS, d.isToday ? "text-primary" : "text-on-surface-variant")}
           >
             <span aria-hidden="true">{d.letter}</span>
             <span
