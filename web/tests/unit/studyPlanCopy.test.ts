@@ -8,6 +8,7 @@ import {
   examLine,
   formatMinutes,
   nextExamForSubject,
+  parseDay,
   reasonLine,
   refusalCopy,
   spokenMinutes,
@@ -145,5 +146,20 @@ describe("plan lines", () => {
     expect(refusalCopy("no_signal").heading).toBe("I need a paper first")
     expect(refusalCopy("quota").heading).toBe("I couldn’t plan this week")
     expect(refusalCopy(null).heading).toBe("I couldn’t plan this week")
+  })
+})
+
+describe("one clock: today built with parseDay", () => {
+  const today = parseDay("2026-08-06")
+  it("counts whole days from the server day in any timezone", () => {
+    expect(examLine({ date: "2027-02-10", paperNumber: 4 }, today)).toBe("Paper 4 in 188 days")
+    const cal = calendar([{ code: "0580", paper: 4, dates: ["2027-02-10", "2026-07-01"] }])
+    expect(nextExamForSubject(cal, "0580", today)).toEqual({ date: "2027-02-10", paperNumber: 4 })
+  })
+  it("treats the same day as today and the next as tomorrow", () => {
+    expect(examLine({ date: "2026-08-06", paperNumber: 2 }, today)).toBe("Paper 2 today")
+    expect(examLine({ date: "2026-08-07", paperNumber: 2 }, today)).toBe("Paper 2 tomorrow")
+    const cal = calendar([{ code: "0580", paper: 2, dates: ["2026-08-06"] }])
+    expect(nextExamForSubject(cal, "0580", today)).toEqual({ date: "2026-08-06", paperNumber: 2 })
   })
 })

@@ -143,7 +143,12 @@ export interface NextExam {
 }
 
 /** The soonest future exam date for one subject, from the same calendar the
- * Announcements countdown reads (K9). */
+ * Announcements countdown reads (K9).
+ *
+ * `today` must be built with `parseDay(response.today)` (the server's day,
+ * local midnight), never `new Date(iso)` (UTC midnight, a day off west of UTC)
+ * or `new Date()` (the device clock, a second source of truth).
+ */
 export function nextExamForSubject(
   calendar: StudentExamCalendar | undefined,
   subjectCode: string,
@@ -162,6 +167,13 @@ export function nextExamForSubject(
   return best ? { date: best.date, paperNumber: best.paperNumber } : null
 }
 
+/**
+ * Countdown line for one exam.
+ *
+ * `today` must be built with `parseDay(response.today)` (the server's day,
+ * local midnight), never `new Date(iso)` (UTC midnight, a day off west of UTC)
+ * or `new Date()` (the device clock, a second source of truth).
+ */
 export function examLine(exam: NextExam, today: Date): string {
   const days = daysUntil(exam.date, today)
   const when = days === 0 ? "today" : days === 1 ? "tomorrow" : `in ${days} days`
