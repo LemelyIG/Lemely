@@ -553,6 +553,19 @@ def test_seat_bodies_are_validated(pg_sessionmaker: sessionmaker[Session]) -> No
     assert h.fake.intentions == []
 
 
+def test_a_reduction_above_the_old_cap_is_not_refused_by_the_schema(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A subscription holding 250 seats (the admin raised the ceiling) can reduce to 201."""
+    sm = pg_sessionmaker
+    h = Harness(sm)
+    scene = teacher_with_plan(sm, extra=250)
+    client = h.as_user(scene["teacher_id"], Role.teacher)
+    res = client.put(_seats_url(scene, "/pending"), json={"extraSeats": 201})
+    assert res.status_code == 200, res.text
+    assert res.json() == {"extraSeats": 250, "pendingExtraSeats": 201}
+
+
 def test_the_seat_ceiling_refusal_is_422_invalid_seats(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:

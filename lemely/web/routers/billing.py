@@ -54,12 +54,12 @@ from lemely.db.billing_repo import (
     UnknownCreditPack,
     UnknownPayer,
     active_catalogue,
+    credit_validity_months,
     describe_payment,
     payment_for_viewer,
     receipts_for,
     saved_cards_for,
 )
-from lemely.db.billing_settings_repo import get_billing_settings
 from lemely.db.billing_summary import build_billing_summary, is_linked_student
 from lemely.db.merchant_charge_repo import (
     ChargeQuote,
@@ -223,7 +223,7 @@ def get_catalogue(
     with sm() as session:
         tiers, packs = active_catalogue(session, audience=audience)
         return CatalogueDTO(
-            creditValidityMonths=get_billing_settings(session).credit_validity_months,
+            creditValidityMonths=credit_validity_months(session),
             planTiers=[_plan_tier_dto(t, current_terms_for(session, t)) for t in tiers],
             creditPacks=[
                 CreditPackDTO(
@@ -242,14 +242,20 @@ def get_catalogue(
 def _render_public_catalogue(
     session: Session, audience: Literal["student", "teacher"]
 ) -> PublicCatalogueDTO:
-    """The public pricing page for one audience: sellable tiers and packs, public fields only."""
+    """The public pricing page for one audience: sellable tiers and packs, public fields only.
+
+    ``creditValidityMonths`` is read live, fail-closed and without writing. The page is then held
+    by ``PublicCatalogueCache`` for its TTL (30 s, per instance, not cleared by admin writes): a
+    declared UD13-DV-2 carve-out, display only, so an edit shows up to 30 s late and no grant
+    reads the cache.
+    """
     is_teacher = audience == "teacher"
     tiers, packs = active_catalogue(
         session, audience=PlanAudience(audience), sellable_tiers_only=True
     )
     return PublicCatalogueDTO(
         audience=audience,
-        creditValidityMonths=get_billing_settings(session).credit_validity_months,
+        creditValidityMonths=credit_validity_months(session),
         planTiers=[
             PublicPlanTierDTO(
                 code=t.code,

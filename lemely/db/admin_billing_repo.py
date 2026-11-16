@@ -38,13 +38,12 @@ from lemely.db.models.billing import (
     Subscription,
 )
 from lemely.db.models.billing_ops import (
-    BillingSettings,
     PaymentRefund,
     RefundKind,
     RefundStatus,
 )
 from lemely.db.models.usage import EstimatorInputKind, UsageEstimator, UsageRate
-from lemely.db.plan_terms_repo import subscribers_to_move
+from lemely.db.plan_terms_repo import current_notice_days, subscribers_to_move
 from lemely.db.subscription_repo import PlanNotPurchasable, PlanSyncFailed, current_grace_days
 from lemely.db.subscription_repo import sync_paymob_plan as link_paymob_plan
 from lemely.db.usage_catalogue_repo import (
@@ -316,8 +315,6 @@ _TERMS_FIELDS: Final = (
 CREDIT_PACK_MUTABLE: Final = ("name", "units", "price_minor", "is_active")
 _CREDIT_PACK_AUDIT: Final = ("code", "name", "units", "price_minor", "currency", "is_active")
 _FREE_ALLOWANCE_AUDIT: Final = (*_CREDIT_PACK_AUDIT, "signup_validity_days")
-#: ``price_change_notice_days`` when ``billing_settings`` has no row (the migration's seed).
-_DEFAULT_NOTICE_DAYS: Final = 14
 _SIGNUP_CODES: Final[dict[FreeAudience, str]] = {
     "student": SIGNUP_STUDENT_PACK,
     "teacher": SIGNUP_TEACHER_PACK,
@@ -398,7 +395,8 @@ class CatalogueSnapshot:
     tier_counts: Mapping[uuid.UUID, TierCounts] = field(default_factory=dict)
     auto_topup_counts: Mapping[uuid.UUID, int] = field(default_factory=dict)
     auto_topup_cap_below_price_counts: Mapping[uuid.UUID, int] = field(default_factory=dict)
-    price_change_notice_days: int = _DEFAULT_NOTICE_DAYS
+    #: The admin notice length, read fail-closed with the rest (UD-13): no seed stands in for it.
+    price_change_notice_days: int = field(kw_only=True)
 
 
 def paymob_drift(tier: PlanTier, key_mode: str, grace_days: int) -> DriftState:
@@ -678,8 +676,7 @@ class AdminCatalogueService:
                 tier_counts=_tier_counts(s),
                 auto_topup_counts=_auto_topup_counts(s),
                 auto_topup_cap_below_price_counts=_auto_topup_cap_below_price_counts(s),
-                price_change_notice_days=s.scalar(select(BillingSettings.price_change_notice_days))
-                or _DEFAULT_NOTICE_DAYS,
+                price_change_notice_days=current_notice_days(s),
             )
 
     # -- tiers ---------------------------------------------------------------

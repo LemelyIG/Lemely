@@ -22,7 +22,6 @@ import sqlalchemy as sa
 import structlog
 from sqlalchemy.orm import aliased
 
-from lemely.core.billing_defaults import PRICE_CHANGE_NOTICE_DAYS
 from lemely.core.subscription_rules import (
     period_end,
     subscription_amount_minor,
@@ -301,9 +300,28 @@ def _live_paid_filters(S: type[Subscription], T: type[PlanTier]) -> list[sa.Colu
     ]
 
 
-def _notice_days(session: Session) -> int:
-    days = session.scalar(sa.select(BillingSettings.price_change_notice_days))
-    return PRICE_CHANGE_NOTICE_DAYS if days is None else int(days)
+class NoticeSettingMissing(RuntimeError):
+    """``billing_settings`` has no row: the notice period is unknown, so no move is scheduled."""
+
+    def __init__(self) -> None:
+        super().__init__("The price-change notice setting is missing")
+
+
+def current_notice_days(session: Session) -> int:
+    """The admin notice length: ``billing_settings.price_change_notice_days`` (7 to 90, ``id = 1``).
+
+    Read in the caller's transaction, no lock, never cached. Fails closed like the seat ceiling
+    and the credit validity: ``create_all`` and the migration both insert the row, so a missing
+    one is a damaged database. It raises :class:`NoticeSettingMissing` and alerts, and no constant
+    stands in for it (a constant could give a subscriber less notice than the admin promised).
+    """
+    days = session.scalar(
+        sa.select(BillingSettings.price_change_notice_days).where(BillingSettings.id == 1)
+    )
+    if days is None:
+        log.error("notice_setting_missing", alert=True)
+        raise NoticeSettingMissing
+    return int(days)
 
 
 def _seats_held(session: Session, teacher_id: uuid.UUID) -> int:
@@ -415,7 +433,7 @@ def _announce_one(
     price_changes = price_terms_differ(cur_terms, new_terms)
     amount_changes = renewal_amount(new_terms, seats) != renewal_amount(cur_terms, seats)
     full_notice = worse or (price_changes and not amount_updatable)
-    effective_at = now + timedelta(days=_notice_days(session)) if full_notice else now
+    effective_at = now + timedelta(days=current_notice_days(session)) if full_notice else now
     sub.pending_terms_version = new_terms.terms_version
     sub.pending_terms_effective_at = effective_at
     sub.version = (sub.version or 0) + 1
@@ -720,7 +738,7 @@ def announce_fixed_path_end(session: Session, sub: Subscription, *, now: datetim
     tier = tier_for_terms(session, sub.plan_tier_id)
     assert tier.interval is not None  # noqa: S101 - a plan that renews has an interval
     ends_at = first_applies_at(
-        end, tier.interval.value, now + timedelta(days=_notice_days(session))
+        end, tier.interval.value, now + timedelta(days=current_notice_days(session))
     )
     written = enqueue_plan_terms_ends(
         session, subscription=sub, terms_version=version, ends_at=ends_at
@@ -753,10 +771,7 @@ def fixed_path_move_ids(
     ``only`` narrows the answer to one row (the caller's re-check under its lock).
     """
     S = Subscription
-    notice_days = sa.func.coalesce(
-        sa.select(BillingSettings.price_change_notice_days).scalar_subquery(),
-        PRICE_CHANGE_NOTICE_DAYS,
-    )
+    notice_days = sa.literal(current_notice_days(session), sa.Integer)
     current = aliased(PlanTierTerms)
     pending = aliased(PlanTierTerms)
     seats = sa.func.coalesce(S.pending_extra_seats, S.extra_seats, 0)
@@ -806,10 +821,12 @@ def fixed_path_move_ids(
 __all__ = [
     "TERMS_NOTICE_BATCH",
     "FixedPathEnd",
+    "NoticeSettingMissing",
     "PendingTermsChange",
     "TierTerms",
     "allowed_terms_for_amount",
     "announce_fixed_path_end",
+    "current_notice_days",
     "current_terms_for",
     "first_applies_at",
     "fixed_path_move_ids",

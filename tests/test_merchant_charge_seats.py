@@ -1247,6 +1247,29 @@ def test_the_admin_ceiling_bounds_a_purchase(pg_sessionmaker: sessionmaker[Sessi
             row.max_extra_seats = saved
 
 
+def test_lowering_the_ceiling_never_sheds_seats_already_held(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """UD-13 A15: a subscription holding 10 seats keeps them when the ceiling drops to 5."""
+    sm = pg_sessionmaker
+    with sm.begin() as session:
+        row = session.get(BillingSettings, 1)
+        assert row is not None
+        saved = row.max_extra_seats
+        row.max_extra_seats = 5
+    try:
+        scene = _teacher(sm, extra=10)
+        _refused(sm, _CheckoutClient(), scene, 1, "invalid_seats")  # nothing more is sold
+        _reduce(sm, scene, 8)  # a reduction is legal above the ceiling: it never reads it
+        sub = _sub(sm, scene)
+        assert (sub.extra_seats, sub.pending_extra_seats) == (10, 8)
+    finally:
+        with sm.begin() as session:
+            row = session.get(BillingSettings, 1)
+            assert row is not None
+            row.max_extra_seats = saved
+
+
 # ---------------------------------------------------------------------------
 # The I3 lock has two exclusions (m3).
 # ---------------------------------------------------------------------------

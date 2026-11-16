@@ -15,12 +15,15 @@ from typing import TYPE_CHECKING
 import pytest
 import sqlalchemy as sa
 from pydantic import ValidationError
+from structlog.testing import capture_logs
 
 from lemely.core import billing_defaults
+from lemely.db.admin_billing_repo import AdminCatalogueService
 from lemely.db.models.billing import CreditPack
 from lemely.db.models.billing_ops import CreditConversionRate
 from lemely.db.models.enums import Role
 from lemely.db.models.usage import UsageGrant
+from lemely.db.plan_terms_repo import NoticeSettingMissing, current_notice_days
 from lemely.db.subscription_repo import credit_units_for_amount
 from lemely.db.usage_catalogue_repo import (
     SIGNUP_STUDENT_PACK,
@@ -30,6 +33,7 @@ from lemely.db.usage_catalogue_repo import (
 )
 from lemely.web.schemas_billing_charges import SeatReductionRequest
 from lemely.web.schemas_subscriptions import SubscriptionCheckoutRequestDTO
+from tests.paymob_fixtures import PAYMOB_SETTINGS, FakePaymobClient
 from tests.usage_helpers import NOW, seed_user
 
 if TYPE_CHECKING:
@@ -185,3 +189,33 @@ def test_the_request_schemas_bound_seats_by_the_sanity_limit_not_the_old_constan
             SubscriptionCheckoutRequestDTO.model_validate(
                 {"planTierId": "5f1f3f0e-0000-4000-8000-000000000001", "extraSeats": over}
             )
+
+
+# -- the price-change notice length fails closed (UD13-G, review I2/M3) -------------------------
+
+
+def test_the_notice_length_is_the_admin_set_one(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    with migrated_sessionmaker.begin() as session:
+        session.execute(sa.text("UPDATE billing_settings SET price_change_notice_days = 30"))
+    with migrated_sessionmaker() as session:
+        assert current_notice_days(session) == 30
+    catalogue = AdminCatalogueService(
+        migrated_sessionmaker, FakePaymobClient(), PAYMOB_SETTINGS, now=lambda: NOW
+    ).catalogue()
+    assert catalogue.price_change_notice_days == 30
+
+
+def test_a_missing_settings_row_stops_the_notice_read_and_alerts(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    with migrated_sessionmaker.begin() as session:
+        session.execute(sa.text("DELETE FROM billing_settings"))
+    with (
+        capture_logs() as logs,
+        migrated_sessionmaker() as session,
+        pytest.raises(NoticeSettingMissing),
+    ):
+        current_notice_days(session)
+    assert [log["event"] for log in logs if log.get("alert")] == ["notice_setting_missing"]

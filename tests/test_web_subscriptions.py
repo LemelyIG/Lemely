@@ -199,6 +199,31 @@ def test_checkout_refuses_a_client_sent_price_and_extra_fields(
         assert response.status_code == 422, extra
 
 
+def test_a_first_checkout_over_200_seats_reaches_the_admin_ceiling(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The schema no longer stops at 200: the service refuses above ``max_extra_seats``."""
+    sm = pg_sessionmaker
+    teacher = seed_user(sm, Role.teacher)
+    tier = seed_tier(sm, audience=PlanAudience.teacher, extra_seat_price_minor=100)
+    http = Harness(sm).as_user(teacher, Role.teacher)
+    url = f"{BILLING}/subscriptions/checkout"
+    body = {"planTierId": str(tier), "extraSeats": 250}
+    with sm.begin() as session:
+        session.execute(sa.text("UPDATE billing_settings SET max_extra_seats = 200"))
+    try:
+        over = http.post(url, json=body)
+        assert over.status_code == 422, over.text
+        assert _error(over) == "invalid_extra_seats"  # the service's refusal, not a schema one
+        with sm.begin() as session:
+            session.execute(sa.text("UPDATE billing_settings SET max_extra_seats = 300"))
+        allowed = http.post(url, json=body)
+        assert allowed.status_code == 201, allowed.text
+    finally:
+        with sm.begin() as session:
+            session.execute(sa.text("UPDATE billing_settings SET max_extra_seats = 200"))
+
+
 def test_checkout_error_mapping(pg_sessionmaker: sessionmaker[Session]) -> None:
     parent = seed_user(pg_sessionmaker, Role.parent)
     child = seed_user(pg_sessionmaker, Role.student)
