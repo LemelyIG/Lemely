@@ -198,14 +198,18 @@ function sortVMs(list: SessionVM[]): SessionVM[] {
   return [...list].sort((a, b) => a.date.localeCompare(b.date) || a.dotIndex - b.dotIndex)
 }
 
-export function planScreen(input: PlanModelInput): PlanScreen {
-  const { overview, filter } = input
+export function planScreen(raw: PlanModelInput): PlanScreen {
+  const { overview } = raw
   if (overview.subjects.length === 0) return { kind: "noSubjects" }
+  // A stale `?subject=` code falls back to all subjects, so the scope is never empty.
+  const filter = resolveFilter(overview, raw.filter ?? undefined)
+  const input: PlanModelInput = { ...raw, filter }
 
   const scope = filter ? overview.subjects.filter((s) => s.subjectCode === filter) : overview.subjects
   const scopeCodes = scope.map((s) => s.subjectCode)
   const available = scope.filter((s) => s.generated && s.plan?.available)
-  const notGenerated = scope.filter((s) => !s.generated)
+  // `generated` with no plan body is as good as not built yet.
+  const notGenerated = scope.filter((s) => !s.generated || !s.plan)
   const refused = scope.filter((s) => s.generated && s.plan && !s.plan.available)
   const dotIndex = (code: string) => overview.subjects.findIndex((s) => s.subjectCode === code)
 

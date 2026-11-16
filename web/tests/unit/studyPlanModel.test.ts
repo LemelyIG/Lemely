@@ -231,3 +231,47 @@ describe("edges", () => {
     expect(resolveFilter(mockWeek(), undefined)).toBeNull()
   })
 })
+
+describe("totality and move rules", () => {
+  it("a stale filter code falls back to all subjects instead of throwing", () => {
+    const s = planScreen(input(mockWeek(), { filter: "9999" }))
+    expect(s.kind).toBe("plan")
+    expect(s.kind === "plan" && s.header.filters.find((f) => f.selected)?.label).toBe("All")
+  })
+  it("a stale filter on a week with no plans still returns a state", () => {
+    const s = planScreen(input(O([SUB("0580", null), SUB("0625", null)]), { filter: "9999" }))
+    expect(s.kind).toBe("firstRun")
+    expect(s.kind === "firstRun" && s.codesToBuild).toEqual(["0580", "0625"])
+  })
+  it("a generated subject with no plan body counts as not built", () => {
+    const o = O([SUB("0580", null, { generated: true }), SUB("0625", P("0625", [S("a", "2026-08-06")]))])
+    const alone = planScreen(input(o, { filter: "0580" }))
+    expect(alone.kind).toBe("firstRun")
+    expect(alone.kind === "firstRun" && alone.codesToBuild).toEqual(["0580"])
+    const mixed = asPlan(planScreen(input(o)))
+    expect(mixed.body.pending).toEqual([{ subjectCode: "0580", subjectName: "Mathematics", kind: "notGenerated" }])
+  })
+  it("stops move days at the end of the week for a session placed past Sunday", () => {
+    const s = asPlan(planScreen(input(O([SUB("0625", P("0625", [S("a", "2026-08-06"), S("b", "2026-08-10")]))]))))
+    const b = s.all.find((v) => v.id === "b")
+    expect(b?.moveDays.map((d) => d.label)).toEqual(["Today", "Fri", "Sat", "Sun"])
+    expect(b?.moveDays.every((d) => d.date <= "2026-08-09")).toBe(true)
+  })
+  it("cannot move anything when today is the plan's last day", () => {
+    const o = O([SUB("0625", P("0625", [S("a", "2026-08-09")]))], { today: "2026-08-09" })
+    const s = asPlan(planScreen(input(o)))
+    expect(s.body.today.sessions[0].moveDays).toEqual([])
+    expect(s.body.today.sessions[0].canMove).toBe(false)
+  })
+  it("a missed any-day session is not movable", () => {
+    const s = asPlan(planScreen(input(O([SUB("0625", P("0625", [S("a", "2026-08-04", { anyDay: true }), S("b", "2026-08-07")]))]))))
+    const a = s.all.find((v) => v.id === "a")
+    expect(a?.status).toBe("anyDay")
+    expect(a?.canMove).toBe(false)
+    expect(a?.moveDays).toEqual([])
+  })
+  it("leaves a goal with nothing planned at zero", () => {
+    const s = asPlan(planScreen(input(O([SUB("0625", P("0625", [S("a", "2026-08-06", { completedAt: DONE }), S("b", "2026-08-07")]))]))))
+    expect(ringParts(s.all, "2026-08-06")).toEqual([1, 0, 0])
+  })
+})
