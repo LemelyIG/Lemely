@@ -29,6 +29,7 @@ from lemely.db.models.billing import (
     PaymentStatus,
     PlanAudience,
     PlanTier,
+    PlanTierTerms,
     Subscription,
 )
 from lemely.db.models.billing_ops import SEED_BILLING_SETTINGS_SQL
@@ -267,6 +268,48 @@ def seed_tier(
     return tier_id
 
 
+def edit_tier_terms(
+    sm: sessionmaker[Session],
+    tier_id: uuid.UUID,
+    *,
+    price_minor: int | None = None,
+    extra_seat_price_minor: int | None = None,
+    allowance_units: int | None = None,
+    included_seats: int | None = None,
+    seat_allowance_units: int | None = None,
+) -> int:
+    """Edit a tier's terms as the admin write does: insert the next history row, then move the tier.
+
+    Returns the new ``terms_version``. Terms left out keep their value. No subscription is
+    touched: that is the point under test.
+    """
+    with sm.begin() as session:
+        tier = session.get(PlanTier, tier_id)
+        assert tier is not None
+        new = tier.terms_version + 1
+        values = {
+            "price_minor": tier.price_minor if price_minor is None else price_minor,
+            "extra_seat_price_minor": (
+                tier.extra_seat_price_minor
+                if extra_seat_price_minor is None
+                else extra_seat_price_minor
+            ),
+            "allowance_units": (
+                tier.allowance_units if allowance_units is None else allowance_units
+            ),
+            "included_seats": tier.included_seats if included_seats is None else included_seats,
+            "seat_allowance_units": (
+                tier.seat_allowance_units if seat_allowance_units is None else seat_allowance_units
+            ),
+        }
+        session.add(PlanTierTerms(plan_tier_id=tier.id, terms_version=new, **values))
+        session.flush()
+        for column, value in values.items():
+            setattr(tier, column, value)
+        tier.terms_version = new
+    return new
+
+
 def seed_subscription(
     sm: sessionmaker[Session],
     *,
@@ -287,6 +330,9 @@ def seed_subscription(
     paymob_cancelled_at: datetime | None = None,
     created_at: datetime | None = None,
     activated_at: datetime | None = None,
+    terms_version: int = 1,
+    pending_terms_version: int | None = None,
+    pending_terms_effective_at: datetime | None = None,
 ) -> uuid.UUID:
     """Insert a subscription row exactly as given (no ledger effect, no period row).
 
@@ -313,6 +359,9 @@ def seed_subscription(
             is_manually_activated=is_manually_activated,
             paymob_cancelled_at=paymob_cancelled_at,
             activated_at=activated_at,
+            terms_version=terms_version,
+            pending_terms_version=pending_terms_version,
+            pending_terms_effective_at=pending_terms_effective_at,
         )
         if created_at is not None:
             sub.created_at = created_at
@@ -496,6 +545,7 @@ __all__ = [
     "T0",
     "FakePaymobClient",
     "charge",
+    "edit_tier_terms",
     "ensure_billing_settings",
     "grants_of",
     "link_parent",

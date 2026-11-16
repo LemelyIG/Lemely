@@ -80,6 +80,12 @@ from lemely.db.models.enums import Role, SubscriptionStatus
 from lemely.db.models.team import TeacherMember, TeacherMemberKind, TeacherMemberStatus
 from lemely.db.models.usage import GrantKind, UsageGrant
 from lemely.db.models.users import User
+from lemely.db.plan_terms_repo import (
+    TierTerms,
+    current_terms_for,
+    terms_for,
+    terms_in_force_for_next_period,
+)
 from lemely.db.teacher_team_repo import TeacherTeamService
 from lemely.db.usage_ledger_repo import GrantAlreadyExpired, UsageLedger
 from lemely.io.paymob.client import PaymobError
@@ -560,17 +566,18 @@ def _seats_in_use(session: Session, teacher_id: uuid.UUID) -> int:
 
 
 def _shed_excess_seats(
-    session: Session, subscription: Subscription, tier: PlanTier, *, now: datetime
+    session: Session, subscription: Subscription, terms: TierTerms, *, now: datetime
 ) -> int:
     """Move the newest active seats over capacity to ``leaving`` (spec §5.4 fallback rule).
 
     Checkout already refuses a plan with fewer seats than the teacher holds (UD-5), so this only
     acts when a seat was claimed between checkout and payment. A leaving seat keeps working to
     month end and gets no new month's grant. Runs before the grant is issued (lock order,
-    DV-13: member rows before ledger owner locks).
+    DV-13: member rows before ledger owner locks). ``terms`` are the period's terms: the capacity
+    changes at the renewal instant and never mid-period.
     """
     capacity = seat_capacity_for(
-        included_seats=tier.included_seats, extra_seats=subscription.extra_seats or 0
+        included_seats=terms.included_seats, extra_seats=subscription.extra_seats or 0
     )
     excess = _seats_in_use(session, subscription.user_id) - capacity
     if excess <= 0:
@@ -754,22 +761,22 @@ def convert_payment_to_credits(
 def _issue_period_grant(
     session: Session,
     subscription: Subscription,
-    tier: PlanTier,
+    terms: TierTerms,
     period: SubscriptionPeriod,
     payment: Payment,
 ) -> UsageGrant | None:
     """The period's ``period_allowance`` grant, the one definition (constraints §5.2).
 
     Owned by the beneficiary, invisible, effective at the period start and expiring at its end;
-    the ledger repays the owner's debt first. A tier with no allowance grants nothing (the ledger
-    refuses zero units).
+    the ledger repays the owner's debt first. Terms with no allowance grant nothing (the ledger
+    refuses zero units). ``terms`` are the terms the period was bought on, never the live tier's.
     """
-    if not tier.allowance_units:
+    if not terms.allowance_units:
         return None
     return UsageLedger(session).issue_grant(
         owner_user_id=subscription.user_id,
         kind=GrantKind.period_allowance,
-        units=tier.allowance_units,
+        units=terms.allowance_units,
         idempotency_key=f"period:{period.id}",
         expires_at=period.period_end,
         visible=False,
@@ -1058,17 +1065,19 @@ def handle_subscription_first(session: Session, payment: Payment, obj: JsonMap) 
             raise
         _convert_superseded_payment(session, payment, subscription, paid_at=paid_at)
         return
+    terms = terms_for(session, subscription)
     period = SubscriptionPeriod(
         subscription_id=subscription.id,
         period_start=paid_at,
         period_end=end,
         payment_id=payment.id,
+        terms_version=terms.terms_version,
     )
     session.add(period)
     session.flush()
     if tier.audience is PlanAudience.teacher:
-        _shed_excess_seats(session, subscription, tier, now=paid_at)
-    _issue_period_grant(session, subscription, tier, period, payment)
+        _shed_excess_seats(session, subscription, terms, now=paid_at)
+    _issue_period_grant(session, subscription, terms, period, payment)
     log.info(
         "subscription_activated",
         subscription_id=str(subscription.id),
@@ -1121,22 +1130,36 @@ def parse_subscription_webhook(body: JsonMap) -> tuple[str, int]:
 
 
 def _period_terms(
-    session: Session, subscription: Subscription, *, with_pending: bool
-) -> tuple[PlanTier, int]:
-    """The tier and extra seats the next period uses, with or without the pending change.
+    session: Session,
+    subscription: Subscription,
+    *,
+    with_pending: bool,
+    with_terms: bool | None = None,
+) -> tuple[PlanTier, TierTerms, int]:
+    """The tier, its terms and the extra seats the next period uses.
 
-    A tier that sells no extra seats holds none, whatever the row says.
+    ``with_pending`` applies the pending plan and seat changes. ``with_terms`` (default: the same)
+    applies the pending terms move, which the fixed-amount path refuses when it would change the
+    amount. Without either the subscriber keeps the terms they are on. A tier that sells no extra
+    seats holds none, whatever the row says.
     """
+    apply_terms = with_pending if with_terms is None else with_terms
     pending_tier_id = subscription.pending_plan_tier_id if with_pending else None
     tier = session.get(PlanTier, pending_tier_id or subscription.plan_tier_id)
     if tier is None:
         raise RuntimeError(f"subscription {subscription.id} has no plan tier")
+    if tier.id != subscription.plan_tier_id:
+        terms = current_terms_for(session, tier)  # a plan change moves to the target's terms
+    elif apply_terms:
+        terms = terms_in_force_for_next_period(session, subscription)
+    else:
+        terms = terms_for(session, subscription)
     seats = (
         subscription.pending_extra_seats
         if with_pending and subscription.pending_extra_seats is not None
         else subscription.extra_seats or 0
     )
-    return tier, seats if tier.extra_seat_price_minor > 0 else 0
+    return tier, terms, seats if terms.extra_seat_price_minor > 0 else 0
 
 
 def _expected_renewal_amount(
@@ -1149,14 +1172,52 @@ def _expected_renewal_amount(
     (:func:`handle_subscription_renewal`, which no production path dispatches) leaves it at its
     default.
     """
-    tier, seats = _period_terms(session, subscription, with_pending=True)
+    _, terms, seats = _period_terms(session, subscription, with_pending=True)
     return expected_renewal_amount_minor(
-        price_minor=tier.price_minor,
+        price_minor=terms.price_minor,
         extra_seats=seats,
-        extra_seat_price_minor=tier.extra_seat_price_minor,
+        extra_seat_price_minor=terms.extra_seat_price_minor,
         paymob_amount_minor=subscription.paymob_amount_minor,
         amount_updatable=amount_updatable,
     )
+
+
+def _renewal_applies(
+    session: Session,
+    subscription: Subscription,
+    charged_minor: int,
+    *,
+    amount_updatable: bool,
+    quiet: bool = False,
+) -> tuple[bool, bool]:
+    """``(apply_pending, apply_terms)`` for a renewal charged at ``charged_minor`` (DV-12, UD13-A).
+
+    The pending tier and seat changes apply iff the charge is the expected amount. The pending
+    terms move applies iff the charge is also the amount the NEW terms compute to: on the
+    fixed-amount path the expected amount is the stamp whatever the terms say, so a move that
+    changes the amount is never applied there (the sweep scheduled a cancel instead), while a move
+    that leaves it unchanged is. A deferred move stays pending and is logged (unless ``quiet``).
+    """
+    expected = _expected_renewal_amount(session, subscription, amount_updatable=amount_updatable)
+    apply_pending = charged_minor == expected
+    in_force = terms_in_force_for_next_period(session, subscription)
+    due = (
+        subscription.pending_plan_tier_id is None
+        and in_force.terms_version != subscription.terms_version
+    )
+    apply_terms = apply_pending
+    if due:
+        computed = _expected_renewal_amount(session, subscription, amount_updatable=True)
+        apply_terms = apply_pending and charged_minor == computed
+        if not apply_terms and not quiet:
+            log.warning(
+                "subscription_terms_move_deferred",
+                subscription_id=str(subscription.id),
+                charged_minor=charged_minor,
+                expected_minor=computed,
+                pending_terms_version=subscription.pending_terms_version,
+            )
+    return apply_pending, apply_terms
 
 
 def _grant_renewal_period(
@@ -1167,20 +1228,26 @@ def _grant_renewal_period(
     charged_at: datetime,
     now: datetime,
     apply_pending: bool,
+    apply_terms: bool,
 ) -> SubscriptionPeriod:
     """Start the paid period: move the subscription, insert the period, grant the allowance.
 
     A plan in force continues from its period end (no gap, no overlap, however early the charge
     landed); a late charge or a reactivated plan starts at the charge. The pending tier and seat
-    changes are applied only when ``apply_pending`` (the charge was the amount they set).
-    Excess seats are shed before the grant is issued (lock order, DV-13).
+    changes are applied only when ``apply_pending`` (the charge was the amount they set), and the
+    pending terms move only when ``apply_terms`` (the charge was the new terms' amount, UD13-A).
+    The period is billed, stamped and granted on the terms in force for it, and excess seats are
+    shed against that capacity before the grant is issued (lock order, DV-13).
 
     Raises:
         _OtherPlanLive: the plan was ended and the account now holds another live one; nothing
             was changed.
     """
-    tier, seats = _period_terms(session, subscription, with_pending=apply_pending)
+    tier, terms, seats = _period_terms(
+        session, subscription, with_pending=apply_pending, with_terms=apply_terms
+    )
     assert tier.interval is not None  # noqa: S101 - the caller checked
+    moved_terms = terms.terms_version != subscription.terms_version
     live = subscription.status in PLAN_LIVE_STATUSES
     old_period_end = subscription.current_period_end
     start = (
@@ -1200,13 +1267,18 @@ def _grant_renewal_period(
                     # (plan_tier_id, terms_version) is a composite foreign key: a tier change
                     # moves to the target's current terms, and a pending move to terms only the
                     # old tier has is dropped with it (P07-T1 review M3).
-                    subscription.terms_version = tier.terms_version
+                    subscription.terms_version = terms.terms_version
                     subscription.pending_terms_version = None
                     subscription.pending_terms_effective_at = None
                 subscription.plan_tier_id = tier.id
                 subscription.pending_plan_tier_id = None
                 subscription.extra_seats = seats
                 subscription.pending_extra_seats = None
+            if apply_terms and moved_terms and tier.id == subscription.plan_tier_id:
+                # The renewal was charged at the new terms' amount: the subscriber is on them now.
+                subscription.terms_version = terms.terms_version
+                subscription.pending_terms_version = None
+                subscription.pending_terms_effective_at = None
             if not live and subscription.paymob_cancelled_at is not None:
                 # A late charge on a plan whose Paymob subscription is already cancelled: the paid
                 # period runs, but Paymob never charges again. End it at the period end as a
@@ -1232,17 +1304,18 @@ def _grant_renewal_period(
         period_start=start,
         period_end=end,
         payment_id=payment.id,
+        terms_version=terms.terms_version,
     )
     session.add(period)
     session.flush()
     if tier.audience is PlanAudience.teacher:
-        _shed_excess_seats(session, subscription, tier, now=now)
+        _shed_excess_seats(session, subscription, terms, now=now)
     if live:
         # A renewal paid during grace: the old period's leftover must not stack onto the new one.
         # After the seat shedding: that locks member rows, and no member lock may follow a ledger
         # lock (DV-13). The old period is the one the subscription pointed at before this call.
         _end_period_grants(session, subscription, now=now, period_end=old_period_end)
-    _issue_period_grant(session, subscription, tier, period, payment)
+    _issue_period_grant(session, subscription, terms, period, payment)
     enqueue_subscription_notice(
         session, subscription=subscription, notice="renewed", effective_at=end
     )
@@ -1310,8 +1383,9 @@ def _settle_renewal(
             payment_id=str(payment.id),
             alert=True,
         )
-    expected = _expected_renewal_amount(session, subscription, amount_updatable=amount_updatable)
-    apply_pending = payment.amount_minor == expected
+    apply_pending, apply_terms = _renewal_applies(
+        session, subscription, payment.amount_minor, amount_updatable=amount_updatable
+    )
     if not apply_pending and (
         subscription.pending_plan_tier_id is not None
         or subscription.pending_extra_seats is not None
@@ -1320,9 +1394,13 @@ def _settle_renewal(
             "subscription_pending_change_deferred",
             subscription_id=str(subscription.id),
             charged_minor=payment.amount_minor,
-            expected_minor=expected,
+            expected_minor=_expected_renewal_amount(
+                session, subscription, amount_updatable=amount_updatable
+            ),
         )
-    tier, _ = _period_terms(session, subscription, with_pending=apply_pending)
+    tier, _, _ = _period_terms(
+        session, subscription, with_pending=apply_pending, with_terms=apply_terms
+    )
     if tier.interval is None:
         alerts.error(
             "subscription_renewal_for_unusable_tier",
@@ -1339,6 +1417,7 @@ def _settle_renewal(
             charged_at=charged_at,
             now=now,
             apply_pending=apply_pending,
+            apply_terms=apply_terms,
         )
     except _OtherPlanLive:
         _note_charge_kept(subscription, payment, reason="other_plan_live")
@@ -2033,7 +2112,16 @@ class SubscriptionService:
         mismatch = (
             current_tier is None or currency != current_tier.currency or amount not in accepted
         )
-        tier, seats = _period_terms(session, subscription, with_pending=amount == expected)
+        apply_pending, apply_terms = _renewal_applies(
+            session,
+            subscription,
+            amount,
+            amount_updatable=self._settings.subscription_amount_updatable,
+            quiet=True,
+        )
+        tier, _, seats = _period_terms(
+            session, subscription, with_pending=apply_pending, with_terms=apply_terms
+        )
         payment = Payment(
             id=uuid.uuid4(),
             special_reference=f"subscription-renewal:{txn_id}",
@@ -2197,24 +2285,28 @@ class SubscriptionService:
             if subscription.pending_extra_seats is not None
             else subscription.extra_seats or 0
         )
-        if extra and target.extra_seat_price_minor == 0:
+        current_terms = terms_for(self._session, subscription)  # what the payer pays now
+        target_terms = current_terms_for(self._session, target)  # what a new purchase costs
+        if extra and target_terms.extra_seat_price_minor == 0:
             raise InvalidPlanChange("the new plan has no extra seats; remove them first")
         # Cheaper means the whole renewal amount, extra seats included: a lower base price with a
         # dearer seat price is an upgrade, and the upgrade path charges it at once.
         current_amount = subscription_amount_minor(
-            price_minor=current.price_minor,
-            extra_seats=extra if current.extra_seat_price_minor > 0 else 0,
-            extra_seat_price_minor=current.extra_seat_price_minor,
+            price_minor=current_terms.price_minor,
+            extra_seats=extra if current_terms.extra_seat_price_minor > 0 else 0,
+            extra_seat_price_minor=current_terms.extra_seat_price_minor,
         )
         target_amount = subscription_amount_minor(
-            price_minor=target.price_minor,
+            price_minor=target_terms.price_minor,
             extra_seats=extra,
-            extra_seat_price_minor=target.extra_seat_price_minor,
+            extra_seat_price_minor=target_terms.extra_seat_price_minor,
         )
         if target_amount >= current_amount:
             raise InvalidPlanChange("not a downgrade; upgrades apply immediately")
         if current.audience is PlanAudience.teacher:
-            capacity = seat_capacity_for(included_seats=target.included_seats, extra_seats=extra)
+            capacity = seat_capacity_for(
+                included_seats=target_terms.included_seats, extra_seats=extra
+            )
             in_use = _seats_in_use(self._session, subscription.user_id)
             if in_use > capacity:
                 raise SeatsInsufficient(in_use=in_use, capacity=capacity)

@@ -32,7 +32,13 @@ from sqlalchemy import select
 
 from lemely.core.subscription_rules import calendar_month_bounds, start_of_day
 from lemely.core.usage_pricing import prorate_units
-from lemely.db.models.billing import PLAN_LIVE_STATUSES, PlanAudience, PlanTier, Subscription
+from lemely.db.models.billing import (
+    PLAN_LIVE_STATUSES,
+    PlanAudience,
+    PlanTier,
+    PlanTierTerms,
+    Subscription,
+)
 from lemely.db.models.team import TeacherMember, TeacherMemberKind, TeacherMemberStatus
 from lemely.db.models.usage import GrantKind, UsageGrant
 from lemely.db.usage_ledger_repo import UsageLedger
@@ -59,17 +65,28 @@ def seat_grant_key(member_id: uuid.UUID, month_start: datetime) -> str:
 _PLAN_ORDER = (Subscription.payer_user_id.is_(None), Subscription.created_at, Subscription.id)
 
 
-def _live_teacher_tier(
+def _counted_seat_allowance(
     session: Session, teacher_user_id: uuid.UUID, *, lock: bool
-) -> PlanTier | None:
-    """The tier of the teacher's counted live plan (index R25), or ``None`` without one.
+) -> int | None:
+    """The monthly seat allowance of the teacher's counted live plan (index R25), or ``None``.
+
+    Read from the terms the subscription is on, never the tier's live column: an admin edit
+    reaches a subscriber at their renewal (UD13-A). ``None`` without a live teacher plan.
 
     ``lock`` takes ``FOR UPDATE`` on that subscription row: step 1 of the lock order. The claim
     already holds it, so there it is a no-op re-lock.
     """
     stmt = (
-        select(PlanTier)
-        .join(Subscription, Subscription.plan_tier_id == PlanTier.id)
+        select(PlanTierTerms.seat_allowance_units)
+        .select_from(Subscription)
+        .join(PlanTier, Subscription.plan_tier_id == PlanTier.id)
+        .join(
+            PlanTierTerms,
+            sa.and_(
+                PlanTierTerms.plan_tier_id == Subscription.plan_tier_id,
+                PlanTierTerms.terms_version == Subscription.terms_version,
+            ),
+        )
         .where(
             Subscription.user_id == teacher_user_id,
             Subscription.status.in_(PLAN_LIVE_STATUSES),
@@ -105,7 +122,7 @@ def _grant_seat(
     )
     if teacher_user_id is None:
         return None, False
-    tier = _live_teacher_tier(session, teacher_user_id, lock=True)  # step 1
+    seat_units = _counted_seat_allowance(session, teacher_user_id, lock=True)  # step 1
     member = session.get(  # step 2
         TeacherMember, member_id, with_for_update=True, populate_existing=True
     )
@@ -113,8 +130,7 @@ def _grant_seat(
         member is None
         or member.kind is not TeacherMemberKind.student_seat
         or member.status is not TeacherMemberStatus.active
-        or tier is None
-        or not tier.seat_allowance_units
+        or not seat_units
     ):
         return None, False
     month_start, month_end = calendar_month_bounds(now)
@@ -127,9 +143,7 @@ def _grant_seat(
     ).first()
     if stored is not None:
         return stored, False
-    units = prorate_units(
-        tier.seat_allowance_units, month_start, month_end, max(start_of_day(now), month_start)
-    )
+    units = prorate_units(seat_units, month_start, month_end, max(start_of_day(now), month_start))
     if units <= 0:
         return None, False
     grant = UsageLedger(session).issue_grant(  # step 3
@@ -152,12 +166,19 @@ def _seats_lacking_a_grant(session: Session, *, now: datetime, limit: int) -> li
     ranked = (
         select(
             Subscription.user_id.label("teacher_user_id"),
-            PlanTier.seat_allowance_units.label("units"),
+            PlanTierTerms.seat_allowance_units.label("units"),
             sa.func.row_number()
             .over(partition_by=Subscription.user_id, order_by=_PLAN_ORDER)
             .label("position"),
         )
         .join(PlanTier, PlanTier.id == Subscription.plan_tier_id)
+        .join(
+            PlanTierTerms,
+            sa.and_(
+                PlanTierTerms.plan_tier_id == Subscription.plan_tier_id,
+                PlanTierTerms.terms_version == Subscription.terms_version,
+            ),
+        )
         .where(
             Subscription.status.in_(PLAN_LIVE_STATUSES),
             PlanTier.audience == PlanAudience.teacher,

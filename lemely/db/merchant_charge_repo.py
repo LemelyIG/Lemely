@@ -105,6 +105,12 @@ from lemely.db.models.billing_ops import BillingSettings
 from lemely.db.models.enums import SubscriptionStatus
 from lemely.db.models.team import TeacherMember, TeacherMemberKind, TeacherMemberStatus
 from lemely.db.models.usage import GrantKind
+from lemely.db.plan_terms_repo import (
+    TierTerms,
+    current_terms_for,
+    terms_for,
+    tier_terms,
+)
 from lemely.db.subscription_repo import (
     AmountPush,
     NoCreditRate,
@@ -571,7 +577,7 @@ class MerchantChargeService:
             currency=plan.currency,
             subscription_id=plan.subscription.id,
             plan_tier_id=plan.new_tier.id,
-            terms_version=current_terms(self._session, plan.new_tier).terms_version,
+            terms_version=current_terms_for(self._session, plan.new_tier).terms_version,
         )
         # The injected clock is the checkout's birth: the void-at-settle rules compare against it.
         payment.created_at = now
@@ -612,8 +618,8 @@ class MerchantChargeService:
             raise MerchantChargeError("tier_not_found", "That plan is not available")
         old_tier = session.get(PlanTier, sub.plan_tier_id)
         assert old_tier is not None  # noqa: S101 - the foreign key
-        old_terms = billed_terms(session, sub)
-        new_terms = current_terms(session, new_tier)
+        old_terms = terms_for(session, sub)
+        new_terms = current_terms_for(session, new_tier)
         if not is_upgrade(old_tier, old_terms, new_tier, new_terms):
             raise MerchantChargeError("not_an_upgrade", "That plan is not an upgrade")
         if new_tier.audience is PlanAudience.teacher:
@@ -777,7 +783,7 @@ class MerchantChargeService:
             raise MerchantChargeError("plan_change_pending", "The plan is set to end")
         tier = session.get(PlanTier, sub.plan_tier_id)
         assert tier is not None  # noqa: S101 - the foreign key
-        terms = billed_terms(session, sub)
+        terms = terms_for(session, sub)
         if tier.audience is not PlanAudience.teacher or terms.extra_seat_price_minor <= 0:
             raise MerchantChargeError("not_a_teacher_plan", "This plan does not sell extra seats")
         if (sub.extra_seats or 0) + seats > seat_ceiling(session):
@@ -849,7 +855,7 @@ class MerchantChargeService:
                 return sub
             sub.pending_extra_seats = None
         else:
-            terms = billed_terms(session, sub)
+            terms = terms_for(session, sub)
             if terms.included_seats + extra_seats < TeacherTeamService(session).seats_used(
                 sub.user_id
             ):
@@ -1367,34 +1373,13 @@ def bump_version(sub: Subscription) -> None:
     sub.version = (sub.version or 0) + 1
 
 
-def billed_terms(session: Session, sub: Subscription) -> PlanTierTerms:
-    """The terms version the subscriber is billed on (UD13-A): what they pay, not the tier's."""
-    terms = session.scalars(
-        sa.select(PlanTierTerms).where(
-            PlanTierTerms.plan_tier_id == sub.plan_tier_id,
-            PlanTierTerms.terms_version == sub.terms_version,
-        )
-    ).one_or_none()
-    if terms is None:
-        raise RuntimeError(f"subscription {sub.id} has no terms row for its version")
-    return terms
-
-
-def current_terms(session: Session, tier: PlanTier) -> PlanTierTerms:
-    """The tier's current terms version: what a new purchase of the tier is priced at."""
-    terms = session.scalars(
-        sa.select(PlanTierTerms).where(
-            PlanTierTerms.plan_tier_id == tier.id,
-            PlanTierTerms.terms_version == tier.terms_version,
-        )
-    ).one_or_none()
-    if terms is None:
-        raise RuntimeError(f"plan tier {tier.id} has no terms row for its version")
-    return terms
+#: The tier's current terms (P06-T4's name, kept for the admin payments module): the one reader is
+#: :func:`lemely.db.plan_terms_repo.current_terms_for`.
+current_terms = current_terms_for
 
 
 def is_upgrade(
-    old_tier: PlanTier, old_terms: PlanTierTerms, new_tier: PlanTier, new_terms: PlanTierTerms
+    old_tier: PlanTier, old_terms: TierTerms, new_tier: PlanTier, new_terms: TierTerms
 ) -> bool:
     """Same audience, interval and currency, and a higher price than the one being paid."""
     return (
@@ -1406,7 +1391,7 @@ def is_upgrade(
     )
 
 
-def _seats_not_sold(sub: Subscription, new_tier: PlanTier, new_terms: PlanTierTerms) -> bool:
+def _seats_not_sold(sub: Subscription, new_tier: PlanTier, new_terms: TierTerms) -> bool:
     """True when a teacher holds extra seats and the target tier sells none (seat price 0).
 
     Such a plan holds no extra seats whatever the row says (the renewal bills none), so an upgrade
@@ -1430,8 +1415,8 @@ def _priced_extra_seats(sub: Subscription, new_tier: PlanTier) -> int:
 
 
 def _upgrade_amount(
-    old_terms: PlanTierTerms,
-    new_terms: PlanTierTerms,
+    old_terms: TierTerms,
+    new_terms: TierTerms,
     extra_seats: int,
     start: datetime,
     end: datetime,
@@ -1456,8 +1441,8 @@ def _upgrade_amount(
 
 
 def _allowance_gain(
-    old_terms: PlanTierTerms,
-    new_terms: PlanTierTerms,
+    old_terms: TierTerms,
+    new_terms: TierTerms,
     start: datetime,
     end: datetime,
     at: datetime,
@@ -1573,7 +1558,7 @@ def upgrade_void_reason(session: Session, sub: Subscription, payment: Payment) -
         target is None
         or current is None
         or not is_upgrade(
-            current, billed_terms(session, sub), target, current_terms(session, target)
+            current, terms_for(session, sub), target, current_terms_for(session, target)
         )
     ):
         return "not_an_upgrade_now"
@@ -1581,13 +1566,13 @@ def upgrade_void_reason(session: Session, sub: Subscription, payment: Payment) -
     # the terms billed NOW. Another upgrade that changed the tier (X landed, this was priced
     # old -> Y), or an admin price change on the target, makes the price differ; a payment that
     # was only converted to credits never moved the tier, so it can never trigger this.
-    if _seats_not_sold(sub, target, current_terms(session, target)):
+    if _seats_not_sold(sub, target, current_terms_for(session, target)):
         return "seats_not_sold"
-    if _terms_moved(payment, current_terms(session, target).terms_version):
+    if _terms_moved(payment, current_terms_for(session, target).terms_version):
         return "superseded"
     repriced = _upgrade_amount(
-        billed_terms(session, sub),
-        current_terms(session, target),
+        terms_for(session, sub),
+        current_terms_for(session, target),
         _priced_extra_seats(sub, target),
         sub.current_period_start,
         sub.current_period_end,
@@ -1658,8 +1643,8 @@ def on_upgrade_paid(session: Session, payment: Payment) -> None:
         return
     target = session.get(PlanTier, payment.plan_tier_id)
     assert target is not None  # noqa: S101 - the foreign key, and upgrade_void_reason read it
-    old_terms = billed_terms(session, sub)
-    new_terms = current_terms(session, target)
+    old_terms = terms_for(session, sub)
+    new_terms = current_terms_for(session, target)
     period = current_period(session, sub)
     start, end = sub.current_period_start, sub.current_period_end
     assert start is not None and end is not None  # noqa: S101 - upgrade_void_reason checked
@@ -1850,7 +1835,7 @@ def seats_void_reason(session: Session, sub: Subscription, payment: Payment) -> 
         return "seats_changing"
     if _terms_moved(payment, sub.terms_version):
         return "superseded"
-    price = billed_terms(session, sub).extra_seat_price_minor
+    price = terms_for(session, sub).extra_seat_price_minor
     if price <= 0:
         return "seats_not_sold"
     quantity = payment.seat_quantity or 0
@@ -2047,24 +2032,19 @@ def _renewal_payment(session: Session, period: SubscriptionPeriod) -> Payment | 
 
 def _period_terms(
     session: Session, sub: Subscription, period: SubscriptionPeriod, renewal: Payment
-) -> PlanTierTerms | None:
+) -> TierTerms | None:
     """The terms the period was billed on, never the tier's live ones (UD13-A, DV-3), or ``None``.
 
     ``period.terms_version`` when the renewal stamped it, on the renewal payment's own tier.
-    Otherwise the terms the subscriber is billed on (:func:`billed_terms`), but only while the
+    Otherwise the terms the subscriber is billed on (:func:`terms_for`), but only while the
     subscription is still on the renewal's tier. After a tier change (an upgrade) with no stamped
     version the billed terms of the period cannot be known exactly, and a guess would turn the
     upgrade's price gap into a "seat" charge: ``None``, and the caller charges nothing.
     """
     tier_id = renewal.plan_tier_id or sub.plan_tier_id
     if period.terms_version is None:
-        return billed_terms(session, sub) if tier_id == sub.plan_tier_id else None
-    terms = session.scalars(
-        sa.select(PlanTierTerms).where(
-            PlanTierTerms.plan_tier_id == tier_id,
-            PlanTierTerms.terms_version == period.terms_version,
-        )
-    ).one_or_none()
+        return terms_for(session, sub) if tier_id == sub.plan_tier_id else None
+    terms = tier_terms(session, tier_id, period.terms_version)
     if terms is None:
         raise RuntimeError(f"subscription {sub.id} has no terms row for its period")
     return terms
@@ -2239,7 +2219,7 @@ def _drop_extra_seats(session: Session, sub: Subscription, *, now: datetime) -> 
     for the period that has ended and the new period's amount is unpaid, so no credit is owed.
     Takes member row locks only (subscription, then members) and no ledger lock.
     """
-    included = billed_terms(session, sub).included_seats
+    included = terms_for(session, sub).included_seats
     dropped = sub.extra_seats or 0
     sub.extra_seats = 0
     sub.pending_extra_seats = None
@@ -2669,7 +2649,6 @@ __all__ = [
     "SeatsExceedNewTier",
     "SeatsNotSold",
     "active_seat_count",
-    "billed_terms",
     "bump_version",
     "charge_queued_payments",
     "charges_configured",

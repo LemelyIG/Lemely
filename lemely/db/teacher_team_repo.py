@@ -70,7 +70,7 @@ from lemely.db.models import (
     Subscription,
     User,
 )
-from lemely.db.models.billing import PlanAudience
+from lemely.db.models.billing import PlanAudience, PlanTierTerms
 from lemely.db.models.enums import InviteRole, Role, SubscriptionStatus
 from lemely.db.models.team import (
     AssistantRole,
@@ -1038,9 +1038,18 @@ class TeacherTeamService:
             select(
                 Subscription.extra_seats,
                 Subscription.pending_extra_seats,
-                PlanTier.included_seats,
+                PlanTierTerms.included_seats,
             )
             .join(PlanTier, Subscription.plan_tier_id == PlanTier.id)
+            # The seats come from the terms the subscriber is on, never the tier's live column: an
+            # admin edit changes capacity at the subscriber's renewal, not mid-period (UD13-A).
+            .join(
+                PlanTierTerms,
+                and_(
+                    PlanTierTerms.plan_tier_id == Subscription.plan_tier_id,
+                    PlanTierTerms.terms_version == Subscription.terms_version,
+                ),
+            )
             .where(
                 Subscription.user_id == teacher_user_id,
                 Subscription.status.in_(LIVE_PLAN_STATUSES),
