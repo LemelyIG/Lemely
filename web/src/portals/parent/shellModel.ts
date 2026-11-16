@@ -35,6 +35,19 @@ export function resolveChildId(param: string | null, childIds: readonly string[]
   return childIds[0] ?? null
 }
 
+/**
+ * The URL's childId, only when it can be trusted: while the children list is still
+ * loading it is kept (the links are replaced on the next render), and once loaded it
+ * must be one of the parent's children. An unknown id (a mistyped or another family's
+ * link) resolves to null so the tabs and trail fall back to the last or first linked
+ * child, never to a URL for a child this parent does not have. The page itself still
+ * shows its own not-found or error state.
+ */
+export function validChildParam(param: string | null, childIds: readonly string[], listPending: boolean): string | null {
+  if (!param) return null
+  return listPending || childIds.includes(param) ? param : null
+}
+
 const clean = (path: string) => path.replace(/\/+$/, "") || "/"
 
 export function topicsActive(path: string): boolean {

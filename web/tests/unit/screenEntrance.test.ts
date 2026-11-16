@@ -65,10 +65,10 @@ describe("screen-outlet.tsx", () => {
 
 describe("every portal layout renders <ScreenOutlet instead of a bare <Outlet", () => {
   // The student and teacher layouts are components/shell/PortalShell.tsx (portal shell spec).
+  // The parent layout is components/shell/PortalShell.tsx too (F1).
   const PORTAL_LAYOUTS = [
     "src/components/shell/PortalShell.tsx",
     "src/portals/admin/index.tsx",
-    "src/portals/parent/index.tsx",
   ] as const
 
   it.each(PORTAL_LAYOUTS)("%s", (relativePath) => {

@@ -21,7 +21,7 @@ function Initial({ name }: { name: string }) {
 
 /**
  * The parent child switcher (mock pa.js `kid`): an initial and the child's name.
- * Only on a child route. With one child it is a plain name pill, not a control,
+ * Only on a child route. With one child it is a plain name label (no ring or caret), not a control,
  * so the parent always sees whose data this is; with two or more a native select
  * sits over the pill, so it is keyboard- and screen-reader-complete and keeps the
  * old switcher's tails (switchChildPath). While the list loads a same-size
@@ -41,8 +41,9 @@ export function ChildSwitcher({ className }: { className?: string }) {
   const current = children.find((c) => c.childId === childId)
   if (!current) return null
   if (children.length < 2) {
+    // A label, not a control: no ring, no fill, no caret, so it never reads as a button.
     return (
-      <span className={cn(PILL, className)}>
+      <span className={cn("inline-flex min-h-11 max-w-full min-w-0 flex-none items-center gap-2 text-label text-on-surface", className)}>
         <Initial name={current.displayName} />
         <span className="truncate">{current.displayName}</span>
       </span>

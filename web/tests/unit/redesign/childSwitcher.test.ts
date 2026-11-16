@@ -49,6 +49,15 @@ describe("ChildSwitcher states (P2, P4, single child, loading, error)", () => {
     expect(out).toContain("Amira")
     expect(out).not.toContain("<select")
   })
+  it("the single-child pill carries no control ring, so it does not read as a button", () => {
+    state.value = { data: { children: [KIDS[0]] }, isPending: false }
+    const out = html("/parent/children/c1")
+    expect(out).not.toContain("inset_0_0_0_1.5px")
+    expect(out).not.toContain("cursor-pointer")
+  })
+  it("two children keep the ring that marks the control", () => {
+    expect(html("/parent/children/c1")).toContain("inset_0_0_0_1.5px")
+  })
   it("loading holds space, hidden from assistive tech, with no control", () => {
     state.value = { data: undefined, isPending: true }
     const out = html("/parent/children/c1")

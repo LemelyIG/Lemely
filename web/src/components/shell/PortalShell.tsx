@@ -29,7 +29,7 @@ import { activeTabTap, isPlainPrimaryClick } from "./tabTap"
 import { titleLevelFor } from "./largeTitle"
 
 export interface PortalShellProps {
-  portal: "student" | "teacher"
+  portal: "student" | "teacher" | "parent"
   sidebar: ShellSidebarContent
   topBar: Omit<ShellTopBarProps, "onOpenNav">
   /** Route tabs for the phone bar; the shell appends "More", which opens the drawer. */
@@ -50,7 +50,7 @@ export interface PortalShellProps {
 }
 
 /**
- * The frame around every student and teacher page (design A `.as-app`): the
+ * The frame around every student, teacher and parent page (design A `.as-app`): the
  * sidebar column from `shell-lg` (1248px), the same sidebar as a drawer below it, the
  * floating top bar, the page well, and the phone tab bar below the `sidebar`
  * breakpoint (approved drift: design A's own phone bar differs).
@@ -126,11 +126,14 @@ export function PortalShell({
           data-fab={fab && !immersive ? "" : undefined}
           className="lm-native-main @container/home w-full min-w-0 flex-1 overflow-x-hidden px-[72px] pt-1 pb-10 focus:outline-none max-shell-lg:px-3.5 max-shell-lg:pb-9 max-sidebar:pb-bottom-nav"
         >
-          <OfflineBanner
-            onRetry={() =>
-              void queryClient.refetchQueries({ type: "active", predicate: (query) => query.state.status === "error" })
-            }
-          />
+          {/* Immersive routes (the practice run) show their own offline strip, so two never stack. */}
+          {immersive ? null : (
+            <OfflineBanner
+              onRetry={() =>
+                void queryClient.refetchQueries({ type: "active", predicate: (query) => query.state.status === "error" })
+              }
+            />
+          )}
           <VerifyEmailBanner />
           <InstallBanner />
           {pending ? (
