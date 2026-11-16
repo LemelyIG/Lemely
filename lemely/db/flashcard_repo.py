@@ -49,7 +49,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 import structlog
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from lemely.core.spaced_repetition import AGAIN_REVIEW_DELAY, CardSchedule, initial_schedule
 from lemely.core.spaced_repetition import ReviewGrade as CoreReviewGrade
@@ -414,8 +414,10 @@ class FlashcardService:
     ) -> DeckSummary:
         """Resolve the topic and save an empty ``writing`` deck. No model call happens here.
 
-        The caller schedules :meth:`run_generation` (the route does it after the response), so
-        the student can leave the screen while the cards are written.
+        The caller must hand :meth:`run_generation` to a worker request (a Cloud Tasks job), so the
+        student can leave the screen while the cards are written. Do not run it as post-response
+        background work: Cloud Run throttles CPU once the response is sent, so it would stall.
+        A deck whose worker never finishes is saved as ``failed/timeout`` once it goes stale.
 
         Raises:
             FlashcardGenerationUnavailableError: no generator was wired in (checked first).
@@ -452,17 +454,29 @@ class FlashcardService:
     def run_generation(self, deck_id: uuid.UUID | str) -> None:
         """Write the cards for a ``writing`` deck, then mark it ``ready`` or ``failed``.
 
-        Never raises: it runs after the HTTP response, where an exception would only reach a
-        log. A deck that is no longer ``writing`` (deleted, or already finished) is left alone.
+        Never raises: it runs in a worker, where an exception would only reach a log. Any model
+        or database error marks the deck ``failed`` (and is logged if even that write fails). A
+        deck that is no longer ``writing`` (deleted, or already finished) is left alone.
         """
-        deck_uuid = _as_uuid(deck_id)
+        try:
+            deck_uuid = _as_uuid(deck_id)
+        except ValueError:
+            log.exception("flashcard_generation_bad_deck_id", deck_id=str(deck_id))
+            return
+        try:
+            self._run_generation(deck_uuid)
+        except Exception:  # last line of defence: the worker must never crash
+            log.exception("flashcard_generation_internal_error", deck_id=str(deck_uuid))
+            self._mark_failed_quietly(deck_uuid, "internal_error")
+
+    def _run_generation(self, deck_uuid: uuid.UUID) -> None:
         with self._sessionmaker() as session:
             deck = session.get(FlashcardDeck, deck_uuid)
             if deck is None or deck.generation_status != DeckGenerationStatus.writing.value:
                 return
             subject_code, topic, count = deck.subject_code, deck.topic, deck.requested_count or 0
         if self._generator is None or topic is None or count < 1:
-            self._mark_failed(deck_uuid, "unavailable")
+            self._mark_failed_quietly(deck_uuid, "unavailable")
             return
         try:
             generated = self._generator.generate(
@@ -470,10 +484,10 @@ class FlashcardService:
             )
         except Exception:  # any model or parse failure is a failed deck, never a crash
             log.exception("flashcard_generation_failed", deck_id=str(deck_uuid))
-            self._mark_failed(deck_uuid, "model_error")
+            self._mark_failed_quietly(deck_uuid, "model_error")
             return
         if not generated.cards:
-            self._mark_failed(deck_uuid, "no_cards")
+            self._mark_failed_quietly(deck_uuid, "no_cards")
             return
         moment = self._now()
         with self._sessionmaker() as session, session.begin():
@@ -507,12 +521,30 @@ class FlashcardService:
             generated=len(generated.cards),
         )
 
+    def _mark_failed_quietly(self, deck_uuid: uuid.UUID, error: str) -> None:
+        """Mark the deck failed; if that write fails too, log it (the stale timeout recovers)."""
+        try:
+            self._mark_failed(deck_uuid, error)
+        except Exception:
+            log.exception("flashcard_generation_mark_failed_error", deck_id=str(deck_uuid))
+
     def _mark_failed(self, deck_uuid: uuid.UUID, error: str) -> None:
         with self._sessionmaker() as session, session.begin():
             deck = session.get(FlashcardDeck, deck_uuid)
             if deck is not None and deck.generation_status == DeckGenerationStatus.writing.value:
                 deck.generation_status = DeckGenerationStatus.failed.value
                 deck.generation_error = error
+
+    @staticmethod
+    def _expire_if_stale(deck: FlashcardDeck, moment: datetime) -> None:
+        """Save a ``writing`` deck past :data:`GENERATION_STALE_AFTER` as ``failed/timeout``."""
+        if (
+            deck.generation_status == DeckGenerationStatus.writing.value
+            and deck.generation_started_at is not None
+            and moment - deck.generation_started_at > GENERATION_STALE_AFTER
+        ):
+            deck.generation_status = DeckGenerationStatus.failed.value
+            deck.generation_error = "timeout"
 
     def generation_status(
         self, student_id: uuid.UUID | str, deck_id: uuid.UUID | str
@@ -527,13 +559,7 @@ class FlashcardService:
         moment = self._now()
         with self._sessionmaker() as session, session.begin():
             deck = self._owned_deck(session, student_uuid, deck_uuid)
-            if (
-                deck.generation_status == DeckGenerationStatus.writing.value
-                and deck.generation_started_at is not None
-                and moment - deck.generation_started_at > GENERATION_STALE_AFTER
-            ):
-                deck.generation_status = DeckGenerationStatus.failed.value
-                deck.generation_error = "timeout"
+            self._expire_if_stale(deck, moment)
             generated = session.scalar(
                 select(func.count()).select_from(Flashcard).where(Flashcard.deck_id == deck.id)
             )
@@ -557,10 +583,20 @@ class FlashcardService:
         if state.status != DeckGenerationStatus.failed:
             raise FlashcardValidationError("only a deck whose writing failed can be retried")
         with self._sessionmaker() as session, session.begin():
-            deck = self._owned_deck(session, _as_uuid(student_id), _as_uuid(deck_id))
-            deck.generation_status = DeckGenerationStatus.writing.value
-            deck.generation_started_at = self._now()
-            deck.generation_error = None
+            claimed = session.execute(
+                update(FlashcardDeck)
+                .where(
+                    FlashcardDeck.id == state.deck_id,
+                    FlashcardDeck.generation_status == DeckGenerationStatus.failed.value,
+                )
+                .values(
+                    generation_status=DeckGenerationStatus.writing.value,
+                    generation_started_at=self._now(),
+                    generation_error=None,
+                )
+            )
+            if getattr(claimed, "rowcount", 0) != 1:
+                raise FlashcardValidationError("only a deck whose writing failed can be retried")
         return GenerationState(
             deck_id=state.deck_id,
             status=DeckGenerationStatus.writing,
@@ -605,12 +641,14 @@ class FlashcardService:
         """Every deck owned by ``student_id``, most recently created first."""
         student_uuid = _as_uuid(student_id)
         moment = self._now()
-        with self._sessionmaker() as session:
+        with self._sessionmaker() as session, session.begin():
             stmt = select(FlashcardDeck).where(FlashcardDeck.user_id == student_uuid)
             if subject_code is not None:
                 stmt = stmt.where(FlashcardDeck.subject_code == subject_code)
             stmt = stmt.order_by(FlashcardDeck.created_at.desc())
             decks = session.scalars(stmt).all()
+            for deck in decks:
+                self._expire_if_stale(deck, moment)
             marks = self._marks_lost_by_topic(session, student_uuid)
             return [
                 self._to_summary(
@@ -669,6 +707,7 @@ class FlashcardService:
         with self._sessionmaker() as session, session.begin():
             deck = self._owned_deck(session, student_uuid, deck_uuid)
             deck.title = cleaned
+            self._expire_if_stale(deck, self._now())
             session.flush()
             marks = self._marks_lost_by_topic(session, student_uuid)
             return self._to_summary(

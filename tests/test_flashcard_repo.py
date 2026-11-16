@@ -59,6 +59,7 @@ from lemely.db.models.flashcards import (
     DeckGenerationStatus,
     DeckOrigin,
     Flashcard,
+    FlashcardDeck,
     FlashcardReview,
 )
 from lemely.db.models.flashcards import ReviewGrade as DbReviewGrade
@@ -923,3 +924,102 @@ def test_generation_status_of_someone_elses_deck_is_an_ownership_error(
     )
     with pytest.raises(FlashcardOwnershipError):
         service.generation_status(other, deck.id)
+
+
+# ---------------------------------------------------------------------------
+# Redesign L10 fix round 1: run_generation never raises, stale everywhere, atomic retry
+# ---------------------------------------------------------------------------
+
+
+def test_a_database_error_while_saving_cards_marks_the_deck_failed(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    # A NUL byte is valid for the model but rejected by Postgres, so the card insert fails.
+    generator = _mock_generator(
+        [GeneratedFlashcard(front="bad\x00front", back="A")], subject_code="0625", topic="1 Motion"
+    )
+    service = FlashcardService(pg_sessionmaker, generator, now=lambda: _FIXED_NOW)
+    deck = service.start_generation(
+        student, subject_code="0625", origin=DeckOrigin.topic, topic="1 Motion", count=3
+    )
+
+    service.run_generation(deck.id)  # must not raise
+
+    state = service.generation_status(student, deck.id)
+    assert (state.status, state.error, state.generated_count) == (
+        DeckGenerationStatus.failed,
+        "internal_error",
+        0,
+    )
+
+
+def test_run_generation_survives_the_failure_marker_failing_too(
+    pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    generator = MagicMock()
+    generator.generate.side_effect = RuntimeError("gemini down")
+    service = FlashcardService(pg_sessionmaker, generator, now=lambda: _FIXED_NOW)
+    deck = service.start_generation(
+        student, subject_code="0625", origin=DeckOrigin.topic, topic="1 Motion", count=3
+    )
+
+    def _boom(_deck_uuid: uuid.UUID, _error: str) -> None:
+        raise OperationalError("UPDATE", {}, Exception("db gone"))
+
+    monkeypatch.setattr(service, "_mark_failed", _boom)
+
+    service.run_generation(deck.id)  # must not raise
+
+
+def test_list_decks_and_rename_report_a_stale_writing_deck_as_failed(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    clock = {"now": _FIXED_NOW}
+    generator = _mock_generator([], subject_code="0625", topic="1 Motion")
+    service = FlashcardService(pg_sessionmaker, generator, now=lambda: clock["now"])
+    first = service.start_generation(
+        student, subject_code="0625", origin=DeckOrigin.topic, topic="1 Motion", count=5
+    )
+    second = service.start_generation(
+        student, subject_code="0625", origin=DeckOrigin.topic, topic="1 Motion", count=5
+    )
+    clock["now"] = _FIXED_NOW + timedelta(minutes=6)
+
+    renamed = service.rename_deck(student, second.id, title="Renamed")
+    assert renamed.generation_status == DeckGenerationStatus.failed
+
+    # No generation_status call before this: the list itself applies the stale rule.
+    statuses = {d.id: d.generation_status for d in service.list_decks(student)}
+    assert statuses == {
+        first.id: DeckGenerationStatus.failed,
+        second.id: DeckGenerationStatus.failed,
+    }
+    with pg_sessionmaker() as session:
+        saved = session.get(FlashcardDeck, first.id)
+        assert saved is not None
+        assert (saved.generation_status, saved.generation_error) == ("failed", "timeout")
+
+
+def test_a_second_concurrent_retry_loses_the_claim(
+    pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    generator = MagicMock()
+    generator.generate.side_effect = RuntimeError("gemini down")
+    service = FlashcardService(pg_sessionmaker, generator, now=lambda: _FIXED_NOW)
+    deck = service.start_generation(
+        student, subject_code="0625", origin=DeckOrigin.topic, topic="1 Motion", count=3
+    )
+    service.run_generation(deck.id)
+    stale_failed_state = service.generation_status(student, deck.id)
+    assert stale_failed_state.status == DeckGenerationStatus.failed
+
+    service.retry_generation(student, deck.id)  # the first worker claims it
+
+    # The second caller read the status before the first claim, so it still sees `failed`.
+    monkeypatch.setattr(service, "generation_status", lambda *_a, **_k: stale_failed_state)
+    with pytest.raises(FlashcardValidationError):
+        service.retry_generation(student, deck.id)
