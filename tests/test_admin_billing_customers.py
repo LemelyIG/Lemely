@@ -75,7 +75,7 @@ JOB_KEYS = {
 PAYMENT_KEYS = {
     "id", "payerUserId", "beneficiaryUserId", "purpose", "status", "amountMinor", "currency",
     "refundedMinor", "paymobOrderId", "paymobTxnId", "planTierId", "creditPackId",
-    "subscriptionId", "seatQuantity", "convertedToCredits", "creditedUnits",
+    "subscriptionId", "seatQuantity", "convertedToCredits", "creditedUnits", "seatRenewalCharge",
     "createdAt", "paidAt", "refunds",
 }  # fmt: skip
 REFUND_KEYS = {

@@ -22,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 
 from lemely.core.metered_actions import MeteredAction
 from lemely.core.subscription_rules import paymob_frequency
+from lemely.db.merchant_charge_repo import RENEWAL_SEAT_DEDUPE_PREFIX
 from lemely.db.models.admin_audit import (
     HAS_IDEMPOTENCY_KEY_SQL,
     IDEMPOTENCY_KEY_SQL,
@@ -1115,6 +1116,12 @@ def _callback_refunded(last_callback: Mapping[str, object] | None) -> int:
 CREDIT_PURCHASE_PURPOSES: Final = frozenset({PaymentPurpose.credit_pack, PaymentPurpose.auto_topup})
 
 
+def is_renewal_seat_charge(payment: Payment) -> bool:
+    """A queued renewal seat charge: it pays for seats that already exist, so no reverse applies."""
+    key = payment.dedupe_key
+    return key is not None and key.startswith(RENEWAL_SEAT_DEDUPE_PREFIX)
+
+
 @dataclass(frozen=True, slots=True)
 class ReverseEffect:
     """What the undo of a refund or void came to, as its closing audit row recorded it.
@@ -1242,6 +1249,7 @@ __all__ = [
     "already_applied",
     "audited",
     "idempotency_lookup",
+    "is_renewal_seat_charge",
     "lock_idempotency_key",
     "payment_views",
     "paymob_drift",

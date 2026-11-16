@@ -10,8 +10,9 @@ from __future__ import annotations
 import uuid
 from contextlib import contextmanager
 from datetime import datetime  # noqa: TC003 - used in a signature FastAPI never inspects
-from typing import TYPE_CHECKING, Annotated, cast
+from typing import TYPE_CHECKING, Annotated, Final, cast, get_args
 
+import structlog
 from fastapi import Depends, HTTPException
 
 from lemely.db.admin_billing_repo import (
@@ -20,6 +21,7 @@ from lemely.db.admin_billing_repo import (
     AdminInvalidError,
     AdminNotFoundError,
     PaymobCallError,
+    is_renewal_seat_charge,
 )
 from lemely.db.models.enums import Role
 from lemely.web.deps import AuthContext, require_role
@@ -83,16 +85,30 @@ def optional_id(value: object | None) -> str | None:
 
 #: The service's audit name for an undo that could not run after the money moved; the wire
 #: says what an admin needs to know, that it failed. Every other name is sent as recorded.
-_REVERSE_WIRE_NAMES = {"unavailable_after_refund": "failed"}
+REVERSE_WIRE_NAMES: Final = {"unavailable_after_refund": "failed"}
+_log = structlog.get_logger("lemely.web.admin_billing_common")
+
+
+def _wire_effect(name: str) -> ReverseEffectName | None:
+    """The wire name of an audit ``reverse_effect``; an unrecognised one is ``None`` and logged.
+
+    One odd audit row must not fail every list that holds its payment (a 500 hides the
+    refund's real outcome from the admin).
+    """
+    wire = REVERSE_WIRE_NAMES.get(name, name)
+    if wire in get_args(ReverseEffectName):
+        return cast("ReverseEffectName", wire)
+    _log.warning("admin_reverse_effect_unrecognised", effect=name)
+    return None
 
 
 def reverse_outcome_dto(refund: PaymentRefund, outcome: ReverseEffect | None) -> ReverseOutcomeDTO:
     """Whether the refund asked to undo the purchase, and what the undo came to (if it ran)."""
     if not refund.reverse_change or outcome is None:
         return ReverseOutcomeDTO(requested=refund.reverse_change, effect=None, reason=None)
-    name = _REVERSE_WIRE_NAMES.get(outcome.effect, outcome.effect)
+    effect = _wire_effect(outcome.effect)
     return ReverseOutcomeDTO(
-        requested=True, effect=cast("ReverseEffectName", name), reason=outcome.reason
+        requested=True, effect=effect, reason=outcome.reason if effect is not None else None
     )
 
 
@@ -136,6 +152,7 @@ def payment_row_dto(view: PaymentView) -> AdminPaymentRowDTO:
         seatQuantity=p.seat_quantity,
         convertedToCredits=view.credited_units is not None,
         creditedUnits=view.credited_units,
+        seatRenewalCharge=is_renewal_seat_charge(p),
         createdAt=p.created_at,
         paidAt=p.paid_at,
         refunds=[refund_dto(r, p.currency, view.reverse_effects.get(r.id)) for r in view.refunds],

@@ -49,6 +49,7 @@ from lemely.db.admin_billing_repo import (
     PaymobCallError,
     alerts,
     audited,
+    is_renewal_seat_charge,
     payment_views,
     require_reason,
 )
@@ -59,7 +60,6 @@ from lemely.db.billing_repo import (
     _outcome_unknown,
 )
 from lemely.db.merchant_charge_repo import (
-    RENEWAL_SEAT_DEDUPE_PREFIX,
     MerchantChargeError,
     MerchantChargeService,
     current_period,
@@ -901,9 +901,7 @@ class AdminPaymentsService:
         never above a reduction already scheduled: that one may already exclude these seats, and
         undoing the purchase must not cut seats an older, unrefunded payment bought.
         """
-        if payment.dedupe_key is not None and payment.dedupe_key.startswith(
-            RENEWAL_SEAT_DEDUPE_PREFIX
-        ):
+        if is_renewal_seat_charge(payment):
             raise _ReverseUnavailableError(
                 "A renewal seat charge paid for seats that already existed."
             )
@@ -1156,7 +1154,9 @@ class AdminPaymentsService:
             ended = sub is not None and was_live and sub.status is SubscriptionStatus.cancelled
             effect: dict[str, object] = {"subscription_effect": "plan_ended" if ended else "none"}
             if refund.reverse_change:
-                effect["reverse_effect"] = "same_as_full_refund"
+                # The full refund is what ends a plan, so the reverse adds nothing: say whether
+                # it ended one (an older, future or already-superseded period ends nothing).
+                effect["reverse_effect"] = "same_as_full_refund" if ended else "nothing_ended"
             return effect
         if not refund.reverse_change:
             return {"purpose_effect": "money_only"}

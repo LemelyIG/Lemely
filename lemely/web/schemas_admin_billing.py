@@ -219,6 +219,7 @@ class UsageEstimatorVersionDTO(ApiModel):
 #: returned but the undo could not run (``reason`` says why); an operator is alerted.
 ReverseEffectName = Literal[
     "same_as_full_refund",
+    "nothing_ended",
     "credits_clawed_back",
     "seat_reduction_scheduled",
     "already_scheduled",
@@ -269,6 +270,7 @@ class AdminPaymentRowDTO(ApiModel):
     seatQuantity: int | None
     convertedToCredits: bool
     creditedUnits: int | None
+    seatRenewalCharge: bool
     createdAt: datetime
     paidAt: datetime | None
     refunds: list[RefundDTO]

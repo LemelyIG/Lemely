@@ -6,11 +6,14 @@ calls). Each guard below was proved red by mutating the service (see the task re
 
 from __future__ import annotations
 
+import re
 import threading
+import typing
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -21,7 +24,7 @@ from sqlalchemy import select
 from structlog.testing import capture_logs
 
 from lemely.core.usage_types import GrantScope, Payer
-from lemely.db.admin_billing_repo import AdminConflictError, AuditAction
+from lemely.db.admin_billing_repo import AdminConflictError, AuditAction, AuditTarget, audited
 from lemely.db.admin_payments_repo import AdminPaymentsService
 from lemely.db.models.billing import (
     Payment,
@@ -40,9 +43,11 @@ from lemely.db.models.usage import (
     UsageGrantBalance,
 )
 from lemely.io.paymob.client import PaymobError, PaymobNotConfigured
+from lemely.web.admin_billing_common import REVERSE_WIRE_NAMES
 from lemely.web.deps import AuthContext, get_auth_context
 from lemely.web.routers import admin_billing_payments
 from lemely.web.routers.admin_billing_payments import get_admin_payments_service
+from lemely.web.schemas_admin_billing import ReverseEffectName
 from tests.admin_billing_db import (
     NOW,
     FakePaymobClient,
@@ -1748,3 +1753,218 @@ def test_a_refused_refund_asked_to_reverse_has_no_effect_yet(
     [refund] = _reversing(_client(sm, admin, paymob), w["payment"]).json()["refunds"]
     assert refund["status"] == "failed"
     assert refund["reverse"] == {"requested": True, "effect": None, "reason": None}
+
+
+# -- P08 review follow-ups: the exclusion, the wire enum, subscription outcomes, void paths ------
+
+
+def test_an_auto_topup_with_grant_units_is_not_converted(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    """``auto_topup_repo`` stamps ``grant_units`` on the top-up itself, as a pack does."""
+    _, topup = _pack_bought_and_partly_spent(sm)
+    with sm.begin() as session:
+        row = session.get(Payment, topup)
+        assert row is not None
+        row.purpose = PaymentPurpose.auto_topup
+        row.grant_units = 400
+    listed = _listed(_client(sm, admin), topup)
+    assert (listed["convertedToCredits"], listed["creditedUnits"]) == (False, None)
+
+
+def test_every_reverse_effect_the_service_writes_is_on_the_wire() -> None:
+    """A name the service can write but the wire enum lacks would blank the outcome."""
+    src = Path("lemely/db/admin_payments_repo.py").read_text()
+    assignments = re.findall(
+        r'"reverse_effect"\]?\s*[:=]\s*("[a-z_]+"(?:\s+if\s+\w+\s+else\s+"[a-z_]+")?)', src
+    )
+    written = {name for text in assignments for name in re.findall(r'"([a-z_]+)"', text)}
+    wire = set(typing.get_args(ReverseEffectName))
+    assert {REVERSE_WIRE_NAMES.get(name, name) for name in written} == wire
+
+
+def test_an_unrecognised_audit_effect_is_a_null_effect_and_a_warning_not_a_500(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _teacher_with_seats(sm)
+    with (
+        sm.begin() as session
+    ):  # the audit log is append-only, so seed a row the service never wrote
+        refund = PaymentRefund(
+            payment_id=w["payment"],
+            admin_user_id=admin,
+            kind=RefundKind.refund,
+            status=RefundStatus.succeeded,
+            amount_minor=4000,
+            reason="seeded",
+            reverse_change=True,
+        )
+        session.add(refund)
+        session.flush()
+        audited(
+            session,
+            admin,
+            AuditAction.PAYMENT_REFUND_SUCCEEDED,
+            AuditTarget.PAYMENT,
+            w["payment"],
+            "seeded",
+            None,
+            {"refund_id": refund.id, "reverse_effect": "from_the_future"},
+        )
+    client = _client(sm, admin)
+    with capture_logs() as logs:
+        resp = client.get(BASE)
+    assert resp.status_code == 200, resp.text
+    row = next(i for i in resp.json()["items"] if i["id"] == str(w["payment"]))
+    assert row["refunds"][0]["reverse"] == {"requested": True, "effect": None, "reason": None}
+    assert [e for e in logs if e["event"] == "admin_reverse_effect_unrecognised"]
+
+
+def test_a_reverse_closed_by_a_callback_race_that_left_the_refund_partial_says_so(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    """``not_applied_partial``: only reachable when the money moved while the row was open."""
+    w = _teacher_with_seats(sm)
+    with sm.begin() as session:
+        refund = PaymentRefund(
+            payment_id=w["payment"],
+            admin_user_id=admin,
+            kind=RefundKind.refund,
+            status=RefundStatus.requested,
+            amount_minor=4000,
+            reason="seeded",
+            reverse_change=True,
+        )
+        session.add(refund)
+        session.flush()
+        refund_id = refund.id
+    _service(sm, FakePaymobClient())._close_refund(
+        refund_id, outcome=RefundStatus.succeeded, response={}, admin_user_id=admin, reason="seeded"
+    )
+    row = _listed(_client(sm, admin), w["payment"])
+    assert row["status"] == "partially_refunded"
+    assert row["refunds"][0]["reverse"] == {
+        "requested": True,
+        "effect": "not_applied_partial",
+        "reason": None,
+    }
+    assert _sub_row(sm, w["sub"]).pending_extra_seats is None
+
+
+def test_a_subscription_reverse_that_ended_no_plan_says_nothing_ended(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    """A payment with no period to end (a kept charge): the full refund changed no plan."""
+    student = add_user(sm, Role.student)
+    tier = add_plan_tier(sm, price_minor=10000)
+    sub = add_subscription(sm, student, tier)
+    payment = add_payment(
+        sm, payer=student, purpose=PaymentPurpose.credit_pack, amount_minor=10000, paymob_txn_id=9
+    )
+    with sm.begin() as session:
+        row = session.get(Payment, payment)
+        assert row is not None
+        row.purpose = PaymentPurpose.subscription_renewal
+        row.credit_pack_id = None
+        row.subscription_id = sub
+        row.plan_tier_id = tier
+    client = _client(sm, admin)
+    [refund] = _reversing(client, payment).json()["refunds"]
+    assert refund["reverse"] == {"requested": True, "effect": "nothing_ended", "reason": None}
+    assert _sub_status(sm, sub) is SubscriptionStatus.active
+    [done] = audit_rows(sm, AuditAction.PAYMENT_REFUND_SUCCEEDED)
+    assert done.after["subscription_effect"] == "none"  # type: ignore[index]
+
+
+def test_a_void_whose_reverse_fails_after_paymob_voided_reports_failed(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _teacher_with_seats(sm)
+
+    class PlanLapses(FakePaymobClient):
+        def void(self, **kwargs: Any) -> dict[str, Any]:
+            with sm.begin() as session:
+                sub = session.get(Subscription, w["sub"])
+                assert sub is not None
+                sub.status = SubscriptionStatus.past_due
+            return {"id": 1, "success": True}
+
+    client = _client(sm, admin, PlanLapses())
+    body = _voiding(client, w["payment"], reverseChange=True).json()
+    [void] = body["refunds"]
+    assert body["status"] == "voided" and void["status"] == "succeeded"
+    assert void["reverse"]["effect"] == "failed" and void["reverse"]["reason"]
+    assert _listed(client, w["payment"])["refunds"][0]["reverse"] == void["reverse"]
+
+
+def test_a_retried_void_with_reverse_is_refused_and_reduces_once(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _teacher_with_seats(sm, held=3, bought=2)
+    paymob = FakePaymobClient()
+    client = _client(sm, admin, paymob)
+    first = _voiding(client, w["payment"], reverseChange=True)
+    second = _voiding(client, w["payment"], reverseChange=True)
+    assert first.status_code == 200
+    assert (second.status_code, second.json()["detail"]["code"]) == (409, "not_voidable")
+    assert [c[0] for c in paymob.calls].count("void") == 1
+    assert _sub_row(sm, w["sub"]).pending_extra_seats == 1
+    assert len(audit_rows(sm, AuditAction.PAYMENT_REFUND_SUCCEEDED)) == 1
+
+
+def test_an_unknown_void_with_reverse_is_reversed_once_by_reconcile(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _teacher_with_seats(sm, held=3, bought=2)
+    with sm() as session:
+        payment = session.get(Payment, w["payment"])
+        assert payment is not None
+        txn = payment.paymob_txn_id
+    paymob = FakePaymobClient()
+    paymob.void_result = PaymobError("gateway", status_code=503, body={})
+    client = _client(sm, admin, paymob)
+    first = _voiding(client, w["payment"], reverseChange=True).json()
+    assert first["refunds"][0]["status"] == "unknown"
+    assert first["refunds"][0]["reverse"] == {"requested": True, "effect": None, "reason": None}
+    retry = _voiding(client, w["payment"], reverseChange=True)
+    assert (retry.status_code, retry.json()["detail"]["code"]) == (409, "refund_in_flight")
+    assert _sub_row(sm, w["sub"]).pending_extra_seats is None
+    paymob.transaction_result = {"id": txn, "is_voided": True, "success": True}
+    for _ in range(2):  # the second reconcile finds nothing in flight
+        resp = client.post(
+            f"/api/admin/billing/payments/{w['payment']}/reconcile", json={"reason": "settle it"}
+        )
+        assert resp.status_code == 200, resp.text
+    assert resp.json()["refunds"][0]["reverse"]["effect"] == "seat_reduction_scheduled"
+    assert _sub_row(sm, w["sub"]).pending_extra_seats == 1
+    assert [c[0] for c in paymob.calls].count("void") == 1
+    assert len(audit_rows(sm, AuditAction.PAYMENT_REFUND_SUCCEEDED)) == 1
+
+
+def test_a_partial_refund_then_the_rest_with_reverse_attaches_it_to_the_second_only(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _teacher_with_seats(sm, held=3, bought=2)
+    client = _client(sm, admin)
+    assert _refund(client, w["payment"], 4000).status_code == 200
+    body = client.post(
+        f"{BASE}/{w['payment']}/refund",
+        json={"amountMinor": None, "reason": "rest", "reverseChange": True},
+    ).json()
+    first, second = body["refunds"]
+    assert first["reverse"] == {"requested": False, "effect": None, "reason": None}
+    assert second["reverse"]["effect"] == "seat_reduction_scheduled"
+
+
+def test_only_a_queued_renewal_seat_charge_is_flagged_as_one(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    renewal = _teacher_with_seats(sm)["payment"]
+    applied = _teacher_with_seats(sm)["payment"]
+    with sm.begin() as session:
+        row = session.get(Payment, renewal)
+        assert row is not None
+        row.dedupe_key = f"extra_seat_renewal:{uuid.uuid4()}:1"
+    client = _client(sm, admin)
+    assert _listed(client, renewal)["seatRenewalCharge"] is True
+    assert _listed(client, applied)["seatRenewalCharge"] is False
