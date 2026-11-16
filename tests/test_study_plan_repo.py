@@ -22,7 +22,7 @@ Covers:
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -54,6 +54,7 @@ from lemely.db.models.quizzes import QuestionBank, Quiz, QuizAssignment, QuizSub
 from lemely.db.models.study_plan import StudyPlanActivityType
 from lemely.db.models.users import User
 from lemely.db.study_plan_repo import (
+    StudyPlanMoveError,
     StudyPlanNotFoundError,
     StudyPlanOwnershipError,
     StudyPlanService,
@@ -671,3 +672,156 @@ def test_complete_session_is_owner_scoped(
     # Inverse: the actual owner succeeds.
     result = study_plan_service.complete_session(owner, session_id)
     assert result.completed_at is not None
+
+
+# ---------------------------------------------------------------------------
+# L9 · moving a session and planning next week.
+# ---------------------------------------------------------------------------
+
+_WED = _THIS_WEEK.date()  # 2026-08-05, "today" for study_plan_service
+_MON = _WED - timedelta(days=2)  # 2026-08-03, this ISO week's Monday
+_SUN = _MON + timedelta(days=6)  # 2026-08-09, this ISO week's Sunday
+
+
+def _seed_plan(
+    sm: sessionmaker[Session], service: StudyPlanService, *, topic: str = "1 Motion"
+) -> tuple[uuid.UUID, object]:
+    """One weak topic and the default 11-hour week: 7 blocks, Wed..Tue (spills past Sunday)."""
+    student = _seed_user(sm)
+    _seed_weakness(sm, student, topic=topic, lost_marks=5)
+    return student, service.generate(student, "0625")
+
+
+def test_move_session_to_a_later_day_persists_and_leaves_the_rest_alone(
+    pg_sessionmaker: sessionmaker[Session], study_plan_service: StudyPlanService
+) -> None:
+    student, plan = _seed_plan(pg_sessionmaker, study_plan_service)
+    first = plan.sessions[0]
+    assert first.date == _WED
+
+    moved = study_plan_service.move_session(student, first.id, _SUN)
+
+    assert moved.date == _SUN
+    reread = study_plan_service.get_current(student, "0625")
+    assert reread is not None
+    assert next(s for s in reread.sessions if s.id == first.id).date == _SUN
+    # Inverse: every other session kept its date.
+    before = {s.id: s.date for s in plan.sessions if s.id != first.id}
+    after = {s.id: s.date for s in reread.sessions if s.id != first.id}
+    assert before == after
+
+
+def test_a_missed_session_moves_to_today(pg_sessionmaker: sessionmaker[Session]) -> None:
+    monday = datetime(2026, 8, 3, 9, 0, tzinfo=UTC)
+    on_monday = StudyPlanService(pg_sessionmaker, now=lambda: monday)
+    student = _seed_user(pg_sessionmaker)
+    _seed_weakness(pg_sessionmaker, student, topic="1 Motion", lost_marks=5)
+    plan = on_monday.generate(student, "0625")
+    missed = plan.sessions[0]
+    assert missed.date == _MON
+
+    on_wednesday = StudyPlanService(pg_sessionmaker, now=lambda: _THIS_WEEK)
+    assert on_wednesday.move_session(student, missed.id, _WED).date == _WED
+
+
+def test_moving_to_a_past_day_is_refused(
+    pg_sessionmaker: sessionmaker[Session], study_plan_service: StudyPlanService
+) -> None:
+    student, plan = _seed_plan(pg_sessionmaker, study_plan_service)
+
+    with pytest.raises(StudyPlanMoveError) as exc:
+        study_plan_service.move_session(student, plan.sessions[1].id, _WED - timedelta(days=1))
+    assert exc.value.code == "past_day"
+
+    # Inverse: today itself is allowed.
+    assert study_plan_service.move_session(student, plan.sessions[1].id, _WED).date == _WED
+
+
+def test_moving_past_the_plans_last_day_is_refused(
+    pg_sessionmaker: sessionmaker[Session], study_plan_service: StudyPlanService
+) -> None:
+    student, plan = _seed_plan(pg_sessionmaker, study_plan_service)
+    last_day = max(max(s.date for s in plan.sessions), _SUN)
+
+    with pytest.raises(StudyPlanMoveError) as exc:
+        study_plan_service.move_session(student, plan.sessions[0].id, last_day + timedelta(days=1))
+    assert exc.value.code == "outside_week"
+
+    # Inverse: the last day itself is allowed.
+    assert study_plan_service.move_session(student, plan.sessions[0].id, last_day).date == last_day
+
+
+def test_a_completed_session_cannot_be_moved(
+    pg_sessionmaker: sessionmaker[Session], study_plan_service: StudyPlanService
+) -> None:
+    student, plan = _seed_plan(pg_sessionmaker, study_plan_service)
+    study_plan_service.complete_session(student, plan.sessions[0].id)
+
+    with pytest.raises(StudyPlanMoveError) as exc:
+        study_plan_service.move_session(student, plan.sessions[0].id, _SUN)
+    assert exc.value.code == "completed"
+
+    # Inverse: an open session in the same plan still moves.
+    assert study_plan_service.move_session(student, plan.sessions[1].id, _SUN).date == _SUN
+
+
+def test_a_session_on_a_superseded_plan_cannot_be_moved(
+    pg_sessionmaker: sessionmaker[Session], study_plan_service: StudyPlanService
+) -> None:
+    student, old = _seed_plan(pg_sessionmaker, study_plan_service)
+    fresh = study_plan_service.generate(student, "0625")
+
+    with pytest.raises(StudyPlanMoveError) as exc:
+        study_plan_service.move_session(student, old.sessions[0].id, _SUN)
+    assert exc.value.code == "superseded"
+
+    # Inverse: the active plan's session moves.
+    assert study_plan_service.move_session(student, fresh.sessions[0].id, _SUN).date == _SUN
+
+
+def test_move_session_is_owner_scoped(
+    pg_sessionmaker: sessionmaker[Session], study_plan_service: StudyPlanService
+) -> None:
+    owner, plan = _seed_plan(pg_sessionmaker, study_plan_service)
+    other = _seed_user(pg_sessionmaker)
+
+    with pytest.raises(StudyPlanOwnershipError):
+        study_plan_service.move_session(other, plan.sessions[0].id, _SUN)
+    with pytest.raises(StudyPlanNotFoundError):
+        study_plan_service.move_session(owner, uuid.uuid4(), _SUN)
+
+    # Inverse: the owner moves it.
+    assert study_plan_service.move_session(owner, plan.sessions[0].id, _SUN).date == _SUN
+
+
+def test_a_moved_session_still_completes(
+    pg_sessionmaker: sessionmaker[Session], study_plan_service: StudyPlanService
+) -> None:
+    student, plan = _seed_plan(pg_sessionmaker, study_plan_service)
+    study_plan_service.move_session(student, plan.sessions[0].id, _SUN)
+
+    done = study_plan_service.complete_session(student, plan.sessions[0].id)
+
+    assert done.completed_at == _THIS_WEEK
+    assert done.date == _SUN
+
+
+def test_next_week_generation_lands_on_next_mondays_week(
+    pg_sessionmaker: sessionmaker[Session], study_plan_service: StudyPlanService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _seed_weakness(pg_sessionmaker, student, topic="1 Motion", lost_marks=5)
+    next_monday = _MON + timedelta(days=7)
+
+    upcoming = study_plan_service.generate(student, "0625", next_week=True)
+
+    assert upcoming.week_start == next_monday
+    assert min(s.date for s in upcoming.sessions) == next_monday
+    assert upcoming.generated_at == _THIS_WEEK  # stamped with the real clock, not the future
+    # Inverse: this week still has no plan, and next week's lookup finds it.
+    assert study_plan_service.get_current(student, "0625") is None
+    found = study_plan_service.get_current(
+        student, "0625", now=datetime.combine(next_monday, time(9), tzinfo=UTC)
+    )
+    assert found is not None
+    assert found.id == upcoming.id

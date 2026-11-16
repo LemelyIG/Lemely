@@ -65,7 +65,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
@@ -113,6 +113,11 @@ def _week_start(now: datetime) -> date:
     return now.date() - timedelta(days=now.weekday())
 
 
+def _next_week_moment(now: datetime) -> datetime:
+    """Midnight UTC on the Monday after ``now``'s ISO week ("Plan next week"'s clock)."""
+    return datetime.combine(_week_start(now) + timedelta(days=7), time.min, tzinfo=UTC)
+
+
 class StudyPlanError(Exception):
     """Base class for study-plan service failures."""
 
@@ -128,6 +133,25 @@ class StudyPlanOwnershipError(StudyPlanError):
     tested — even though chunk C renders both as a 404 (module docstring,
     D4.11 precedent).
     """
+
+
+class StudyPlanMoveError(StudyPlanError):
+    """A move the plan does not allow.
+
+    ``code`` is machine-readable for the HTTP layer:
+
+    * ``"completed"``: the session is done, and a completion record is history.
+    * ``"superseded"``: a rebuild replaced the plan, so the id is stale.
+    * ``"past_day"``: the target is before today.
+    * ``"outside_week"``: the target is after the plan's last day.
+
+    The plan's last day is its ISO Sunday, or its latest session if the scheduler
+    placed one past Sunday (sessions start at ``now.date()``).
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,8 +215,9 @@ class StudyPlanService:
         *,
         weekly_hours: float | None = None,
         now: datetime | None = None,
+        next_week: bool = False,
     ) -> PlanView:
-        """Build this week's plan from the three live signals and persist it.
+        """Build a week's plan from the three live signals and persist it.
 
         Supersedes (never mutates) any existing active plan for the same
         ``(student, subject, week)`` — see the module docstring. Persists
@@ -200,13 +225,20 @@ class StudyPlanService:
         yet this week" and "the student was refused a plan this week" are
         both real, queryable states via :meth:`get_current`.
 
+        ``next_week=True`` plans the ISO week after the clock's ("Plan next
+        week" on the week-done screen): sessions are laid out from next
+        Monday, and :meth:`get_current` finds the plan once that week
+        arrives. ``generated_at``/``superseded_at`` still record the real
+        clock, never the future Monday.
+
         ``weekly_hours`` defaults to the caller's ``StudentProfile
         .weekly_study_hours`` when omitted, falling back to
         :data:`_DEFAULT_WEEKLY_HOURS` when the caller has no profile row or
         left it unset.
         """
         student_uuid = _as_uuid(student_id)
-        moment = now if now is not None else self._now()
+        clock = now if now is not None else self._now()
+        moment = _next_week_moment(clock) if next_week else clock
         week_start = _week_start(moment)
 
         with self._sessionmaker() as session, session.begin():
@@ -245,7 +277,7 @@ class StudyPlanService:
                 )
             ).first()
             if existing is not None:
-                existing.superseded_at = moment
+                existing.superseded_at = clock
 
             row = DbStudyPlan(
                 user_id=student_uuid,
@@ -254,7 +286,7 @@ class StudyPlanService:
                 weekly_hours=resolved_hours,
                 available=plan.available,
                 reason=plan.reason,
-                generated_at=moment,
+                generated_at=clock,
             )
             session.add(row)
             session.flush()
@@ -333,6 +365,53 @@ class StudyPlanService:
             row, plan = self._owned_session(session, student_uuid, session_uuid)
             if row.completed_at is None:
                 row.completed_at = moment
+            session.flush()
+            return self._to_session_view(row, plan.subject_code)
+
+    def move_session(
+        self,
+        student_id: uuid.UUID | str,
+        session_id: uuid.UUID | str,
+        to_date: date,
+        *,
+        now: datetime | None = None,
+    ) -> SessionView:
+        """Move one of the caller's own open sessions to another day of its plan.
+
+        The one edit a plan's sessions take besides ``completed_at``. A
+        rebuild still supersedes the whole plan (moves included), exactly as
+        it supersedes completions — the module's "never mutate history" rule
+        is about superseded plans, and a superseded plan refuses moves.
+
+        Raises:
+            StudyPlanNotFoundError / StudyPlanOwnershipError: as
+                :meth:`complete_session` (both rendered 404).
+            StudyPlanMoveError: ``completed``, ``superseded``, ``past_day``
+                or ``outside_week`` — see the class docstring.
+        """
+        student_uuid = _as_uuid(student_id)
+        session_uuid = _as_uuid(session_id)
+        moment = now if now is not None else self._now()
+        today = moment.date()
+        with self._sessionmaker() as session, session.begin():
+            row, plan = self._owned_session(session, student_uuid, session_uuid)
+            if plan.superseded_at is not None:
+                raise StudyPlanMoveError("superseded", "This session's plan has been rebuilt")
+            if row.completed_at is not None:
+                raise StudyPlanMoveError("completed", "A completed session cannot be moved")
+            if to_date < today:
+                raise StudyPlanMoveError("past_day", "A session cannot be moved to a past day")
+            latest = session.scalar(
+                select(func.max(DbStudyPlanSession.date)).where(
+                    DbStudyPlanSession.plan_id == plan.id
+                )
+            )
+            last_day = max(plan.week_start + timedelta(days=6), latest or plan.week_start)
+            if to_date > last_day:
+                raise StudyPlanMoveError(
+                    "outside_week", "A session can only move within its own week"
+                )
+            row.date = to_date
             session.flush()
             return self._to_session_view(row, plan.subject_code)
 
@@ -560,6 +639,7 @@ __all__ = [
     "PlanView",
     "SessionView",
     "StudyPlanError",
+    "StudyPlanMoveError",
     "StudyPlanNotFoundError",
     "StudyPlanOwnershipError",
     "StudyPlanService",
