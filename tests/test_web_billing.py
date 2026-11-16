@@ -271,6 +271,24 @@ def test_catalogue_states_the_admin_set_credit_validity(
     assert client.get("/api/billing/catalogue").json()["creditValidityMonths"] == 9
 
 
+def test_the_catalogues_are_503_with_a_code_when_the_validity_setting_is_missing(
+    client: TestClient, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    user = seed_user(migrated_sessionmaker, Role.student)
+    _as(client, user, Role.student)
+    with migrated_sessionmaker.begin() as session:
+        session.execute(sa.text("DELETE FROM billing_settings"))
+    for url, params in (
+        ("/api/billing/public-catalogue", {"audience": "student"}),
+        ("/api/billing/catalogue", None),
+    ):
+        response = client.get(url, params=params)
+        assert response.status_code == 503, url
+        detail = response.json()["detail"]
+        assert detail["error"] == "credit_validity_setting_missing"
+        assert detail["code"] == "credit_validity_setting_missing"
+
+
 def test_public_catalogue_sends_the_interval_the_frontend_adapter_reads(
     client: TestClient, migrated_sessionmaker: sessionmaker[Session]
 ) -> None:

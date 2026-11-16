@@ -91,6 +91,7 @@ from lemely.web.routers import (
     xp,
 )
 from lemely.web.scheduled_notifications import run_sweeper
+from lemely.web.settings_errors import SETTINGS_ERROR_CODES, settings_unavailable_handler
 from lemely.web.tutoring_email import MOCK_WARNING, email_delivery_mode
 from lemely.web.usage import (
     UsageBlocked,
@@ -274,6 +275,9 @@ def create_app() -> FastAPI:
     app.add_exception_handler(UsageBlocked, usage_blocked_handler)
     # A ledger outage that stopped metered work before it started: 503 + Retry-After.
     app.add_exception_handler(UsageUnavailable, usage_unavailable_handler)
+    # UD-13: a missing ``billing_settings`` row is a retryable 503 with a code, never a bare 500.
+    for settings_error in SETTINGS_ERROR_CODES:
+        app.add_exception_handler(settings_error, settings_unavailable_handler)
 
     @app.exception_handler(EmptyGradeBoundaryStoreError)
     async def _thresholds_not_ingested(

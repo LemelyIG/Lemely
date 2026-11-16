@@ -47,8 +47,8 @@ IMPORT_ALLOWLIST: Final = {
     "db/billing_settings_repo.py": frozenset(  # seeds the ``billing_settings`` row
         {"CREDIT_VALIDITY_MONTHS", "GRACE_DAYS", "MAX_EXTRA_SEATS", "PRICE_CHANGE_NOTICE_DAYS"}
     ),
-    "db/usage_catalogue_repo.py": frozenset(  # seeds ``credit_packs.signup_validity_days``
-        {"TEACHER_SIGNUP_VALIDITY_DAYS"}
+    "db/usage_catalogue_repo.py": frozenset(  # seeds the signup ``credit_packs`` rows
+        {"STUDENT_SIGNUP_UNITS", "TEACHER_SIGNUP_UNITS", "TEACHER_SIGNUP_VALIDITY_DAYS"}
     ),
 }
 MIGRATIONS_DIR: Final = "db/migrations/"
@@ -57,14 +57,12 @@ MIGRATIONS_DIR: Final = "db/migrations/"
 SEED_NAMES: Final = frozenset(billing_defaults.__all__)
 #: Names of rates that moved into admin settings. Reintroducing one means a second source of truth.
 REMOVED_NAMES: Final = frozenset(
-    {
-        "CREDIT_EXPIRY_MONTHS",
-        "GRACE_PERIOD",
-        "MAX_EXTRA_SEATS_AT_CHECKOUT",
-        "PAYMOB_RETRIAL_DAYS",
-        "TEACHER_SIGNUP_VALIDITY",
-    }
+    {"CREDIT_EXPIRY_MONTHS", "MAX_EXTRA_SEATS_AT_CHECKOUT", "TEACHER_SIGNUP_VALIDITY"}
 )
+#: Removed names common enough to exist unrelated elsewhere: caught only when imported from the
+#: rules module, read as an attribute, or bound in the rules module or the db layer.
+SCOPED_REMOVED_NAMES: Final = frozenset({"GRACE_PERIOD", "PAYMOB_RETRIAL_DAYS"})
+RULES_FILE: Final = "core/subscription_rules.py"
 FORBIDDEN_NAMES: Final = SEED_NAMES | REMOVED_NAMES
 #: Removed names also caught in lower case (``credit_expiry_months = 12``). The seed names and
 #: ``GRACE_PERIOD`` are not: their lower-case forms are ordinary locals and function names.
@@ -78,8 +76,12 @@ LOWER_CASE_TOO: Final = frozenset(
 SEAT_SANITY_BOUND: Final = 10_000
 #: A literal at least this large next to a seat count is a hardcoded ceiling, not arithmetic.
 SEAT_LITERAL_FLOOR: Final = 50
+#: A seat field may carry a literal ``le=`` up to the per-purchase bound (100, B17); above it the
+#: field is capping the subscription's seats, which is the admin ceiling's job.
+SEAT_PER_PURCHASE_BOUND: Final = 100
 
 _MONTH_HELPER: Final = re.compile(r"(add|plus|shift)_?months?", re.IGNORECASE)
+_IMPORT_FUNCTIONS: Final = frozenset({"import_module", "__import__"})
 _DEFAULTS_PATH: Final = re.compile(r"^[\w.]*billing_defaults$")
 _TIMEDELTA_UNITS: Final = frozenset(
     {"weeks", "days", "hours", "minutes", "seconds", "milliseconds", "microseconds"}
@@ -110,17 +112,6 @@ def _callee_name(call: ast.Call) -> str:
     if isinstance(func, ast.Name):
         return func.id
     return func.attr if isinstance(func, ast.Attribute) else ""
-
-
-def _docstring_ids(tree: ast.AST) -> set[int]:
-    """``id`` of every docstring node, so prose that names the seed module is not flagged."""
-    found: set[int] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
-            first = node.body[0] if node.body else None
-            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
-                found.add(id(first.value))
-    return found
 
 
 def _bound_names(node: ast.AST) -> list[str]:
@@ -168,8 +159,20 @@ def _months_argument(call: ast.Call) -> ast.expr | None:
     return next((kw.value for kw in call.keywords if kw.arg == "months"), None)
 
 
-def _fixed_months(arg: ast.expr, constants: set[str]) -> bool:
-    """A month count fixed in code: literal arithmetic, a walrus, or a named constant."""
+def _step_of_one(node: ast.expr) -> bool:
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        return _int_value(node.operand) == 1
+    return _int_value(node) == 1
+
+
+def _fixed_months(arg: ast.expr, constants: set[str], *, calendar_step: bool) -> bool:
+    """A month count fixed in code: literal arithmetic, a walrus, or a named constant.
+
+    ``calendar_step`` allows a step of one month (``add_months(month_start, 1)``): in a module
+    that issues no grants it is calendar arithmetic, not a validity.
+    """
+    if calendar_step and _step_of_one(arg):
+        return False
     if _is_literal_expression(arg) or isinstance(arg, ast.NamedExpr):
         return True
     if isinstance(arg, ast.Name):
@@ -220,9 +223,9 @@ def violations(sources: dict[str, str]) -> list[str]:
         is_seed_module = rel == DEFAULTS_FILE
         migration = rel.startswith(MIGRATIONS_DIR)
         allowed = IMPORT_ALLOWLIST.get(rel)
-        docstrings = _docstring_ids(tree)
         month_calls = _add_months_aliases(tree)
         constants = _literal_constants(tree)
+        issues_grants = _issues_grants(tree)
         for node in ast.walk(tree):
             line = getattr(node, "lineno", 0)
             where = f"{rel}:{line}:"
@@ -235,13 +238,14 @@ def violations(sources: dict[str, str]) -> list[str]:
                 )
                 if isinstance(node, ast.Attribute) and node.attr == "billing_defaults":
                     found.append(f"{where} reaches billing_defaults by attribute path")
-                if (
-                    isinstance(node, ast.Constant)
-                    and isinstance(node.value, str)
-                    and id(node) not in docstrings
-                    and _DEFAULTS_PATH.match(node.value)
-                ):
-                    found.append(f"{where} names billing_defaults as a string (importlib)")
+                if isinstance(node, ast.Call) and _callee_name(node) in _IMPORT_FUNCTIONS:
+                    found.extend(
+                        f"{where} names billing_defaults as a string (importlib)"
+                        for arg in node.args
+                        if isinstance(arg, ast.Constant)
+                        and isinstance(arg.value, str)
+                        and _DEFAULTS_PATH.match(arg.value)
+                    )
             if not is_seed_module:
                 found.extend(
                     f"{where} binds {name}, a seeded or removed rate name"
@@ -256,20 +260,40 @@ def violations(sources: dict[str, str]) -> list[str]:
                     )
                     if used in REMOVED_NAMES:
                         found.append(f"{where} reintroduces {used}")
-            found.extend(_calls_findings(node, where, in_db, month_calls, constants))
+                found.extend(
+                    f"{where} reintroduces {name}"
+                    for name in _scoped_removed_uses(node, rel, in_db)
+                )
+            found.extend(_calls_findings(node, where, issues_grants, month_calls, constants))
             found.extend(_seat_findings(node, where, rel.startswith("web/schemas")))
     return found
 
 
+def _issues_grants(tree: ast.AST) -> bool:
+    """Whether the module issues credit grants (calls ``issue_grant``)."""
+    return any(isinstance(n, ast.Call) and _callee_name(n) == "issue_grant" for n in ast.walk(tree))
+
+
+def _scoped_removed_uses(node: ast.AST, rel: str, in_db: bool) -> list[str]:
+    """Uses of ``GRACE_PERIOD`` or ``PAYMOB_RETRIAL_DAYS`` that mean the removed rules constant."""
+    if isinstance(node, ast.ImportFrom) and (node.module or "").endswith("subscription_rules"):
+        return [a.name for a in node.names if a.name in SCOPED_REMOVED_NAMES]
+    if isinstance(node, ast.Attribute) and node.attr in SCOPED_REMOVED_NAMES:
+        return [node.attr]
+    if rel == RULES_FILE or in_db:
+        return [name for name in _bound_names(node) if name in SCOPED_REMOVED_NAMES]
+    return []
+
+
 def _calls_findings(
-    node: ast.AST, where: str, in_db: bool, month_calls: set[str], constants: set[str]
+    node: ast.AST, where: str, issues_grants: bool, month_calls: set[str], constants: set[str]
 ) -> list[str]:
     found: list[str] = []
     if isinstance(node, ast.Call):
         name = _callee_name(node)
         if name in month_calls or _MONTH_HELPER.fullmatch(name.strip("_")):
             arg = _months_argument(node)
-            if arg is not None and _fixed_months(arg, constants):
+            if arg is not None and _fixed_months(arg, constants, calendar_step=not issues_grants):
                 found.append(f"{where} add_months with a month count fixed in code")
         if name == "relativedelta" and any(
             _is_literal_expression(kw.value)
@@ -277,11 +301,11 @@ def _calls_findings(
             if kw.arg in {"months", "years"}
         ):
             found.append(f"{where} relativedelta with a literal month or year count")
-        if in_db and any(
+        if issues_grants and any(
             kw.arg == "expires_at" and _has_literal_timedelta(kw.value) for kw in node.keywords
         ):
             found.append(f"{where} expires_at built from a literal timedelta")
-    if in_db and isinstance(node, ast.Assign | ast.AnnAssign | ast.AugAssign):
+    if issues_grants and isinstance(node, ast.Assign | ast.AnnAssign | ast.AugAssign):
         value = getattr(node, "value", None)
         if (
             isinstance(value, ast.expr)
@@ -303,7 +327,9 @@ def _target_names(node: ast.Assign | ast.AnnAssign | ast.AugAssign) -> list[str]
     ]
 
 
-_NOT_A_SEAT_COUNT: Final = re.compile(r"price|minor|amount|unit|allowance|grant", re.IGNORECASE)
+_NOT_A_SEAT_COUNT: Final = re.compile(
+    r"price|minor|amount|unit|allowance|grant|len\(|rows|items", re.IGNORECASE
+)
 
 
 def _int_value(node: ast.expr) -> int | None:
@@ -338,7 +364,7 @@ def _seat_findings(node: ast.AST, where: str, in_schema: bool) -> list[str]:
         ):
             for kw in value.keywords:
                 bound = _int_value(kw.value) if kw.arg == "le" else None
-                if bound is not None and bound != SEAT_SANITY_BOUND:
+                if bound is not None and SEAT_PER_PURCHASE_BOUND < bound != SEAT_SANITY_BOUND:
                     found.append(f"{where} a seat field capped by a literal le={bound}")
     return found
 
@@ -409,7 +435,10 @@ def test_a_literal_relativedelta_is_flagged() -> None:
     assert _flags("x = now + relativedelta(months=n)\n") == []
 
 
-def test_a_literal_timedelta_on_an_expiry_is_flagged_in_the_db_layer() -> None:
+GRANT_MODULE = "def g(ledger):\n    return ledger.issue_grant(1)\n\n\n"
+
+
+def test_a_literal_timedelta_on_an_expiry_is_flagged_in_a_grant_issuing_module() -> None:
     bad = (
         "def f(now):\n    expires_at = now + timedelta(days=30)\n",
         "def f(now):\n    return issue(expires_at=now + timedelta(days=365))\n",
@@ -417,14 +446,30 @@ def test_a_literal_timedelta_on_an_expiry_is_flagged_in_the_db_layer() -> None:
         "def f(now):\n    grant_expires_at: object = now + timedelta(weeks=4)\n",
     )
     for source in bad:
-        assert _flags(source), source
+        assert _flags(GRANT_MODULE + source), source
+        assert _flags(GRANT_MODULE + source, "web/routers/x.py"), source
     ok = (
         "def f(now, pack):\n    return now + timedelta(days=pack.signup_validity_days)\n",
         "def f(now, d):\n    expires_at = now + timedelta(days=d)\n",
         "def f(now):\n    return now - timedelta(hours=2)\n",  # an operational window
     )
     for source in ok:
+        assert _flags(GRANT_MODULE + source) == [], source
+
+
+def test_a_token_or_otp_expiry_outside_a_grant_issuing_module_is_not_flagged() -> None:
+    for source in (
+        "def f(now):\n    expires_at = now + timedelta(minutes=10)\n",
+        "def f(now):\n    return issue(expires_at=now + timedelta(days=7))\n",
+    ):
         assert _flags(source) == [], source
+
+
+def test_calendar_stepping_is_allowed_only_outside_a_grant_issuing_module() -> None:
+    step = "def f(month_start):\n    return add_months(month_start, 1)\n"
+    assert _flags(step) == []
+    assert _flags(GRANT_MODULE + step)  # in a module that issues grants one month is a validity
+    assert _flags("def f(m):\n    return add_months(m, 2)\n")  # only a step of one is legal
 
 
 def test_a_hardcoded_seat_ceiling_is_flagged() -> None:
@@ -442,9 +487,12 @@ def test_a_hardcoded_seat_ceiling_is_flagged() -> None:
         "def f(seats):\n    return seats > 0\n",
         "def f(seats):\n    return 1 <= seats <= MAX_SEATS_PER_PURCHASE\n",
         "def f(rows):\n    return len(rows) > 200\n",
+        "def f(seat_rows):\n    return len(seat_rows) > 500\n",
     )
     for source in ok:
         assert _flags(source) == [], source
+    per_purchase = "from pydantic import Field\n\nseats: int = Field(ge=1, le=100)\n"
+    assert _flags(per_purchase, "web/schemas_billing_charges.py") == []
     sanity = "from pydantic import Field\n\nextraSeats: int = Field(default=0, ge=0, le=10_000)\n"
     assert _flags(sanity, "web/schemas_subscriptions.py") == []
     named = "from pydantic import Field\n\nseats: int = Field(ge=1, le=MAX_SEATS_PER_PURCHASE)\n"
@@ -463,7 +511,8 @@ def test_an_import_of_the_seed_module_outside_the_allowlist_is_flagged() -> None
     for source in forms:
         assert _flags(source, "db/billing_repo.py"), source
         assert _flags(source, "db/migrations/versions/0099_x.py") == [], source
-    # Prose that names the module (a docstring) is not an import.
+    # A log string or a docstring that names the module is not an import.
+    assert _flags("log.info('billing_defaults')\n") == []
     assert _flags('"""Seeds live in lemely.core.billing_defaults."""\n') == []
 
 
@@ -487,13 +536,18 @@ def test_a_seed_or_removed_rate_name_is_flagged_however_it_comes_back() -> None:
         "def MAX_EXTRA_SEATS():\n    return 200\n",
         "MAX_EXTRA_SEATS_AT_CHECKOUT: int = 200\n",
         "from x import TEACHER_SIGNUP_VALIDITY\n",
-        "GRACE_PERIOD: Final = timedelta(days=3)\n",
         "from lemely.core.subscription_rules import GRACE_PERIOD\n",
         "def f(now):\n    return now + rules.GRACE_PERIOD\n",
-        "PAYMOB_RETRIAL_DAYS = 3\n",
         "def f():\n    return rules.MAX_EXTRA_SEATS_AT_CHECKOUT\n",
     )
     for source in forms:
         assert _flags(source, "core/x.py"), source
+    # The rules constants T18 moved into settings: caught where they mean the old rule ...
+    rules = "core/subscription_rules.py"
+    assert _flags("GRACE_PERIOD: Final = timedelta(days=3)\n", rules)
+    assert _flags("PAYMOB_RETRIAL_DAYS = 3\n", rules)
+    assert _flags("GRACE_PERIOD = timedelta(days=3)\n", "db/x.py")
+    # ... and not as an unrelated name elsewhere.
+    assert _flags("GRACE_PERIOD = 5\n", "web/x.py") == []
     # The seed module itself is where the seeds are declared.
     assert _flags("MAX_EXTRA_SEATS: int = 200\n", DEFAULTS_FILE) == []

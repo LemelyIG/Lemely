@@ -20,7 +20,11 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from lemely.core.billing_defaults import TEACHER_SIGNUP_VALIDITY_DAYS
+from lemely.core.billing_defaults import (
+    STUDENT_SIGNUP_UNITS,
+    TEACHER_SIGNUP_UNITS,
+    TEACHER_SIGNUP_VALIDITY_DAYS,
+)
 from lemely.core.metered_actions import ACTION_SPECS, MeteredAction
 from lemely.core.usage_types import EstimatorParams
 from lemely.db.models.billing import CreditPack
@@ -41,9 +45,9 @@ log = structlog.get_logger(__name__)
 
 SIGNUP_STUDENT_PACK = "signup_student"
 SIGNUP_TEACHER_PACK = "signup_teacher"
-#: About two papers at the top of the seeded marking estimate (spec §2.1).
+#: The seeded signup units per pack (spec §2.1); the values are the seed module's.
 DEFAULT_SIGNUP_UNITS: Mapping[str, int] = MappingProxyType(
-    {SIGNUP_STUDENT_PACK: 250, SIGNUP_TEACHER_PACK: 2000}
+    {SIGNUP_STUDENT_PACK: STUDENT_SIGNUP_UNITS, SIGNUP_TEACHER_PACK: TEACHER_SIGNUP_UNITS}
 )
 _SIGNUP_NAMES = {
     SIGNUP_STUDENT_PACK: "Student free allowance",
