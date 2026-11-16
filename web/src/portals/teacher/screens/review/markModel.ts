@@ -41,6 +41,8 @@ export interface MarkState {
   ticked: string[]
   touched: boolean
   raw: number
+  /** Lemely gave a mark: until the teacher touches anything, that clamped mark is the total, even if the ticks cannot add up to it. */
+  anchored?: boolean
 }
 
 const clampMark = (n: number, max: number | null): number => Math.min(max ?? Number.POSITIVE_INFINITY, Math.max(0, n))
@@ -103,7 +105,7 @@ function move(points: readonly MarkPoint[], ticked: readonly string[], max: numb
  */
 export function initialMarkState(points: readonly MarkPoint[], lemely: number | null, max: number | null = null): MarkState {
   const raw = clampMark(lemely ?? 0, max)
-  if (points.length === 0) return { ticked: [], touched: false, raw }
+  if (points.length === 0) return { ticked: [], touched: false, raw, anchored: lemely != null }
   let ticked: string[] = []
   for (const p of points) {
     if (!p.awarded) continue
@@ -119,7 +121,7 @@ export function initialMarkState(points: readonly MarkPoint[], lemely: number | 
       ticked = next
     }
   }
-  return { ticked, touched: false, raw }
+  return { ticked, touched: false, raw, anchored: lemely != null }
 }
 
 function computed(points: readonly MarkPoint[], ticked: readonly string[]): number {
@@ -130,9 +132,22 @@ function computed(points: readonly MarkPoint[], ticked: readonly string[]): numb
   }, 0)
 }
 
-/** The ticks decide the total (or the raw number when there are no points), clamped to [0, max]. */
-export function totalOf(points: readonly MarkPoint[], s: MarkState, max: number | null, _lemely?: number | null): number {
-  return clampMark(points.length === 0 ? s.raw : computed(points, s.ticked), max)
+/** The ticks decide the total (or the raw number when there are no points), clamped to [0, max].
+ * An untouched item keeps Lemely's clamped mark, so unreachable ticks never invent an override. */
+export function totalOf(points: readonly MarkPoint[], s: MarkState, max: number | null): number {
+  if (points.length === 0 || (s.anchored && !s.touched)) return clampMark(s.raw, max)
+  return clampMark(computed(points, s.ticked), max)
+}
+
+/** False only when the teacher has no way to enter a mark: no points, no maximum to step within, and no mark from Lemely. */
+export function canSave(points: readonly MarkPoint[], s: MarkState, max: number | null, lemely: number | null): boolean {
+  return points.length > 0 || max != null || lemely != null || s.touched
+}
+
+/** Shown when Lemely's own mark is above the maximum and was clamped. */
+export function clampNote(lemely: number | null, max: number | null): string | null {
+  if (lemely == null || max == null || lemely <= max) return null
+  return `Lemely gave ${lemely}, above the maximum of ${max}, so it is shown as ${max}`
 }
 
 export function isBlocked(points: readonly MarkPoint[], s: MarkState, id: string, max: number | null): boolean {
@@ -175,7 +190,6 @@ export function canStep(
   points: readonly MarkPoint[],
   s: MarkState,
   max: number | null,
-  _lemely?: number | null,
 ): { down: boolean; up: boolean } {
   if (max == null) return { down: false, up: false }
   if (points.length === 0) return { down: s.raw > 0, up: s.raw < max }
@@ -236,9 +250,9 @@ export function resolveBody(a: {
   canAdjust: boolean
 }): ResolveReviewRequest {
   const note = a.note.trim() || undefined
-  const total = totalOf(a.points, a.state, a.max, a.lemely)
+  const total = totalOf(a.points, a.state, a.max)
   const body: ResolveReviewRequest = {}
-  if (a.canAdjust && total !== a.lemely) {
+  if (a.canAdjust && canSave(a.points, a.state, a.max, a.lemely) && total !== a.lemely) {
     body.overrideMarks = total
     const breakdown = breakdownOf(a.points, a.state)
     if (breakdown) body.breakdown = breakdown

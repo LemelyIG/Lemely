@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest"
 import type { ReviewItemPoint } from "@/lib/teacherTypes"
 import {
   breakdownOf,
+  canSave,
   canStep,
+  clampNote,
   deltaLine,
   initialMarkState,
   isBlocked,
@@ -70,13 +72,13 @@ describe("totals", () => {
   it("starts at Lemely's own mark", () => {
     const s = initialMarkState(Q4, 4, 5)
     expect(s.ticked).toEqual(["p1", "p2", "p4", "p5"])
-    expect(totalOf(Q4, s, 5, 4)).toBe(4)
+    expect(totalOf(Q4, s, 5)).toBe(4)
   })
   it("recomputes from ticks once touched", () => {
     let s = initialMarkState(Q4, 4, 5)
     s = toggleTick(Q4, s, "p6", 5)
     expect(s.touched).toBe(true)
-    expect(totalOf(Q4, s, 5, 4)).toBe(5)
+    expect(totalOf(Q4, s, 5)).toBe(5)
   })
   it("blocks the other branch of an either/or", () => {
     const s = initialMarkState(Q4, 4, 5)
@@ -92,7 +94,7 @@ describe("totals", () => {
     expect(s.ticked).toEqual(["p1", "p2", "p5", "p3"])
     expect(isBlocked(Q4, s, "p4", 5)).toBe(true)
     expect(toggleTick(Q4, s, "p4", 5)).toBe(s)
-    expect(totalOf(Q4, s, 5, 4)).toBe(4)
+    expect(totalOf(Q4, s, 5)).toBe(4)
   })
   it("blocks a second either/or member even when the group cap would allow it", () => {
     const alt = markPointsFrom([
@@ -132,11 +134,11 @@ describe("totals", () => {
       wire({ markPointId: "c", ordinal: 2 }),
     ])
     const over: MarkState = { ticked: ["a", "b", "c"], touched: true, raw: 0 }
-    expect(totalOf(three, over, 2, 0)).toBe(2)
-    expect(totalOf(three, over, null, 0)).toBe(3)
-    expect(totalOf([], { ticked: [], touched: true, raw: 9 }, 3, null)).toBe(3)
-    expect(totalOf([], { ticked: [], touched: true, raw: -2 }, 3, null)).toBe(0)
-    expect(totalOf([], { ticked: [], touched: true, raw: 9 }, null, null)).toBe(9)
+    expect(totalOf(three, over, 2)).toBe(2)
+    expect(totalOf(three, over, null)).toBe(3)
+    expect(totalOf([], { ticked: [], touched: true, raw: 9 }, 3)).toBe(3)
+    expect(totalOf([], { ticked: [], touched: true, raw: -2 }, 3)).toBe(0)
+    expect(totalOf([], { ticked: [], touched: true, raw: 9 }, null)).toBe(9)
   })
   it("derives ticks that add up to Lemely's total when they disagree at load", () => {
     const three = markPointsFrom([
@@ -146,7 +148,7 @@ describe("totals", () => {
     ])
     const s = initialMarkState(three, 2, 3)
     expect(s.ticked).toEqual(["a", "b"])
-    expect(totalOf(three, s, 3, 2)).toBe(2)
+    expect(totalOf(three, s, 3)).toBe(2)
     expect(initialMarkState(three, 0, 3).ticked).toEqual([])
     expect(initialMarkState(three, null, 3).ticked).toEqual(["a"])
     expect(initialMarkState(three, null, 3).raw).toBe(0)
@@ -159,9 +161,9 @@ describe("totals", () => {
       wire({ markPointId: "c", awarded: true, ordinal: 2 }),
     ])
     const s = initialMarkState(three, 3, 2)
-    expect(totalOf(three, s, 2, 3)).toBe(2)
-    expect(totalOf([], initialMarkState([], 9, 3), 3, 9)).toBe(3)
-    expect(totalOf([], initialMarkState([], -4, 3), 3, -4)).toBe(0)
+    expect(totalOf(three, s, 2)).toBe(2)
+    expect(totalOf([], initialMarkState([], 9, 3), 3)).toBe(3)
+    expect(totalOf([], initialMarkState([], -4, 3), 3)).toBe(0)
   })
   it("counts a tariff-2 point at its tariff and respects the group cap", () => {
     const pool = markPointsFrom([
@@ -173,14 +175,14 @@ describe("totals", () => {
     expect(pool[0].code).toBe("M2")
     let s = initialMarkState(pool, 0)
     s = toggleTick(pool, s, "t", 10)
-    expect(totalOf(pool, s, 10, 0)).toBe(2)
+    expect(totalOf(pool, s, 10)).toBe(2)
     expect(isBlocked(pool, s, "u", 10)).toBe(false)
     s = toggleTick(pool, s, "u", 10)
-    expect(totalOf(pool, s, 10, 0)).toBe(3)
+    expect(totalOf(pool, s, 10)).toBe(3)
     // Group without its own maximum is capped at one point's tariff.
     s = toggleTick(pool, s, "v", 10)
     expect(isBlocked(pool, s, "w", 10)).toBe(true)
-    expect(totalOf(pool, s, 10, 0)).toBe(5)
+    expect(totalOf(pool, s, 10)).toBe(5)
     expect(poolHeader(pool, 2)).toBe("Up to 2 marks from these")
     expect(poolHeader(markPointsFrom([wire({ markPointId: "q", groupKey: "pool:9", groupMaxMarks: 1 })]), 0)).toBe(
       "Up to 1 mark from these",
@@ -195,7 +197,7 @@ describe("totals", () => {
     let s = initialMarkState(pool, 0)
     s = toggleTick(pool, s, "a", 3)
     s = toggleTick(pool, s, "b", 3)
-    expect(totalOf(pool, s, 3, 0)).toBe(2)
+    expect(totalOf(pool, s, 3)).toBe(2)
     expect(isBlocked(pool, s, "c", 3)).toBe(true)
     expect(poolHeader(pool, 0)).toBe("Up to 2 marks from these")
     expect(poolHeader(pool, 1)).toBeNull()
@@ -211,18 +213,18 @@ describe("stepper", () => {
       wire({ markPointId: "v", ordinal: 2 }),
     ])
     let s = initialMarkState(pts, 0, 4)
-    const seen = [totalOf(pts, s, 4, 0)]
+    const seen = [totalOf(pts, s, 4)]
     for (let i = 0; i < 4; i++) {
       s = stepUp(pts, s, 4)
-      seen.push(totalOf(pts, s, 4, 0))
+      seen.push(totalOf(pts, s, 4))
     }
     expect(seen).toEqual([0, 1, 2, 3, 4])
-    expect(canStep(pts, s, 4, 0)).toEqual({ down: true, up: false })
+    expect(canStep(pts, s, 4)).toEqual({ down: true, up: false })
     for (let i = 3; i >= 0; i--) {
       s = stepDown(pts, s, 4)
-      expect(totalOf(pts, s, 4, 0)).toBe(i)
+      expect(totalOf(pts, s, 4)).toBe(i)
     }
-    expect(canStep(pts, s, 4, 0)).toEqual({ down: false, up: true })
+    expect(canStep(pts, s, 4)).toEqual({ down: false, up: true })
   })
   it("has no dead step when Lemely's ticks disagree with its total", () => {
     const pts = markPointsFrom([
@@ -232,40 +234,40 @@ describe("stepper", () => {
     ])
     let s = initialMarkState(pts, 2, 3)
     s = stepDown(pts, s, 3)
-    expect(totalOf(pts, s, 3, 2)).toBe(1)
+    expect(totalOf(pts, s, 3)).toBe(1)
     s = stepUp(pts, stepUp(pts, s, 3), 3)
-    expect(totalOf(pts, s, 3, 2)).toBe(3)
+    expect(totalOf(pts, s, 3)).toBe(3)
   })
   it("disables the stepper when the maximum is unknown", () => {
     const s = initialMarkState(Q4, 4, null)
-    expect(canStep(Q4, s, null, 4)).toEqual({ down: false, up: false })
+    expect(canStep(Q4, s, null)).toEqual({ down: false, up: false })
     expect(stepUp(Q4, s, null)).toBe(s)
     expect(stepDown(Q4, s, null)).toBe(s)
     const r = initialMarkState([], 2, null)
-    expect(canStep([], r, null, 2)).toEqual({ down: false, up: false })
+    expect(canStep([], r, null)).toEqual({ down: false, up: false })
     expect(stepUp([], r, null)).toBe(r)
   })
   it("adds the next eligible point and removes the last ticked", () => {
     let s = initialMarkState(Q4, 4, 5)
     s = stepUp(Q4, s, 5)
     expect(s.ticked.at(-1)).toBe("p6")
-    expect(totalOf(Q4, s, 5, 4)).toBe(5)
-    expect(canStep(Q4, s, 5, 4)).toEqual({ down: true, up: false })
+    expect(totalOf(Q4, s, 5)).toBe(5)
+    expect(canStep(Q4, s, 5)).toEqual({ down: true, up: false })
     s = stepDown(Q4, s, 5)
     s = stepDown(Q4, s, 5)
-    expect(totalOf(Q4, s, 5, 4)).toBe(3)
+    expect(totalOf(Q4, s, 5)).toBe(3)
   })
   it("steps a raw number when there are no points", () => {
     let s = initialMarkState([], 1, 3)
-    expect(totalOf([], s, 3, 1)).toBe(1)
+    expect(totalOf([], s, 3)).toBe(1)
     s = stepUp([], s, 3)
     s = stepUp([], s, 3)
     s = stepUp([], s, 3)
-    expect(totalOf([], s, 3, 1)).toBe(3)
-    expect(canStep([], s, 3, 1)).toEqual({ down: true, up: false })
+    expect(totalOf([], s, 3)).toBe(3)
+    expect(canStep([], s, 3)).toEqual({ down: true, up: false })
     s = stepDown([], stepDown([], stepDown([], stepDown([], s, 3), 3), 3), 3)
-    expect(totalOf([], s, 3, 1)).toBe(0)
-    expect(canStep([], s, 3, 1)).toEqual({ down: false, up: true })
+    expect(totalOf([], s, 3)).toBe(0)
+    expect(canStep([], s, 3)).toEqual({ down: false, up: true })
   })
 })
 
@@ -349,5 +351,28 @@ describe("breakdownOf", () => {
     expect(breakdownOf(pts, { ...all, ticked: ["sc"] })).toEqual({ methodMarks: 0, accuracyMarks: 0, otherMarks: 1, notes: null })
     expect(breakdownOf(pts, { ...all, ticked: [] })).toEqual({ methodMarks: 0, accuracyMarks: 0, otherMarks: 0, notes: null })
     expect(breakdownOf([], all)).toBeUndefined()
+  })
+})
+
+describe("fix round 1", () => {
+  it("never commits an override the teacher did not make when ticks cannot reach Lemely's total", () => {
+    const one = markPointsFrom([wire({ markPointId: "p1", tariff: 3, ordinal: 0 })])
+    const s = initialMarkState(one, 1, 5)
+    expect(totalOf(one, s, 5)).toBe(1)
+    expect(resolveBody({ points: one, state: s, max: 5, lemely: 1, note: "", canAdjust: true })).toEqual({})
+  })
+  it("has no save when there is no way to enter a mark", () => {
+    const s = initialMarkState([], null, null)
+    expect(canSave([], s, null, null)).toBe(false)
+    expect(resolveBody({ points: [], state: s, max: null, lemely: null, note: "", canAdjust: true }).overrideMarks).toBeUndefined()
+    expect(canSave([], s, 3, null)).toBe(true)
+    expect(canSave([], s, null, 2)).toBe(true)
+    expect(canSave(Q4, initialMarkState(Q4, null, null), null, null)).toBe(true)
+  })
+  it("explains an above-max clamp", () => {
+    expect(clampNote(9, 3)).toBe("Lemely gave 9, above the maximum of 3, so it is shown as 3")
+    expect(clampNote(3, 3)).toBeNull()
+    expect(clampNote(null, 3)).toBeNull()
+    expect(clampNote(9, null)).toBeNull()
   })
 })
