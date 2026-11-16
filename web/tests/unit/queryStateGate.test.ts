@@ -185,6 +185,11 @@ const ALLOWLIST: { path: string; reason: string }[] = [
       "loads data, but its one consumer degrades: a failed profile read renders `the email on your account`, a complete sentence, where an error panel would announce a failure the reader does not need to act on",
   },
   {
+    path: "src/portals/admin/screens/billing/CatalogueEditors.tsx",
+    reason:
+      "loads data, but only as an inline preview inside an open dialog: the price-impact GET's pending and error states are sentences in the warning (\"Checking who this affects\", \"Couldn't check how many auto top-ups this affects\"); a QueryState panel would replace the form mid-edit",
+  },
+  {
     path: "src/portals/admin/screens/billing/PaymentActions.tsx",
     reason:
       "loads no data: `useRefundPayment`, `useVoidPayment` and `useReconcilePayment` are mutations (POSTs), and the payment arrives as a prop from `CustomerDetail`, which fetches the customer inside its own `<QueryState>`",

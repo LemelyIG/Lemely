@@ -34,15 +34,19 @@ import {
 /**
  * What a form tells the admin about the customers it affects, as the values change. `warned` is
  * true while the warning shows: the dialog then asks for a tick before it saves, and the tick is
- * a form-only value that never reaches the request body.
+ * form-only state that never reaches the request body. The tick confirms `key` (the warning's
+ * text): when the warning changes the box is unticked. `pending` means the facts are still
+ * loading, so nothing can be confirmed or saved yet.
  */
 export interface ImpactView {
   warned: boolean
   node: ReactNode
   confirmLabel: string
+  key: string
+  pending?: boolean
 }
 
-const NO_IMPACT: ImpactView = { warned: false, node: null, confirmLabel: "" }
+const NO_IMPACT: ImpactView = { warned: false, node: null, confirmLabel: "", key: "" }
 const useNoImpact = (): ImpactView => NO_IMPACT
 
 /** Short fields pair up on wide dialogs; prose and names take the full row. */
@@ -98,13 +102,15 @@ export function ReasonedFormDialog<TBody>({
   const [values, setValues] = useState<FormValues>(initial)
   const [reason, setReason] = useState("")
   const [attempts, setAttempts] = useState(0)
+  // The warning the admin ticked for; a different warning is unconfirmed.
+  const [confirmedKey, setConfirmedKey] = useState<string | null>(null)
 
   const impact = useImpact(values)
   const perField = fieldErrors(fields, values)
   const reasonProblem = reasonError(reason)
-  const confirmError = confirmProblem(impact.warned, values)
+  const confirmError = confirmProblem(impact.warned, confirmedKey, impact.key)
   const crossProblems = Object.keys(perField).length === 0 ? (check?.(values) ?? []) : []
-  const valid = Object.keys(perField).length === 0 && reasonProblem === null && crossProblems.length === 0 && confirmError === null
+  const valid = Object.keys(perField).length === 0 && reasonProblem === null && crossProblems.length === 0 && confirmError === null && !impact.pending
   const showErrors = attempts > 0
   const set = (name: string, value: string | boolean) => setValues((v) => ({ ...v, [name]: value }))
 
@@ -157,7 +163,7 @@ export function ReasonedFormDialog<TBody>({
             <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>
               Cancel
             </Button>
-            <Button variant="primary" type="submit" form={formId} loading={mutation.isPending} disabled={blocked !== null}>
+            <Button variant="primary" type="submit" form={formId} loading={mutation.isPending} disabled={blocked !== null || impact.pending === true}>
               {submitLabel}
             </Button>
           </div>
@@ -247,13 +253,13 @@ export function ReasonedFormDialog<TBody>({
         <div role="status" className={impact.warned ? "flex flex-col gap-2 rounded-md bg-surface-container-low px-3 py-3 text-body-sm text-on-surface sm:col-span-2" : "sr-only"}>
           {impact.warned ? impact.node : null}
         </div>
-        {impact.warned ? (
+        {impact.warned && !impact.pending ? (
           <div className="sm:col-span-2">
             <Checkbox
               label={impact.confirmLabel}
-              checked={values.confirmImpact === true}
+              checked={confirmedKey === impact.key}
               error={showErrors ? (confirmError ?? undefined) : undefined}
-              onChange={(e) => set("confirmImpact", e.target.checked)}
+              onChange={(e) => setConfirmedKey(e.target.checked ? impact.key : null)}
             />
           </div>
         ) : null}

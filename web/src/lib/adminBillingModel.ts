@@ -550,10 +550,10 @@ function reverseUnavailable(reason: string | null): string {
 }
 
 export const FRIENDLY: Record<string, string> = {
-  stale_write: "Someone changed this while you were editing. The page now shows the current values. Close this and edit again.",
-  credit_rate_exists: "A rate was set for this currency while you were editing. The page now shows it. Close this and edit again.",
+  stale_write: "Someone changed this while you were editing.",
+  credit_rate_exists: "A rate was set for this currency while you were editing. The page now shows it.",
   credit_rate_not_set: "This currency has no rate to clear. The page now shows the current state.",
-  llm_price_exists: "An override was set for this model while you were editing. The page now shows it. Close this and edit again.",
+  llm_price_exists: "An override was set for this model while you were editing. The page now shows it.",
   llm_price_not_set: "This model has no override to clear. The page now shows the current state.",
   rate_clear_needs_confirm: "Clearing a rate stops conversions. Confirm it in the dialog to continue.",
   override_drops_tier: "This model is billed at a higher price for long prompts. Add the tier prices, or tick the box to charge one flat rate.",

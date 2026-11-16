@@ -31,6 +31,12 @@ import { PlanChangeDialog } from "./PlanChangeDialog"
 const TEXT_LINK =
   "inline-flex items-center rounded-sm font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:min-h-11"
 
+/** The banner says the plan ends at this renewal instead of moving: the card must agree. */
+function endsAtPeriodEnd(sub: SubscriptionView): boolean {
+  const change = sub.pendingTermsChange
+  return change !== null && change.endsInsteadOfMoving && (change.firstRenewalAt ?? sub.currentPeriodEnd) === sub.currentPeriodEnd
+}
+
 function PlanCard({
   summary,
   audience,
@@ -63,7 +69,7 @@ function PlanCard({
             </p>
             {waiting ? (
               <p className="m-0 text-body-sm text-on-surface-variant">Waiting for the first payment to confirm.</p>
-            ) : sub.cancelAtPeriodEnd && sub.currentPeriodEnd ? (
+            ) : (sub.cancelAtPeriodEnd || endsAtPeriodEnd(sub)) && sub.currentPeriodEnd ? (
               <p className="m-0 text-body-sm text-on-surface-variant">
                 Ends {formatBillingDate(sub.currentPeriodEnd)}. Usage comes from credits after that.
               </p>
@@ -220,7 +226,7 @@ export function BillingOverview({
             const sub = s.subscription
             const live = isLiveSubscription(sub?.status)
             const waiting = sub?.status === "pending_first_payment"
-            const notice = priceChangeNotice({ summary: s, audience })
+            const notice = priceChangeNotice({ summary: s, audience, forChild })
             const page = (meter: UsageMeterView) => (
               <>
                 {sub?.status === "past_due" ? (

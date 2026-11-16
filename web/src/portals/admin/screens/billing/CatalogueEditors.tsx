@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
 import {
   PACK_UPDATE_FIELDS,
   TIER_UPDATE_FIELDS,
@@ -23,8 +24,9 @@ import { ReasonedFormDialog, type ImpactView } from "./ReasonedFormDialog"
  * closed and the row opened again.
  */
 
-const NO_WARNING: ImpactView = { warned: false, node: null, confirmLabel: "" }
+const NO_WARNING: ImpactView = { warned: false, node: null, confirmLabel: "", key: "" }
 const PACK_CONFIRM = "I understand these customers will be charged the new price."
+const PACK_UNKNOWN_CONFIRM = "I understand I can't see who is affected, and they will be charged the new price."
 const TIER_CONFIRM = "I understand these customers will be emailed about the change."
 
 const lines = (items: string[]) => items.map((t) => <p key={t} className="m-0">{t}</p>)
@@ -47,7 +49,9 @@ export function TierEditDialog({
   const hidden = hiddenFeatureCount(tier.rawFeatures)
   const useTierImpact = (values: FormValues): ImpactView => {
     const impact = tierImpact(tier, values, { noticeDays, amountUpdatable })
-    return impact ? { warned: true, node: lines(tierImpactLines(impact)), confirmLabel: TIER_CONFIRM } : NO_WARNING
+    if (!impact) return NO_WARNING
+    const text = tierImpactLines(impact)
+    return { warned: true, node: lines(text), confirmLabel: TIER_CONFIRM, key: text.join("\n") }
   }
   return (
     <ReasonedFormDialog
@@ -79,11 +83,13 @@ function usePackImpactView(pack: AdminCreditPack, values: FormValues): ImpactVie
   const settled = useDebouncedValue(target, 350)
   const query = usePackPriceImpact(pack.id, settled)
   if (target === null) return NO_WARNING
-  const warning = (node: ImpactView["node"]): ImpactView => ({ warned: true, node, confirmLabel: PACK_CONFIRM })
-  if (settled !== target || query.isPending) return warning(<p className="m-0">Checking who this affects…</p>)
-  if (query.isError) return warning(<p className="m-0">Couldn&apos;t check how many auto top-ups this affects. They will be charged the new price.</p>)
+  const warning = (node: ImpactView["node"], key: string, pending = false, confirmLabel = PACK_CONFIRM): ImpactView => ({ warned: true, node, confirmLabel, key, pending })
+  // The counts are not known yet: nothing can be confirmed, and the save waits.
+  if (settled !== target || query.isPending) return warning(<p className="m-0">Checking who this affects…</p>, "pending", true)
+  // A failed count gets its own confirm: the admin is told they cannot see who is affected.
+  if (query.isError) return warning(<p className="m-0">Couldn&apos;t check how many auto top-ups this affects. They will be charged the new price.</p>, "unknown", false, PACK_UNKNOWN_CONFIRM)
   const impact = packImpactLines(query.data)
-  return impact === null ? NO_WARNING : warning(lines(impact))
+  return impact === null ? NO_WARNING : warning(lines(impact), impact.join("\n"))
 }
 
 export function PackEditDialog({

@@ -23,8 +23,10 @@ export interface TierImpactSettings {
 export interface TierImpact {
   customers: number
   noticeDays: number
-  /** A price term changed and Paymob cannot re-price running renewals. */
+  /** The base price changed and Paymob cannot re-price running renewals. */
   endsAtRenewal: boolean
+  /** A price term changes and Paymob cannot re-price a running renewal. */
+  fixedPath: boolean
 }
 
 const str = (v: FormValues, k: string) => String(v[k] ?? "").trim()
@@ -48,14 +50,14 @@ function seatMoney(v: FormValues, k: string): number | null {
 const differs = (typed: number | null, stored: number) => typed !== null && typed !== stored
 
 /** Which terms the typed values change. Name, features and on-sale are not terms. */
-function termChanges(tier: AdminPlanTier, v: FormValues): { any: boolean; price: boolean } {
+function termChanges(tier: AdminPlanTier, v: FormValues): { any: boolean; price: boolean; basePrice: boolean } {
   const price = differs(minorFromMajor(str(v, "priceMajor")), tier.priceMinor)
   const allowance = differs(wholeNumber(v, "allowanceUnits"), tier.allowanceUnits)
-  if (tier.audience !== "teacher") return { any: price || allowance, price }
+  if (tier.audience !== "teacher") return { any: price || allowance, price, basePrice: price }
   const seatPrice = differs(seatMoney(v, "extraSeatPriceMajor"), tier.extraSeatPriceMinor ?? 0)
   const included = differs(seatNumber(v, "includedSeats"), tier.includedSeats ?? 0)
   const seatAllowance = differs(seatNumber(v, "seatAllowanceUnits"), tier.seatAllowanceUnits ?? 0)
-  return { any: price || allowance || seatPrice || included || seatAllowance, price: price || seatPrice }
+  return { any: price || allowance || seatPrice || included || seatAllowance, price: price || seatPrice, basePrice: price }
 }
 
 /** The warning for a tier edit, or `null` when no customer is affected. */
@@ -63,7 +65,7 @@ export function tierImpact(tier: AdminPlanTier, v: FormValues, settings: TierImp
   if (tier.liveSubscriptionCount <= 0) return null
   const changes = termChanges(tier, v)
   if (!changes.any) return null
-  return { customers: tier.liveSubscriptionCount, noticeDays: settings.noticeDays, endsAtRenewal: changes.price && !settings.amountUpdatable }
+  return { customers: tier.liveSubscriptionCount, noticeDays: settings.noticeDays, endsAtRenewal: changes.basePrice && !settings.amountUpdatable, fixedPath: changes.price && !settings.amountUpdatable }
 }
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many)
@@ -71,11 +73,13 @@ const count = (n: number) => new Intl.NumberFormat("en-US").format(n)
 
 export function tierImpactLines(i: TierImpact): string[] {
   const lead =
-    `${count(i.customers)} ${plural(i.customers, "customer is", "customers are")} on this plan. New customers get the new terms now. ` +
-    `Current customers get an email and move at their first renewal after ${i.noticeDays} ${plural(i.noticeDays, "day", "days")}, ` +
-    `if it's worse for them, or at their next renewal if it's better.`
-  if (!i.endsAtRenewal) return [lead]
-  return [lead, "Paymob can't change existing renewals, so their plans will end at that renewal and they'll be asked to subscribe again."]
+    `${count(i.customers)} ${plural(i.customers, "customer is", "customers are")} on this plan. New customers get these terms now. ` +
+    `Current customers are emailed and move at a renewal: after ${i.noticeDays} ${plural(i.noticeDays, "day", "days")} if it's worse for them, at the next one if it's better.`
+  if (!i.fixedPath) return [lead]
+  return [
+    lead,
+    `Paymob can't change running renewals, so a price change waits ${i.noticeDays} ${plural(i.noticeDays, "day", "days")} for everyone. Plans whose amount changes end at that renewal, and those customers subscribe again.`,
+  ]
 }
 
 /**
@@ -99,7 +103,11 @@ export function packImpactLines(impact: PackPriceImpact): string[] | null {
   return [lead, `${count(m)} of them ${plural(m, "has", "have")} a monthly limit below it, so their auto top-up will stop until they raise the limit.`]
 }
 
-/** The tick is asked for only while a warning shows. */
-export function confirmProblem(warned: boolean, v: FormValues): string | null {
-  return warned && v.confirmImpact !== true ? "Tick the box to confirm." : null
+/**
+ * The tick is asked for only while a warning shows, and it confirms one warning: `confirmed` is
+ * the text that was showing when the box was ticked, so a changed or stronger warning is
+ * unconfirmed again.
+ */
+export function confirmProblem(warned: boolean, confirmed: string | null, current: string): string | null {
+  return warned && confirmed !== current ? "Tick the box to confirm." : null
 }

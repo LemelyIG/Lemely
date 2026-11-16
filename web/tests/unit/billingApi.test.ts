@@ -238,7 +238,7 @@ describe("billing failure copy", () => {
 
   it("maps the first checkout's seat refusal, 422 invalid_extra_seats, to the same short copy", () => {
     const real = new ApiError(422, "422", { error: "invalid_extra_seats", message: "extra_seats exceeds the maximum" })
-    expect(billingFailureMessage(real, "start checkout")).toBe("That's over the extra-seat limit. Try fewer.")
+    expect(billingFailureMessage(real, "start checkout")).toBe("This plan can't take that many extra seats. Try fewer.")
     expect(billingFailureMessage(real, "start checkout")).not.toContain("extra_seats")
     expect(isTerminalRefusal(real)).toBe(true)
   })

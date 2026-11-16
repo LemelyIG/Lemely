@@ -239,22 +239,25 @@ const tier = (over: Partial<PlanTier>): PlanTier => ({
 
 describe("checkout request builders", () => {
   it("builds a student subscription request with no extra seats", () => {
-    expect(subscriptionCheckoutRequest({ id: "t1" }, "student", null, 5)).toEqual({ planTierId: "t1", beneficiaryId: null, extraSeats: 0 })
+    expect(subscriptionCheckoutRequest({ id: "t1", extraSeatPriceMinor: null }, "student", null, 5)).toEqual({ planTierId: "t1", beneficiaryId: null, extraSeats: 0 })
   })
 
   it("builds a parent-for-child request with the child as beneficiary", () => {
-    expect(subscriptionCheckoutRequest({ id: "t1" }, "student", "child-1", 0)).toEqual({ planTierId: "t1", beneficiaryId: "child-1", extraSeats: 0 })
+    expect(subscriptionCheckoutRequest({ id: "t1", extraSeatPriceMinor: null }, "student", "child-1", 0)).toEqual({ planTierId: "t1", beneficiaryId: "child-1", extraSeats: 0 })
     expect(packCheckoutRequest({ id: "p1" }, "child-1")).toEqual({ creditPackId: "p1", beneficiaryId: "child-1" })
     expect(packCheckoutRequest({ id: "p1" }, null)).toEqual({ creditPackId: "p1", beneficiaryId: null })
   })
 
   it("carries clamped extra seats for a teacher only", () => {
-    expect(subscriptionCheckoutRequest({ id: "t5" }, "teacher", null, 12).extraSeats).toBe(12)
+    expect(subscriptionCheckoutRequest({ id: "t5", extraSeatPriceMinor: 3000 }, "teacher", null, 12).extraSeats).toBe(12)
     // The admin ceiling is the server's to enforce; the client stops only at the schema's bound.
-    expect(subscriptionCheckoutRequest({ id: "t5" }, "teacher", null, 999).extraSeats).toBe(999)
-    expect(subscriptionCheckoutRequest({ id: "t5" }, "teacher", null, 250).extraSeats).toBe(250)
-    expect(subscriptionCheckoutRequest({ id: "t5" }, "teacher", null, 10_001).extraSeats).toBe(10_000)
-    expect(subscriptionCheckoutRequest({ id: "t5" }, "teacher", null, -3).extraSeats).toBe(0)
+    expect(subscriptionCheckoutRequest({ id: "t5", extraSeatPriceMinor: 3000 }, "teacher", null, 999).extraSeats).toBe(999)
+    expect(subscriptionCheckoutRequest({ id: "t5", extraSeatPriceMinor: 3000 }, "teacher", null, 250).extraSeats).toBe(250)
+    expect(subscriptionCheckoutRequest({ id: "t5", extraSeatPriceMinor: 3000 }, "teacher", null, 10_001).extraSeats).toBe(10_000)
+    expect(subscriptionCheckoutRequest({ id: "t5", extraSeatPriceMinor: 3000 }, "teacher", null, -3).extraSeats).toBe(0)
+    // A plan that sells no extra seats gets none: the server refuses the request otherwise.
+    expect(subscriptionCheckoutRequest({ id: "t6", extraSeatPriceMinor: 0 }, "teacher", null, 2).extraSeats).toBe(0)
+    expect(subscriptionCheckoutRequest({ id: "t6", extraSeatPriceMinor: null }, "teacher", null, 2).extraSeats).toBe(0)
     expect(clampExtraSeats(Number.NaN)).toBe(0)
     expect(clampExtraSeats(4.9)).toBe(4)
   })

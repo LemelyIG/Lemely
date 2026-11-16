@@ -125,14 +125,14 @@ export function clampExtraSeats(value: number): number {
   return Math.max(0, Math.min(EXTRA_SEATS_MAX, Math.trunc(value) || 0))
 }
 
-/** The body of `POST /billing/subscriptions/checkout`. Only teacher plans carry extra seats. */
+/** The body of `POST /billing/subscriptions/checkout`. Only a teacher plan that sells extra seats carries any. */
 export function subscriptionCheckoutRequest(
-  tier: Pick<PlanTier, "id">,
+  tier: Pick<PlanTier, "id" | "extraSeatPriceMinor">,
   audience: Audience,
   beneficiaryId: string | null,
   extraSeats: number,
 ): SubscriptionCheckoutRequest {
-  return { planTierId: tier.id, beneficiaryId, extraSeats: audience === "teacher" ? clampExtraSeats(extraSeats) : 0 }
+  return { planTierId: tier.id, beneficiaryId, extraSeats: audience === "teacher" && (tier.extraSeatPriceMinor ?? 0) > 0 ? clampExtraSeats(extraSeats) : 0 }
 }
 
 /** The body of `POST /billing/checkout/pack`. `beneficiaryId` is the linked child for a parent. */

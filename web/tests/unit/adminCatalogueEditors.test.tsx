@@ -88,7 +88,7 @@ describe("tier editor", () => {
     setField("Price (EGP)", "275.00")
     const note = screen.getByText(/14 customers are on this plan/)
     expect(note.textContent).toContain("after 45 days")
-    expect(screen.queryByText(/Paymob can't change existing renewals/)).toBeNull()
+    expect(screen.queryByText(/Paymob can't change running renewals/)).toBeNull()
   })
 
   it("adds the fixed-amount sentence only when the server says amounts cannot be updated", () => {
@@ -96,7 +96,7 @@ describe("tier editor", () => {
     mount()
     openTier()
     setField("Price (EGP)", "275.00")
-    expect(screen.getByText(/Paymob can't change existing renewals/)).toBeTruthy()
+    expect(screen.getByText(/Paymob can't change running renewals/)).toBeTruthy()
   })
 
   it("stays quiet for an edit that is not a term", () => {
@@ -234,7 +234,7 @@ describe("pack editor", () => {
     setField("Price (EGP)", "175.00")
     settled()
     expect(screen.getByText(/Couldn't check how many auto top-ups this affects/)).toBeTruthy()
-    expect(screen.getByLabelText("I understand these customers will be charged the new price.")).toBeTruthy()
+    expect(screen.getByLabelText("I understand I can't see who is affected, and they will be charged the new price.")).toBeTruthy()
   })
 
   it("drops the warning when no auto top-up can charge", () => {
@@ -263,5 +263,73 @@ describe("pack editor", () => {
     expect((screen.getByRole("button", { name: "Save pack" }) as HTMLButtonElement).disabled).toBe(true)
     const dlg = screen.getByRole("dialog")
     expect(within(dlg).getByText(/Someone changed this while you were editing/)).toBeTruthy()
+  })
+
+  it("a pack price rise cannot be saved while the impact is still being checked", () => {
+    vi.useFakeTimers()
+    s.impact = pendingQuery()
+    mount()
+    openPack()
+    setField("Price (EGP)", "175.00")
+    expect(screen.getByText("Checking who this affects…")).toBeTruthy()
+    // Nothing to confirm yet, and the button is off.
+    expect(screen.queryByLabelText(/I understand/)).toBeNull()
+    setField("Reason", "Pack price follows costs")
+    expect((screen.getByRole("button", { name: "Save pack" }) as HTMLButtonElement).disabled).toBe(true)
+    save("Save pack")
+    // Enter in a field submits the form without the button.
+    fireEvent.submit(screen.getByRole("dialog").querySelector("form")!)
+    expect((s.updatePack as Fake).mutate).not.toHaveBeenCalled()
+  })
+
+  it("a failed count needs its own explicit confirm", () => {
+    vi.useFakeTimers()
+    s.impact = errorQuery(new ApiError(404, "gone"))
+    mount()
+    openPack()
+    setField("Price (EGP)", "175.00")
+    settled()
+    setField("Reason", "Pack price follows costs")
+    save("Save pack")
+    expect((s.updatePack as Fake).mutate).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByLabelText("I understand I can't see who is affected, and they will be charged the new price."))
+    save("Save pack")
+    expect((s.updatePack as Fake).mutate).toHaveBeenCalledTimes(1)
+  })
+
+  it("a tick given before the counts arrive does not carry over to the counts", () => {
+    vi.useFakeTimers()
+    s.impact = errorQuery(new ApiError(404, "gone"))
+    mount()
+    openPack()
+    setField("Price (EGP)", "175.00")
+    settled()
+    fireEvent.click(screen.getByLabelText("I understand I can't see who is affected, and they will be charged the new price."))
+    // The server then answers with counts: a different warning, so the old tick is void.
+    s.impact = okQuery({ autoTopupCount: 6, capBelowPriceCount: 2 })
+    setField("Price (EGP)", "176.00")
+    settled()
+    expect((screen.getByLabelText("I understand these customers will be charged the new price.") as HTMLInputElement).checked).toBe(false)
+  })
+})
+
+describe("tier editor: the tick", () => {
+  it("a tick given for one warning does not carry over to a stronger one", () => {
+    s.catalogue = catalogue({ subscriptionAmountUpdatable: false })
+    mount()
+    openTier()
+    setField("Allowance per period (units)", "5000")
+    expect(screen.queryByText(/Paymob can't change running renewals/)).toBeNull()
+    fireEvent.click(screen.getByLabelText("I understand these customers will be emailed about the change."))
+    setField("Price (EGP)", "275.00")
+    expect(screen.getByText(/Paymob can't change running renewals/)).toBeTruthy()
+    expect((screen.getByLabelText("I understand these customers will be emailed about the change.") as HTMLInputElement).checked).toBe(false)
+  })
+
+  it("the stale-write dialog says it once", () => {
+    s.updateTier = fakeMutation({ isError: true, error: new ApiError(409, "x", { code: "stale_write", message: "m" }) })
+    mount()
+    openTier()
+    expect(screen.getAllByText(/current values/).length).toBe(1)
   })
 })

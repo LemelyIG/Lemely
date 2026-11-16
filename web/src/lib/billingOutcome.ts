@@ -55,8 +55,8 @@ const CONFLICTS: Record<string, string> = {
 /** 422 refusals from the charge routes. */
 const INVALID: Record<string, string> = {
   invalid_seats: "That's over the extra-seat limit. Try fewer.",
-  // The first checkout's refusal for the same thing (the service checks the admin-set ceiling).
-  invalid_extra_seats: "That's over the extra-seat limit. Try fewer.",
+  // The first checkout's refusal: over the admin-set ceiling, or a plan that sells no extra seats.
+  invalid_extra_seats: "This plan can't take that many extra seats. Try fewer.",
   invalid_settings: "Those settings aren't valid. Check them and try again.",
 }
 

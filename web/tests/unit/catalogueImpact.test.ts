@@ -75,15 +75,19 @@ describe("tier impact: copy", () => {
     const one = { ...student, liveSubscriptionCount: 1 }
     const [lead] = tierImpactLines(tierImpact(one, edit(one, { priceMajor: "275.00" }), { noticeDays: 1, amountUpdatable: true })!)
     expect(lead).toContain("1 customer is on this plan")
-    expect(lead).toContain("after 1 day,")
+    expect(lead).toContain("after 1 day ")
   })
   it("adds the fixed-amount sentence only on the fallback and only when a price changes", () => {
     const fallback = { noticeDays: 30, amountUpdatable: false }
     expect(lines(student, { priceMajor: "275.00" }, fallback)).toHaveLength(2)
-    expect(lines(student, { priceMajor: "275.00" }, fallback)[1]).toContain("Paymob can't change existing renewals")
+    expect(lines(student, { priceMajor: "275.00" }, fallback)[1]).toContain("Paymob can't change running renewals")
+    expect(lines(student, { priceMajor: "275.00" }, fallback)[1]).toContain("waits 30 days for everyone")
     expect(lines(student, { priceMajor: "275.00" }, settings)).toHaveLength(1)
     expect(lines(student, { allowanceUnits: "5000" }, fallback)).toHaveLength(1)
     expect(lines(teacher, { extraSeatPriceMajor: "35.00" }, fallback)).toHaveLength(2)
+    // A seat-price-only edit ends only plans that hold extra seats: the browser cannot say every plan ends.
+    expect(tierImpact(teacher, edit(teacher, { extraSeatPriceMajor: "40.00" }), fallback)!.endsAtRenewal).toBe(false)
+    expect(tierImpact(student, edit(student, { priceMajor: "275.00" }), fallback)!.endsAtRenewal).toBe(true)
   })
 })
 
@@ -120,10 +124,12 @@ describe("pack price impact", () => {
 
 describe("confirm gate", () => {
   it("blocks until the box is ticked, only while a warning shows", () => {
-    expect(confirmProblem(true, { confirmImpact: false })).toBe("Tick the box to confirm.")
-    expect(confirmProblem(true, {})).toBe("Tick the box to confirm.")
-    expect(confirmProblem(true, { confirmImpact: true })).toBeNull()
-    expect(confirmProblem(false, { confirmImpact: false })).toBeNull()
+    expect(confirmProblem(true, null, "a")).toBe("Tick the box to confirm.")
+    expect(confirmProblem(true, "a", "a")).toBeNull()
+    expect(confirmProblem(false, null, "")).toBeNull()
+  })
+  it("a tick confirms one warning: a different one is unconfirmed", () => {
+    expect(confirmProblem(true, "a", "b")).toBe("Tick the box to confirm.")
   })
 })
 
@@ -132,11 +138,7 @@ describe("payload shape", () => {
     expect(tierUpdateBody(tierValues(student), "Raise price", student.rawFeatures, student.version)).toMatchObject({ expectedVersion: 4, reason: "Raise price" })
     expect(packUpdateBody(packValues(pack), "Raise price", pack.version)).toMatchObject({ expectedVersion: 2, priceMinor: 15000 })
   })
-  it("never sends a confirm flag to the server", () => {
-    const body = tierUpdateBody({ ...tierValues(student), confirmImpact: true }, "Raise price", student.rawFeatures, 4)
-    expect(Object.keys(body)).not.toContain("confirmImpact")
-    expect(Object.keys(packUpdateBody({ ...packValues(pack), confirmImpact: true }, "Raise price", 2))).not.toContain("confirmImpact")
-  })
+
 })
 
 describe("client limits match the server", () => {

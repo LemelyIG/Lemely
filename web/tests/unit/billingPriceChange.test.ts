@@ -85,6 +85,9 @@ describe("price-change banner on the billing page", () => {
     expect(text(html)).toContain(`Your plan ends on ${formatBillingDate("2026-12-01T00:00:00Z")}. Subscribe again to keep it at the new price.`)
     expect(html).toContain(`href="${billingPaths({ role: "student" }).plans}"`)
     expect(text(html)).not.toContain("Cancel at period end")
+    // The plan card agrees with the banner.
+    expect(text(html)).toContain(`Ends ${formatBillingDate("2026-12-01T00:00:00Z")}`)
+    expect(text(html)).not.toContain("Renews")
   })
 
   it("seats to remove: a teacher with a team larger than the new plan", () => {

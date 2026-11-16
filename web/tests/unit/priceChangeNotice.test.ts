@@ -70,8 +70,28 @@ describe("price-change notice", () => {
     expect(n.heading).toBe("Your plan ends on 1 Dec 2026 because its price changed. Subscribe again to keep it.")
   })
 
-  it("offers cancel only while the plan is not already ending", () => {
-    expect(notice(sub({ cancelAtPeriodEnd: true, pendingTermsChange: change() }))!.canCancel).toBe(false)
+  it("says nothing about a move once the payer has cancelled: the plan ends first", () => {
+    expect(notice(sub({ cancelAtPeriodEnd: true, pendingTermsChange: change() }))).toBeNull()
+    expect(notice(sub({ cancelAtPeriodEnd: true, pendingTermsChange: change({ endsInsteadOfMoving: true }) }))).toBeNull()
+  })
+
+  it("still explains a platform cancel even while the change is pending", () => {
+    expect(notice(sub({ cancelAtPeriodEnd: true, cancelReason: "plan_terms_changed", pendingTermsChange: change() }))!.variant).toBe("ended")
+  })
+
+  it("words it for the child's plan when a parent is looking", () => {
+    const s = sub({ pendingTermsChange: change() })
+    const n = priceChangeNotice({ summary: summary({ subscription: s }), audience: "student", forChild: true }, "en-GB")!
+    expect(n.heading.startsWith("This plan changes on")).toBe(true)
+    const e = sub({ pendingTermsChange: change({ endsInsteadOfMoving: true }) })
+    expect(priceChangeNotice({ summary: summary({ subscription: e }), audience: "student", forChild: true }, "en-GB")!.heading).toMatch(/^This plan ends on/)
+  })
+
+  it("prices the renewal with the extra seats the payer holds", () => {
+    const t = sub({ extraSeats: 2, pendingTermsChange: change({ priceMinor: 100000, extraSeatPriceMinor: 3500 }) })
+    const n = notice(t, summary({ subscription: t }), "teacher")!
+    expect(n.heading).toBe(`Your plan changes on 1 Dec 2026: ${m(107000)} per month.`)
+    expect(n.details).toContain(`Includes 2 extra seats at ${m(3500)} each.`)
   })
 
   it("tells a teacher how many students to remove, counting the extra seats they keep", () => {
