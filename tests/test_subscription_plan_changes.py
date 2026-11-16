@@ -13,12 +13,13 @@ import pytest
 import sqlalchemy as sa
 from structlog.testing import capture_logs
 
-from lemely.core.subscription_rules import AMOUNT_SYNC_WINDOW, expected_renewal_amount_minor
+from lemely.core.subscription_rules import expected_renewal_amount_minor
 from lemely.db import subscription_repo
 from lemely.db.models.billing import Payment, PaymentStatus, PlanAudience, Subscription
 from lemely.db.models.enums import PlanInterval, Role, SubscriptionStatus
 from lemely.db.models.tutoring import EmailOutbox
 from lemely.db.subscription_repo import (
+    EARLY_CHARGE_WINDOW,
     AmountPush,
     DowngradeUnavailable,
     InvalidPlanChange,
@@ -261,8 +262,8 @@ def test_a_cleared_downgrade_puts_the_original_amount_back_inside_the_window(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     """DV-16: schedule, push, clear. The stamp (6 000) is stale, so the sweep repairs it, but
-    only once the renewal is within ``AMOUNT_SYNC_WINDOW``: nothing pending selects nothing
-    earlier."""
+    only once the renewal is within ``EARLY_CHARGE_WINDOW`` (the sweep's prefilter: Paymob may
+    charge that early): nothing pending selects nothing earlier."""
     payer, tier, sid = _student_sub(pg_sessionmaker)
     lower = seed_tier(pg_sessionmaker, price_minor=6_000)
     client = FakePaymobClient()
@@ -277,12 +278,12 @@ def test_a_cleared_downgrade_puts_the_original_amount_back_inside_the_window(
         )
 
     # Outside the window with nothing pending: left alone (no PUT).
-    assert _sweep(pg_sessionmaker, END - AMOUNT_SYNC_WINDOW - timedelta(hours=1), client) == 0
+    assert _sweep(pg_sessionmaker, END - EARLY_CHARGE_WINDOW - timedelta(hours=1), client) == 0
     assert _puts(client) == [(PID, 6_000)]
     assert _sub(pg_sessionmaker, sid).paymob_amount_minor == 6_000
 
     # Inside it: the original price goes back to Paymob before the renewal charge.
-    assert _sweep(pg_sessionmaker, END - AMOUNT_SYNC_WINDOW + timedelta(hours=1), client) == 1
+    assert _sweep(pg_sessionmaker, END - EARLY_CHARGE_WINDOW + timedelta(hours=1), client) == 1
     assert _puts(client) == [(PID, 6_000), (PID, 10_000)]
     assert _sub(pg_sessionmaker, sid).paymob_amount_minor == 10_000
 

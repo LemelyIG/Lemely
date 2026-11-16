@@ -35,7 +35,6 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
 from lemely.core.subscription_rules import (
-    AMOUNT_SYNC_WINDOW,
     MAX_GRACE_DAYS,
     STALE_CHECKOUT_AFTER,
     expected_renewal_amount_minor,
@@ -2741,7 +2740,7 @@ class SubscriptionService:
 
         * **Amount** (DV-16): an active, linked, not-cancelling row whose period has not ended
           and that has a pending tier or seat change, no stamp, an uncertain last PUT, or a
-          renewal within ``AMOUNT_SYNC_WINDOW`` (which repairs a stamp left behind by a cleared
+          renewal within ``EARLY_CHARGE_WINDOW`` (which repairs a stamp left behind by a cleared
           change). Only rows whose expected amount differs count toward ``limit``, so rows that
           need nothing never crowd out rows that do.
         * **Cancel, live** (DV-15): a live cancel-at-period-end row Paymob has not cancelled yet.
@@ -2907,7 +2906,7 @@ class SubscriptionService:
                     S.pending_extra_seats.is_not(None),
                     S.paymob_amount_minor.is_(None),
                     S.amount_sync_uncertain_at.is_not(None),
-                    S.current_period_end <= now + AMOUNT_SYNC_WINDOW,
+                    S.current_period_end <= now + EARLY_CHARGE_WINDOW,
                 ),
             )
             .order_by(S.current_period_end, S.id)

@@ -564,8 +564,6 @@ _STATUS_FOR_CODE: Final = {
     "seats_insufficient": status.HTTP_409_CONFLICT,
     "downgrade_unavailable": status.HTTP_409_CONFLICT,
     "plan_mode_mismatch": status.HTTP_409_CONFLICT,
-    # A missing ``billing_settings`` row (a damaged database, alerted): nothing is guessed.
-    "grace_setting_missing": status.HTTP_503_SERVICE_UNAVAILABLE,
     "not_linked_parent": status.HTTP_403_FORBIDDEN,
     "subscription_not_found": status.HTTP_404_NOT_FOUND,
     "plan_not_purchasable": status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -755,7 +753,8 @@ def charge_error(exc: MerchantChargeError) -> HTTPException:
 
     ``seats_exceed_new_tier`` adds ``inUse`` and ``capacity``; ``seats_not_sold`` adds
     ``extraSeats`` (the teacher must reduce them first); ``upgrade_unavailable`` adds ``next``
-    when the fixed-amount fallback is the cause. A 503 and an unknown payer carry fixed copy.
+    when the fixed-amount fallback is the cause; ``period_not_started`` adds ``opensAt`` (the
+    ISO instant changes open again). A 503 and an unknown payer carry fixed copy.
     """
     code = exc.code
     code_status = _CHARGE_STATUS.get(code, status.HTTP_409_CONFLICT)
@@ -770,6 +769,8 @@ def charge_error(exc: MerchantChargeError) -> HTTPException:
                 detail[wire] = exc.detail[key]
     if "next" in exc.detail:
         detail["next"] = exc.detail["next"]
+    if "opens_at" in exc.detail:
+        detail["opensAt"] = exc.detail["opens_at"]
     return HTTPException(code_status, detail)
 
 

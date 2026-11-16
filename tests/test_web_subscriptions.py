@@ -263,8 +263,15 @@ def test_every_subscription_error_code_has_a_status() -> None:
         cls = pending.pop()
         pending.extend(cls.__subclasses__())
         codes.add(cls.code)
-    # Never reach these routes: the webhook parser, the credit-conversion helper and the plan sync.
-    unreachable = {"subscription_error", "malformed_webhook", "no_credit_rate", "plan_sync_failed"}
+    # Never reach these routes: the webhook parser, the credit-conversion helper, the plan sync and
+    # the grace read (webhook and admin only; an app-level handler answers it with a 503).
+    unreachable = {
+        "subscription_error",
+        "malformed_webhook",
+        "no_credit_rate",
+        "plan_sync_failed",
+        "grace_setting_missing",
+    }
     assert codes - unreachable <= set(billing_router._STATUS_FOR_CODE)
 
 
@@ -280,12 +287,6 @@ def test_checkout_answers_503_when_paymob_is_down(pg_sessionmaker: sessionmaker[
     h.fake.intention_response = good
     r = http.post(f"{BILLING}/subscriptions/checkout", json={"planTierId": str(tier)})
     assert r.status_code == 201  # the failed checkout does not block the retry
-
-
-def test_a_missing_grace_setting_maps_to_exactly_503() -> None:
-    """No customer route reads the setting today (checkout refuses an unlinked tier); the mapping
-    is the answer if one ever does, so a damaged database is never a 400."""
-    assert billing_router._STATUS_FOR_CODE["grace_setting_missing"] == 503
 
 
 def test_checkout_answers_503_when_paymob_is_unconfigured(

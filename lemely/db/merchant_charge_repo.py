@@ -643,6 +643,7 @@ class MerchantChargeService:
         start, end = sub.current_period_start, sub.current_period_end
         if start is None or end is None:
             raise MerchantChargeError("subscription_not_active", "The plan has no current period")
+        _refuse_before_period_start(start, now)
         amount = _upgrade_amount(
             old_terms, new_terms, _priced_extra_seats(sub, new_tier), start, end, now
         )
@@ -810,6 +811,7 @@ class MerchantChargeService:
         start, end = sub.current_period_start, sub.current_period_end
         if start is None or end is None:
             raise MerchantChargeError("subscription_not_active", "The plan has no current period")
+        _refuse_before_period_start(start, now)
         amount = _seat_amount(seats, terms.extra_seat_price_minor, start, end, now)
         if amount <= 0:
             raise MerchantChargeError("period_ending", "The current period is about to end")
@@ -2004,6 +2006,23 @@ class _ShortfallPlan:
     amount_minor: int
     currency: str
     seat_quantity: int | None
+
+
+def _refuse_before_period_start(start: datetime, now: datetime) -> None:
+    """Refuse a charge while the subscription's current period has not started yet.
+
+    Paymob renews at its own anchor, which after a late retry can be days before our period end.
+    Our renewal then moves ``current_period_start`` to the old end, so until then the quote would
+    prorate against a future period (the full price) and the settle would void the payment as
+    ``period_rolled``: credits instead of seats. Nothing is written or charged; ``opens_at`` is the
+    instant changes open again.
+    """
+    if now < start:
+        raise MerchantChargeError(
+            "period_not_started",
+            f"Your next period is already paid; plan and seat changes open on {start:%Y-%m-%d}",
+            detail={"opens_at": start.isoformat()},
+        )
 
 
 def seat_grace_days(session: Session) -> int:

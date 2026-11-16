@@ -706,6 +706,32 @@ def test_every_conflict_code_the_ui_reads_is_a_409_with_detail_error(
     assert h.fake.intentions == []
 
 
+def test_a_charge_before_the_period_starts_is_a_409_with_the_date_it_opens(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Paymob renewed early: the current period is the next one, so nothing is charged yet."""
+    sm = pg_sessionmaker
+    h = Harness(sm)
+    opens = NOW + timedelta(days=5)
+    scene = teacher_with_plan(sm, start=opens, end=opens + timedelta(days=30))
+    target = seed_tier(
+        sm,
+        audience=PlanAudience.teacher,
+        price_minor=40_000,
+        included_seats=2,
+        extra_seat_price_minor=1_500,
+    )
+    teacher = h.as_user(scene["teacher_id"], Role.teacher)
+    seats = teacher.post(_seats_url(scene), json={"seats": 1})
+    quote = teacher.post(_seats_url(scene, "/quote"), json={"seats": 1})
+    upgrade = teacher.post(_upgrade_url(scene), json={"planTierId": str(target)})
+    for res in (seats, quote, upgrade):
+        assert res.status_code == 409
+        assert _error(res) == "period_not_started"
+        assert res.json()["detail"]["opensAt"] == opens.isoformat()
+    assert h.fake.intentions == []
+
+
 def test_seats_in_use_and_exceed_new_tier_carry_their_numbers_and_stay_409(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:

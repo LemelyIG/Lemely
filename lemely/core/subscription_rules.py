@@ -37,13 +37,14 @@ PAYMOB_ACCOUNT_TZ: Final = ZoneInfo("Africa/Cairo")
 MAX_GRACE_DAYS: Final = 7
 
 #: A renewal is checked against its Paymob amount when it is due within this window (DV-16).
-#: Deliberately NOT sized from the early-charge window (T18 review m5). A paid seat or tier change
-#: pushes its new amount to Paymob right after the commit; the window only gates the sweep's
-#: re-check and refuses paid changes whose push could not be repaired in time. Paymob's charge is
-#: normally about a day early; only a plan renewed on a late retry day has its anchor up to
-#: ``MAX_GRACE_DAYS`` early, and a change inside that rare gap meets an already-taken charge at the
-#: old amount, which the amount-mismatch alert surfaces. Refusing seat and plan changes for the
-#: last week of every period for everyone would cost far more than that bounded exposure.
+#: Deliberately NOT sized from the early-charge window (T18 re-review). A paid seat or tier change
+#: pushes its new amount to Paymob right after the commit; this window only gates the refusal of a
+#: paid change whose push could not be repaired in time (when the stamp is unconfirmed). Paymob's
+#: charge is normally about a day early. The one exposure is a plan with a late-retry anchor (up to
+#: ``MAX_GRACE_DAYS`` early) bought into just before that anchor with a push that keeps failing:
+#: Paymob then charges the old amount, one period is under-charged by the change, and only the
+#: push-failure alerts show it (the renewal matches the stamp, so no mismatch alert fires). A change
+#: after the early renewal is refused outright (``period_not_started``).
 AMOUNT_SYNC_WINDOW: Final = timedelta(days=2)
 
 _FAILURE_FLAGS: Final = ("pending", "is_voided", "is_refunded", "error_occured", "is_auth")
