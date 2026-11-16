@@ -549,7 +549,7 @@ def test_seat_bodies_are_validated(pg_sessionmaker: sessionmaker[Session]) -> No
     assert client.post(_seats_url(scene), json={"seats": 101}).status_code == 422
     assert client.post(_seats_url(scene, "/quote"), json={"seats": -1}).status_code == 422
     assert client.put(_seats_url(scene, "/pending"), json={"extraSeats": -1}).status_code == 422
-    assert client.put(_seats_url(scene, "/pending"), json={"extraSeats": 201}).status_code == 422
+    assert client.put(_seats_url(scene, "/pending"), json={"extraSeats": 10_001}).status_code == 422
     assert h.fake.intentions == []
 
 

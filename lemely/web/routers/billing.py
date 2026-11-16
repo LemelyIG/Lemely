@@ -59,6 +59,7 @@ from lemely.db.billing_repo import (
     receipts_for,
     saved_cards_for,
 )
+from lemely.db.billing_settings_repo import get_billing_settings
 from lemely.db.billing_summary import build_billing_summary, is_linked_student
 from lemely.db.merchant_charge_repo import (
     ChargeQuote,
@@ -222,6 +223,7 @@ def get_catalogue(
     with sm() as session:
         tiers, packs = active_catalogue(session, audience=audience)
         return CatalogueDTO(
+            creditValidityMonths=get_billing_settings(session).credit_validity_months,
             planTiers=[_plan_tier_dto(t, current_terms_for(session, t)) for t in tiers],
             creditPacks=[
                 CreditPackDTO(
@@ -247,6 +249,7 @@ def _render_public_catalogue(
     )
     return PublicCatalogueDTO(
         audience=audience,
+        creditValidityMonths=get_billing_settings(session).credit_validity_months,
         planTiers=[
             PublicPlanTierDTO(
                 code=t.code,

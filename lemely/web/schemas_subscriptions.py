@@ -111,7 +111,8 @@ class SubscriptionCheckoutRequestDTO(ApiModel):
 
     planTierId: uuid.UUID
     beneficiaryId: uuid.UUID | None = None
-    extraSeats: int = Field(default=0, ge=0, le=200)
+    #: A sanity bound only: the service refuses above the admin-set ``max_extra_seats`` (UD-13 A15).
+    extraSeats: int = Field(default=0, ge=0, le=10_000)
 
 
 class SubscriptionCheckoutDTO(ApiModel):

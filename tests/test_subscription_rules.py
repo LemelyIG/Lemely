@@ -9,7 +9,6 @@ import pytest
 from lemely.core.subscription_rules import (
     AMOUNT_SYNC_WINDOW,
     GRACE_PERIOD,
-    MAX_EXTRA_SEATS_AT_CHECKOUT,
     PAYMOB_ACCOUNT_TZ,
     PAYMOB_RETRIAL_DAYS,
     PERIOD_DAYS,
@@ -42,7 +41,6 @@ def test_constants() -> None:
     assert set(PERIOD_DAYS.values()) <= SUBSCRIPTION_FREQUENCIES
     assert timedelta(days=3) == GRACE_PERIOD
     assert timedelta(hours=2) == STALE_CHECKOUT_AFTER
-    assert MAX_EXTRA_SEATS_AT_CHECKOUT == 200
     assert timedelta(days=2) == AMOUNT_SYNC_WINDOW
 
 

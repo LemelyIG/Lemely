@@ -66,6 +66,8 @@ class PublicCatalogueDTO(ApiModel):
     """Response for ``GET /api/billing/public-catalogue?audience=…`` (no auth)."""
 
     audience: str
+    #: Months a purchased credit stays valid: the admin-set ``billing_settings`` value.
+    creditValidityMonths: int
     planTiers: list[PublicPlanTierDTO] = Field(default_factory=list)
     creditPacks: list[PublicCreditPackDTO] = Field(default_factory=list)
 
@@ -73,6 +75,8 @@ class PublicCatalogueDTO(ApiModel):
 class CatalogueDTO(ApiModel):
     """Response for ``GET /api/billing/catalogue``."""
 
+    #: Months a purchased credit stays valid: the admin-set ``billing_settings`` value.
+    creditValidityMonths: int
     planTiers: list[PlanTierDTO] = Field(default_factory=list)
     creditPacks: list[CreditPackDTO] = Field(default_factory=list)
 

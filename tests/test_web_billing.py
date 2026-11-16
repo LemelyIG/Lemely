@@ -217,6 +217,7 @@ def test_public_catalogue_needs_no_auth_and_hides_internals(
     assert response.status_code == 200
     assert response.json() == {
         "audience": "student",
+        "creditValidityMonths": 12,
         "planTiers": [
             {
                 "code": "student_monthly",
@@ -243,6 +244,31 @@ def test_public_catalogue_needs_no_auth_and_hides_internals(
     hidden_markers = ("paymob", "allowance", "Allowance", 'Id"', "student_retired")
     for hidden in (*hidden_markers, "pack_old", "signup_"):
         assert hidden not in response.text, hidden
+
+
+def test_public_catalogue_states_the_admin_set_credit_validity(
+    client: TestClient,
+    migrated_sessionmaker: sessionmaker[Session],
+    cache_clock: _Clock,
+) -> None:
+    for audience in ("student", "teacher"):
+        body = client.get("/api/billing/public-catalogue", params={"audience": audience}).json()
+        assert body["creditValidityMonths"] == 12
+    with migrated_sessionmaker.begin() as session:
+        session.execute(sa.text("UPDATE billing_settings SET credit_validity_months = 6"))
+    cache_clock.now += 31  # past the public cache's 30 s lifetime
+    body = client.get("/api/billing/public-catalogue", params={"audience": "student"}).json()
+    assert body["creditValidityMonths"] == 6
+
+
+def test_catalogue_states_the_admin_set_credit_validity(
+    client: TestClient, migrated_sessionmaker: sessionmaker[Session]
+) -> None:
+    user = seed_user(migrated_sessionmaker, Role.student)
+    _as(client, user, Role.student)
+    with migrated_sessionmaker.begin() as session:
+        session.execute(sa.text("UPDATE billing_settings SET credit_validity_months = 9"))
+    assert client.get("/api/billing/catalogue").json()["creditValidityMonths"] == 9
 
 
 def test_public_catalogue_sends_the_interval_the_frontend_adapter_reads(

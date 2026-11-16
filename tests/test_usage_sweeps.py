@@ -19,7 +19,6 @@ from lemely.db.models.users import User
 from lemely.db.usage_catalogue_repo import (
     SIGNUP_IDEMPOTENCY_KEY,
     SIGNUP_STUDENT_PACK,
-    TEACHER_SIGNUP_VALIDITY,
 )
 from lemely.db.usage_ledger_repo import UsageLedger
 from lemely.runtime.config import NotificationsSettings
@@ -195,7 +194,7 @@ def test_a_user_verified_before_deploy_gets_exactly_one_signup_grant(
     )
     # The teacher's 30 days count from the repair, not from the old verification.
     assert teacher_grant.visible is True
-    assert teacher_grant.expires_at == AT_3AM + TEACHER_SIGNUP_VALIDITY
+    assert teacher_grant.expires_at == AT_3AM + timedelta(days=30)
 
 
 def test_a_failed_signup_grant_is_repaired_and_a_rerun_grants_nothing(

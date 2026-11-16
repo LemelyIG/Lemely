@@ -22,7 +22,6 @@ from lemely.db.models.usage import (
 from lemely.db.usage_catalogue_repo import (
     SIGNUP_STUDENT_PACK,
     SIGNUP_TEACHER_PACK,
-    TEACHER_SIGNUP_VALIDITY,
     current_estimator,
     current_rate_version,
     ensure_usage_catalogue,
@@ -224,7 +223,7 @@ def test_teacher_signup_is_visible_credits_for_thirty_days(
         assert grant is not None
         assert grant.visible is True
         assert grant.units == 2000
-        assert grant.expires_at == NOW + TEACHER_SIGNUP_VALIDITY
+        assert grant.expires_at == NOW + timedelta(days=30)
 
 
 def test_other_roles_and_a_zeroed_pack_get_nothing(

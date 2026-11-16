@@ -12,7 +12,6 @@ from datetime import datetime  # noqa: TC003 - pydantic reads the type at runtim
 
 from pydantic import Field
 
-from lemely.core.subscription_rules import MAX_EXTRA_SEATS_AT_CHECKOUT
 from lemely.db.auto_topup_repo import MAX_SETTING_VALUE
 from lemely.db.merchant_charge_repo import MAX_SEATS_PER_PURCHASE
 from lemely.web.schemas import ApiModel
@@ -33,7 +32,9 @@ class ExtraSeatsRequest(ApiModel):
 class SeatReductionRequest(ApiModel):
     """Body for ``PUT .../seats/pending``: the extra-seat total wanted from the next renewal."""
 
-    extraSeats: int = Field(ge=0, le=MAX_EXTRA_SEATS_AT_CHECKOUT)
+    #: ``le`` is a sanity bound (``billing_settings.max_extra_seats`` tops out at 10 000); the
+    #: service holds the admin-set ceiling, and a reduction never needs it (UD-13 A15).
+    extraSeats: int = Field(ge=0, le=10_000)
 
 
 class AutoTopupRequest(ApiModel):

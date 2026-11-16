@@ -20,6 +20,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from lemely.core.billing_defaults import TEACHER_SIGNUP_VALIDITY_DAYS
 from lemely.core.metered_actions import ACTION_SPECS, MeteredAction
 from lemely.core.usage_types import EstimatorParams
 from lemely.db.models.billing import CreditPack
@@ -48,12 +49,11 @@ _SIGNUP_NAMES = {
     SIGNUP_STUDENT_PACK: "Student free allowance",
     SIGNUP_TEACHER_PACK: "Teacher signup credits",
 }
-TEACHER_SIGNUP_VALIDITY = timedelta(days=30)
 #: ``credit_packs.signup_validity_days`` seeded with a signup pack (NULL = never expires). A
 #: database seeded after migration 0057 has no backfill, so without this the teacher pack would
 #: read as "never" while the grant still expires it (DV-T1d).
 DEFAULT_SIGNUP_VALIDITY_DAYS: Mapping[str, int | None] = MappingProxyType(
-    {SIGNUP_STUDENT_PACK: None, SIGNUP_TEACHER_PACK: TEACHER_SIGNUP_VALIDITY.days}
+    {SIGNUP_STUDENT_PACK: None, SIGNUP_TEACHER_PACK: TEACHER_SIGNUP_VALIDITY_DAYS}
 )
 #: One signup grant per account: ``usage_grants`` is unique on (owner, idempotency_key).
 SIGNUP_IDEMPOTENCY_KEY = "signup"
@@ -187,13 +187,15 @@ def grant_signup_allowance(
 ) -> UsageGrant | None:
     """Issue the free start (spec §2.1): idempotent per account.
 
-    A student gets a hidden one-time allowance with no expiry; a teacher gets visible
-    credits that expire after 30 days. Other roles, or a pack set to 0 units, get none.
+    A student gets a hidden one-time allowance, a teacher visible credits. How long either
+    lasts is the pack's admin-set ``signup_validity_days`` (UD-13), read here at grant time:
+    ``now`` plus that many days, or never when it is NULL. Other roles, or a pack set to 0
+    units, get none.
     """
     if role is Role.student:
-        code, visible, expires_at = SIGNUP_STUDENT_PACK, False, None
+        code, visible = SIGNUP_STUDENT_PACK, False
     elif role is Role.teacher:
-        code, visible, expires_at = SIGNUP_TEACHER_PACK, True, now + TEACHER_SIGNUP_VALIDITY
+        code, visible = SIGNUP_TEACHER_PACK, True
     else:
         return None
     query = select(CreditPack).where(CreditPack.code == code)
@@ -204,6 +206,8 @@ def grant_signup_allowance(
     if pack is None or pack.units <= 0:
         log.info("signup_grant_disabled", code=code, user_id=str(user_id))
         return None
+    days = pack.signup_validity_days
+    expires_at = None if days is None else now + timedelta(days=days)
     return UsageLedger(session).issue_grant(
         owner_user_id=user_id,
         kind=GrantKind.signup,

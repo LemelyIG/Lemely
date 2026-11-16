@@ -22,9 +22,6 @@ GRACE_PERIOD: Final = timedelta(days=3)
 #: expire after 3600 s (spec §5.1 step 2); the second hour absorbs a late callback.
 STALE_CHECKOUT_AFTER: Final = timedelta(hours=2)
 
-#: Upper bound on extra seats bought with the first checkout.
-MAX_EXTRA_SEATS_AT_CHECKOUT: Final = 200
-
 #: Days per period. Paymob plans accept only 7/15/30/60/90/180/360-day frequencies
 #: (research 02 §6), so a month is 30 days and a year 360, and Lemely's period matches the
 #: Paymob billing cycle exactly.
@@ -189,7 +186,6 @@ def renewal_period_start(*, current_period_end: datetime | None, charged_at: dat
 __all__ = [
     "AMOUNT_SYNC_WINDOW",
     "GRACE_PERIOD",
-    "MAX_EXTRA_SEATS_AT_CHECKOUT",
     "PAYMOB_ACCOUNT_TZ",
     "PAYMOB_RETRIAL_DAYS",
     "PERIOD_DAYS",
