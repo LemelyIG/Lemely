@@ -36,7 +36,7 @@ import {
   studentShellTrail,
   type NavItem,
 } from "./data"
-import { STUDENT_PLAN_TO, STUDENT_PRACTICE_TO, isPlanSection, isPracticeSection, studentOverflowItems } from "./shellNav"
+import { STUDENT_PLAN_TO, STUDENT_PRACTICE_TO, isPlanSection, isPracticeSection, studentOverflowItems, underDialogActive } from "./shellNav"
 
 export const STUDENT_SETTINGS_BASE = "/student/settings"
 
@@ -141,11 +141,13 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
   const practiceActive = isPracticeSection(pagePath)
   const planActive = isPlanSection(pagePath)
   const sectionActive = (id: string) => (id === "practice" && practiceActive) || (id === "plan" && planActive) || undefined
+  // Under the Settings dialog the URL is the dialog's, so each row also asks `underDialogActive` (Home on a fresh load).
+  const under = (to: string, end?: boolean) => underDialogActive({ to, end }, pagePath, location.pathname)
   const primaryItems: NavShellItem[] = [
-    { id: "/student", to: "/student", end: true, label: "Home", icon: <ShellIcon name="home" /> },
-    { id: STUDENT_PRACTICE_TO, to: STUDENT_PRACTICE_TO, label: "Practice", icon: <ShellIcon name="practice" />, active: sectionActive("practice") },
-    { id: STUDENT_PLAN_TO, to: STUDENT_PLAN_TO, label: "Plan", icon: <ShellIcon name="plan" />, active: sectionActive("plan") },
-    { id: "/student/profile", to: "/student/profile", label: "Me", icon: <ShellIcon name="user" /> },
+    { id: "/student", to: "/student", end: true, label: "Home", icon: <ShellIcon name="home" />, active: under("/student", true) },
+    { id: STUDENT_PRACTICE_TO, to: STUDENT_PRACTICE_TO, label: "Practice", icon: <ShellIcon name="practice" />, active: sectionActive("practice") ?? under(STUDENT_PRACTICE_TO) },
+    { id: STUDENT_PLAN_TO, to: STUDENT_PLAN_TO, label: "Plan", icon: <ShellIcon name="plan" />, active: sectionActive("plan") ?? under(STUDENT_PLAN_TO) },
+    { id: "/student/profile", to: "/student/profile", label: "Me", icon: <ShellIcon name="user" />, active: under("/student/profile") },
   ]
   // Every other old row (Your classes, Standings, Friends, Tutors, Sessions) is the sidebar's More group.
   const moreItems = studentOverflowItems(navItems)

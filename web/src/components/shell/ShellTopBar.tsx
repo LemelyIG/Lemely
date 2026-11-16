@@ -118,12 +118,26 @@ export function ShellTopBar({
           // (`max-shell-lg:`) follow the same breakpoint.
           // On Android a detail route puts the back arrow and the menu icon side by side at the start of the bar,
           // which clash, so the phone menu steps aside there. iOS keeps it (back left, menu by the bell), and so do tab roots.
-          className={cn(SHELL_ICON_BUTTON, "shell-lg:hidden", !phoneMenu && "max-shell-sm:hidden", phoneMenu && level === "detail" && "android:hidden")}
+          // On the iOS root bar the title is centred between inset edges sized for three trailing actions, so a fourth
+          // action there overlapped it (title ended at 246px, first action began at 206px). The menu goes to the
+          // leading edge instead (me-auto pushes the three actions to the end), the same place iOS puts a leading bar button.
+          className={cn(
+            SHELL_ICON_BUTTON,
+            "shell-lg:hidden",
+            !phoneMenu && "max-shell-sm:hidden",
+            phoneMenu && level === "detail" && "android:hidden",
+            phoneMenu && level === "root" && "ios:me-auto",
+          )}
         >
           <ShellIcon name="menu" />
         </button>
         {/* aria-hidden: the page's h1 carries the name, so a screen reader would hear it twice. */}
-        <p data-shell-title aria-hidden="true" className="me-auto min-w-0 truncate text-title-bar text-on-surface lm-native-inline-title">
+        <p data-shell-title aria-hidden="true" className={cn(
+            "me-auto min-w-0 truncate text-title-bar text-on-surface lm-native-inline-title",
+            // A child pill in the bar (parent) takes the room: the title is the page's own h1 again just below, so it steps aside on small web phones.
+            !native && "[header:has([data-child-switcher])_&]:max-phone:hidden",
+          )}
+        >
           {title}
         </p>
         {actions}

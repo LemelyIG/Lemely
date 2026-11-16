@@ -56,7 +56,7 @@ describe("student tab bar (mock h6.js TAB6, Plan in the Subjects slot by user ru
     expect(read("portals/student/shell.tsx")).toMatch(/moreTab=\{false\}\s+phoneMenu\b/)
     const bar = read("components/shell/ShellTopBar.tsx")
     expect(bar).toMatch(/phoneMenu\?: boolean/)
-    expect(bar).toContain('cn(SHELL_ICON_BUTTON, "shell-lg:hidden", !phoneMenu && "max-shell-sm:hidden"')
+    expect(bar).toMatch(/cn\(\s*SHELL_ICON_BUTTON,\s*"shell-lg:hidden",\s*!phoneMenu && "max-shell-sm:hidden"/)
     expect(bar).toContain("aria-label={navLabel}")
     expect(read("components/shell/PortalShell.tsx")).toMatch(/phoneMenu = false/)
     // Teacher and parent keep the default: they never pass it.
@@ -101,5 +101,16 @@ describe("student phone menu on native detail routes", () => {
     expect(bar).toMatch(/phoneMenu && level === "detail" && "android:hidden"/)
     // The rule is scoped to a detail level: no unconditional native:hidden on the button.
     expect(bar).not.toMatch(/"shell-lg:hidden",\s*"android:hidden"/)
+  })
+})
+
+describe("student phone top bar on iOS: the title clears every action", () => {
+  it("moves the menu to the leading edge on the root bar, where the centred title is sized for three trailing actions", () => {
+    const bar = read("components/shell/ShellTopBar.tsx")
+    expect(bar).toContain('phoneMenu && level === "root" && "ios:me-auto"')
+    // The title insets in index.css reserve three 44px actions per side: the trailing group may never exceed three.
+    const css = read("index.css")
+    expect(css).toContain("--native-title-inset-ios: 144px")
+    expect(144).toBeGreaterThanOrEqual(3 * 44)
   })
 })

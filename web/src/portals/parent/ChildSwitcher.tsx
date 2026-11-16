@@ -43,22 +43,23 @@ export function ChildSwitcher({ className }: { className?: string }) {
   if (children.length < 2) {
     // A label, not a control: no ring, no fill, no caret, so it never reads as a button.
     return (
-      <span className={cn("inline-flex min-h-11 max-w-full min-w-0 flex-none items-center gap-2 text-label text-on-surface max-phone:max-w-36", className)}>
+      <span data-child-switcher="" className={cn("inline-flex min-h-11 max-w-full min-w-0 flex-none items-center gap-2 text-label text-on-surface max-phone:max-w-36", className)}>
         <Initial name={current.displayName} />
-        <span className="min-w-0 truncate">{current.displayName}</span>
+        <span className="min-w-0 truncate" title={current.displayName}>{current.displayName}</span>
       </span>
     )
   }
   return (
-    <span className={cn(PILL, "cursor-pointer focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-primary", className)}>
+    <span data-child-switcher="" className={cn(PILL, "cursor-pointer focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-primary", className)}>
       <Initial name={current.displayName} />
       {/* The name is always visible. Below 414px the whole pill is capped at 9rem so the page title keeps its room (390 left "Ph" of "Physics"), and a long name truncates. */}
-      <span aria-hidden="true" className="min-w-0 truncate">
+      <span aria-hidden="true" className="min-w-0 truncate" title={current.displayName}>
         {current.displayName}
       </span>
       <CaretDown size={12} weight="bold" aria-hidden="true" className="flex-none" />
       <select
         aria-label="Choose which child to view"
+        title={current.displayName}
         value={childId}
         onChange={(event) => navigate(switchChildPath(location.pathname, event.target.value))}
         className="absolute inset-0 size-full cursor-pointer appearance-none rounded-full opacity-0"

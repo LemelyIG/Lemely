@@ -79,3 +79,15 @@ describe("an unknown childId never reaches the tabs or links", () => {
     expect(shell).toMatch(/<Glyph size=\{18\} aria-hidden="true" \/>, activeIcon: undefined/)
   })
 })
+
+describe("parent top bar polish", () => {
+  it("the compact title steps aside below the phone breakpoint when the child pill is in the bar (web only)", () => {
+    const bar = read("components/shell/ShellTopBar.tsx")
+    expect(bar).toContain('!native && "[header:has([data-child-switcher])_&]:max-phone:hidden"')
+    expect(read("portals/parent/ChildSwitcher.tsx").match(/data-child-switcher=""/g)).toHaveLength(2)
+  })
+  it("the truncated name carries the full name as a tooltip", () => {
+    const pill = read("portals/parent/ChildSwitcher.tsx")
+    expect(pill.match(/title=\{current\.displayName\}/g)).toHaveLength(3)
+  })
+})
