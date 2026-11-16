@@ -18,7 +18,7 @@ import {
 import { fx } from "./support/billingFixtures"
 import { errorQuery, okQuery, pendingQuery, renderStatic } from "./support/billingRender"
 
-const noRate = { ...fx.margin, egpPerUsd: null, costMinor: null, marginMinor: null }
+const noRate = { ...fx.margin, egpPerUsd: null, egpPerUsdSource: null, costMinor: null, marginMinor: null }
 
 const s = vi.hoisted(() => ({ report: null as unknown }))
 vi.mock("@/lib/hooks/useAdminBillingApi", () => ({ useMarginReport: () => s.report }))
@@ -116,6 +116,8 @@ describe("margin model", () => {
     expect(rateProblem("-5")).toMatch(/number/)
     expect(rateProblem("1e3")).toMatch(/number/)
     expect(rateProblem("fifty")).toMatch(/number/)
+    expect(rateProblem("48.1234")).toBeNull()
+    expect(rateProblem("48.12345")).toMatch(/4 decimal/)
     expect(rateParam("  ")).toBeNull()
     expect(rateParam(" 48.5 ")).toBe("48.5")
   })
@@ -141,7 +143,9 @@ describe("Margin", () => {
     expect(html).toContain("7%")
     expect(html).toContain("debtor@example.com")
     expect(html).toContain("USD 44.12")
-    expect(html).toContain("1 USD = 50.00 EGP")
+    expect(html).toContain("1 USD = 50 EGP (default)")
+    expect(html).toContain("Metered settled cost")
+    expect(html).not.toContain("LLM cost")
     expect(html).not.toContain("No USD to EGP rate set")
   })
 
@@ -149,7 +153,7 @@ describe("Margin", () => {
     s.report = okQuery(noRate)
     const html = renderStatic(h(Margin))
     expect(html).toContain("No USD to EGP rate set")
-    expect(html).toContain("Enter an EGP per USD rate above to work out cost in EGP and margin.")
+    expect(html).toContain("Set a default in billing rules, or enter an EGP per USD rate above, to work out cost in EGP and margin.")
     expect(html).not.toContain("/platform/billing/catalogue")
     expect(html).toContain("USD 44.12")
     expect(html.match(/Not available/g)?.length).toBe(3)

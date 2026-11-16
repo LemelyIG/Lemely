@@ -114,9 +114,15 @@ export function invalidateOnPaid(
   return true
 }
 
-/** The extra-seats field is a 0 to 200 number; anything else becomes the nearest valid value. */
+/**
+ * The most the server's schema takes for extra seats at checkout. It is a sanity bound only: the
+ * admin-set ceiling (billing rules) is enforced by the service, whose refusal the page shows.
+ */
+export const EXTRA_SEATS_MAX = 10_000
+
+/** The extra-seats field is a 0 to 10,000 number; anything else becomes the nearest valid value. */
 export function clampExtraSeats(value: number): number {
-  return Math.max(0, Math.min(200, Math.trunc(value) || 0))
+  return Math.max(0, Math.min(EXTRA_SEATS_MAX, Math.trunc(value) || 0))
 }
 
 /** The body of `POST /billing/subscriptions/checkout`. Only teacher plans carry extra seats. */

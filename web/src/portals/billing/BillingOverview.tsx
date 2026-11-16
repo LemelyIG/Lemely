@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react"
 import { Link, useLocation, useSearchParams } from "react-router-dom"
 import { CreditBalanceCard } from "@/components/billing/credit-balance"
 import { DebtNotice } from "@/components/billing/debt-notice"
+import { PriceChangeBanner } from "@/components/billing/price-change-banner"
 import { UsageMeterCard } from "@/components/billing/usage-meter"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
@@ -16,6 +17,7 @@ import { billingPaths, type BillingScope } from "@/lib/billingPaths"
 import type { Audience, BillingSummary, PlanTier, SubscriptionView, UsageMeterView } from "@/lib/billingTypes"
 import { useBillingSummary, useCatalogue } from "@/lib/hooks/useBillingApi"
 import { useUsageMeter } from "@/lib/hooks/useUsageApi"
+import { priceChangeNotice } from "@/lib/priceChange"
 import { describeQueryFailure } from "@/lib/queryFailure"
 import { CancelPlanDialog } from "./CancelPlanDialog"
 import { PlanChangeDialog } from "./PlanChangeDialog"
@@ -218,6 +220,7 @@ export function BillingOverview({
             const sub = s.subscription
             const live = isLiveSubscription(sub?.status)
             const waiting = sub?.status === "pending_first_payment"
+            const notice = priceChangeNotice({ summary: s, audience })
             const page = (meter: UsageMeterView) => (
               <>
                 {sub?.status === "past_due" ? (
@@ -233,6 +236,14 @@ export function BillingOverview({
                 <div className="has-[[role=status]:empty]:-mt-6">
                   <DebtNotice debtUnits={meter.debtUnits} audience={audience} buyHref={s.canManage ? paths.packs : null} />
                 </div>
+                {notice ? (
+                  <PriceChangeBanner
+                    notice={notice}
+                    plansHref={paths.plans}
+                    teamHref={audience === "teacher" && s.canManage ? "/teacher/team" : null}
+                    onCancel={s.canManage && !waiting ? () => setCancelOpen(true) : null}
+                  />
+                ) : null}
                 <PlanCard summary={s} audience={audience} plansHref={paths.plans} forChild={forChild} onCancel={() => setCancelOpen(true)} />
                 <div className="grid gap-4 md:grid-cols-2">
                   <UsageMeterCard meter={meter} />

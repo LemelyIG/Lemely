@@ -42,6 +42,7 @@ import type {
   ManualActivationRequest,
   MarginReport,
   PackCreate,
+  PackPriceImpact,
   PackUpdate,
   PaymentStatus,
   ProblemQueue,
@@ -73,6 +74,8 @@ export const adminBillingApi = {
   syncTier: (id: string, b: Reasoned) => request<WireAdminPlanTier>(`${B}/tiers/${enc(id)}/sync`, post(b)),
   createPack: (b: PackCreate) => request<AdminCreditPack>(`${B}/packs`, post(b)),
   updatePack: (id: string, b: PackUpdate) => request<AdminCreditPack>(`${B}/packs/${enc(id)}`, put(b)),
+  /** Read-only preview: auto top-ups at a proposed price, before anything is saved. */
+  packPriceImpact: (id: string, priceMinor: number) => request<PackPriceImpact>(`${B}/packs/${enc(id)}/price-impact?priceMinor=${priceMinor}`),
   createRate: (b: RateCreate) => request<UsageRateRow>(`${B}/rates`, post(b)),
   createEstimator: (b: EstimatorCreate) => request<EstimatorRow>(`${B}/estimators`, post(b)),
   updateFreeAllowance: (b: FreeAllowanceUpdate) => request<WireFreeAllowance>(`${B}/free-allowances`, put(b)),
@@ -125,6 +128,7 @@ export const adminBillingKeys = {
   payments: (status: PaymentStatus | null) => ["admin", "billing", "payments", status ?? "all"] as const,
   problems: ["admin", "billing", "problems"] as const,
   margin: (from: string, to: string, egpPerUsd: string | null = null) => ["admin", "billing", "margin", from, to, egpPerUsd] as const,
+  packImpact: (id: string, priceMinor: number) => ["admin", "billing", "pack-impact", id, priceMinor] as const,
   health: ["admin", "billing", "health"] as const,
   settings: ["admin", "billing", "settings"] as const,
   creditRates: ["admin", "billing", "credit-rates"] as const,
@@ -134,10 +138,14 @@ export const adminBillingKeys = {
 export const useAdminCatalogue = (): UseQueryResult<AdminCatalogue, Error> =>
   useQuery({ queryKey: adminBillingKeys.catalogue, retry: adminRetry, queryFn: adminBillingApi.catalogue, select: toAdminCatalogue })
 
-/** Catalogue writes return the single row, so the catalogue is refetched. */
+/**
+ * Catalogue writes return the single row, so the catalogue is refetched. It is refetched when a
+ * write fails too: a 409 `stale_write` says someone else changed the row, and the page behind
+ * the dialog must show what they saved.
+ */
 function useCatalogueWrite<V, D>(fn: (v: V) => Promise<D>): UseMutationResult<D, Error, V> {
   const qc = useQueryClient()
-  return useMutation({ mutationFn: fn, onSuccess: () => qc.invalidateQueries({ queryKey: adminBillingKeys.catalogue }) })
+  return useMutation({ mutationFn: fn, onSettled: () => qc.invalidateQueries({ queryKey: adminBillingKeys.catalogue }) })
 }
 
 export const useCreateTier = () => useCatalogueWrite((b: TierCreate) => adminBillingApi.createTier(b))
@@ -145,6 +153,19 @@ export const useUpdateTier = () => useCatalogueWrite((v: { id: string; body: Tie
 export const useSyncTier = () => useCatalogueWrite((v: { id: string; body: Reasoned }) => adminBillingApi.syncTier(v.id, v.body))
 export const useCreatePack = () => useCatalogueWrite((b: PackCreate) => adminBillingApi.createPack(b))
 export const useUpdatePack = () => useCatalogueWrite((v: { id: string; body: PackUpdate }) => adminBillingApi.updatePack(v.id, v.body))
+/**
+ * Who a pack price would affect, asked while the editor is open. `priceMinor` null means no
+ * question: nothing is fetched. A failed answer is an error, never a zero.
+ */
+export const usePackPriceImpact = (packId: string, priceMinor: number | null): UseQueryResult<PackPriceImpact, Error> =>
+  useQuery({
+    queryKey: adminBillingKeys.packImpact(packId, priceMinor ?? 0),
+    queryFn: () => adminBillingApi.packPriceImpact(packId, priceMinor ?? 0),
+    enabled: priceMinor !== null,
+    retry: adminRetry,
+    staleTime: 0,
+  })
+
 export const useCreateRate = () => useCatalogueWrite((b: RateCreate) => adminBillingApi.createRate(b))
 export const useCreateEstimator = () => useCatalogueWrite((b: EstimatorCreate) => adminBillingApi.createEstimator(b))
 const FREE_LABEL = { student: "the student free allowance", teacher: "the teacher signup credits" } as const

@@ -165,9 +165,10 @@ describe("AutoTopupCard", () => {
     expect(html).toMatch(/<button(?=[^>]*role="switch")(?=[^>]*disabled)[^>]*>/)
   })
 
-  it("reports a failed charge that switched top-up off", () => {
+  it("says a switched-off top-up needs a look at the saved card, without claiming why", () => {
     s.settings = okQuery({ ...fx.autoTopup, disabledReason: "charge_failed" })
-    expect(card()).toMatch(/role="status"[^>]*>.*last charge failed/)
+    expect(card()).toMatch(/role="status"[^>]*>Auto top-up is off\. Check your saved card, then turn it back on\./)
+    expect(card()).not.toMatch(/last charge|failed/)
   })
 
   it("is hidden from a non-payer", () => {

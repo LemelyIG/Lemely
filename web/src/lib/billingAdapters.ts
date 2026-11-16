@@ -94,6 +94,7 @@ export function toCreditPack(w: WireCreditPack): CreditPack {
 export function toCatalogue(w: WireCatalogue, audience: Audience): Catalogue {
   return {
     audience,
+    creditValidityMonths: w.creditValidityMonths,
     tiers: w.planTiers
       .map(toPlanTier)
       .filter((t): t is PlanTier => t !== null && t.audience === audience),
@@ -137,6 +138,8 @@ export function toBillingSummary(w: WireBillingSummary): BillingSummary {
             graceUntil: sub.graceUntil,
             extraSeats: sub.extraSeats,
             pendingExtraSeats: sub.pendingExtraSeats,
+            pendingTermsChange: sub.pendingTermsChange,
+            cancelReason: sub.cancelReason,
           }
         : null,
     canManage: w.canManage,
@@ -250,6 +253,8 @@ const DRIFT: Record<PaymobDrift, string | null> = {
 export function toAdminCatalogue(w: WireAdminCatalogue): AdminCatalogue {
   const free = (a: "student" | "teacher") => w.freeAllowances.find((f) => f.audience === a)
   return {
+    subscriptionAmountUpdatable: w.subscriptionAmountUpdatable,
+    priceChangeNoticeDays: w.priceChangeNoticeDays,
     tiers: w.planTiers.map((t) => {
       const teacher = t.audience === "teacher"
       return {
@@ -266,6 +271,10 @@ export function toAdminCatalogue(w: WireAdminCatalogue): AdminCatalogue {
         extraSeatPriceMinor: teacher ? t.extraSeatPriceMinor : null,
         features: featureLines(t.features),
         isActive: t.isActive,
+        version: t.version,
+        termsVersion: t.termsVersion,
+        liveSubscriptionCount: t.liveSubscriptionCount,
+        pendingMoves: t.pendingMoves,
         paymobPlanId: t.paymobPlanId,
         drift: DRIFT[t.paymobDrift],
         driftState: t.paymobDrift,
@@ -290,6 +299,7 @@ export function toAdminCatalogue(w: WireAdminCatalogue): AdminCatalogue {
 export function toPublicCatalogue(w: WirePublicCatalogue): PublicCatalogue {
   return {
     audience: w.audience,
+    creditValidityMonths: w.creditValidityMonths,
     tiers: w.planTiers.flatMap((t): PublicTier[] => {
       const audience = toAudience(t.audience)
       const interval = toInterval(t.interval)

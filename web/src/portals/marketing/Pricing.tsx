@@ -10,7 +10,7 @@ import { QueryState } from "@/components/ui/query-state"
 import { EmptyState } from "@/components/ui/state-views"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useAuth } from "@/lib/auth/AuthContext"
-import { formatCredits, formatMoney, intervalLabel } from "@/lib/billingFormat"
+import { formatCredits, formatMoney, intervalLabel, validityMonths } from "@/lib/billingFormat"
 import type { Audience, BillingInterval } from "@/lib/billingTypes"
 import { usePublicCatalogue } from "@/lib/hooks/useBillingApi"
 import {
@@ -178,7 +178,7 @@ export function Pricing() {
                   </section>
                   <section id="packs" aria-labelledby="pricing-packs" className="flex scroll-mt-24 flex-col gap-4">
                     <h2 id="pricing-packs" className="pricing-section-title text-on-surface">Credit packs</h2>
-                    <p className="m-0 text-body-sm text-on-surface-variant">Credits last 12 months from purchase.</p>
+                    <p className="m-0 text-body-sm text-on-surface-variant">Credits last {validityMonths(c.creditValidityMonths)} from purchase.</p>
                     {c.packs.length === 0 ? (
                       <p className="m-0 text-body-sm text-on-surface-variant">No credit packs right now.</p>
                     ) : (

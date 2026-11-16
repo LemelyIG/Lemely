@@ -29,6 +29,11 @@ export function formatBillingDate(iso: string, locale?: string): string {
   return new Date(iso).toLocaleDateString(locale, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })
 }
 
+/** "1 month", "6 months": how long a bought credit stays valid, as the admin set it. */
+export function validityMonths(months: number): string {
+  return `${months} ${months === 1 ? "month" : "months"}`
+}
+
 /** A held legacy plan has no interval: say "per period" rather than guess one. */
 export function intervalLabel(interval: BillingInterval | null): string {
   if (interval === null) return "per period"

@@ -250,7 +250,10 @@ describe("checkout request builders", () => {
 
   it("carries clamped extra seats for a teacher only", () => {
     expect(subscriptionCheckoutRequest({ id: "t5" }, "teacher", null, 12).extraSeats).toBe(12)
-    expect(subscriptionCheckoutRequest({ id: "t5" }, "teacher", null, 999).extraSeats).toBe(200)
+    // The admin ceiling is the server's to enforce; the client stops only at the schema's bound.
+    expect(subscriptionCheckoutRequest({ id: "t5" }, "teacher", null, 999).extraSeats).toBe(999)
+    expect(subscriptionCheckoutRequest({ id: "t5" }, "teacher", null, 250).extraSeats).toBe(250)
+    expect(subscriptionCheckoutRequest({ id: "t5" }, "teacher", null, 10_001).extraSeats).toBe(10_000)
     expect(subscriptionCheckoutRequest({ id: "t5" }, "teacher", null, -3).extraSeats).toBe(0)
     expect(clampExtraSeats(Number.NaN)).toBe(0)
     expect(clampExtraSeats(4.9)).toBe(4)

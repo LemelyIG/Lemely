@@ -101,7 +101,8 @@ describe("admin billing model", () => {
       isActive: true,
       reason: "price check",
     })
-    expect(tierUpdateBody(v, "price check")).toEqual({
+    expect(tierUpdateBody(v, "price check", undefined, 4)).toEqual({
+      expectedVersion: 4,
       name: tier.name,
       priceMinor: tier.priceMinor,
       allowanceUnits: tier.allowanceUnits,
@@ -125,7 +126,7 @@ describe("admin billing model", () => {
   it("builds pack, rate, estimator and free-allowance bodies", () => {
     const pack = { code: "pack_p", name: "P", units: "500", priceMajor: "150", isActive: true }
     expect(packBody(pack, "new pack")).toEqual({ code: "pack_p", name: "P", units: 500, priceMinor: 15000, currency: "EGP", isActive: true, reason: "new pack" })
-    expect(packUpdateBody(pack, "edit pack")).toEqual({ name: "P", units: 500, priceMinor: 15000, isActive: true, reason: "edit pack" })
+    expect(packUpdateBody(pack, "edit pack", 2)).toEqual({ expectedVersion: 2, name: "P", units: 500, priceMinor: 15000, isActive: true, reason: "edit pack" })
     expect(rateBody({ action: "regrade", unitsPerUsd: "1200", effectiveFrom: "2026-12-01" }, "rate")).toEqual({
       action: "regrade", unitsPerUsd: 1200, effectiveFrom: "2026-12-01T00:00:00Z", reason: "rate",
     })
@@ -236,15 +237,15 @@ describe("admin billing model: what the server would refuse is refused first", (
     const v = tierValues(tier)
     expect(featureLinesOf(v)).toEqual(["Mark past papers", "Study plans"])
     // Untouched form: identical features come back.
-    expect(tierUpdateBody(v, "r", raw).features).toEqual(raw)
+    expect(tierUpdateBody(v, "r", raw, 1).features).toEqual(raw)
     // Remove one true line, add one: non-true keys stay, the removed line goes, the new one is true.
     const edited = { ...v, features: "Mark past papers\nClass analytics" }
-    expect(tierUpdateBody(edited, "r", raw).features).toEqual({ papers: "unlimited", beta: false, tiers: 3, "Mark past papers": true, "Class analytics": true })
+    expect(tierUpdateBody(edited, "r", raw, 1).features).toEqual({ papers: "unlimited", beta: false, tiers: 3, "Mark past papers": true, "Class analytics": true })
     // Typing the name of a stored-false key turns it on.
     expect(mergeFeatures({ beta: false }, ["beta"])).toEqual({ beta: true })
     expect(hiddenFeatureCount(raw)).toBe(3)
     // Without raw features (a new tier) only the typed lines are sent.
-    expect(tierUpdateBody(v, "r").features).toEqual({ "Mark past papers": true, "Study plans": true })
+    expect(tierUpdateBody(v, "r", undefined, 1).features).toEqual({ "Mark past papers": true, "Study plans": true })
   })
 
   it("sends only the free allowances that changed, and an unset one always counts as changed", () => {

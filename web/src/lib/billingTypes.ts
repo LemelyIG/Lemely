@@ -100,6 +100,8 @@ export interface WireCreditPack {
 
 /** 02 `CatalogueDTO` (`GET /billing/catalogue`). */
 export interface WireCatalogue {
+  /** Months a bought credit stays valid: the admin-set rule, never a constant in the UI. */
+  creditValidityMonths: number
   planTiers: WirePlanTier[]
   creditPacks: WireCreditPack[]
 }
@@ -222,6 +224,27 @@ export interface WireSubscriptionView {
   graceUntil: string | null
   extraSeats: number
   pendingExtraSeats: number | null
+  /** A noticed move to the plan's newer terms, for the payer's own screen (UD13-A). */
+  pendingTermsChange: WirePendingTermsChange | null
+  /** Set when the platform, not the payer, scheduled the end of the plan. */
+  cancelReason: "plan_terms_changed" | null
+}
+
+/**
+ * 07 `PendingTermsChangeDTO`. Allowance sizes are never sent (spec §2.1): `allowanceChange`
+ * only says whether the allowance grows or shrinks. `includedSeats` is the new count.
+ */
+export interface WirePendingTermsChange {
+  effectiveAt: string
+  firstRenewalAt: string | null
+  priceMinor: number
+  extraSeatPriceMinor: number
+  includedSeats: number
+  priceChanges: boolean
+  allowanceChange: "more" | "less" | null
+  includedSeatsChanges: boolean
+  seatAllowanceChanges: boolean
+  endsInsteadOfMoving: boolean
 }
 
 /** 05 `BillingSummaryDTO` (`GET /billing/summary?beneficiaryId=`, plan 05 Task 13, R3). */
@@ -378,6 +401,7 @@ export interface CreditPack {
 
 export interface Catalogue {
   audience: Audience
+  creditValidityMonths: number
   tiers: PlanTier[]
   packs: CreditPack[]
 }
@@ -408,6 +432,8 @@ export interface SubscriptionView {
   graceUntil: string | null
   extraSeats: number
   pendingExtraSeats: number | null
+  pendingTermsChange: WirePendingTermsChange | null
+  cancelReason: "plan_terms_changed" | null
 }
 
 export interface CreditBucket {
@@ -678,6 +704,14 @@ export interface WireAdminPlanTier {
   extraSeatPriceMinor: number
   features: Record<string, unknown>
   isActive: boolean
+  /** Row version: sent back as `expectedVersion` so a stale edit answers 409. */
+  version: number
+  /** The terms version in force for new customers. */
+  termsVersion: number
+  /** Subscriptions that are live (active, past due or waiting on a first payment). */
+  liveSubscriptionCount: number
+  /** Live subscriptions still on older terms, waiting to move. */
+  pendingMoves: number
   paymobPlanId: number | null
   paymobDrift: PaymobDrift
 }
@@ -691,6 +725,17 @@ export interface AdminCreditPack {
   priceMinor: number
   currency: string
   isActive: boolean
+  version: number
+  /** Enabled auto top-ups that buy this pack. */
+  autoTopupCount: number
+  /** Of those, how many have a monthly limit below the pack's current price. */
+  autoTopupCapBelowPriceCount: number
+}
+
+/** 07 `PackPriceImpactDTO` (`GET /packs/{id}/price-impact?priceMinor=`): a preview, nothing saved. */
+export interface PackPriceImpact {
+  autoTopupCount: number
+  capBelowPriceCount: number
 }
 
 /** 07 `FreeAllowanceDTO` (the inactive signup packs, index R11). */
@@ -731,6 +776,9 @@ export interface WireAdminCatalogue {
   freeAllowances: WireFreeAllowance[]
   usageRates: UsageRateRow[]
   usageEstimators: EstimatorRow[]
+  /** False on the fixed-amount fallback: Paymob cannot change a running renewal's amount. */
+  subscriptionAmountUpdatable: boolean
+  priceChangeNoticeDays: number
 }
 
 export interface Reasoned {
@@ -755,6 +803,8 @@ export interface TierCreate extends Reasoned {
 
 /** 07 `PlanTierUpdateDTO`: every editable field, all required. */
 export interface TierUpdate extends Reasoned {
+  /** The version the form was opened on; a newer row answers 409 `stale_write`. */
+  expectedVersion: number
   name: string
   priceMinor: number
   allowanceUnits: number
@@ -777,6 +827,8 @@ export interface PackCreate extends Reasoned {
 
 /** 07 `CreditPackUpdateDTO`: every editable field, all required. */
 export interface PackUpdate extends Reasoned {
+  /** The version the form was opened on; a newer row answers 409 `stale_write`. */
+  expectedVersion: number
   name: string
   units: number
   priceMinor: number
@@ -826,6 +878,10 @@ export interface AdminPlanTier {
   extraSeatPriceMinor: number | null
   features: string[]
   isActive: boolean
+  version: number
+  termsVersion: number
+  liveSubscriptionCount: number
+  pendingMoves: number
   paymobPlanId: number | null
   /** `null` when in sync with Paymob. */
   drift: string | null
@@ -851,6 +907,8 @@ export interface FreeAllowances {
 }
 
 export interface AdminCatalogue {
+  subscriptionAmountUpdatable: boolean
+  priceChangeNoticeDays: number
   tiers: AdminPlanTier[]
   packs: AdminCreditPack[]
   rates: UsageRateRow[]
@@ -1120,7 +1178,10 @@ export interface MarginReport {
     byModel: { model: string; costUsd: string }[]
     unattributedModelUsd: string
   }
+  /** The rate the report used, as the server normalises it ("50", "48.5"); `null` when none. */
   egpPerUsd: string | null
+  /** Where that rate came from: this request, or the admin's billing rules. */
+  egpPerUsdSource: "request" | "settings" | null
   costMinor: number | null
   marginMinor: number | null
   accuracy: {
@@ -1141,7 +1202,8 @@ export interface MarginReport {
     creditsExpiring30dUnits: number
     creditsExpiring30dOwners: number
     creditsExpiredUnusedUnits: number
-    expiredJobs: { count: number; costUsd: string }
+    /** Jobs that expired unsettled. They never have a cost recorded. */
+    expiredJobs: { count: number }
   }
 }
 
@@ -1178,6 +1240,7 @@ export interface BillingHealth {
 /** 02 `PublicCatalogueDTO` (`GET /billing/public-catalogue?audience=`). No ids. */
 export interface WirePublicCatalogue {
   audience: Audience
+  creditValidityMonths: number
   planTiers: {
     code: string
     name: string
@@ -1214,6 +1277,7 @@ export interface PublicTier {
 
 export interface PublicCatalogue {
   audience: Audience
+  creditValidityMonths: number
   tiers: PublicTier[]
   packs: PublicPack[]
 }

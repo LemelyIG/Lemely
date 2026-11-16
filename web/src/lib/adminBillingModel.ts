@@ -90,7 +90,7 @@ export type FieldSpec = FieldBase &
     | { kind: "number"; optional?: boolean; positive?: boolean; min?: number; max?: number }
     | { kind: "decimal"; optional?: boolean; places: number; max: number }
     | { kind: "notice"; text: string }
-    | { kind: "money"; optional?: boolean; positive?: boolean }
+    | { kind: "money"; optional?: boolean; positive?: boolean; /** Largest amount in minor units; defaults to a sanity bound. */ max?: number }
     | { kind: "select"; options: { value: string; label: string }[] }
     | { kind: "checkbox" }
     | { kind: "lines" }
@@ -199,8 +199,8 @@ export function fieldErrors(fields: FieldSpec[], values: FormValues, now: Date =
         errors[f.name] = `${f.label} must be an amount like 250 or 250.50.`
       } else if (f.positive && minor === 0) {
         errors[f.name] = `${f.label} must be more than zero.`
-      } else if (minor > MAX_MINOR) {
-        errors[f.name] = `${f.label} must be at most ${grouped(MAX_MINOR / 100)}.`
+      } else if (minor > (f.max ?? MAX_MINOR)) {
+        errors[f.name] = `${f.label} must be at most ${grouped((f.max ?? MAX_MINOR) / 100)}.`
       }
     }
   }
@@ -213,14 +213,23 @@ export function validateFields(fields: FieldSpec[], values: FormValues, now: Dat
 
 const ACTION_OPTIONS = METERED_ACTIONS.map((a) => ({ value: a, label: a }))
 
+/*
+ * Ceilings the server enforces (`schemas_admin_billing.py`): a tier price is an INTEGER column,
+ * money elsewhere is ten billion piasters, usage is a trillion units, seats ten thousand.
+ */
+const TIER_PRICE_MAX_MINOR = 2 ** 31 - 1
+const MONEY_MAX_MINOR = 10 ** 10
+const UNITS_MAX = 10 ** 12
+const SEATS_MAX = 10_000
+
 /** Editable after creation (07 `PlanTierUpdateDTO`). Seat fields only exist on teacher tiers. */
 export const TIER_UPDATE_FIELDS: FieldSpec[] = [
   { name: "name", label: "Name", kind: "text", maxLength: 120 },
-  { name: "priceMajor", label: "Price (EGP)", kind: "money", hint: "Per billing period. Zero makes a free tier." },
-  { name: "allowanceUnits", label: "Allowance per period (units)", kind: "number" },
-  { name: "includedSeats", label: "Included seats", kind: "number", optional: true, audience: "teacher" },
-  { name: "seatAllowanceUnits", label: "Seat allowance per month (units)", kind: "number", optional: true, audience: "teacher" },
-  { name: "extraSeatPriceMajor", label: "Extra seat price (EGP)", kind: "money", optional: true, audience: "teacher" },
+  { name: "priceMajor", label: "Price (EGP)", kind: "money", max: TIER_PRICE_MAX_MINOR, hint: "Per billing period. Zero makes a free tier." },
+  { name: "allowanceUnits", label: "Allowance per period (units)", kind: "number", max: UNITS_MAX },
+  { name: "includedSeats", label: "Included seats", kind: "number", optional: true, max: SEATS_MAX, audience: "teacher" },
+  { name: "seatAllowanceUnits", label: "Seat allowance per month (units)", kind: "number", optional: true, max: UNITS_MAX, audience: "teacher" },
+  { name: "extraSeatPriceMajor", label: "Extra seat price (EGP)", kind: "money", optional: true, max: MONEY_MAX_MINOR, audience: "teacher" },
   { name: "features", label: "Feature lines", kind: "lines", hint: "One per line. Each line is shown to buyers." },
   { name: "isActive", label: "On sale", kind: "checkbox" },
 ]
@@ -257,7 +266,7 @@ export function tierValues(t: AdminPlanTier | null): FormValues {
   }
 }
 
-export function tierUpdateBody(v: FormValues, reason: string, rawFeatures?: Record<string, unknown>): TierUpdate {
+function tierFields(v: FormValues, rawFeatures?: Record<string, unknown>) {
   const teacher = isTeacher(v)
   return {
     name: str(v, "name"),
@@ -268,12 +277,16 @@ export function tierUpdateBody(v: FormValues, reason: string, rawFeatures?: Reco
     extraSeatPriceMinor: teacher ? moneyOrZero(v, "extraSeatPriceMajor") : 0,
     features: mergeFeatures(rawFeatures, featureLinesOf(v)),
     isActive: v.isActive === true,
-    reason,
   }
 }
 
+/** Built from the row the form was opened on: its version and its stored features, never live data. */
+export function tierUpdateBody(v: FormValues, reason: string, rawFeatures: Record<string, unknown> | undefined, expectedVersion: number): TierUpdate {
+  return { ...tierFields(v, rawFeatures), expectedVersion, reason }
+}
+
 export function tierBody(v: FormValues, reason: string): TierCreate {
-  const { name, priceMinor, allowanceUnits, includedSeats, seatAllowanceUnits, extraSeatPriceMinor, features, isActive } = tierUpdateBody(v, reason)
+  const { name, priceMinor, allowanceUnits, includedSeats, seatAllowanceUnits, extraSeatPriceMinor, features, isActive } = tierFields(v)
   return {
     code: str(v, "code"),
     name,
@@ -294,8 +307,8 @@ export function tierBody(v: FormValues, reason: string): TierCreate {
 /** Packs are bought, so a pack with no credits or no price is refused (07 `Positive`). */
 export const PACK_UPDATE_FIELDS: FieldSpec[] = [
   { name: "name", label: "Name", kind: "text", maxLength: 120 },
-  { name: "units", label: "Credits", kind: "number", positive: true },
-  { name: "priceMajor", label: "Price (EGP)", kind: "money", positive: true },
+  { name: "units", label: "Credits", kind: "number", positive: true, max: UNITS_MAX },
+  { name: "priceMajor", label: "Price (EGP)", kind: "money", positive: true, max: MONEY_MAX_MINOR },
   { name: "isActive", label: "On sale", kind: "checkbox" },
 ]
 
@@ -322,12 +335,16 @@ export function packValues(p: AdminCreditPack | null): FormValues {
   }
 }
 
-export function packUpdateBody(v: FormValues, reason: string): PackUpdate {
-  return { name: str(v, "name"), units: num(v, "units"), priceMinor: minorFromMajor(str(v, "priceMajor")) ?? 0, isActive: v.isActive === true, reason }
+function packFields(v: FormValues) {
+  return { name: str(v, "name"), units: num(v, "units"), priceMinor: minorFromMajor(str(v, "priceMajor")) ?? 0, isActive: v.isActive === true }
+}
+
+export function packUpdateBody(v: FormValues, reason: string, expectedVersion: number): PackUpdate {
+  return { ...packFields(v), expectedVersion, reason }
 }
 
 export function packBody(v: FormValues, reason: string): PackCreate {
-  const { name, units, priceMinor, isActive } = packUpdateBody(v, reason)
+  const { name, units, priceMinor, isActive } = packFields(v)
   return { code: str(v, "code"), name, units, priceMinor, currency: "EGP", isActive, reason }
 }
 
@@ -544,6 +561,7 @@ export const FRIENDLY: Record<string, string> = {
   low_above_high: "Each low bound must be at or below its high bound.",
   per_input_without_input_kind: "Per input units need a counted input. Choose pages, marks or questions, or set both to 0.",
   seat_fields_on_student_tier: "Student tiers carry no seats. Set the seat fields to 0.",
+  extra_seats_held: "Customers hold extra seats on this plan, so the extra-seat price can't be zero.",
   not_billable: "A free tier has no Paymob plan to sync.",
   paymob_billed: "Paymob bills this plan, so its period can't be moved here. Grant credits instead.",
   refund_in_flight: "A refund on this payment is still waiting on Paymob. Check with Paymob before trying another.",

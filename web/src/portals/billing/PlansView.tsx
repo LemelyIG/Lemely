@@ -11,12 +11,13 @@ import { CardGridSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
 import { EmptyState } from "@/components/ui/state-views"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { formatCredits, formatMoney, intervalLabel } from "@/lib/billingFormat"
+import { formatCredits, formatMoney, intervalLabel, validityMonths } from "@/lib/billingFormat"
 import { billingFailureMessage } from "@/lib/billingOutcome"
 import type { BillingPaths } from "@/lib/billingPaths"
 import type { Audience, BillingInterval, CreditPack, PlanTier } from "@/lib/billingTypes"
 import {
   clampExtraSeats,
+  EXTRA_SEATS_MAX,
   initialInterval,
   packCheckoutRequest,
   seatsIncludedLabel,
@@ -219,7 +220,7 @@ export function PlansView(props: PlansViewProps) {
                       type="number"
                       inputMode="numeric"
                       min={0}
-                      max={200}
+                      max={EXTRA_SEATS_MAX}
                       value={extraSeats}
                       onChange={(e) => setExtraSeats(clampExtraSeats(Number(e.target.value)))}
                     />
@@ -270,7 +271,7 @@ export function PlansView(props: PlansViewProps) {
               <section id="packs" aria-labelledby="packs-heading" className="flex scroll-mt-24 flex-col gap-4">
                 <h2 id="packs-heading" className="m-0 text-display-sm text-on-surface">Credit packs</h2>
                 <p className="m-0 text-body-sm text-on-surface-variant">
-                  Credits pay once a plan's allowance runs out, or on their own without a plan. They last 12 months from purchase.
+                  Credits pay once a plan's allowance runs out, or on their own without a plan. They last {validityMonths(c.creditValidityMonths)} from purchase.
                 </p>
                 <ul className="m-0 grid list-none gap-4 p-0 md:grid-cols-2 lg:grid-cols-3">
                   {c.packs.map((pack) => (

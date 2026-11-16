@@ -6,9 +6,10 @@ import type { CreditBalance } from "@/lib/billingTypes"
 import { creditExpiryLines } from "@/lib/usageMeterModel"
 
 /*
- * Credits are an abstract balance with an expiry breakdown (spec §2.1). Purchased credits
- * expire 12 months after purchase; signup credits for teachers after 30 days. Lines within
- * 30 days of expiry are marked so a payer can spend them first.
+ * Credits are an abstract balance with an expiry breakdown (spec §2.1). Each line carries its
+ * own expiry, so what the admin set when it was granted (credit validity for purchased credits,
+ * signup validity for free ones) shows without a rule hardcoded here. Lines within 30 days of
+ * expiry are marked so a payer can spend them first.
  */
 
 export function CreditBalanceCard({

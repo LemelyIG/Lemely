@@ -63,6 +63,8 @@ const activeSub: SubscriptionView = {
   graceUntil: null,
   extraSeats: 0,
   pendingExtraSeats: null,
+  pendingTermsChange: null,
+  cancelReason: null,
 }
 
 const estimate: EstimateResponse = { low: 30, high: 60, payer: "allowance", percentLow: 2, percentHigh: 4, blockedReason: null }
@@ -144,10 +146,11 @@ const summary: BillingSummary = {
 
 const studentCatalogue: Catalogue = {
   audience: "student",
+  creditValidityMonths: 12,
   tiers: [studentMonthly, studentYearly],
   packs: [{ id: "p1", code: "pack_500", name: "500 credits", units: 500, priceMinor: 15000, currency: "EGP" }],
 }
-const teacherCatalogue: Catalogue = { audience: "teacher", tiers: [teacherMonthly, teacherMax], packs: studentCatalogue.packs }
+const teacherCatalogue: Catalogue = { audience: "teacher", creditValidityMonths: 12, tiers: [teacherMonthly, teacherMax], packs: studentCatalogue.packs }
 
 const history: UsageHistoryPage = { jobs: [job], nextCursor: null }
 
@@ -227,6 +230,8 @@ const wireTeacherSummary: WireBillingSummary = {
     graceUntil: null,
     extraSeats: 2,
     pendingExtraSeats: null,
+    pendingTermsChange: null,
+    cancelReason: null,
   },
   canManage: true,
   managedByName: null,
@@ -255,15 +260,18 @@ const team: TeamView = {
 }
 
 const adminCatalogue: AdminCatalogue = {
+  subscriptionAmountUpdatable: true,
+  priceChangeNoticeDays: 30,
   tiers: [
     {
       id: "t-s-m", code: "student_plus_m", name: "Student Plus", audience: "student", interval: "month", priceMinor: 25000,
       currency: "EGP", allowanceUnits: 4000, includedSeats: null, seatAllowanceUnits: null, extraSeatPriceMinor: null,
-      features: ["Mark past papers", "Study plans"], isActive: true, paymobPlanId: 77, drift: null, driftState: "in_sync",
+      features: ["Mark past papers", "Study plans"], isActive: true, version: 4, termsVersion: 2, liveSubscriptionCount: 14, pendingMoves: 3, paymobPlanId: 77, drift: null,
+      driftState: "in_sync",
       rawFeatures: { "Mark past papers": true, "Study plans": true },
     },
   ],
-  packs: [{ id: "p1", code: "pack_500", name: "500 credits", units: 500, priceMinor: 15000, currency: "EGP", isActive: true }],
+  packs: [{ id: "p1", code: "pack_500", name: "500 credits", units: 500, priceMinor: 15000, currency: "EGP", isActive: true, version: 2, autoTopupCount: 6, autoTopupCapBelowPriceCount: 0 }],
   rates: [{ id: "r1", version: 1, action: "mark_paper", unitsPerUsd: 1000, effectiveFrom: "2026-11-01T00:00:00Z" }],
   estimators: [
     { id: "e1", version: 1, action: "mark_paper", inputKind: "none", baseLow: 2, baseHigh: 4, perInputLow: 0, perInputHigh: 0, effectiveFrom: "2026-11-01T00:00:00Z" },
@@ -428,7 +436,8 @@ const margin: MarginReport = {
     byModel: [{ model: "claude-haiku", costUsd: "30.000000" }],
     unattributedModelUsd: "0.100000",
   },
-  egpPerUsd: "50.00",
+  egpPerUsd: "50",
+  egpPerUsdSource: "settings",
   costMinor: 220600,
   marginMinor: 1179400,
   accuracy: [{ action: "mark_paper", estimatorVersion: 1, jobs: 420, below: 10, above: 19, shareOutside: 0.07, meanOverrunUnits: 1.8, maxOverrunUnits: 6 }],
@@ -440,7 +449,7 @@ const margin: MarginReport = {
     creditsExpiring30dUnits: 4200,
     creditsExpiring30dOwners: 12,
     creditsExpiredUnusedUnits: 800,
-    expiredJobs: { count: 2, costUsd: "0.420000" },
+    expiredJobs: { count: 2 },
   },
 }
 

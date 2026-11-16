@@ -236,6 +236,18 @@ describe("billing failure copy", () => {
     }
   })
 
+  it("maps the first checkout's seat refusal, 422 invalid_extra_seats, to the same short copy", () => {
+    const real = new ApiError(422, "422", { error: "invalid_extra_seats", message: "extra_seats exceeds the maximum" })
+    expect(billingFailureMessage(real, "start checkout")).toBe("That's over the extra-seat limit. Try fewer.")
+    expect(billingFailureMessage(real, "start checkout")).not.toContain("extra_seats")
+    expect(isTerminalRefusal(real)).toBe(true)
+  })
+
+  it("tells a payer whose monthly limit is below the pack price to raise it", () => {
+    const e = new ApiError(409, "409", { error: "cap_below_pack_price", message: "monthly_cap_minor < pack.price_minor" })
+    expect(billingFailureMessage(e, "save auto top-up")).toBe("Your monthly limit is below the pack price. Raise it to keep auto top-up working.")
+  })
+
   it("marks refusals that fail the same way again as terminal, and transient ones as not", () => {
     const e = (error: string, status = 409) => new ApiError(status, String(status), { error, message: "x" })
     for (const c of ["upgrade_unavailable", "seats_not_sold", "seats_exceed_new_tier", "not_an_upgrade", "subscription_not_active", "period_ending"]) {

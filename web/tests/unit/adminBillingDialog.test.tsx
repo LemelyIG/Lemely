@@ -56,7 +56,7 @@ function wrap(el: ReturnType<typeof h>) {
 }
 
 function dialog(mutation: Fake, over: Record<string, unknown> = {}) {
-  const toBody = vi.fn((v: Record<string, string | boolean>, reason: string) => packUpdateBody(v, reason))
+  const toBody = vi.fn((v: Record<string, string | boolean>, reason: string) => packUpdateBody(v, reason, 2))
   const onClose = vi.fn()
   const onSaved = vi.fn()
   render(

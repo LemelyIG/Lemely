@@ -8,6 +8,7 @@ import { Modal } from "@/components/ui/modal"
 import { Select } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
+import { confirmProblem } from "@/lib/catalogueImpact"
 import {
   REASON_MAX,
   adminBillingFailureMessage,
@@ -30,6 +31,20 @@ import {
  * focus. A server refusal sits in the footer, next to the button that caused it.
  */
 
+/**
+ * What a form tells the admin about the customers it affects, as the values change. `warned` is
+ * true while the warning shows: the dialog then asks for a tick before it saves, and the tick is
+ * a form-only value that never reaches the request body.
+ */
+export interface ImpactView {
+  warned: boolean
+  node: ReactNode
+  confirmLabel: string
+}
+
+const NO_IMPACT: ImpactView = { warned: false, node: null, confirmLabel: "" }
+const useNoImpact = (): ImpactView => NO_IMPACT
+
 /** Short fields pair up on wide dialogs; prose and names take the full row. */
 const HALF: ReadonlySet<FieldSpec["kind"]> = new Set(["number", "decimal", "money", "date", "select"])
 
@@ -48,6 +63,7 @@ export function ReasonedFormDialog<TBody>({
   rolledBackOn502 = false,
   reload,
   blocked = null,
+  useImpact = useNoImpact,
 }: {
   open: boolean
   onClose: () => void
@@ -71,6 +87,11 @@ export function ReasonedFormDialog<TBody>({
    * write with no idempotency key: the screen must show fresh data before the admin may retry.
    */
   blocked?: string | null
+  /**
+   * A hook that reads the typed values and returns the customer-impact warning. It must be the
+   * same hook for the whole life of the dialog (it is called on every render).
+   */
+  useImpact?: (values: FormValues) => ImpactView
 }) {
   const formId = useId()
   const formRef = useRef<HTMLFormElement>(null)
@@ -78,10 +99,12 @@ export function ReasonedFormDialog<TBody>({
   const [reason, setReason] = useState("")
   const [attempts, setAttempts] = useState(0)
 
+  const impact = useImpact(values)
   const perField = fieldErrors(fields, values)
   const reasonProblem = reasonError(reason)
+  const confirmError = confirmProblem(impact.warned, values)
   const crossProblems = Object.keys(perField).length === 0 ? (check?.(values) ?? []) : []
-  const valid = Object.keys(perField).length === 0 && reasonProblem === null && crossProblems.length === 0
+  const valid = Object.keys(perField).length === 0 && reasonProblem === null && crossProblems.length === 0 && confirmError === null
   const showErrors = attempts > 0
   const set = (name: string, value: string | boolean) => setValues((v) => ({ ...v, [name]: value }))
 
@@ -218,6 +241,20 @@ export function ReasonedFormDialog<TBody>({
                 <li key={m}>{m}</li>
               ))}
             </ul>
+          </div>
+        ) : null}
+        {/* Mounted before it has content, so a warning that appears is announced. */}
+        <div role="status" className={impact.warned ? "flex flex-col gap-2 rounded-md bg-surface-container-low px-3 py-3 text-body-sm text-on-surface sm:col-span-2" : "sr-only"}>
+          {impact.warned ? impact.node : null}
+        </div>
+        {impact.warned ? (
+          <div className="sm:col-span-2">
+            <Checkbox
+              label={impact.confirmLabel}
+              checked={values.confirmImpact === true}
+              error={showErrors ? (confirmError ?? undefined) : undefined}
+              onChange={(e) => set("confirmImpact", e.target.checked)}
+            />
           </div>
         ) : null}
         <Textarea

@@ -2,6 +2,7 @@
 import { useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { ChartFrame } from "@/components/ui/chart-frame"
 import { Input } from "@/components/ui/input"
 import { BarChart } from "@/components/ui/lazy-chart"
@@ -19,20 +20,18 @@ import {
   costByActionBars,
   MAX_RANGE_DAYS,
   defaultRange,
-  loadRate,
   formatShare,
   formatUsd,
   marginShare,
   rangeProblem,
   rateParam,
   rateProblem,
-  saveRate,
   revenueBars,
   type DayRange,
 } from "@/lib/marginModel"
 
 /*
- * Money and margin (spec §8.4). Revenue against LLM cost, estimate accuracy, and the standing
+ * Money and margin (spec §8.4). Revenue against metered settled cost, estimate accuracy, and the standing
  * money risks. Every figure is a counted fact from the report: the figures are a definition
  * strip (DESIGN.md names metric cards as the anti-reference), the charts and tables carry the
  * breakdowns, and nothing is derived that the server did not send except the margin share.
@@ -107,22 +106,23 @@ function Money({ r }: { r: MarginReport }) {
         <Fig label="Refunded">{formatMoney(r.revenue.refundedMinor, CUR)}</Fig>
       </Strip>
       <Strip label="Cost and margin" cols="grid-cols-2 md:grid-cols-4">
-        <Fig label="LLM cost">{formatUsd(r.cost.totalUsd)}</Fig>
-        <Fig label="LLM cost in EGP">{r.costMinor === null ? "Not available" : formatMoney(r.costMinor, CUR)}</Fig>
+        <Fig label="Metered settled cost">{formatUsd(r.cost.totalUsd)}</Fig>
+        <Fig label="Metered settled cost in EGP">{r.costMinor === null ? "Not available" : formatMoney(r.costMinor, CUR)}</Fig>
         <Fig label="Margin">{r.marginMinor === null ? "Not available" : formatMoney(r.marginMinor, CUR)}</Fig>
         <Fig label="Margin share of net revenue">{share === null ? "Not available" : formatShare(share)}</Fig>
       </Strip>
       <p className="m-0 text-body-sm text-on-surface-variant">
         {noRate ? (
           <>
-            {NO_RATE}. Enter an EGP per USD rate above to work out cost in EGP and margin.
+            {NO_RATE}. Set a default in billing rules, or enter an EGP per USD rate above, to work out cost in EGP and margin.
           </>
         ) : (
           <>
-            Cost converted at 1 USD = {r.egpPerUsd} EGP.
+            Cost converted at 1 USD = {r.egpPerUsd} EGP{r.egpPerUsdSource === "request" ? " (your override)" : " (default)"}.
             {share === null ? " Margin share needs positive net revenue." : ""}
           </>
         )}
+        {" "}Cost counts settled metered jobs only.
       </p>
     </Section>
   )
@@ -146,12 +146,12 @@ function Charts({ r }: { r: MarginReport }) {
       </ChartFrame>
       <ChartFrame
         headingLevel={3}
-        title="LLM cost by action"
+        title="Metered settled cost by action"
         subtitle="USD, this range"
         isEmpty={r.cost.byAction.length === 0}
         emptyBody="No metered jobs settled in this range."
       >
-        <BarChart data={bars} horizontal formatValue={usdFigure} leftMargin={categoryAxisPx(bars)} valueTickCount={2} rightMargin={VALUE_LABEL_SPILL_PX} ariaLabel="LLM cost by action, in USD" />
+        <BarChart data={bars} horizontal formatValue={usdFigure} leftMargin={categoryAxisPx(bars)} valueTickCount={2} rightMargin={VALUE_LABEL_SPILL_PX} ariaLabel="Metered settled cost by action, in USD" />
       </ChartFrame>
     </div>
   )
@@ -291,7 +291,7 @@ function Exposure({ r }: { r: MarginReport }) {
         </Fig>
         <Fig label="Users at their limit">{x.usersAtLimit}</Fig>
         <Fig label="Expired jobs" wide>
-          {x.expiredJobs.count} · {formatUsd(x.expiredJobs.costUsd)}
+          {x.expiredJobs.count}
         </Fig>
       </Strip>
       <Strip label="Credits unused" cols="grid-cols-1 md:grid-cols-2">
@@ -333,12 +333,19 @@ export function Margin() {
   // What the fields show, and the last value of each that was valid. Only valid values are sent.
   const [draft, setDraft] = useState<DayRange>(() => defaultRange(new Date()))
   const [applied, setApplied] = useState<DayRange>(draft)
-  const [rateText, setRateText] = useState(loadRate)
-  const [appliedRate, setAppliedRate] = useState<string | null>(() => rateParam(rateText))
+  // `null` = untouched: the field shows the server's default and no rate is sent. Typing makes an
+  // override that lasts for this visit; the default lives in billing rules, not in the browser.
+  const [rateText, setRateText] = useState<string | null>(null)
+  const [appliedRate, setAppliedRate] = useState<string | null>(null)
+  const [serverDefault, setServerDefault] = useState<string | null>(null)
   const problem = rangeProblem(draft)
-  const rateError = rateProblem(rateText)
+  const rateError = rateText === null ? null : rateProblem(rateText)
   const report = useMarginReport(applied.from, applied.to, appliedRate)
   const forbidden = report.status === "error" && isForbidden(report.error)
+
+  // The server says which rate it used and where it came from; the default is learned from it.
+  const echoed = report.data
+  if (echoed && echoed.egpPerUsdSource === "settings" && echoed.egpPerUsd !== serverDefault) setServerDefault(echoed.egpPerUsd)
 
   function edit(next: DayRange) {
     setDraft(next)
@@ -347,11 +354,22 @@ export function Margin() {
 
   function editRate(text: string) {
     setRateText(text)
-    if (rateProblem(text) === null) {
-      setAppliedRate(rateParam(text))
-      saveRate(text)
-    }
+    if (rateProblem(text) === null) setAppliedRate(rateParam(text))
   }
+
+  function useDefault() {
+    setRateText(null)
+    setAppliedRate(null)
+  }
+
+  const overriding = appliedRate !== null
+  const rateHint = overriding
+    ? "Your override, for this visit."
+    : serverDefault === null
+      ? "No default is set. Add one in billing rules, or type a rate."
+      : rateText === ""
+        ? `Empty uses the default, ${serverDefault}.`
+        : "The default from billing rules."
 
   return (
     <div className="flex flex-col gap-8">
@@ -367,13 +385,26 @@ export function Margin() {
               <div className="w-48">
                 <Input label="To" type="date" value={draft.to} min={draft.from || undefined} error={problem?.field === "to" ? problem.message : undefined} onChange={(e) => edit({ ...draft, to: e.target.value })} />
               </div>
-              <div className="w-48">
-                <Input label="EGP per USD" inputMode="decimal" autoComplete="off" value={rateText} error={rateError ?? undefined} onChange={(e) => editRate(e.target.value)} />
+              <div className="flex w-64 max-w-full flex-col items-start gap-1">
+                <Input
+                  wrapperClassName="w-full"
+                  label="EGP per USD"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  value={rateText ?? serverDefault ?? ""}
+                  hint={rateError ? undefined : rateHint}
+                  error={rateError ?? undefined}
+                  onChange={(e) => editRate(e.target.value)}
+                />
+                {rateText !== null ? (
+                  <Button size="sm" variant="ghost" className="-ms-3" onClick={useDefault}>
+                    Use default
+                  </Button>
+                ) : null}
               </div>
             </div>
             <p className="m-0 max-w-prose text-body-sm text-on-surface-variant">
-              Whole UTC days, both included, up to {MAX_RANGE_DAYS} days. Defaults to the last 90 days. The rate turns LLM cost into EGP; it is kept in this
-              browser, not on the server.
+              Whole UTC days, both included, up to {MAX_RANGE_DAYS} days. Defaults to the last 90 days. The rate turns cost into EGP.
             </p>
           </div>
           <QueryState query={report} skeleton={<PageHeaderSkeleton />} error={{ heading: "Couldn't load money and margin" }}>

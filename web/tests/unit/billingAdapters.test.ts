@@ -38,16 +38,18 @@ describe("billing adapters", () => {
   it("renames catalogue fields, maps intervals, keeps one audience and drops interval-less tiers", () => {
     const c = toCatalogue(
       {
+        creditValidityMonths: 6,
         planTiers: [tier(), tier({ planTierId: "t2", audience: "teacher", includedSeats: 20, extraSeatPriceMinor: 3000 }), tier({ planTierId: "t3", interval: null })],
         creditPacks: [{ creditPackId: "p1", code: "pack_500", name: "500 credits", credits: 500, priceMinor: 15000, currency: "EGP" }],
       },
       "student",
     )
+    expect(c.creditValidityMonths).toBe(6)
     expect(c.tiers).toEqual([
       { id: "t1", code: "student_plus_m", name: "Student Plus", audience: "student", interval: "month", priceMinor: 25000, currency: "EGP", features: ["Mark past papers"], includedSeats: null, extraSeatPriceMinor: null },
     ])
     expect(c.packs[0]).toEqual({ id: "p1", code: "pack_500", name: "500 credits", units: 500, priceMinor: 15000, currency: "EGP" })
-    expect(toCatalogue({ planTiers: [tier({ audience: "teacher", includedSeats: 20, extraSeatPriceMinor: 3000 })], creditPacks: [] }, "teacher").tiers[0]).toMatchObject({ includedSeats: 20, extraSeatPriceMinor: 3000 })
+    expect(toCatalogue({ creditValidityMonths: 12, planTiers: [tier({ audience: "teacher", includedSeats: 20, extraSeatPriceMinor: 3000 })], creditPacks: [] }, "teacher").tiers[0]).toMatchObject({ includedSeats: 20, extraSeatPriceMinor: 3000 })
     expect(featureLines({ a: true, b: "x", c: false })).toEqual(["a"])
   })
 
@@ -75,6 +77,8 @@ describe("billing adapters", () => {
         graceUntil: null,
         extraSeats: 0,
         pendingExtraSeats: null,
+        pendingTermsChange: null,
+        cancelReason: null,
       },
       canManage: false,
       managedByName: "Mona",
@@ -114,6 +118,8 @@ describe("billing adapters", () => {
         graceUntil: null,
         extraSeats: 0,
         pendingExtraSeats: null,
+        pendingTermsChange: null,
+        cancelReason: null,
       },
       canManage: true,
       managedByName: null,
@@ -126,13 +132,13 @@ describe("billing adapters", () => {
     const s = toBillingSummary(w)
     expect(s.subscription?.tier).toMatchObject({ id: "t1", interval: null, audience: "student" })
     expect(s.subscription?.pendingTier?.interval).toBe("year")
-    expect(toCatalogue({ planTiers: [legacy], creditPacks: [] }, "student").tiers).toEqual([])
+    expect(toCatalogue({ creditValidityMonths: 12, planTiers: [legacy], creditPacks: [] }, "student").tiers).toEqual([])
   })
 
   it("never relabels an unknown audience as student", () => {
     const odd = tier({ audience: "admin" })
-    expect(toCatalogue({ planTiers: [odd], creditPacks: [] }, "student").tiers).toEqual([])
-    expect(toCatalogue({ planTiers: [odd], creditPacks: [] }, "teacher").tiers).toEqual([])
+    expect(toCatalogue({ creditValidityMonths: 12, planTiers: [odd], creditPacks: [] }, "student").tiers).toEqual([])
+    expect(toCatalogue({ creditValidityMonths: 12, planTiers: [odd], creditPacks: [] }, "teacher").tiers).toEqual([])
     expect(toHeldTier(odd)).toMatchObject({ audience: null, includedSeats: null })
     expect(toHeldTier(tier({ interval: "weekly" as never })).interval).toBeNull()
     const base = {

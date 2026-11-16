@@ -14,11 +14,13 @@ const tier = (code: string, name: string, audience: "student" | "teacher", inter
 })
 const students: PublicCatalogue = {
   audience: "student",
+  creditValidityMonths: 12,
   tiers: [tier("student_plus_m", "Student Plus", "student", "month", 25000), tier("student_plus_y", "Student Plus", "student", "year", 250000)],
   packs: [],
 }
 const teachers: PublicCatalogue = {
   audience: "teacher",
+  creditValidityMonths: 12,
   tiers: [tier("teacher_pro_m", "Teacher Pro", "teacher", "month", 90000), tier("teacher_pro_y", "Teacher Pro", "teacher", "year", 900000)],
   packs: [],
 }

@@ -49,12 +49,14 @@ const CONFLICTS: Record<string, string> = {
   seat_reduction_unavailable: "Seats can't be reduced now. Nothing changed.",
   seat_reduction_locked: "Reduction locked. You can change it at your next renewal.",
   settings_changing: "Settings just changed. Reload and try again.",
-  cap_below_pack_price: "The monthly limit is below one pack's price. Raise it or pick a smaller pack.",
+  cap_below_pack_price: "Your monthly limit is below the pack price. Raise it to keep auto top-up working.",
 }
 
 /** 422 refusals from the charge routes. */
 const INVALID: Record<string, string> = {
   invalid_seats: "That's over the extra-seat limit. Try fewer.",
+  // The first checkout's refusal for the same thing (the service checks the admin-set ceiling).
+  invalid_extra_seats: "That's over the extra-seat limit. Try fewer.",
   invalid_settings: "Those settings aren't valid. Check them and try again.",
 }
 
@@ -75,6 +77,7 @@ const TERMINAL = new Set([
   "seat_reduction_pending",
   "seat_charge_overdue",
   "invalid_seats",
+  "invalid_extra_seats",
 ])
 
 export function isTerminalRefusal(err: unknown): boolean {

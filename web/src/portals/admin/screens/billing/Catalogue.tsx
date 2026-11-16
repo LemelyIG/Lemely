@@ -11,24 +11,19 @@ import {
   ESTIMATOR_FIELDS,
   FREE_FIELDS,
   PACK_FIELDS,
-  PACK_UPDATE_FIELDS,
   RATE_FIELDS,
   TIER_FIELDS,
-  TIER_UPDATE_FIELDS,
   estimatorBody,
   estimatorErrors,
   freeChanges,
   formatUtc,
-  hiddenFeatureCount,
   freeValues,
   isForbidden,
   packBody,
-  packUpdateBody,
   packValues,
   paymobState,
   rateBody,
   tierBody,
-  tierUpdateBody,
   tierValues,
   versionRows,
   type VersionStatus,
@@ -51,6 +46,7 @@ import { BillingRules } from "./BillingRules"
 import { Empty, Section } from "./CataloguePanels"
 import { CreditConversion } from "./CreditConversion"
 import { LlmPrices } from "./LlmPrices"
+import { PackEditDialog, TierEditDialog } from "./CatalogueEditors"
 import { ReasonedFormDialog } from "./ReasonedFormDialog"
 
 /* Catalogue (spec §8.1): every price, allowance, pack, rate and estimator is data, versioned
@@ -93,6 +89,25 @@ function PaymobCell({ tier }: { tier: AdminPlanTier }) {
       ) : (
         <span className="text-body-sm text-on-surface-variant">{state.text}</span>
       )}
+    </div>
+  )
+}
+
+/** Who is on a tier and which terms they are on: what an edit would reach. */
+function TierCustomers({ tier }: { tier: AdminPlanTier }) {
+  const { liveSubscriptionCount: live, pendingMoves: waiting } = tier
+  return (
+    <div className="flex flex-col items-start gap-1 text-body-sm text-on-surface-variant">
+      <span>
+        Terms <span className="text-data-sm">v{tier.termsVersion}</span>
+        {" · "}
+        <span className="text-data-sm">{n(live)}</span> {live === 1 ? "customer" : "customers"}
+      </span>
+      {waiting > 0 ? (
+        <Badge tone="info" className="whitespace-normal">
+          {n(waiting)} {waiting === 1 ? "customer" : "customers"} waiting to move
+        </Badge>
+      ) : null}
     </div>
   )
 }
@@ -164,6 +179,9 @@ function Tiers({ tiers, open }: { tiers: AdminPlanTier[]; open: (d: Dialog) => v
                     <span className="text-body-sm text-on-surface-variant">
                       {cap(t.audience)}, {intervalWord(t)}
                     </span>
+                    <div className="mt-1">
+                      <TierCustomers tier={t} />
+                    </div>
                   </div>
                 </TD>
                 <TD numeric>{formatMoney(t.priceMinor, t.currency)}</TD>
@@ -216,6 +234,12 @@ function Tiers({ tiers, open }: { tiers: AdminPlanTier[]; open: (d: Dialog) => v
                 <dt className="text-on-surface-variant">Seats</dt>
                 <dd className="m-0">
                   <TierSeats tier={t} />
+                </dd>
+              </div>
+              <div className="col-span-2">
+                <dt className="text-on-surface-variant">Customers</dt>
+                <dd className="m-0">
+                  <TierCustomers tier={t} />
                 </dd>
               </div>
               <div className="col-span-2">
@@ -522,24 +546,13 @@ export function Catalogue() {
           <Body c={c} open={open} saved={saved} />
           {dialog?.kind === "tier" ? (
             dialog.tier ? (
-              <ReasonedFormDialog
+              <TierEditDialog
                 key={dialog.tier.id}
-                open
-                onClose={close}
-                title={`Edit ${dialog.tier.code}`}
-                fields={TIER_UPDATE_FIELDS}
-                initial={tierValues(dialog.tier)}
-                submitLabel="Save tier"
+                tier={dialog.tier}
+                noticeDays={c.priceChangeNoticeDays}
+                amountUpdatable={c.subscriptionAmountUpdatable}
                 mutation={updateTier}
-                toBody={(v, r) => ({ id: dialog.tier!.id, body: tierUpdateBody(v, r, dialog.tier!.rawFeatures) })}
-                note={
-                  <p className="m-0 text-body-sm text-on-surface-variant">
-                    Code, audience and interval are fixed once a tier exists. A changed price shows as drift until it is synced to Paymob.
-                    {hiddenFeatureCount(dialog.tier.rawFeatures) > 0
-                      ? ` ${hiddenFeatureCount(dialog.tier.rawFeatures)} other feature setting${hiddenFeatureCount(dialog.tier.rawFeatures) === 1 ? "" : "s"} on this tier are not lines to edit and are kept as they are.`
-                      : ""}
-                  </p>
-                }
+                onClose={close}
                 onSaved={saved(`Saved ${dialog.tier.code}.`)}
               />
             ) : (
@@ -586,19 +599,7 @@ export function Catalogue() {
           ) : null}
           {dialog?.kind === "pack" ? (
             dialog.pack ? (
-              <ReasonedFormDialog
-                key={dialog.pack.id}
-                open
-                onClose={close}
-                title={`Edit ${dialog.pack.code}`}
-                fields={PACK_UPDATE_FIELDS}
-                initial={packValues(dialog.pack)}
-                submitLabel="Save pack"
-                mutation={updatePack}
-                toBody={(v, r) => ({ id: dialog.pack!.id, body: packUpdateBody(v, r) })}
-                note={<p className="m-0 text-body-sm text-on-surface-variant">The code is fixed once a pack exists.</p>}
-                onSaved={saved(`Saved ${dialog.pack.code}.`)}
-              />
+              <PackEditDialog key={dialog.pack.id} pack={dialog.pack} mutation={updatePack} onClose={close} onSaved={saved(`Saved ${dialog.pack.code}.`)} />
             ) : (
               <ReasonedFormDialog
                 open

@@ -109,7 +109,7 @@ function Form({
         <p role="status" className="m-0 rounded-lg bg-surface-container-high p-3 text-body-sm text-on-surface">
           {notice === "charge_failed" ? (
             <>
-              Auto top-up was switched off because the last charge failed. Check the card, then switch it back on. To use a new card,{" "}
+              Auto top-up is off. Check your saved card, then turn it back on. To use a new card,{" "}
               <Link to={packsHref} className={LINK}>
                 buy a pack with it
               </Link>

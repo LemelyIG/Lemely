@@ -94,8 +94,8 @@ describe("toAdminCatalogue", () => {
   it("maps intervals and features, nulls student seat fields, names drift and folds free allowances", () => {
     const c = toAdminCatalogue({
       planTiers: [
-        { id: "t1", code: "s_m", name: "Student Plus", audience: "student", interval: "monthly", priceMinor: 25000, currency: "EGP", allowanceUnits: 4000, includedSeats: 0, seatAllowanceUnits: 0, extraSeatPriceMinor: 0, features: { "Mark past papers": true }, isActive: true, paymobPlanId: 77, paymobDrift: "in_sync" },
-        { id: "t2", code: "t_m", name: "Teacher Pro", audience: "teacher", interval: "yearly", priceMinor: 900000, currency: "EGP", allowanceUnits: 9000, includedSeats: 20, seatAllowanceUnits: 300, extraSeatPriceMinor: 3000, features: {}, isActive: true, paymobPlanId: null, paymobDrift: "not_synced" },
+        { id: "t1", code: "s_m", name: "Student Plus", audience: "student", interval: "monthly", priceMinor: 25000, currency: "EGP", allowanceUnits: 4000, includedSeats: 0, seatAllowanceUnits: 0, extraSeatPriceMinor: 0, features: { "Mark past papers": true }, isActive: true, version: 3, termsVersion: 1, liveSubscriptionCount: 0, pendingMoves: 0, paymobPlanId: 77, paymobDrift: "in_sync" },
+        { id: "t2", code: "t_m", name: "Teacher Pro", audience: "teacher", interval: "yearly", priceMinor: 900000, currency: "EGP", allowanceUnits: 9000, includedSeats: 20, seatAllowanceUnits: 300, extraSeatPriceMinor: 3000, features: {}, isActive: true, version: 1, termsVersion: 1, liveSubscriptionCount: 4, pendingMoves: 2, paymobPlanId: null, paymobDrift: "not_synced" },
       ],
       creditPacks: [],
       freeAllowances: [
@@ -104,7 +104,11 @@ describe("toAdminCatalogue", () => {
       ],
       usageRates: [],
       usageEstimators: [],
+      subscriptionAmountUpdatable: false,
+      priceChangeNoticeDays: 45,
     })
+    expect(c).toMatchObject({ subscriptionAmountUpdatable: false, priceChangeNoticeDays: 45 })
+    expect(c.tiers[1]).toMatchObject({ version: 1, termsVersion: 1, liveSubscriptionCount: 4, pendingMoves: 2 })
     expect(c.tiers[0]).toMatchObject({ interval: "month", features: ["Mark past papers"], includedSeats: null, seatAllowanceUnits: null, extraSeatPriceMinor: null, drift: null })
     expect(c.tiers[1]).toMatchObject({ interval: "year", includedSeats: 20, seatAllowanceUnits: 300, extraSeatPriceMinor: 3000, drift: "Not synced to Paymob yet" })
     expect(c.freeAllowances).toEqual({

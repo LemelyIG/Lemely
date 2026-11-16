@@ -384,6 +384,17 @@ stores that the client refuses.
   Rules in `lib/phoneBanner.ts` (tested). Links to `/student/settings`,
   `/teacher/settings` or `/settings/profile` by role.
 
+## C-27 — Price-change banner
+`components/billing/price-change-banner.tsx` — `PriceChangeBanner({ notice, plansHref, teamHref, onCancel })`
+- The payer's notice that the plan's terms are changing, on the billing page above the
+  plan card. Neutral surface and icon, like the debt notice: news, not an error.
+- `notice` comes from `priceChangeNotice()` in `lib/priceChange.ts` (all copy and the
+  seats-to-remove arithmetic live there, tested). Variants: `move` (new price and date, a
+  "Cancel at period end" action), `ends` (the plan ends instead of moving, "See plans") and
+  `ended` (the platform already scheduled the end). A teacher whose team is larger than the
+  new plan is told how many students to remove, with "Manage seats".
+- Allowance sizes are never stated (spec §2.1); the server says only bigger or smaller.
+
 ## Known follow-ups for the P2.5.3 retrofit
 - Two pre-token-system components duplicate new library components and
   should be deleted in favor of the new ones once screens are retrofitted:

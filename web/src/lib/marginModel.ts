@@ -96,41 +96,22 @@ export function windowOf(range: DayRange): { start: string; end: string } {
   return { start: `${range.from}T00:00:00Z`, end: `${new Date(to + DAY_MS).toISOString().slice(0, 10)}T00:00:00Z` }
 }
 
-/** Why a typed USD to EGP rate can't be sent, or null when it can (an empty box is fine: the
- * rate is optional and the report then has no EGP cost or margin). */
+/** Why a typed USD to EGP rate can't be sent, or null when it can. An empty box is fine: the
+ * server then uses the default from the billing rules, if one is set. */
 export function rateProblem(text: string): string | null {
   const t = text.trim()
   if (t === "") return null
   if (!/^\d+(\.\d+)?$/.test(t)) return "Enter a number, such as 50 or 48.5."
+  // The route takes at most four decimals.
+  if (!/^\d+(\.\d{1,4})?$/.test(t)) return "Use at most 4 decimal places."
   const n = Number(t)
   if (n <= 0) return "The rate must be more than 0."
   if (n > MAX_RATE) return `The rate can be at most ${MAX_RATE.toLocaleString("en")}.`
   return null
 }
 
-/** The rate to send, or null for none. Only call with text `rateProblem` accepts. */
+/** The rate to send, or null to let the server use its default. Only call with text `rateProblem` accepts. */
 export function rateParam(text: string): string | null {
   const t = text.trim()
   return t === "" ? null : t
-}
-
-const RATE_KEY = "lemely.admin.margin.egpPerUsd"
-
-/** The rate this browser last used, if it is still a valid one. The server stores no rate. */
-export function loadRate(): string {
-  try {
-    const t = globalThis.localStorage?.getItem(RATE_KEY) ?? ""
-    return rateProblem(t) === null ? t : ""
-  } catch {
-    return ""
-  }
-}
-
-export function saveRate(text: string): void {
-  try {
-    if (rateParam(text) === null) globalThis.localStorage?.removeItem(RATE_KEY)
-    else globalThis.localStorage?.setItem(RATE_KEY, text.trim())
-  } catch {
-    // Storage can be blocked; the rate then lasts for this visit only.
-  }
 }

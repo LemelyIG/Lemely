@@ -21,6 +21,7 @@ import { errorQuery, okQuery, pendingQuery, renderStatic } from "./support/billi
 
 const wire: WirePublicCatalogue = {
   audience: "teacher",
+  creditValidityMonths: 12,
   planTiers: [
     { code: "teacher_max_m", name: "Teacher Max", audience: "teacher", interval: "monthly", priceMinor: 150000, currency: "EGP", features: {}, includedSeats: 40, extraSeatPriceMinor: 3000 },
     { code: "teacher_pro_m", name: "Teacher Pro", audience: "teacher", interval: "monthly", priceMinor: 90000, currency: "EGP", features: { "Class analytics": true }, includedSeats: 20, extraSeatPriceMinor: 3000 },
@@ -56,6 +57,7 @@ describe("toPublicCatalogue", () => {
   it("drops tiers with an unknown audience or interval and nulls seat fields off teacher tiers", () => {
     const c = toPublicCatalogue({
       audience: "student",
+      creditValidityMonths: 12,
       planTiers: [
         { code: "s", name: "S", audience: "student", interval: "monthly", priceMinor: 1, currency: "EGP", features: {}, includedSeats: 9, extraSeatPriceMinor: 9 },
         { code: "school", name: "School", audience: "school", interval: "monthly", priceMinor: 1, currency: "EGP", features: {}, includedSeats: 5, extraSeatPriceMinor: 5 },
