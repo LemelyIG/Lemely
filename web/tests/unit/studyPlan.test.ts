@@ -39,6 +39,8 @@ function session(overrides: Partial<StudyPlanSessionDTO> = {}): StudyPlanSession
     durationMinutes: 45,
     focus: "Practice questions: 1.2 Motion",
     completedAt: null,
+    anyDay: false,
+    reason: null,
     ...overrides,
   }
 }
