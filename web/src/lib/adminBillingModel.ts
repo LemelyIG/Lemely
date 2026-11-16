@@ -777,9 +777,13 @@ export function voidNote(p: ReversePayment): string {
 }
 
 /** One refund's reverse outcome in short, status-led words; null when there is nothing to report. */
-export function reverseOutcome(r: Pick<AdminRefund, "reverse">): { label: string; detail: string | null; tone: "neutral" | "error" } | null {
+export function reverseOutcome(r: Pick<AdminRefund, "reverse"> & { status?: AdminRefund["status"] }): { label: string; detail: string | null; tone: "neutral" | "error" } | null {
   const effect = r.reverse?.effect
-  if (!effect) return null
+  if (!effect) {
+    // A settled refund that asked for a reverse but has no effect: the server did not recognise
+    // the outcome. While the refund is still in flight, nothing is shown.
+    return r.reverse?.requested && r.status === "succeeded" ? { label: "Outcome not recorded", detail: null, tone: "neutral" } : null
+  }
   switch (effect) {
     case "nothing_ended":
       return { label: "No plan to end", detail: "The refund did not end a plan.", tone: "neutral" }

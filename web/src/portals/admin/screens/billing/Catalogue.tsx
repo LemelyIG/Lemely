@@ -101,7 +101,7 @@ function TierCustomers({ tier }: { tier: AdminPlanTier }) {
       <span>
         Terms <span className="text-data-sm">v{tier.termsVersion}</span>
         {" · "}
-        <span className="text-data-sm">{n(live)}</span> {live === 1 ? "customer" : "customers"}
+        <span className="text-data-sm">{n(live)}</span> paying {live === 1 ? "customer" : "customers"}
       </span>
       {waiting > 0 ? (
         <Badge tone="info" className="whitespace-normal">

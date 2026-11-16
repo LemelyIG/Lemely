@@ -74,12 +74,10 @@ export function priceChangeNotice(
     }
   }
 
-  let seats: PriceChangeNotice["seats"] = null
-  if (audience === "teacher" && change.includedSeatsChanges && summary.seats) {
-    const capacity = change.includedSeats + (sub.pendingExtraSeats ?? sub.extraSeats)
-    const remove = summary.seats.used - capacity
-    if (remove > 0) seats = { remove, capacity, before: date }
-  }
+  // The server counts active seats against the new capacity, the way the renewal will shed them.
+  const remove = audience === "teacher" ? (change.seatsToRemove ?? 0) : 0
+  const seats: PriceChangeNotice["seats"] =
+    remove > 0 ? { remove, capacity: change.includedSeats + extras, before: date } : null
 
   const when = date ? `on ${date}` : "at your next renewal"
   return {

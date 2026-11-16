@@ -17,6 +17,7 @@ const change = (over: Partial<WirePendingTermsChange> = {}): WirePendingTermsCha
   includedSeatsChanges: false,
   seatAllowanceChanges: false,
   endsInsteadOfMoving: false,
+  seatsToRemove: null,
   ...over,
 })
 const sub = (over: Partial<SubscriptionView> = {}): SubscriptionView => ({ ...fx.activeSub, ...over })
@@ -94,27 +95,23 @@ describe("price-change notice", () => {
     expect(n.details).toContain(`Includes 2 extra seats at ${m(3500)} each.`)
   })
 
-  it("tells a teacher how many students to remove, counting the extra seats they keep", () => {
-    const teacher = sub({ extraSeats: 2, pendingTermsChange: change({ includedSeats: 10, includedSeatsChanges: true }) })
-    const sum = summary({ subscription: teacher, seats: { capacity: 22, used: 17 } })
-    const n = notice(teacher, sum, "teacher")!
+  it("tells a teacher how many students to remove, as the server counts them", () => {
+    const teacher = sub({ extraSeats: 2, pendingTermsChange: change({ includedSeats: 10, includedSeatsChanges: true, seatsToRemove: 5 }) })
+    const n = notice(teacher, summary({ subscription: teacher, seats: { capacity: 22, used: 17 } }), "teacher")!
     expect(n.seats).toEqual({ remove: 5, capacity: 12, before: "1 Dec 2026" })
-    expect(n.details).toContain("Included seats: 10.")
   })
 
-  it("counts a scheduled seat reduction as the capacity at renewal", () => {
-    const teacher = sub({ extraSeats: 4, pendingExtraSeats: 0, pendingTermsChange: change({ includedSeats: 10, includedSeatsChanges: true }) })
-    const n = notice(teacher, summary({ subscription: teacher, seats: { capacity: 14, used: 12 } }), "teacher")!
-    expect(n.seats).toEqual({ remove: 2, capacity: 10, before: "1 Dec 2026" })
+  it("does not count seats a teacher already removed (leaving seats still show in `used`)", () => {
+    // Held 17, removed 5 (leaving until month end): 12 active, capacity 12. The server says 0.
+    const teacher = sub({ extraSeats: 2, pendingTermsChange: change({ priceChanges: false, includedSeats: 10, includedSeatsChanges: true, seatsToRemove: 0 }) })
+    expect(notice(teacher, summary({ subscription: teacher, seats: { capacity: 22, used: 17 } }), "teacher")!.seats).toBeNull()
   })
 
-  it("shows no seat count when the team fits, or for a student, or when seats do not change", () => {
-    const fits = sub({ extraSeats: 0, pendingTermsChange: change({ includedSeats: 20, includedSeatsChanges: true }) })
-    expect(notice(fits, summary({ subscription: fits, seats: { capacity: 20, used: 20 } }), "teacher")!.seats).toBeNull()
-    const over = sub({ pendingTermsChange: change({ includedSeats: 5, includedSeatsChanges: true }) })
-    expect(notice(over, summary({ subscription: over, seats: { capacity: 20, used: 18 } }), "student")!.seats).toBeNull()
-    const same = sub({ pendingTermsChange: change({ includedSeats: 5, includedSeatsChanges: false }) })
-    expect(notice(same, summary({ subscription: same, seats: { capacity: 20, used: 18 } }), "teacher")!.seats).toBeNull()
+  it("shows no seat count for a student, or when the server has none", () => {
+    const over = sub({ pendingTermsChange: change({ seatsToRemove: 4 }) })
+    expect(notice(over, summary({ subscription: over }), "student")!.seats).toBeNull()
+    const none = sub({ pendingTermsChange: change({ seatsToRemove: null }) })
+    expect(notice(none, summary({ subscription: none }), "teacher")!.seats).toBeNull()
   })
 
   it("states a changed extra-seat price", () => {

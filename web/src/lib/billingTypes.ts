@@ -245,6 +245,8 @@ export interface WirePendingTermsChange {
   includedSeatsChanges: boolean
   seatAllowanceChanges: boolean
   endsInsteadOfMoving: boolean
+  /** Active seats over the new capacity, as the renewal will shed them; `null` on a plan without seats. */
+  seatsToRemove: number | null
 }
 
 /** 05 `BillingSummaryDTO` (`GET /billing/summary?beneficiaryId=`, plan 05 Task 13, R3). */
@@ -708,9 +710,9 @@ export interface WireAdminPlanTier {
   version: number
   /** The terms version in force for new customers. */
   termsVersion: number
-  /** Subscriptions that are live (active, past due or waiting on a first payment). */
+  /** Paying subscriptions the notice reaches: not complimentary, manual, cancelling or changing plan. */
   liveSubscriptionCount: number
-  /** Live subscriptions still on older terms, waiting to move. */
+  /** Paying subscriptions still on older terms, waiting to move (the notice pool). */
   pendingMoves: number
   paymobPlanId: number | null
   paymobDrift: PaymobDrift

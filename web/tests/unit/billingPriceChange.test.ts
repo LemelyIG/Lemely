@@ -45,6 +45,7 @@ const change = (over: Partial<WirePendingTermsChange> = {}): WirePendingTermsCha
   includedSeatsChanges: false,
   seatAllowanceChanges: false,
   endsInsteadOfMoving: false,
+  seatsToRemove: null,
   ...over,
 })
 const withSub = (over: Partial<SubscriptionView>) => {
@@ -91,7 +92,7 @@ describe("price-change banner on the billing page", () => {
   })
 
   it("seats to remove: a teacher with a team larger than the new plan", () => {
-    const teacher = { ...fx.activeSub, extraSeats: 2, pendingTermsChange: change({ includedSeats: 10, includedSeatsChanges: true }) }
+    const teacher = { ...fx.activeSub, extraSeats: 2, pendingTermsChange: change({ includedSeats: 10, includedSeatsChanges: true, seatsToRemove: 5 }) }
     s.summary = okQuery({ ...fx.summary, subscription: teacher, seats: { capacity: 22, used: 17 } })
     const t = text(overview("teacher"))
     expect(t).toContain(`Remove 5 students from your team before ${formatBillingDate("2026-12-01T00:00:00Z")}. The new plan has 12 seats.`)

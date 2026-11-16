@@ -73,7 +73,7 @@ const count = (n: number) => new Intl.NumberFormat("en-US").format(n)
 
 export function tierImpactLines(i: TierImpact): string[] {
   const lead =
-    `${count(i.customers)} ${plural(i.customers, "customer is", "customers are")} on this plan. New customers get these terms now. ` +
+    `${count(i.customers)} paying ${plural(i.customers, "customer is", "customers are")} on this plan. New customers get these terms now. ` +
     `Current customers are emailed and move at a renewal: after ${i.noticeDays} ${plural(i.noticeDays, "day", "days")} if it's worse for them, at the next one if it's better.`
   if (!i.fixedPath) return [lead]
   return [

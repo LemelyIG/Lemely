@@ -84,9 +84,9 @@ describe("tier editor", () => {
     s.catalogue = catalogue({ priceChangeNoticeDays: 45 })
     mount()
     openTier()
-    expect(screen.queryByText(/customers are on this plan/)).toBeNull()
+    expect(screen.queryByText(/paying customers are on this plan/)).toBeNull()
     setField("Price (EGP)", "275.00")
-    const note = screen.getByText(/14 customers are on this plan/)
+    const note = screen.getByText(/14 paying customers are on this plan/)
     expect(note.textContent).toContain("after 45 days")
     expect(screen.queryByText(/Paymob can't change running renewals/)).toBeNull()
   })
@@ -147,7 +147,7 @@ describe("tier editor", () => {
     view.rerender(h(QueryClientProvider, { client: new QueryClient() }, h(MemoryRouter, null, h(Catalogue))))
     setField("Price (EGP)", "275.00")
     // Against the frozen baseline (250.00) this is still a change; against live data it would not be.
-    expect(screen.getByText(/14 customers are on this plan/)).toBeTruthy()
+    expect(screen.getByText(/14 paying customers are on this plan/)).toBeTruthy()
     setField("Reason", "Repricing for the new term")
     fireEvent.click(screen.getByLabelText("I understand these customers will be emailed about the change."))
     save("Save tier")
@@ -178,6 +178,8 @@ describe("tier card", () => {
     const card = screen.getAllByText(/waiting to move/)[0]!
     expect(card.textContent).toBe("3 customers waiting to move")
     expect(screen.getAllByText("v2").length).toBeGreaterThan(0)
+    // The count is the paying pool the notice reaches, not everyone on the plan.
+    expect(screen.getAllByText(/paying customers/).length).toBeGreaterThan(0)
   })
 
   it("shows no waiting line when nobody is waiting", () => {

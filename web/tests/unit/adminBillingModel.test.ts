@@ -457,6 +457,9 @@ describe("refund: reverse the change", () => {
   it("shows each reverse outcome in short words, and nothing when there is none", () => {
     const r = (effect: string | null, reason: string | null = null) => ({ reverse: { requested: effect !== null, effect, reason } }) as never
     expect(reverseOutcome(r(null))).toBeNull()
+    const asked = (status: string) => ({ status, reverse: { requested: true, effect: null, reason: null } }) as never
+    expect(reverseOutcome(asked("succeeded"))).toEqual({ label: "Outcome not recorded", detail: null, tone: "neutral" })
+    for (const status of ["requested", "unknown", "failed"]) expect(reverseOutcome(asked(status))).toBeNull()
     expect(reverseOutcome({} as never)).toBeNull()
     expect(reverseOutcome(r("plan_ends_at_period_end"))?.label).toBe("Renewal stopped")
     expect(reverseOutcome(r("credits_clawed_back"))?.label).toBe("Credits taken back")

@@ -62,19 +62,19 @@ describe("tier impact: copy", () => {
 
   it("states the customer count and the configured notice days", () => {
     const [lead] = lines(student, { priceMajor: "275.00" }, { noticeDays: 45, amountUpdatable: true })
-    expect(lead).toContain("14 customers are on this plan")
+    expect(lead).toContain("14 paying customers are on this plan")
     expect(lead).toContain("after 45 days")
     expect(lead).not.toContain("30 days")
   })
   it("groups large counts", () => {
     const many = { ...student, liveSubscriptionCount: 1284 }
-    expect(tierImpactLines(tierImpact(many, edit(many, { priceMajor: "275.00" }), settings)!)[0]).toContain("1,284 customers are on this plan")
+    expect(tierImpactLines(tierImpact(many, edit(many, { priceMajor: "275.00" }), settings)!)[0]).toContain("1,284 paying customers are on this plan")
     expect(packImpactLines({ autoTopupCount: 1284, capBelowPriceCount: 1000 })![1]).toContain("1,000 of them have")
   })
   it("reads right for one customer and one notice day", () => {
     const one = { ...student, liveSubscriptionCount: 1 }
     const [lead] = tierImpactLines(tierImpact(one, edit(one, { priceMajor: "275.00" }), { noticeDays: 1, amountUpdatable: true })!)
-    expect(lead).toContain("1 customer is on this plan")
+    expect(lead).toContain("1 paying customer is on this plan")
     expect(lead).toContain("after 1 day ")
   })
   it("adds the fixed-amount sentence only on the fallback and only when a price changes", () => {
