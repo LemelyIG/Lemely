@@ -9,10 +9,10 @@ export interface WalkthroughStep {
   body?: string
 }
 
-/** The first-run walkthrough list (mock .walk2 / .wn2). */
+/** The first-run walkthrough list (mock .walk2 / .wn2). role="list" because list-style none drops the semantics in Safari and VoiceOver. */
 export function Walkthrough({ steps }: { steps: WalkthroughStep[] }) {
   return (
-    <ol className="rd-walk">
+    <ol className="rd-walk" role="list">
       {steps.map((step, i) => {
         const Icon = step.icon
         return (

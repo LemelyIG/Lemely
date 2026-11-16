@@ -1,6 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import { CaretDown } from "@phosphor-icons/react"
 import { useLocation, useNavigate, useParams } from "react-router-dom"
+import { Select } from "@/components/ui/select"
 import { useChildren } from "@/lib/hooks/useParentApi"
 import { cn } from "@/lib/utils"
 import { switchChildPath } from "./shellModel"
@@ -57,19 +58,23 @@ export function ChildSwitcher({ className }: { className?: string }) {
         {current.displayName}
       </span>
       <CaretDown size={12} weight="bold" aria-hidden="true" className="flex-none" />
-      <select
+      {/* The kit's Select as a transparent overlay: the pill underneath is the visible control, the native picker stays on top. */}
+      <Select
+        label="Choose which child to view"
+        labelClassName="sr-only"
+        wrapperClassName="absolute inset-0 block [&>div]:h-full [&_svg]:hidden"
         aria-label="Choose which child to view"
         title={current.displayName}
         value={childId}
         onChange={(event) => navigate(switchChildPath(location.pathname, event.target.value))}
-        className="absolute inset-0 size-full cursor-pointer appearance-none rounded-full opacity-0"
+        className="h-full cursor-pointer rounded-full border-0 bg-transparent p-0 opacity-0"
       >
         {children.map((child) => (
           <option key={child.childId} value={child.childId}>
             {child.displayName}
           </option>
         ))}
-      </select>
+      </Select>
     </span>
   )
 }

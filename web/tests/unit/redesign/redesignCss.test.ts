@@ -37,6 +37,10 @@ describe("redesign.css motion rule", () => {
     expect(outsideMotionBlocks(css)).not.toMatch(/animation\s*:/)
   })
 
+  it("moves nothing on hover or press through a transition outside the motion block (reduced motion snaps)", () => {
+    expect(outsideMotionBlocks(css)).not.toMatch(/transition\s*:[^;]*\b(translate|transform)\b/)
+  })
+
   it("uses only rd- class selectors", () => {
     const selectors = [...outsideMotionBlocks(css).matchAll(/(^|\})\s*([^{}@]+)\{/g)].map((m) => m[2].trim())
     const foreign = selectors.flatMap((s) => [...s.matchAll(/\.([a-zA-Z][\w-]*)/g)].map((m) => m[1])).filter((c) => !c.startsWith("rd-"))

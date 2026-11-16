@@ -13,7 +13,7 @@ describe("Walkthrough", () => {
         ],
       }),
     )
-    expect(out).toMatch(/^<ol class="rd-walk">/)
+    expect(out).toMatch(/^<ol class="rd-walk" role="list">/)
     expect(out).toContain('<span class="rd-walk-n" aria-hidden="true">1</span>')
     expect(out).toContain("<b>Scan a Maths paper</b><span>Any past paper you have tried.</span>")
     expect(out).toContain('<span class="rd-walk-n" aria-hidden="true">2</span>')
