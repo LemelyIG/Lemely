@@ -404,7 +404,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/teacher/review/{item_id}/dismiss"): STAFF,
     ("POST", "/api/teacher/review/{item_id}/resolve"): STAFF,
     ("GET", "/api/teacher/students/{student_id}"): STAFF,
-    # ── STUDENT (80) ────────────────────
+    # ── STUDENT (82) ────────────────────
     # Tutoring S1-S5, S14, S15 (SPEC §c.1): the caller's own bookings only (O5); a
     # parent reads them through PA1-PA3. S15 records the safety notice (row 16 ii).
     ("GET", "/api/student/bookings"): STUDENT,
@@ -498,8 +498,10 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/student/quizzes/{assignment_id}/submit"): STUDENT,
     ("GET", "/api/student/result/{paper_id}"): STUDENT,
     ("GET", "/api/student/standings"): STUDENT,
+    ("GET", "/api/student/study-plan"): STUDENT,
     ("POST", "/api/student/study-plan"): STUDENT,
     ("POST", "/api/student/study-plan/sessions/{session_id}/complete"): STUDENT,
+    ("POST", "/api/student/study-plan/sessions/{session_id}/move"): STUDENT,
     ("GET", "/api/student/study-plan/{subject_code}"): STUDENT,
     ("GET", "/api/student/subject/{code}"): STUDENT,
     ("POST", "/api/student/uploads"): STUDENT,

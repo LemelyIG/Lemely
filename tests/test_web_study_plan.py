@@ -27,13 +27,21 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.db.base import Base
+from lemely.db.models.academic import Subject
 from lemely.db.models.attempts import Attempt, WeaknessRecord
 from lemely.db.models.enums import AttemptOrigin, Role
+from lemely.db.models.profiles import StudentSubjectEnrolment
 from lemely.db.models.users import User
+from lemely.db.student_profile_repo import StudentProfileService
 from lemely.db.study_plan_repo import StudyPlanService
 from lemely.runtime.config import DatabaseSettings
 from lemely.web import create_app
-from lemely.web.deps import AuthContext, get_auth_context, get_study_plan_service
+from lemely.web.deps import (
+    AuthContext,
+    get_auth_context,
+    get_student_profile_service,
+    get_study_plan_service,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -550,3 +558,239 @@ def test_complete_route_rejects_non_students(
     _auth_as(client, student, Role.student)
     ok = client.post(f"/api/student/study-plan/sessions/{session_id}/complete")
     assert ok.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# L9 · the week across subjects, moving a session, planning next week.
+# ---------------------------------------------------------------------------
+
+
+def _enrol(sm: sessionmaker[Session], student_id: uuid.UUID, code: str) -> None:
+    with sm.begin() as session:
+        if session.scalar(sa.select(Subject.id).where(Subject.code == code)) is None:
+            session.add(Subject(code=code, name=f"Subject {code}"))
+            session.flush()
+        session.add(StudentSubjectEnrolment(user_id=student_id, subject_code=code))
+
+
+def _use_profile_service(client: TestClient, sm: sessionmaker[Session]) -> None:
+    client.app.dependency_overrides[get_student_profile_service] = (  # type: ignore[union-attr]
+        lambda: StudentProfileService(sm)
+    )
+
+
+def test_week_lists_every_enrolled_subject_in_one_call(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    study_plan_service: StudyPlanService,
+) -> None:
+    _use_study_plan_service(client, study_plan_service)
+    _use_profile_service(client, pg_sessionmaker)
+    student = _seed_user(pg_sessionmaker)
+    _enrol(pg_sessionmaker, student, "0625")
+    _enrol(pg_sessionmaker, student, "0580")
+    _seed_weakness(pg_sessionmaker, student, topic="1 Motion", lost_marks=5)
+    study_plan_service.generate(student, "0625")
+    study_plan_service.generate(student, "9709")  # a plan for a subject they are not enrolled in
+    _auth_as(client, student, Role.student)
+
+    resp = client.get("/api/student/study-plan")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["today"] == "2026-08-05"
+    assert body["weekStart"] == "2026-08-03"
+    assert body["weekEnd"] == "2026-08-09"
+    assert [s["subjectCode"] for s in body["subjects"]] == ["0580", "0625"]
+    maths, physics = body["subjects"]
+    assert maths == {
+        "subjectCode": "0580",
+        "generated": False,
+        "plan": None,
+        "paperCount": 0,
+        "weakTopics": [],
+    }
+    assert physics["generated"] is True
+    assert physics["weakTopics"] == [{"topic": "1 Motion", "accuracyPct": 50}]
+    session = physics["plan"]["sessions"][0]
+    assert session["anyDay"] is False
+    assert session["reason"] == {"kind": "marks_lost", "count": 5}
+    # Inverse: the un-enrolled subject's plan is not in the week.
+    assert "9709" not in [s["subjectCode"] for s in body["subjects"]]
+
+
+def test_week_is_owner_scoped(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    study_plan_service: StudyPlanService,
+) -> None:
+    _use_study_plan_service(client, study_plan_service)
+    _use_profile_service(client, pg_sessionmaker)
+    owner = _seed_user(pg_sessionmaker)
+    other = _seed_user(pg_sessionmaker)
+    for uid in (owner, other):
+        _enrol(pg_sessionmaker, uid, "0625")
+    _seed_weakness(pg_sessionmaker, owner, topic="1 Motion", lost_marks=5)
+    study_plan_service.generate(owner, "0625")
+
+    _auth_as(client, other, Role.student)
+    assert client.get("/api/student/study-plan").json()["subjects"][0]["plan"] is None
+    # Inverse: the owner sees it.
+    _auth_as(client, owner, Role.student)
+    assert client.get("/api/student/study-plan").json()["subjects"][0]["plan"] is not None
+
+
+@pytest.mark.parametrize("role", [Role.teacher, Role.parent])
+def test_week_route_rejects_non_students(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    study_plan_service: StudyPlanService,
+    role: Role,
+) -> None:
+    _use_study_plan_service(client, study_plan_service)
+    _use_profile_service(client, pg_sessionmaker)
+    _auth_as(client, _seed_user(pg_sessionmaker, role), role)
+
+    assert client.get("/api/student/study-plan").status_code == 403
+    # Inverse.
+    _auth_as(client, _seed_user(pg_sessionmaker), Role.student)
+    assert client.get("/api/student/study-plan").status_code == 200
+
+
+def _student_with_plan(
+    client: TestClient, sm: sessionmaker[Session], service: StudyPlanService
+) -> tuple[uuid.UUID, str]:
+    _use_study_plan_service(client, service)
+    student = _seed_user(sm)
+    _seed_weakness(sm, student, topic="1 Motion", lost_marks=5)
+    plan = service.generate(student, "0625")
+    _auth_as(client, student, Role.student)
+    return student, str(plan.sessions[0].id)
+
+
+def test_move_owner_gets_the_new_date(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    study_plan_service: StudyPlanService,
+) -> None:
+    _, session_id = _student_with_plan(client, pg_sessionmaker, study_plan_service)
+
+    resp = client.post(
+        f"/api/student/study-plan/sessions/{session_id}/move", json={"date": "2026-08-09"}
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["date"] == "2026-08-09"
+    assert resp.json()["reason"] is None
+    sessions = client.get("/api/student/study-plan/0625").json()["plan"]["sessions"]
+    assert next(s for s in sessions if s["id"] == session_id)["date"] == "2026-08-09"
+
+
+def test_move_unknown_and_other_students_sessions_are_byte_identical_404s(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    study_plan_service: StudyPlanService,
+) -> None:
+    _, session_id = _student_with_plan(client, pg_sessionmaker, study_plan_service)
+    unknown = client.post(
+        f"/api/student/study-plan/sessions/{uuid.uuid4()}/move", json={"date": "2026-08-09"}
+    )
+    _auth_as(client, _seed_user(pg_sessionmaker), Role.student)
+    foreign = client.post(
+        f"/api/student/study-plan/sessions/{session_id}/move", json={"date": "2026-08-09"}
+    )
+
+    assert unknown.status_code == foreign.status_code == 404
+    assert unknown.content == foreign.content
+
+
+def test_move_refusals_carry_a_machine_readable_code(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    study_plan_service: StudyPlanService,
+) -> None:
+    _, session_id = _student_with_plan(client, pg_sessionmaker, study_plan_service)
+    url = f"/api/student/study-plan/sessions/{session_id}/move"
+
+    past = client.post(url, json={"date": "2026-08-04"})
+    assert past.status_code == 422
+    assert past.json()["detail"]["code"] == "past_day"
+
+    far = client.post(url, json={"date": "2026-09-30"})
+    assert far.status_code == 422
+    assert far.json()["detail"]["code"] == "outside_week"
+
+    client.post(f"/api/student/study-plan/sessions/{session_id}/complete")
+    done = client.post(url, json={"date": "2026-08-09"})
+    assert done.status_code == 409
+    assert done.json()["detail"]["code"] == "completed"
+
+
+def test_move_with_a_malformed_id_or_date_is_422(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    study_plan_service: StudyPlanService,
+) -> None:
+    _, session_id = _student_with_plan(client, pg_sessionmaker, study_plan_service)
+
+    bad_id = client.post(
+        "/api/student/study-plan/sessions/not-a-uuid/move", json={"date": "2026-08-09"}
+    )
+    bad_date = client.post(
+        f"/api/student/study-plan/sessions/{session_id}/move", json={"date": "Friday"}
+    )
+
+    assert bad_id.status_code == 422
+    assert bad_date.status_code == 422
+
+
+@pytest.mark.parametrize("role", [Role.teacher, Role.parent])
+def test_move_route_rejects_non_students(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    study_plan_service: StudyPlanService,
+    role: Role,
+) -> None:
+    _, session_id = _student_with_plan(client, pg_sessionmaker, study_plan_service)
+    url = f"/api/student/study-plan/sessions/{session_id}/move"
+    _auth_as(client, _seed_user(pg_sessionmaker, role), role)
+
+    assert client.post(url, json={"date": "2026-08-09"}).status_code == 403
+
+
+def test_post_week_next_plans_next_week_without_touching_this_one(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    study_plan_service: StudyPlanService,
+) -> None:
+    _use_study_plan_service(client, study_plan_service)
+    student = _seed_user(pg_sessionmaker)
+    _seed_weakness(pg_sessionmaker, student, topic="1 Motion", lost_marks=5)
+    _auth_as(client, student, Role.student)
+
+    nxt = client.post("/api/student/study-plan", json={"subjectCode": "0625", "week": "next"})
+
+    assert nxt.status_code == 201
+    assert nxt.json()["weekStart"] == "2026-08-10"
+    assert client.get("/api/student/study-plan/0625").json()["generated"] is False
+    # Inverse: the default is this week.
+    cur = client.post("/api/student/study-plan", json={"subjectCode": "0625"})
+    assert cur.json()["weekStart"] == "2026-08-03"
+    # And an unknown value is refused.
+    bad = client.post("/api/student/study-plan", json={"subjectCode": "0625", "week": "later"})
+    assert bad.status_code == 422
+
+
+def test_complete_still_returns_the_session_with_the_new_keys(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    study_plan_service: StudyPlanService,
+) -> None:
+    _, session_id = _student_with_plan(client, pg_sessionmaker, study_plan_service)
+
+    resp = client.post(f"/api/student/study-plan/sessions/{session_id}/complete")
+
+    assert resp.status_code == 200
+    assert resp.json()["completedAt"] is not None
+    assert resp.json()["anyDay"] is False
+    assert resp.json()["reason"] is None

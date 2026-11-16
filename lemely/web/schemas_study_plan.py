@@ -14,8 +14,20 @@ gap); the retired DTO never surfaced them.
 from __future__ import annotations
 
 from datetime import date, datetime  # noqa: TC003 - pydantic needs the real type at runtime
+from typing import Literal
 
 from lemely.web.schemas import ApiModel
+
+
+class SessionReasonDTO(ApiModel):
+    """Why a session is in the plan, from rows that prove it (L9).
+
+    ``count`` is marks lost (``marks_lost``), cards due by the end of today
+    (``cards_due``), or days since the last marked paper (``last_paper``).
+    """
+
+    kind: Literal["marks_lost", "cards_due", "last_paper"]
+    count: int
 
 
 class StudyPlanSessionDTO(ApiModel):
@@ -32,6 +44,10 @@ class StudyPlanSessionDTO(ApiModel):
     durationMinutes: int
     focus: str
     completedAt: datetime | None
+    anyDay: bool = False
+    """True for a past paper: the screen offers it on any day of the week."""
+    reason: SessionReasonDTO | None = None
+    """Filled on ``GET /api/student/study-plan`` only; ``None`` on every other route."""
 
 
 class StudyPlanWeekDTO(ApiModel):
@@ -80,3 +96,36 @@ class CurrentStudyPlanDTO(ApiModel):
 
 class CreateStudyPlanRequestDTO(ApiModel):
     subjectCode: str
+    week: Literal["current", "next"] = "current"
+
+
+class WeakTopicDTO(ApiModel):
+    topic: str
+    accuracyPct: int
+
+
+class SubjectWeekDTO(ApiModel):
+    """One enrolled subject inside :class:`StudyPlanOverviewDTO`.
+
+    ``generated``/``plan`` keep :class:`CurrentStudyPlanDTO`'s three states
+    (no plan / refusal / real plan) per subject.
+    """
+
+    subjectCode: str
+    generated: bool
+    plan: StudyPlanWeekDTO | None
+    paperCount: int
+    weakTopics: list[WeakTopicDTO]
+
+
+class StudyPlanOverviewDTO(ApiModel):
+    """``GET /api/student/study-plan``: this ISO week across every enrolled subject (L9)."""
+
+    today: date
+    weekStart: date
+    weekEnd: date
+    subjects: list[SubjectWeekDTO]
+
+
+class MoveSessionRequestDTO(ApiModel):
+    date: date

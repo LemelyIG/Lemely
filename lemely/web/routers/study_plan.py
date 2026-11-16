@@ -30,24 +30,44 @@ from typing import TYPE_CHECKING, Annotated, NoReturn
 from fastapi import APIRouter, Depends, HTTPException
 
 from lemely.db.models.enums import Role, XpSource
+from lemely.db.models.study_plan import StudyPlanActivityType
+from lemely.db.student_profile_repo import StudentProfileService
 from lemely.db.study_plan_repo import (
     StudyPlanError,
+    StudyPlanMoveError,
     StudyPlanNotFoundError,
     StudyPlanOwnershipError,
     StudyPlanService,
 )
 from lemely.db.xp_repo import XpService
-from lemely.web.deps import AuthContext, get_study_plan_service, get_xp_service, require_role
+from lemely.web.deps import (
+    AuthContext,
+    get_student_profile_service,
+    get_study_plan_service,
+    get_xp_service,
+    require_role,
+)
 from lemely.web.schemas_study_plan import (
     CreateStudyPlanRequestDTO,
     CurrentStudyPlanDTO,
+    MoveSessionRequestDTO,
+    SessionReasonDTO,
+    StudyPlanOverviewDTO,
     StudyPlanSessionDTO,
     StudyPlanWeekDTO,
+    SubjectWeekDTO,
+    WeakTopicDTO,
 )
 from lemely.web.xp_awards import award_xp_safely
 
 if TYPE_CHECKING:
-    from lemely.db.study_plan_repo import PlanView, SessionView
+    import uuid
+    from collections.abc import Mapping
+
+    from lemely.db.study_plan_repo import PlanView, SessionReason, SessionView, WeekOverview
+
+#: Move refusals that describe the session's state (409) rather than a bad target (422).
+_MOVE_CONFLICTS = frozenset({"completed", "superseded"})
 
 router = APIRouter(
     prefix="/api/student/study-plan", dependencies=[Depends(require_role(Role.student))]
@@ -66,7 +86,9 @@ def _raise_for(exc: StudyPlanError) -> NoReturn:
     raise HTTPException(status_code=422, detail=str(exc)) from exc  # pragma: no cover
 
 
-def _session_to_dto(session: SessionView) -> StudyPlanSessionDTO:
+def _session_to_dto(
+    session: SessionView, reason: SessionReason | None = None
+) -> StudyPlanSessionDTO:
     return StudyPlanSessionDTO(
         id=str(session.id),
         date=session.date,
@@ -75,10 +97,19 @@ def _session_to_dto(session: SessionView) -> StudyPlanSessionDTO:
         durationMinutes=session.duration_minutes,
         focus=session.focus,
         completedAt=session.completed_at,
+        anyDay=session.activity_type is StudyPlanActivityType.past_paper,
+        reason=(
+            SessionReasonDTO.model_validate({"kind": reason.kind, "count": reason.count})
+            if reason
+            else None
+        ),
     )
 
 
-def _plan_to_dto(plan: PlanView) -> StudyPlanWeekDTO:
+def _plan_to_dto(
+    plan: PlanView, reasons: Mapping[uuid.UUID, SessionReason] | None = None
+) -> StudyPlanWeekDTO:
+    found = reasons or {}
     return StudyPlanWeekDTO(
         id=str(plan.id),
         subjectCode=plan.subject_code,
@@ -87,8 +118,44 @@ def _plan_to_dto(plan: PlanView) -> StudyPlanWeekDTO:
         available=plan.available,
         reason=plan.reason,
         generatedAt=plan.generated_at,
-        sessions=[_session_to_dto(s) for s in plan.sessions],
+        sessions=[_session_to_dto(s, found.get(s.id)) for s in plan.sessions],
     )
+
+
+def _overview_to_dto(overview: WeekOverview) -> StudyPlanOverviewDTO:
+    return StudyPlanOverviewDTO(
+        today=overview.today,
+        weekStart=overview.week_start,
+        weekEnd=overview.week_end,
+        subjects=[
+            SubjectWeekDTO(
+                subjectCode=s.subject_code,
+                generated=s.plan is not None,
+                plan=_plan_to_dto(s.plan, s.reasons) if s.plan is not None else None,
+                paperCount=s.paper_count,
+                weakTopics=[
+                    WeakTopicDTO(topic=w.topic, accuracyPct=w.accuracy_pct) for w in s.weak_topics
+                ],
+            )
+            for s in overview.subjects
+        ],
+    )
+
+
+@router.get("", response_model=StudyPlanOverviewDTO)
+def get_study_plan_week(
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[StudyPlanService, Depends(get_study_plan_service)],
+    profile_service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
+) -> StudyPlanOverviewDTO:
+    """This ISO week across every subject the caller is enrolled in (L9).
+
+    Takes no parameters: identity and the subject list both come from the
+    token's user. The service's injected clock decides "today" and the week,
+    never this router (see commit 7ba50165 for what a second clock costs).
+    """
+    codes = profile_service.list_enrolled_subject_codes(auth.user_id)
+    return _overview_to_dto(service.get_week(auth.user_id, codes))
 
 
 @router.get("/{subject_code}", response_model=CurrentStudyPlanDTO)
@@ -123,7 +190,7 @@ def create_study_plan(
     (student, subject, ISO week), so a second call here regenerates cleanly
     with no extra logic needed at this layer.
     """
-    plan = service.generate(auth.user_id, body.subjectCode)
+    plan = service.generate(auth.user_id, body.subjectCode, next_week=body.week == "next")
     return _plan_to_dto(plan)
 
 
@@ -159,6 +226,34 @@ def complete_study_plan_session(
         subject_code=session.subject_code,
         seam="study_session_completed",
     )
+    return _session_to_dto(session)
+
+
+@router.post("/sessions/{session_id}/move", response_model=StudyPlanSessionDTO)
+def move_study_plan_session(
+    session_id: str,
+    body: MoveSessionRequestDTO,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[StudyPlanService, Depends(get_study_plan_service)],
+) -> StudyPlanSessionDTO:
+    """Move one of the caller's own open sessions to another day of its week.
+
+    404 (byte-identical) for an unknown or another student's id, 422 for a
+    malformed id or a ``past_day``/``outside_week`` target, 409 for a
+    ``completed`` or ``superseded`` session. Refusals carry
+    ``{"code", "message"}`` so the screen can say which.
+    """
+    try:
+        session = service.move_session(auth.user_id, session_id, body.date)
+    except StudyPlanMoveError as exc:
+        status = 409 if exc.code in _MOVE_CONFLICTS else 422
+        raise HTTPException(
+            status_code=status, detail={"code": exc.code, "message": str(exc)}
+        ) from exc
+    except StudyPlanError as exc:
+        _raise_for(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _session_to_dto(session)
 
 
