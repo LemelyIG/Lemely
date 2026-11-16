@@ -62,12 +62,15 @@ function Frame({ id, title, children }: { id: string; title: string; children: R
 function Toolbar({ theme, setTheme, frozen, setFrozen }: { theme: Theme; setTheme: (t: Theme) => void; frozen: boolean; setFrozen: (f: boolean) => void }) {
   const btn = "min-h-11 rounded-full border border-outline px-4 text-sm text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary aria-pressed:bg-primary aria-pressed:text-on-primary"
   return (
-    <div role="toolbar" aria-label="Gallery controls" className="sticky top-0 z-50 flex flex-wrap items-center gap-2 border-b border-outline-variant bg-surface px-4 py-2 sm:px-6">
+    <header className="sticky top-0 z-50">
+    <h1 className="sr-only">Redesign kit gallery</h1>
+    <div role="toolbar" aria-label="Gallery controls" className="flex flex-wrap items-center gap-2 border-b border-outline-variant bg-surface px-4 py-2 sm:px-6">
       <span className="me-auto text-sm font-medium text-on-surface">Redesign kit</span>
       <button type="button" className={btn} aria-pressed={theme === "light"} onClick={() => setTheme("light")}>Light</button>
       <button type="button" className={btn} aria-pressed={theme === "dark"} onClick={() => setTheme("dark")}>Dark</button>
       <button type="button" className={btn} aria-pressed={frozen} onClick={() => setFrozen(!frozen)}>Freeze motion</button>
     </div>
+    </header>
   )
 }
 
