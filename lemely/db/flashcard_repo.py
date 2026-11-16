@@ -43,6 +43,8 @@ from __future__ import annotations
 
 import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -71,6 +73,7 @@ if TYPE_CHECKING:
     import sqlalchemy as sa
     from sqlalchemy.orm import Session, sessionmaker
 
+    from lemely.core.flashcards import GeneratedFlashcardDeck
     from lemely.io.flashcard_generation import FlashcardGenerator
 
 
@@ -255,6 +258,9 @@ class _DeckCounts:
 
 #: A ``writing`` deck older than this is reported (and saved) as failed: its worker died.
 GENERATION_STALE_AFTER = timedelta(minutes=5)
+GENERATION_TIMEOUT_SECONDS = 120.0
+"""Bound on the model call. Under the 300 s Cloud Run request timeout, so the request that runs
+the generation always has time left to mark the deck ``failed`` and answer."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,11 +322,13 @@ class FlashcardService:
         generator: FlashcardGenerator | None = None,
         *,
         now: Callable[[], datetime] = _utcnow,
+        generation_timeout_seconds: float = GENERATION_TIMEOUT_SECONDS,
     ) -> None:
         """Wire the service to a session factory, an optional generator, and a clock."""
         self._sessionmaker = sessionmaker
         self._generator = generator
         self._now = now
+        self._generation_timeout = generation_timeout_seconds
 
     # -- Deck creation (manual / topic / weakness) -----------------------------
 
@@ -479,9 +487,11 @@ class FlashcardService:
             self._mark_failed_quietly(deck_uuid, "unavailable")
             return
         try:
-            generated = self._generator.generate(
-                subject_code=subject_code, topic=topic, count=count
-            )
+            generated = self._generate_bounded(self._generator, subject_code, topic, count)
+        except TimeoutError:
+            log.error("flashcard_generation_timeout", deck_id=str(deck_uuid))
+            self._mark_failed_quietly(deck_uuid, "timeout")
+            return
         except Exception:  # any model or parse failure is a failed deck, never a crash
             log.exception("flashcard_generation_failed", deck_id=str(deck_uuid))
             self._mark_failed_quietly(deck_uuid, "model_error")
@@ -520,6 +530,26 @@ class FlashcardService:
             requested=count,
             generated=len(generated.cards),
         )
+
+    def _generate_bounded(
+        self, generator: FlashcardGenerator, subject_code: str, topic: str, count: int
+    ) -> GeneratedFlashcardDeck:
+        """Run the model call, raising :class:`TimeoutError` once the bound passes.
+
+        The call runs in a throwaway thread so a hung request cannot hold this one past the
+        bound; a late answer is discarded (the deck is already ``failed``).
+        """
+        pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="flashcard-gen")
+        try:
+            future = pool.submit(
+                generator.generate, subject_code=subject_code, topic=topic, count=count
+            )
+            try:
+                return future.result(timeout=self._generation_timeout)
+            except FutureTimeoutError as exc:
+                raise TimeoutError from exc
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
 
     def _mark_failed_quietly(self, deck_uuid: uuid.UUID, error: str) -> None:
         """Mark the deck failed; if that write fails too, log it (the stale timeout recovers)."""
@@ -688,6 +718,26 @@ class FlashcardService:
                 marks_lost=self._deck_marks_lost(deck, marks),
                 generation_status=DeckGenerationStatus(deck.generation_status),
                 requested_count=deck.requested_count,
+            )
+
+    def deck_summary(self, student_id: uuid.UUID | str, deck_id: uuid.UUID | str) -> DeckSummary:
+        """One of the caller's decks as a list row, with its current status and counts.
+
+        Raises:
+            FlashcardNotFoundError / FlashcardOwnershipError: as :meth:`get_deck`.
+        """
+        student_uuid = _as_uuid(student_id)
+        deck_uuid = _as_uuid(deck_id)
+        moment = self._now()
+        with self._sessionmaker() as session, session.begin():
+            deck = self._owned_deck(session, student_uuid, deck_uuid)
+            self._expire_if_stale(deck, moment)
+            session.flush()
+            marks = self._marks_lost_by_topic(session, student_uuid)
+            return self._to_summary(
+                deck,
+                self._deck_counts(session, deck.id, moment),
+                marks_lost=self._deck_marks_lost(deck, marks),
             )
 
     def rename_deck(

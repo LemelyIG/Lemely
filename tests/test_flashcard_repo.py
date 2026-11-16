@@ -25,6 +25,7 @@ Covers:
 
 from __future__ import annotations
 
+import threading
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -1023,3 +1024,31 @@ def test_a_second_concurrent_retry_loses_the_claim(
     monkeypatch.setattr(service, "generation_status", lambda *_a, **_k: stale_failed_state)
     with pytest.raises(FlashcardValidationError):
         service.retry_generation(student, deck.id)
+
+
+def test_a_model_call_past_the_timeout_marks_the_deck_failed_timeout(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    release = threading.Event()
+    generator = MagicMock()
+    generator.generate.side_effect = lambda **_kw: release.wait(5)
+    service = FlashcardService(
+        pg_sessionmaker, generator, now=lambda: _FIXED_NOW, generation_timeout_seconds=0.05
+    )
+    deck = service.start_generation(
+        student, subject_code="0625", origin=DeckOrigin.topic, topic="1 Motion", count=3
+    )
+
+    try:
+        service.run_generation(deck.id)  # returns at the bound, not when the model finishes
+    finally:
+        release.set()
+
+    state = service.generation_status(student, deck.id)
+    assert (state.status, state.error, state.generated_count) == (
+        DeckGenerationStatus.failed,
+        "timeout",
+        0,
+    )
+    assert service.deck_summary(student, deck.id).generation_status == DeckGenerationStatus.failed

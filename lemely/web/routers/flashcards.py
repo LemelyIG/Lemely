@@ -257,19 +257,20 @@ def weak_topics(
     ]
 
 
-@router.post("/decks/generate", response_model=GenerateDeckResponseDTO, status_code=202)
+@router.post("/decks/generate", response_model=GenerateDeckResponseDTO, status_code=201)
 def generate_deck(
     body: GenerateDeckRequestDTO,
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
     service: Annotated[FlashcardService, Depends(get_flashcard_service)],
 ) -> GenerateDeckResponseDTO:
-    """Start writing an AI deck: save it as ``writing`` (409/422/503 refusals happen here).
+    """Write an AI deck: save it as ``writing`` (409/422/503 refusals happen here), then write it.
 
     The cards are written inside this request, after the deck is saved and before the response
     is sent. Production is Cloud Run, which throttles CPU once a response is sent, so the work
-    is neither a ``BackgroundTasks`` job nor a thread. The returned deck is the ``writing``
-    snapshot taken before the model ran, with ``generatedCount`` 0; the real, never-padded
-    count and the final status come from ``GET .../generation``.
+    is neither a ``BackgroundTasks`` job nor a thread. The model call is bounded below the Cloud
+    Run request timeout, so the deck always leaves ``writing``. The response is the final state
+    (``ready`` or ``failed``) with the real, never-padded ``generatedCount``, re-read after the
+    work, so the client never shows a stale ``writing``.
 
     Declared before ``/decks/{deck_id}`` so the literal path wins the match.
     """
@@ -285,8 +286,13 @@ def generate_deck(
     except FlashcardError as exc:
         _raise_for(exc)
     service.run_generation(deck.id)
+    try:
+        final = service.deck_summary(auth.user_id, str(deck.id))
+        state = service.generation_status(auth.user_id, str(deck.id))
+    except FlashcardError as exc:
+        _raise_for(exc)
     return GenerateDeckResponseDTO(
-        deck=_summary_to_dto(deck), requestedCount=body.count, generatedCount=0
+        deck=_summary_to_dto(final), requestedCount=body.count, generatedCount=state.generated_count
     )
 
 
@@ -340,7 +346,7 @@ def generation_status(
 
 
 @router.post(
-    "/decks/{deck_id}/generation/retry", response_model=GenerationStatusDTO, status_code=202
+    "/decks/{deck_id}/generation/retry", response_model=GenerationStatusDTO, status_code=200
 )
 def retry_generation(
     deck_id: str,
@@ -349,8 +355,8 @@ def retry_generation(
 ) -> GenerationStatusDTO:
     """Write a failed deck's cards again, inside this request. A deck that is not failed is 422.
 
-    Like ``POST /decks/generate``, the work runs before the response (Cloud Run throttles CPU
-    after it). The body is the ``writing`` snapshot taken before the model ran.
+    Like ``POST /decks/generate``, the work runs (bounded) before the response, and the body is
+    the final status re-read after it.
     """
     try:
         state = service.retry_generation(auth.user_id, deck_id)
@@ -359,7 +365,11 @@ def retry_generation(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     service.run_generation(state.deck_id)
-    return _generation_to_dto(state)
+    try:
+        final = service.generation_status(auth.user_id, str(state.deck_id))
+    except FlashcardError as exc:
+        _raise_for(exc)
+    return _generation_to_dto(final)
 
 
 @router.delete("/decks/{deck_id}", status_code=204)

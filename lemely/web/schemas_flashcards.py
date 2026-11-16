@@ -199,10 +199,10 @@ class DeckDetailDTO(ApiModel):
 
 
 class GenerateDeckResponseDTO(ApiModel):
-    """202 response for a deck whose cards are being written.
+    """201 response: the deck as it stands once its cards are written (``ready`` or ``failed``).
 
-    ``generatedCount`` is 0 here; the real, persisted number comes from
-    ``GET .../generation`` and may be less than ``requestedCount`` — the model is
+    ``generatedCount`` is the real, persisted number, re-read after the work. It may be
+    less than ``requestedCount`` — the model is
     free to return fewer and nothing pads the difference (spec §1.4). The frontend
     must render the true number, not the requested one.
     """

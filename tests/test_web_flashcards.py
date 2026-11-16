@@ -381,8 +381,11 @@ def test_generated_cards_are_marked_ai_on_the_wire(
         "/api/student/flashcards/decks/generate",
         json={"subjectCode": "0625", "origin": "topic", "topic": "4.3 Circuits", "count": 2},
     )
-    assert response.status_code == 202
-    assert response.json()["deck"]["generationStatus"] == "writing"
+    assert response.status_code == 201
+    body = response.json()
+    # The work is done before the response: the body is the final state, not a snapshot.
+    assert body["deck"]["generationStatus"] == "ready"
+    assert (body["deck"]["cardCount"], body["generatedCount"]) == (2, 2)
     deck_id = response.json()["deck"]["id"]
 
     cards = client.get(f"/api/student/flashcards/decks/{deck_id}").json()["cards"]
@@ -407,7 +410,8 @@ def test_a_short_generation_reports_the_true_count_never_the_requested_one(
         json={"subjectCode": "0625", "origin": "topic", "topic": "4.3 Circuits", "count": 10},
     ).json()
     assert started["requestedCount"] == 10
-    assert started["generatedCount"] == 0
+    assert started["generatedCount"] == 1
+    assert started["deck"]["generationStatus"] == "ready"
 
     status = client.get(f"/api/student/flashcards/decks/{started['deck']['id']}/generation").json()
     assert status == {
@@ -466,7 +470,7 @@ def test_an_unbounded_count_never_reaches_the_billed_model(
         client.post(
             "/api/student/flashcards/decks/generate", json={**body, "count": 50}
         ).status_code
-        == 202
+        == 201
     )
     generator.generate.assert_called_once()
 
@@ -756,7 +760,7 @@ def test_generate_for_a_chosen_weak_topic(
         "/api/student/flashcards/decks/generate",
         json={"subjectCode": "0625", "origin": "weakness", "topic": "1 Motion", "count": 4},
     )
-    assert ok.status_code == 202
+    assert ok.status_code == 201
     assert ok.json()["deck"]["topic"] == "1 Motion"
     not_weak = client.post(
         "/api/student/flashcards/decks/generate",
@@ -780,16 +784,21 @@ def test_a_failed_generation_can_be_retried(
     _use_service(client, service)
     _auth_as(client, student)
 
-    deck_id = client.post(
+    first = client.post(
         "/api/student/flashcards/decks/generate",
         json={"subjectCode": "0625", "origin": "topic", "topic": "1 Motion", "count": 3},
-    ).json()["deck"]["id"]
+    )
+    # A failed run still answers with the final state, so the client does not flash "writing".
+    assert first.status_code == 201
+    assert first.json()["deck"]["generationStatus"] == "failed"
+    assert first.json()["generatedCount"] == 0
+    deck_id = first.json()["deck"]["id"]
     failed = client.get(f"/api/student/flashcards/decks/{deck_id}/generation").json()
     assert (failed["status"], failed["error"]) == ("failed", "model_error")
 
     retried = client.post(f"/api/student/flashcards/decks/{deck_id}/generation/retry")
-    assert retried.status_code == 202
-    assert retried.json()["status"] == "writing"
+    assert retried.status_code == 200
+    assert (retried.json()["status"], retried.json()["generatedCount"]) == ("ready", 1)
     after = client.get(f"/api/student/flashcards/decks/{deck_id}/generation").json()
     assert (after["status"], after["generatedCount"]) == ("ready", 1)
     # A ready deck cannot be retried.
