@@ -159,9 +159,9 @@ def _seed_user(
     return uid
 
 
-def _metadata() -> ExamMetadata:
+def _metadata(subject_code: str = "9999") -> ExamMetadata:
     return ExamMetadata(
-        subject_code="9999",
+        subject_code=subject_code,
         paper_number=1,
         paper_variant=1,
         session_month="May/June",
@@ -195,8 +195,8 @@ def _question(
     )
 
 
-def _report(questions: list[CorrectedQuestion]) -> AccuracyReport:
-    correction = CorrectionResult(metadata=_metadata(), questions=questions)
+def _report(questions: list[CorrectedQuestion], subject_code: str = "9999") -> AccuracyReport:
+    correction = CorrectionResult(metadata=_metadata(subject_code), questions=questions)
     awarded, maximum = correction.awarded_marks, correction.maximum_marks
     pct = round((awarded / maximum) * 100.0, 2) if maximum else 0.0
     prediction = GradePrediction(
@@ -3990,3 +3990,305 @@ def test_l5_detail_reports_the_one_based_source_page_only_when_a_box_exists(
     assert client.get(f"/api/teacher/review/{boxed_id}").json()["sourcePage"] == _MARKED_PAGE + 1
     _auth_as(client, boxless_teacher, Role.teacher)
     assert client.get(f"/api/teacher/review/{boxless_id}").json()["sourcePage"] is None
+
+
+# ---------------------------------------------------------------------------
+# L5: sort, multi-filters, search, facets, hasHistory.
+# ---------------------------------------------------------------------------
+
+
+def _l5_seed(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    *,
+    teacher: uuid.UUID | None = None,
+    class_name: str = "Maths 10B",
+    student_name: str = "Layla",
+    subject_code: str = "9999",
+    questions: list[CorrectedQuestion],
+) -> tuple[uuid.UUID, uuid.UUID, dict[str, uuid.UUID]]:
+    """One student in one (new) class with one attempt. Returns
+    ``(teacher, class_id, {question_id: review_item_id})``; the map holds the
+    low-confidence row per question (a plagiarism question maps to its flag row)."""
+    teacher = teacher or _seed_user(pg_sessionmaker, Role.teacher)
+    student = _seed_user(pg_sessionmaker, Role.student, display_name=student_name)
+    cls = class_service.create_class(teacher, class_name)
+    assert cls.join_code is not None
+    class_service.join_by_code(student, cls.join_code)
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=str(student), report=_report(questions, subject_code)
+    )
+    ids: dict[str, uuid.UUID] = {}
+    with pg_sessionmaker() as session:
+        rows = session.execute(
+            sa.select(ReviewQueueItem.id, QuestionResult.question_id)
+            .join(QuestionResult, ReviewQueueItem.question_result_id == QuestionResult.id)
+            .where(ReviewQueueItem.attempt_id == attempt_id)
+        ).all()
+        for item_id, question_id in rows:
+            ids[question_id] = item_id
+    return teacher, cls.class_id, ids
+
+
+def _l5_three(
+    pg_sessionmaker: sessionmaker[Session], class_service: ClassService
+) -> tuple[uuid.UUID, dict[str, uuid.UUID]]:
+    teacher, _, ids = _l5_seed(
+        pg_sessionmaker,
+        class_service,
+        questions=[
+            _question("1", awarded=1, maximum=5, confidence_score=0.64),  # lost 4
+            _question("2", awarded=3, maximum=4, confidence_score=0.58),  # lost 1
+            _question("3", awarded=0, maximum=3, confidence_score=0.69),  # lost 3
+        ],
+    )
+    return teacher, ids
+
+
+def _l5_ids(body: dict[str, object]) -> list[str]:
+    items = body["items"]
+    assert isinstance(items, list)
+    return [str(i["itemId"]) for i in items]
+
+
+def test_l5_sort_by_marks_lost_puts_the_biggest_loss_first(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    teacher, ids = _l5_three(pg_sessionmaker, class_service)
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+    body = client.get("/api/teacher/review", params={"sort": "lost"}).json()
+    assert _l5_ids(body) == [str(ids["1"]), str(ids["3"]), str(ids["2"])]
+
+
+def test_l5_sort_by_confidence_puts_the_least_sure_first(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    teacher, ids = _l5_three(pg_sessionmaker, class_service)
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+    body = client.get("/api/teacher/review", params={"sort": "confidence"}).json()
+    assert _l5_ids(body) == [str(ids["2"]), str(ids["1"]), str(ids["3"])]
+
+
+def test_l5_cursor_walks_a_sorted_queue_without_gaps_or_repeats(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    teacher, ids = _l5_three(pg_sessionmaker, class_service)
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+    seen: list[str] = []
+    cursor: str | None = None
+    for _ in range(5):
+        params: dict[str, str | int] = {"sort": "lost", "limit": 1}
+        if cursor:
+            params["cursor"] = cursor
+        body = client.get("/api/teacher/review", params=params).json()
+        assert body["total"] == 3
+        seen += _l5_ids(body)
+        cursor = body["nextCursor"]
+        if cursor is None:
+            break
+    assert seen == [str(ids["1"]), str(ids["3"]), str(ids["2"])]
+
+
+def test_l5_a_cursor_from_another_sort_is_a_422(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    teacher, _ = _l5_three(pg_sessionmaker, class_service)
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+    cursor = client.get("/api/teacher/review", params={"sort": "lost", "limit": 1}).json()[
+        "nextCursor"
+    ]
+    assert cursor is not None
+    resp = client.get(
+        "/api/teacher/review", params={"sort": "confidence", "limit": 1, "cursor": cursor}
+    )
+    assert resp.status_code == 422
+
+
+def test_l5_unknown_sort_is_a_422(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    teacher, _ = _l5_three(pg_sessionmaker, class_service)
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+    assert client.get("/api/teacher/review", params={"sort": "newest"}).status_code == 422
+
+
+def test_l5_repeated_reason_and_class_params_are_a_union(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    teacher, class_a, _ = _l5_seed(
+        pg_sessionmaker,
+        class_service,
+        class_name="10A",
+        questions=[_question("1", awarded=0, maximum=2)],
+    )
+    _, class_b, _ = _l5_seed(
+        pg_sessionmaker,
+        class_service,
+        teacher=teacher,
+        class_name="10B",
+        student_name="Omar",
+        questions=[
+            _question(
+                "1",
+                awarded=0,
+                maximum=2,
+                confidence_score=1.0,
+                needs_review=False,
+                plagiarism_flagged=True,
+            )
+        ],
+    )
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+
+    both_classes = client.get(
+        "/api/teacher/review", params=[("class_id", str(class_a)), ("class_id", str(class_b))]
+    ).json()
+    assert both_classes["total"] == 2
+    one_class = client.get("/api/teacher/review", params={"class_id": str(class_a)}).json()
+    assert one_class["total"] == 1
+
+    both_reasons = client.get(
+        "/api/teacher/review", params=[("reason", "low_confidence"), ("reason", "plagiarism_flag")]
+    ).json()
+    assert both_reasons["total"] == 2
+    unknown_only = client.get("/api/teacher/review", params={"reason": "not_a_reason"}).json()
+    assert unknown_only["total"] == 0
+
+
+def test_l5_a_malformed_class_id_among_several_is_a_422(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    teacher, class_a, _ = _l5_seed(
+        pg_sessionmaker, class_service, questions=[_question("1", awarded=0, maximum=2)]
+    )
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+    resp = client.get(
+        "/api/teacher/review", params=[("class_id", str(class_a)), ("class_id", "nope")]
+    )
+    assert resp.status_code == 422
+
+
+def test_l5_subject_filter_and_subject_codes_facet(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    teacher, _, _ = _l5_seed(
+        pg_sessionmaker,
+        class_service,
+        subject_code="0580",
+        questions=[_question("1", awarded=0, maximum=2)],
+    )
+    _l5_seed(
+        pg_sessionmaker,
+        class_service,
+        teacher=teacher,
+        class_name="11C",
+        student_name="Youssef",
+        subject_code="0625",
+        questions=[_question("1", awarded=0, maximum=2)],
+    )
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+
+    everything = client.get("/api/teacher/review").json()
+    assert everything["subjectCodes"] == ["0580", "0625"]
+    physics = client.get("/api/teacher/review", params={"subject": "0625"}).json()
+    assert physics["total"] == 1
+    assert physics["items"][0]["subjectCode"] == "0625"
+    # The facet lists what the other filters allow, not just the chosen subject,
+    # so a teacher can widen the subject choice without clearing it first.
+    assert physics["subjectCodes"] == ["0580", "0625"]
+
+
+def test_l5_search_matches_name_question_and_paper_code_case_insensitively(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    teacher, _, ids = _l5_seed(
+        pg_sessionmaker,
+        class_service,
+        student_name="Layla Hassan",
+        questions=[_question("4", awarded=0, maximum=2), _question("7", awarded=0, maximum=2)],
+    )
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+
+    assert client.get("/api/teacher/review", params={"q": "layla"}).json()["total"] == 2
+    assert _l5_ids(client.get("/api/teacher/review", params={"q": "Q7"}).json()) == [str(ids["7"])]
+    assert client.get("/api/teacher/review", params={"q": "9999/11"}).json()["total"] == 2
+    assert client.get("/api/teacher/review", params={"q": "nobody"}).json()["total"] == 0
+    assert client.get("/api/teacher/review", params={"q": "x" * 101}).status_code == 422
+
+
+def test_l5_has_history_is_false_for_a_new_teacher_and_true_once_anything_was_reviewed(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    fresh = _seed_user(pg_sessionmaker, Role.teacher)
+    class_service.create_class(fresh, "Empty 9A")
+    _use_review_service(client, review_service)
+    _auth_as(client, fresh, Role.teacher)
+    empty = client.get("/api/teacher/review").json()
+    assert empty["total"] == 0
+    assert empty["hasHistory"] is False
+
+    teacher, _, ids = _l5_seed(
+        pg_sessionmaker, class_service, questions=[_question("1", awarded=0, maximum=2)]
+    )
+    _auth_as(client, teacher, Role.teacher)
+    assert client.get("/api/teacher/review").json()["hasHistory"] is True
+    assert client.post(f"/api/teacher/review/{ids['1']}/resolve", json={}).status_code == 200
+    after = client.get("/api/teacher/review").json()
+    assert after["total"] == 0
+    assert after["hasHistory"] is True
+
+
+def test_l5_default_sort_and_legacy_cursor_still_work(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    teacher, _ = _l5_three(pg_sessionmaker, class_service)
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+    first = client.get("/api/teacher/review", params={"limit": 1}).json()
+    second = client.get(
+        "/api/teacher/review", params={"limit": 1, "cursor": first["nextCursor"]}
+    ).json()
+    assert _l5_ids(first) != _l5_ids(second)
+    assert first["total"] == second["total"] == 3

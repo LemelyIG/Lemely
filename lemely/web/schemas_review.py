@@ -13,6 +13,8 @@ from __future__ import annotations
 #: re-export of the same alias. The wire boundary is where this ``Literal``
 #: is load-bearing — pyright, not mypy, is what catches a plain ``str``
 #: reaching it (see ``ReviewItemPointDTO.verdict``'s docstring).
+from pydantic import Field
+
 from lemely.core.schemas import PointVerdictWire as PointVerdictWire
 from lemely.web.schemas import ApiModel
 
@@ -91,6 +93,10 @@ class ReviewQueueListDTO(ApiModel):
     items: list[ReviewQueueItemDTO]
     nextCursor: str | None = None
     total: int
+    subjectCodes: list[str] = Field(default_factory=list)
+    """Subject codes the "Paper" filter can offer (see ``ReviewQueuePage.subject_codes``)."""
+    hasHistory: bool = True
+    """False only for a caller who has never had a review item: first run."""
 
 
 class ReviewItemPointDTO(ApiModel):

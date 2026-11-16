@@ -22,7 +22,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, NoReturn
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from lemely.db.models.enums import Role
 from lemely.db.review_repo import (
@@ -35,7 +35,10 @@ from lemely.db.review_repo import (
     ReviewOwnershipError,
     ReviewQueueRow,
     ReviewService,
+    ReviewSort,
     ReviewValidationError,
+    SortKey,
+    review_sort_key,
 )
 from lemely.io.rasterise import looks_like_pdf
 from lemely.io.scan_limits import ScanRejectedError
@@ -108,24 +111,49 @@ def _raise_for(exc: ReviewError) -> NoReturn:
 # ---------------------------------------------------------------------------
 
 _CURSOR_SEP = "|"
+_CURSOR_V2 = "v2"
 
 
-def _encode_cursor(created_at: datetime, item_id: uuid.UUID) -> str:
-    """Opaque keyset cursor: urlsafe-base64 of ``"<iso created_at>|<uuid>"``."""
-    raw = f"{created_at.isoformat()}{_CURSOR_SEP}{item_id}"
+def _encode_cursor(row: ReviewQueueRow, sort: ReviewSort) -> str:
+    """Opaque keyset cursor for ``row`` under ``sort``.
+
+    ``oldest`` keeps the original urlsafe-base64 ``"<iso created_at>|<uuid>"``
+    so a cursor issued before L5 still continues. The other sorts carry the
+    full :data:`~lemely.db.review_repo.SortKey` and the sort it belongs to, so a
+    cursor can never be replayed under a different order.
+    """
+    if sort == "oldest":
+        raw = f"{row.created_at.isoformat()}{_CURSOR_SEP}{row.item_id}"
+    else:
+        flag, value, created_at, item_id = review_sort_key(row, sort)
+        raw = _CURSOR_SEP.join(
+            [_CURSOR_V2, sort, str(flag), repr(value), created_at.isoformat(), str(item_id)]
+        )
     return base64.urlsafe_b64encode(raw.encode()).decode()
 
 
-def _decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
+def _decode_cursor(cursor: str, sort: ReviewSort) -> SortKey:
     """Inverse of :func:`_encode_cursor`.
 
-    Raises ``HTTPException(422)`` on anything that does not round-trip — a
-    malformed cursor is a client error, never a 500.
+    A 422 for anything that does not round-trip or that was issued for another sort.
     """
     try:
         raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+        parts = raw.split(_CURSOR_SEP)
+        if parts[0] == _CURSOR_V2:
+            _, cursor_sort, flag, value, created_at_str, item_id_str = parts
+            if cursor_sort != sort:
+                raise ValueError("cursor belongs to another sort")
+            return (
+                int(flag),
+                float(value),
+                datetime.fromisoformat(created_at_str),
+                uuid.UUID(item_id_str),
+            )
+        if sort != "oldest":
+            raise ValueError("cursor belongs to another sort")
         created_at_str, item_id_str = raw.split(_CURSOR_SEP, 1)
-        return datetime.fromisoformat(created_at_str), uuid.UUID(item_id_str)
+        return (0, 0.0, datetime.fromisoformat(created_at_str), uuid.UUID(item_id_str))
     except (ValueError, UnicodeDecodeError, binascii.Error) as exc:
         raise HTTPException(status_code=422, detail="Malformed cursor") from exc
 
@@ -245,9 +273,12 @@ def _detail_to_dto(detail: ReviewItemDetail) -> ReviewItemDetailDTO:
 def list_review_queue(
     auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[ReviewService, Depends(get_review_service)],
-    class_id: str | None = None,
-    reason: str | None = None,
+    class_id: Annotated[list[str] | None, Query()] = None,
+    reason: Annotated[list[str] | None, Query()] = None,
+    subject: Annotated[list[str] | None, Query()] = None,
+    q: Annotated[str | None, Query(max_length=100)] = None,
     min_age_hours: float | None = None,
+    sort: ReviewSort = "oldest",
     limit: int = 50,
     cursor: str | None = None,
 ) -> ReviewQueueListDTO:
@@ -267,17 +298,27 @@ def list_review_queue(
     in ``ReviewService.list_queue`` (the keyset-cursor predicate is not
     re-implemented here); this route only turns its ``ReviewQueuePage`` into
     the wire DTO.
+
+    L5: ``class_id``, ``reason`` and ``subject`` may repeat (any of). ``q``
+    searches name, class, paper code and question. ``sort`` is one of
+    :data:`~lemely.db.review_repo.REVIEW_SORTS` (``oldest`` is the default and
+    unchanged); an unknown value is a 422. ``cursor`` is tied to the sort it was
+    issued under. ``subjectCodes`` feeds the Paper filter; ``hasHistory`` is
+    false only on first run.
     """
     if not 1 <= limit <= 200:
         raise HTTPException(status_code=422, detail="limit must be between 1 and 200")
-    parsed_cursor = _decode_cursor(cursor) if cursor is not None else None
+    parsed_cursor = _decode_cursor(cursor, sort) if cursor is not None else None
     try:
         result = service.list_queue(
             auth.user_id,
             auth.role,
-            class_id=class_id,
-            reason=reason,
+            class_ids=class_id,
+            reasons=reason,
+            subject_codes=subject,
+            search=q,
             min_age_hours=min_age_hours,
+            sort=sort,
             limit=limit,
             cursor=parsed_cursor,
         )
@@ -285,9 +326,13 @@ def list_review_queue(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     has_more = len(result.rows) > limit
     page = result.rows[:limit]
-    next_cursor = _encode_cursor(page[-1].created_at, page[-1].item_id) if has_more else None
+    next_cursor = _encode_cursor(page[-1], sort) if has_more else None
     return ReviewQueueListDTO(
-        items=[_row_to_dto(row) for row in page], nextCursor=next_cursor, total=result.total
+        items=[_row_to_dto(row) for row in page],
+        nextCursor=next_cursor,
+        total=result.total,
+        subjectCodes=result.subject_codes,
+        hasHistory=result.has_history,
     )
 
 

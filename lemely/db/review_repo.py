@@ -101,9 +101,9 @@ skipped (``not_found`` / ``forbidden`` / ``already_closed``) — see
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, get_args
+from typing import TYPE_CHECKING, Literal, get_args
 
 import sqlalchemy as sa
 import structlog
@@ -220,6 +220,65 @@ class ReviewQueueRow:
     review_reason: str | None = None
 
 
+ReviewSort = Literal["oldest", "lost", "confidence"]
+#: Every sort the queue accepts; the route validates against the Literal.
+REVIEW_SORTS: tuple[ReviewSort, ...] = ("oldest", "lost", "confidence")
+#: One shape for every sort, so one keyset cursor compares across pages:
+#: ``(missing-value flag, value, created_at, item_id)``. A row with no value for
+#: the chosen sort (no marks, no confidence) sorts after every row that has one.
+SortKey = tuple[int, float, datetime, uuid.UUID]
+
+
+def review_sort_key(row: ReviewQueueRow, sort: ReviewSort) -> SortKey:
+    """The total order ``list_queue`` sorts by and pages over.
+
+    ``lost`` is marks lost (maximum minus Lemely's mark), biggest first;
+    ``confidence`` is the confidence score, least sure first; ``oldest`` is
+    longest-waiting first. Every key ends in ``(created_at, item_id)``, so ties
+    are stable and the oldest-first behaviour is unchanged for ``oldest``.
+    """
+    if sort == "lost":
+        if row.maximum_marks is None or row.ai_awarded_marks is None:
+            return (1, 0.0, row.created_at, row.item_id)
+        return (0, -float(row.maximum_marks - row.ai_awarded_marks), row.created_at, row.item_id)
+    if sort == "confidence":
+        if row.confidence_score is None:
+            return (1, 0.0, row.created_at, row.item_id)
+        return (0, float(row.confidence_score), row.created_at, row.item_id)
+    return (0, 0.0, row.created_at, row.item_id)
+
+
+def _normalise_cursor(cursor: SortKey | tuple[datetime, uuid.UUID]) -> SortKey:
+    """Accept the legacy ``(created_at, item_id)`` cursor (oldest sort) as well."""
+    if len(cursor) == 2:
+        created_at, item_id = cursor
+        return (0, 0.0, created_at, item_id)
+    return cursor
+
+
+def _paper_code(row: ReviewQueueRow) -> str | None:
+    """CAIE paper code as teachers write it: ``0580/42`` (paper 4, variant 2)."""
+    if row.subject_code and row.paper_number is not None:
+        variant = "" if row.paper_variant is None else str(row.paper_variant)
+        return f"{row.subject_code}/{row.paper_number}{variant}"
+    return None
+
+
+def _search_text(row: ReviewQueueRow) -> str:
+    """Everything the queue's search box matches, case-folded."""
+    question = row.question_id or ""
+    parts = [
+        row.student_display_name,
+        row.class_name or "",
+        row.subject_code or "",
+        _paper_code(row) or "",
+        question,
+        f"q{question}" if question else "",
+        row.review_reason or "",
+    ]
+    return " ".join(parts).casefold()
+
+
 @dataclass(frozen=True, slots=True)
 class ReviewQueuePage:
     """A :meth:`ReviewService.list_queue` result: one page plus the true total.
@@ -235,6 +294,12 @@ class ReviewQueuePage:
 
     rows: list[ReviewQueueRow]
     total: int
+    subject_codes: list[str] = field(default_factory=list)
+    """Distinct subject codes among the rows the class/reason/age filters allow,
+    before the subject and search filters: what the "Paper" filter can offer."""
+    has_history: bool = True
+    """False only when the caller has never had a review item at all (any status):
+    the client's first-run walkthrough. Computed only for an empty result."""
 
 
 #: The narrowed wire type for :attr:`ReviewItemPoint.verdict`. Re-exported
@@ -415,10 +480,15 @@ class ReviewService:
         caller_role: Role | str,
         *,
         class_id: uuid.UUID | str | None = None,
+        class_ids: Sequence[uuid.UUID | str] | None = None,
         reason: str | None = None,
+        reasons: Sequence[str] | None = None,
+        subject_codes: Sequence[str] | None = None,
+        search: str | None = None,
         min_age_hours: float | None = None,
+        sort: ReviewSort = "oldest",
         limit: int | None = None,
-        cursor: tuple[datetime, uuid.UUID] | None = None,
+        cursor: SortKey | tuple[datetime, uuid.UUID] | None = None,
     ) -> ReviewQueuePage:
         """Return every **open** review item across the caller's own students.
 
@@ -446,16 +516,32 @@ class ReviewService:
         and ``limit`` are applied — cursor/limit are pagination over one
         query's result set, not a narrower query, so ``total`` and ``rows``
         can never fall out of sync with each other or with the tenant scope.
+
+        L5 additions. ``class_ids``/``reasons``/``subject_codes`` are unions
+        (any of), combined with the single ``class_id``/``reason`` kept for
+        existing callers. An unknown reason among several is ignored; only
+        unknown reasons yields no rows. ``search`` is a case-insensitive
+        substring over name, class, subject, paper code (``0580/42``), question
+        (``4`` or ``Q4``) and the marker's reason text. ``sort`` picks
+        :func:`review_sort_key`; ``cursor`` is that key (the legacy
+        ``(created_at, item_id)`` pair is accepted for ``oldest``).
         """
+        wanted_classes: set[uuid.UUID] = {_as_uuid(c) for c in (class_ids or [])}
+        if class_id is not None:
+            wanted_classes.add(_as_uuid(class_id))
+        class_filter = frozenset(wanted_classes) if wanted_classes else None
         visible, student_classes = self._visible_rosters(
-            caller_id, caller_role, class_id_filter=class_id
+            caller_id, caller_role, class_ids_filter=class_filter
         )
-        reason_enum: ReviewReason | None = None
-        if reason is not None:
+        reason_values = [*(reasons or []), *([reason] if reason is not None else [])]
+        reason_enums: list[ReviewReason] = []
+        for value in reason_values:
             try:
-                reason_enum = ReviewReason(reason)
+                reason_enums.append(ReviewReason(value))
             except ValueError:
-                return ReviewQueuePage(rows=[], total=0)
+                continue
+        if reason_values and not reason_enums:
+            return ReviewQueuePage(rows=[], total=0, has_history=True)
         now = datetime.now(UTC)
         results: list[ReviewQueueRow] = []
         with self._sessionmaker() as session:
@@ -472,8 +558,8 @@ class ReviewService:
                     )
                     .order_by(ReviewQueueItem.created_at, ReviewQueueItem.id)
                 )
-                if reason_enum is not None:
-                    stmt = stmt.where(ReviewQueueItem.reason == reason_enum)
+                if reason_enums:
+                    stmt = stmt.where(ReviewQueueItem.reason.in_(reason_enums))
                 unshared_from = _unshared_from(session, student_classes)
                 for item, attempt, qr in session.execute(stmt).all():
                     # R3/R8: a read filter, never a status write — `withdrawn`
@@ -505,7 +591,7 @@ class ReviewService:
             # Letting the console half through would hand the one role that is
             # deliberately empty-scoped here a view of every teacher's marking
             # — a widening of this endpoint, not a fix to it.
-            if class_id is None and _as_role(caller_role) is not Role.platform_admin:
+            if class_filter is None and _as_role(caller_role) is not Role.platform_admin:
                 paper_stmt = (
                     select(ReviewQueueItem, TeacherPaper)
                     .join(TeacherPaper, ReviewQueueItem.teacher_paper_id == TeacherPaper.id)
@@ -515,8 +601,8 @@ class ReviewService:
                     )
                     .order_by(ReviewQueueItem.created_at, ReviewQueueItem.id)
                 )
-                if reason_enum is not None:
-                    paper_stmt = paper_stmt.where(ReviewQueueItem.reason == reason_enum)
+                if reason_enums:
+                    paper_stmt = paper_stmt.where(ReviewQueueItem.reason.in_(reason_enums))
                 # One parse per paper, not per row: a single paper commonly
                 # contributes several flagged questions, and validating its
                 # whole `AccuracyReport` again for each one is pure waste.
@@ -530,21 +616,62 @@ class ReviewService:
         # within each half (T-07's "prioritised list"). The `item_id`
         # tiebreak makes this order (and therefore cursor pagination over it)
         # stable when two rows from different sources share a `created_at`.
-        results.sort(key=lambda row: (row.created_at, row.item_id))
+        # Under the L5 sorts the same total order is `review_sort_key`.
         if min_age_hours is not None:
             results = [row for row in results if row.waiting_hours >= min_age_hours]
+        facet_codes = sorted({row.subject_code for row in results if row.subject_code})
+        if subject_codes:
+            wanted_subjects = set(subject_codes)
+            results = [row for row in results if row.subject_code in wanted_subjects]
+        needle = (search or "").strip().casefold()
+        if needle:
+            results = [row for row in results if needle in _search_text(row)]
+        results.sort(key=lambda row: review_sort_key(row, sort))
         # `total` is captured here — after every filter except `cursor`/
         # `limit` — so it reflects exactly what `rows` is a page of, from
         # this one query, not a second and possibly differently-scoped one.
         total = len(results)
         page = results
         if cursor is not None:
-            page = [row for row in page if (row.created_at, row.item_id) > cursor]
+            boundary = _normalise_cursor(cursor)
+            page = [row for row in page if review_sort_key(row, sort) > boundary]
         if limit is not None:
             # `limit + 1`, not `limit`: the extra row is how the caller
             # (the router) learns a next page exists without a second query.
             page = page[: limit + 1]
-        return ReviewQueuePage(rows=page, total=total)
+        has_history = total > 0 or self._any_item_ever(caller_id, caller_role)
+        return ReviewQueuePage(
+            rows=page, total=total, subject_codes=facet_codes, has_history=has_history
+        )
+
+    def _any_item_ever(self, caller_id: uuid.UUID | str, caller_role: Role | str) -> bool:
+        """Whether the caller has ever been shown a review item, in any status.
+
+        Ignores every filter: it answers "has this teacher used the queue
+        before", which picks the first-run walkthrough over "Nothing to
+        review". Same tenancy as :meth:`list_queue`, including no console half
+        for ``platform_admin``. Runs only when a listing came back empty.
+        """
+        visible, _ = self._visible_rosters(caller_id, caller_role)
+        with self._sessionmaker() as session:
+            if visible:
+                hit = session.execute(
+                    select(ReviewQueueItem.id)
+                    .join(Attempt, ReviewQueueItem.attempt_id == Attempt.id)
+                    .where(Attempt.user_id.in_(visible.keys()))
+                    .limit(1)
+                ).first()
+                if hit is not None:
+                    return True
+            if _as_role(caller_role) is Role.platform_admin:
+                return False
+            hit = session.execute(
+                select(ReviewQueueItem.id)
+                .join(TeacherPaper, ReviewQueueItem.teacher_paper_id == TeacherPaper.id)
+                .where(teacher_paper_visible(_as_uuid(caller_id), _as_role(caller_role)))
+                .limit(1)
+            ).first()
+            return hit is not None
 
     def get_item(
         self, caller_id: uuid.UUID | str, caller_role: Role | str, item_id: uuid.UUID | str
@@ -978,6 +1105,7 @@ class ReviewService:
         caller_role: Role | str,
         *,
         class_id_filter: uuid.UUID | str | None = None,
+        class_ids_filter: frozenset[uuid.UUID] | None = None,
     ) -> tuple[dict[uuid.UUID, tuple[uuid.UUID, str, str]], dict[uuid.UUID, set[uuid.UUID]]]:
         """:meth:`_visible_class_map`, plus every visible class each student is in.
 
@@ -988,7 +1116,11 @@ class ReviewService:
         One roster pass builds both.
         """
         return visible_rosters(
-            self._class_service, caller_id, caller_role, class_id_filter=class_id_filter
+            self._class_service,
+            caller_id,
+            caller_role,
+            class_id_filter=class_id_filter,
+            class_ids_filter=class_ids_filter,
         )
 
     def _find_any_item(
@@ -1096,8 +1228,12 @@ def visible_rosters(
     caller_role: Role | str,
     *,
     class_id_filter: uuid.UUID | str | None = None,
+    class_ids_filter: frozenset[uuid.UUID] | None = None,
 ) -> tuple[dict[uuid.UUID, tuple[uuid.UUID, str, str]], dict[uuid.UUID, set[uuid.UUID]]]:
     """The review queue's visibility rule: which students a caller is shown, and in which classes.
+
+    ``class_ids_filter`` narrows to any of several classes (the queue's
+    multi-class filter); both filters may be given.
 
     The one definition; :meth:`ReviewService._visible_rosters` and
     :func:`attempt_has_reviewer` both call it.
@@ -1108,6 +1244,8 @@ def visible_rosters(
     if class_id_filter is not None:
         class_uuid = _as_uuid(class_id_filter)
         rows = [row for row in rows if row.class_id == class_uuid]
+    if class_ids_filter is not None:
+        rows = [row for row in rows if row.class_id in class_ids_filter]
     for row in rows:
         for entry in class_service.roster(caller_id, caller_role, row.class_id):
             mapping[entry.student_id] = (row.class_id, row.name, entry.display_name)
