@@ -18,6 +18,8 @@ import sqlalchemy as sa
 from structlog.testing import capture_logs
 
 from lemely.db.models.billing import (
+    Payment,
+    PaymentPurpose,
     PlanAudience,
     PlanTier,
     Subscription,
@@ -30,11 +32,17 @@ from lemely.db.models.usage import GrantKind
 from lemely.db.plan_terms_repo import (
     first_applies_at,
     fixed_path_move_ids,
+    pending_terms_change,
     queue_terms_change_notices,
     terms_for,
     terms_in_force_for_next_period,
 )
-from lemely.db.subscription_repo import TRIGGER_SUCCESS, SubscriptionService
+from lemely.db.subscription_repo import (
+    EARLY_CHARGE_WINDOW,
+    TRIGGER_SUCCESS,
+    TRIGGER_SUSPENDED,
+    SubscriptionService,
+)
 from lemely.db.teacher_team_repo import TeacherTeamService
 from lemely.web.subscription_deps import SubscriptionDeps
 from lemely.web.subscription_jobs import terms_change_notices_job, terms_move_fixed_path_job
@@ -162,6 +170,18 @@ def _sweep(sm: sessionmaker[Session], now: datetime) -> FakePaymobClient:
 
 def _period_grants(sm: sessionmaker[Session], owner: uuid.UUID) -> list[int]:
     return [g.units for g in grants_of(sm, owner) if g.kind is GrantKind.period_allowance]
+
+
+def _renewals(sm: sessionmaker[Session], sid: uuid.UUID) -> list[Payment]:
+    with sm() as session:
+        return list(
+            session.scalars(
+                sa.select(Payment).where(
+                    Payment.subscription_id == sid,
+                    Payment.purpose == PaymentPurpose.subscription_renewal,
+                )
+            )
+        )
 
 
 def _periods(sm: sessionmaker[Session], sid: uuid.UUID) -> list[SubscriptionPeriod]:
@@ -714,6 +734,11 @@ def test_a_notice_longer_than_the_billing_period_terminates_across_several_perio
     assert sub.current_period_end == ends_at  # the plan ends on the date the mail named
     assert sub.terms_notice_sent_at is not None  # the mail's own (fake) clock
     assert ends_at - sub.terms_notice_sent_at >= timedelta(days=45)  # a full notice ahead
+    # And the plan really ends: pushed before Paymob's early charge, ended at the period end.
+    _push_cancels(sm, ends_at - EARLY_CHARGE_WINDOW)
+    assert _sub(sm, sid).paymob_cancelled_at is not None
+    _push_cancels(sm, ends_at + timedelta(minutes=1))
+    assert _sub(sm, sid).status is SubscriptionStatus.cancelled
 
 
 def test_a_price_cut_on_the_fixed_path_waits_the_full_notice_period(
@@ -972,15 +997,72 @@ def _fixed_cancelled(sm: sessionmaker[Session]) -> tuple[uuid.UUID, uuid.UUID, u
     return owner, sid, tier
 
 
-def test_the_sweep_holds_the_platforms_cancel_until_the_period_end(
+PUSH_FROM = END - EARLY_CHARGE_WINDOW  # the first moment Paymob could charge the next period
+
+
+def test_the_sweep_holds_the_platforms_cancel_until_paymob_could_first_charge(
     sm: sessionmaker[Session],
 ) -> None:
-    """R2-I1: the push waits, so a revert has a window; at the period end it goes out."""
+    """R3-C1: held for a revert, but pushed before Paymob's early charge, never after it."""
     _, sid, _ = _fixed_cancelled(sm)
     assert _push_cancels(sm, TICK).calls_to("cancel_subscription") == []
+    assert _push_cancels(sm, PUSH_FROM - timedelta(minutes=1)).calls_to("cancel_subscription") == []
     assert _sub(sm, sid).paymob_cancelled_at is None
-    assert _push_cancels(sm, END + timedelta(minutes=1)).calls_to("cancel_subscription")
+    assert _push_cancels(sm, PUSH_FROM).calls_to("cancel_subscription")
     assert _sub(sm, sid).paymob_cancelled_at is not None
+
+
+def test_a_plan_the_payer_was_told_will_end_is_cancelled_at_paymob_before_it_can_charge(
+    sm: sessionmaker[Session],
+) -> None:
+    """R3-C1, the reviewer's loop: sweeps run up to the period end, Paymob's charge is early, and
+    the plan ends instead of renewing every month."""
+    _, sid, _ = _fixed_cancelled(sm)
+    pushed_at = None
+    for hours in range(0, 24 * 31, 6):  # every sweeper tick from the job to the period end
+        now = TICK + timedelta(hours=hours)
+        if _push_cancels(sm, now).calls_to("cancel_subscription"):
+            pushed_at = now
+            break
+    assert pushed_at is not None
+    assert END - pushed_at <= EARLY_CHARGE_WINDOW  # Paymob never gets to charge first
+    assert END - pushed_at > timedelta(days=3)  # and a revert had until then
+    _push_cancels(sm, END + timedelta(minutes=1))
+    sub = _sub(sm, sid)
+    assert (sub.status, sub.current_period_end) == (SubscriptionStatus.cancelled, END)
+    assert sub.cancel_source is None  # the plan is over: nobody's cancel is pending
+
+
+def test_a_charge_on_a_held_platform_cancel_grants_nothing_and_asks_for_a_refund(
+    sm: sessionmaker[Session],
+) -> None:
+    """R3-C1: Paymob charged before the push. No period, the payment is kept, the cancel goes
+    out on the next sweep, and the alert names the cause (not "our cancel did not take effect")."""
+    owner, sid, _ = _fixed_cancelled(sm)
+    charged = PUSH_FROM - timedelta(hours=1)  # one hour before the hold ends
+    with capture_logs() as logs:
+        _renew(sm, 10_000, txn=901, at=charged, updatable=False)
+    events = [e["event"] for e in logs if e.get("alert")]
+    assert events == ["subscription_charge_after_terms_cancel"]
+    sub = _sub(sm, sid)
+    assert sub.current_period_end == END  # no new period
+    assert (sub.cancel_at_period_end, sub.cancel_source) == (True, "platform_terms")
+    assert _period_grants(sm, owner) == []
+    assert [p.status.value for p in _renewals(sm, sid)] == ["paid"]  # kept for the refund
+    assert _push_cancels(sm, charged + timedelta(hours=2)).calls_to("cancel_subscription")
+    assert _sub(sm, sid).paymob_cancelled_at is not None
+
+
+def test_a_charge_after_the_push_also_grants_nothing(sm: sessionmaker[Session]) -> None:
+    owner, sid, _ = _fixed_cancelled(sm)
+    _push_cancels(sm, PUSH_FROM)
+    with capture_logs() as logs:
+        _renew(sm, 10_000, txn=902, at=END - timedelta(hours=2), updatable=False)
+    assert [e["event"] for e in logs if e.get("alert")] == [
+        "subscription_charge_after_terms_cancel"
+    ]
+    assert _sub(sm, sid).current_period_end == END
+    assert _period_grants(sm, owner) == []
 
 
 def test_a_revert_withdraws_the_platforms_cancel_the_real_sweep_has_not_pushed(
@@ -1002,9 +1084,9 @@ def test_a_revert_withdraws_the_platforms_cancel_the_real_sweep_has_not_pushed(
 
 def test_a_revert_leaves_a_cancel_paymob_already_holds(sm: sessionmaker[Session]) -> None:
     _, sid, tier = _fixed_cancelled(sm)
-    _push_cancels(sm, END + timedelta(minutes=1))  # the period end: Paymob holds the cancel
+    _push_cancels(sm, PUSH_FROM)  # the hold ended: Paymob holds the cancel
     edit_tier_terms(sm, tier, price_minor=10_000)
-    assert _notify(sm, now=END + timedelta(minutes=2), updatable=False) == 0
+    assert _notify(sm, now=PUSH_FROM + timedelta(minutes=1), updatable=False) == 0
     assert _sub(sm, sid).paymob_cancelled_at is not None
 
 
@@ -1108,3 +1190,73 @@ def test_a_due_cut_overtaken_by_a_later_notice_does_not_page_underpaid(
     assert [e["event"] for e in logs if e.get("alert")] == [
         "subscription_renewal_unexplained_amount"
     ]
+
+
+def test_a_suspension_on_a_held_platform_cancel_is_recorded_and_a_revert_leaves_it(
+    sm: sessionmaker[Session],
+) -> None:
+    """R3-M2: Paymob suspends while the platform's cancel is held; a revert must not report a
+    suspended plan live or tell the payer it will renew."""
+    owner, sid, tier = _fixed_cancelled(sm)
+    client = FakePaymobClient()
+    client.subscriptions[PID] = remote_subscription(PID, state="suspended")
+    with sm.begin() as session:
+        _service(session, client, updatable=False).apply_renewal_webhook(
+            subscription_webhook(TRIGGER_SUSPENDED, PID), now=TICK + timedelta(hours=1)
+        )
+    sub = _sub(sm, sid)
+    assert (sub.cancel_source, sub.suspended_at) == ("suspension", TICK + timedelta(hours=1))
+    edit_tier_terms(sm, tier, price_minor=10_000)
+    assert _notify(sm, now=TICK + timedelta(hours=2), updatable=False) == 0
+    sub = _sub(sm, sid)
+    assert (sub.cancel_at_period_end, sub.cancel_source) == (True, "suspension")
+    assert [m.template for m in _mail(sm, owner)] == ["plan_terms_ends"]  # no "will renew" mail
+
+
+def test_a_plan_that_ends_or_expires_clears_its_cancel_source(sm: sessionmaker[Session]) -> None:
+    """R3-M3: a stale source on a finished plan would block the 0059 downgrade for good."""
+    _, sid, _ = _fixed_cancelled(sm)
+    _push_cancels(sm, END + timedelta(minutes=1))
+    row = _sub(sm, sid)
+    assert (row.status, row.cancel_source) == (SubscriptionStatus.cancelled, None)
+    student = seed_user(sm, Role.student)
+    tier = seed_tier(sm)
+    expiring = seed_subscription(
+        sm,
+        user_id=student,
+        tier_id=tier,
+        payer_id=student,
+        status=SubscriptionStatus.past_due,
+        grace_until=NOW0 - timedelta(days=1),
+        paymob_subscription_id=PID + 7,
+    )
+    with sm.begin() as session:
+        session.execute(
+            sa.update(Subscription)
+            .where(Subscription.id == expiring)
+            .values(cancel_at_period_end=True, cancel_source="admin")
+        )
+    client = FakePaymobClient()
+    with sm.begin() as session:
+        _service(session, client, updatable=False).expire_overdue(now=NOW0)
+    done = _sub(sm, expiring)
+    assert (done.status, done.cancel_source) == (SubscriptionStatus.expired, None)
+
+
+def test_the_ends_mail_restart_moves_the_screens_dates_to_the_mailed_date(
+    sm: sessionmaker[Session],
+) -> None:
+    """R3-M5: after the notice clock restarts, the summary dates are the ones the mail names."""
+    teacher, tier, sid = _teacher_with_seat_price(sm, period_end=NOW0 + timedelta(days=20))
+    edit_tier_terms(sm, tier, extra_seat_price_minor=900)
+    _notify(sm, updatable=False)
+    _set_extra_seats(sm, sid, 2)
+    assert terms_move_fixed_path_job(_fixed_deps(sm), now=NOW0 + timedelta(days=10)) == 0
+    ends = next(m for m in _mail(sm, teacher) if m.template == "plan_terms_ends")
+    mailed = datetime.fromisoformat(str(ends.context["ends_at"]))
+    with sm() as session:
+        sub = session.get(Subscription, sid)
+        assert sub is not None
+        change = pending_terms_change(session, sub, interval="monthly", amount_updatable=False)
+    assert change is not None
+    assert (change.effective_at, change.first_renewal_at) == (mailed, mailed)

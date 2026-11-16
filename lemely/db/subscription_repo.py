@@ -1410,6 +1410,30 @@ def _note_charge_kept(subscription: Subscription, payment: Payment, *, reason: s
     )
 
 
+def _keep_charge_after_terms_cancel(subscription: Subscription, payment: Payment) -> bool:
+    """A renewal charge landed on a plan the platform cancelled for a terms move: no new period.
+
+    The payer was told the plan ends, so a period is never granted for it (UD-2 (c), as for a
+    charge on a cancelled plan): the payment stays ``paid`` and an operator refunds it. The cancel
+    is pushed to Paymob by the next sweep, which already selects such a row (Paymob charges at
+    most ``EARLY_CHARGE_WINDOW`` before the period end, where the hold has ended); the webhook
+    transaction never calls Paymob (DV-15). Always ``False``: nothing was granted.
+    """
+    alerts.error(
+        "subscription_charge_after_terms_cancel",
+        subscription_id=str(subscription.id),
+        payment_id=str(payment.id),
+        charged_minor=payment.amount_minor,
+        cancel_pushed=subscription.paymob_cancelled_at is not None,
+        detail=(
+            "Paymob charged a plan the platform cancelled for a price change. No period was "
+            "granted: refund the payment."
+        ),
+        alert=True,
+    )
+    return False
+
+
 def _settle_renewal(
     session: Session,
     subscription: Subscription,
@@ -2271,6 +2295,12 @@ class SubscriptionService:
                 alert=True,
             )
             return False
+        if (
+            subscription.cancel_at_period_end
+            and subscription.cancel_source == "platform_terms"
+            and subscription.status in PLAN_LIVE_STATUSES
+        ):
+            return _keep_charge_after_terms_cancel(subscription, payment)
         granted = _settle_renewal(
             session,
             subscription,
@@ -2691,8 +2721,10 @@ class SubscriptionService:
                 S.cancel_at_period_end.is_(True),
                 linked,
                 S.paymob_cancelled_at.is_(None),
-                # A suspension's cancel and the platform's own terms-move cancel wait for the period
-                # end: a resume, or an admin revert of the move, can still undo them until then.
+                # A suspension's cancel waits for the period end (a resume can still undo it). The
+                # platform's own terms-move cancel waits until Paymob could first charge the next
+                # period (``EARLY_CHARGE_WINDOW`` before the end): an admin revert can withdraw it
+                # until then, and Paymob never charges early a plan the payer was told will end.
                 sa.or_(
                     sa.and_(
                         S.suspended_at.is_(None),
@@ -2700,6 +2732,10 @@ class SubscriptionService:
                             S.cancel_source.is_(None),
                             S.cancel_source != "platform_terms",
                         ),
+                    ),
+                    sa.and_(
+                        S.cancel_source == "platform_terms",
+                        S.current_period_end <= now + EARLY_CHARGE_WINDOW,
                     ),
                     S.current_period_end <= now,
                 ),
@@ -2890,6 +2926,7 @@ class SubscriptionService:
             return False
         subscription.status = SubscriptionStatus.cancelled
         subscription.grace_until = None
+        subscription.cancel_source = None  # the plan is over: nobody's cancel is pending
         subscription.suspended_at = None  # the plan is over: no resume can act on it (M-2)
         _clear_amount_marks(subscription)
         _bump(subscription)
@@ -3447,6 +3484,7 @@ class SubscriptionService:
         if subscription.status in PLAN_LIVE_STATUSES:
             subscription.status = SubscriptionStatus.cancelled
             subscription.grace_until = None
+            subscription.cancel_source = None
             subscription.suspended_at = None
             subscription.pending_plan_tier_id = None
             subscription.pending_extra_seats = None
@@ -3559,6 +3597,7 @@ class SubscriptionService:
         pick up an expired row whose cancel was never stamped.
         """
         subscription.status = SubscriptionStatus.expired
+        subscription.cancel_source = None
         # The notice names the date the plan actually ended: the stored deadline when the sweep
         # got to it after the grace, today when Paymob gave up before it.
         deadline = min(subscription.grace_until or subscription.current_period_end or now, now)
@@ -3770,6 +3809,13 @@ class SubscriptionService:
         if subscription.status is not SubscriptionStatus.active:
             return
         if subscription.cancel_at_period_end:
+            if subscription.cancel_source == "platform_terms" and subscription.suspended_at is None:
+                # The platform's held cancel: Paymob is now suspended too. Record it as a
+                # suspension's, so an admin revert of the move cannot report a suspended plan live.
+                subscription.cancel_source = "suspension"
+                subscription.suspended_at = now
+                _bump(subscription)
+                log.info("subscription_suspended_in_paymob", subscription_id=str(subscription.id))
             return
         subscription.cancel_at_period_end = True
         subscription.cancel_source = "suspension"

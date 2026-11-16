@@ -629,8 +629,9 @@ def pending_terms_change(
 def subscribers_to_move(session: Session, tier_id: uuid.UUID) -> int:
     """Renewing subscribers of the tier not yet on its current terms: those a terms edit moves.
 
-    Complimentary and manual rows do not renew, and a cancelling subscriber is leaving: neither is
-    noticed or moved (the same pool as the notice job, before its pending-version filter).
+    Complimentary and manual rows do not renew, a cancelling subscriber is leaving, and a pending
+    plan change decides the next terms: none is noticed or moved (the same pool as the notice job,
+    before its pending-version filter).
     """
     S = Subscription
     return int(
@@ -644,6 +645,7 @@ def subscribers_to_move(session: Session, tier_id: uuid.UUID) -> int:
                 S.payer_user_id.is_not(None),
                 S.is_manually_activated.is_(False),
                 S.cancel_at_period_end.is_(False),
+                S.pending_plan_tier_id.is_(None),
                 S.terms_version < PlanTier.terms_version,
             )
         )
@@ -689,6 +691,8 @@ def announce_fixed_path_end(session: Session, sub: Subscription, *, now: datetim
     if not written:
         return FixedPathEnd.ANNOUNCED  # notices are off for this payer: nothing to wait for
     sub.terms_notice_sent_at = now
+    # The screen reads the move's dates from the row: they must be the ones the mail names.
+    sub.pending_terms_effective_at = ends_at
     sub.version = (sub.version or 0) + 1
     return FixedPathEnd.SENT
 

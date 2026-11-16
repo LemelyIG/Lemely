@@ -1469,3 +1469,22 @@ def test_a_name_only_edit_audits_no_subscribers_to_move(
     [row] = audit_rows(sm, "catalogue.plan_tier.update")
     assert row.after is not None
     assert (row.after["termsVersion"], row.after["subscribersToMove"]) == (1, 0)
+
+
+def test_the_audit_count_leaves_out_a_subscriber_with_a_pending_plan_change(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    """R3-M4: the notice job never moves a row whose pending plan change decides its terms."""
+    tier = add_plan_tier(sm, price_minor=10000)
+    other = add_plan_tier(sm, code="other_tier", price_minor=5000)
+    add_subscription(sm, add_user(sm), tier)
+    changing = add_subscription(sm, add_user(sm), tier)
+    with sm.begin() as session:
+        row = session.get(Subscription, changing)
+        assert row is not None
+        row.pending_plan_tier_id = other
+    resp = admin_client(sm, admin).put(f"{P}/tiers/{tier}", json=_tier_update(priceMinor=15000))
+    assert resp.status_code == 200, resp.text
+    [row] = audit_rows(sm, "catalogue.plan_tier.update")
+    assert row.after is not None
+    assert row.after["subscribersToMove"] == 1
