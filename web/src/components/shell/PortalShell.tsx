@@ -29,12 +29,16 @@ import { activeTabTap, isPlainPrimaryClick } from "./tabTap"
 import { titleLevelFor } from "./largeTitle"
 
 export interface PortalShellProps {
-  portal: "student" | "teacher"
+  portal: "student" | "teacher" | "parent"
   sidebar: ShellSidebarContent
   topBar: Omit<ShellTopBarProps, "onOpenNav">
   /** Route tabs for the phone bar; the shell appends "More", which opens the drawer. */
   bottomTabs: NavShellItem[]
   bottomEmphasisId?: string
+  /** Append the shell's "More" cell (default true). The student bar has the mock's five tabs and no More: its overflow lives in the top bar's navigation sheet. */
+  moreTab?: boolean
+  /** Show the top bar's menu button on phones too (default false). Set when the bar has no More cell to open the drawer. */
+  phoneMenu?: boolean
   /** Accessible name of the drawer dialog. */
   drawerTitle: string
   /** The portal's gate query is pending: the content slot shows RouteSkeleton. */
@@ -46,7 +50,7 @@ export interface PortalShellProps {
 }
 
 /**
- * The frame around every student and teacher page (design A `.as-app`): the
+ * The frame around every student, teacher and parent page (design A `.as-app`): the
  * sidebar column from `shell-lg` (1248px), the same sidebar as a drawer below it, the
  * floating top bar, the page well, and the phone tab bar below the `sidebar`
  * breakpoint (approved drift: design A's own phone bar differs).
@@ -62,6 +66,8 @@ export function PortalShell({
   topBar,
   bottomTabs,
   bottomEmphasisId,
+  moreTab = true,
+  phoneMenu = false,
   drawerTitle,
   pending,
   overlay,
@@ -79,12 +85,14 @@ export function PortalShell({
   const navigate = useNavigate()
   const matches = useMatches()
   const immersive = matches.some((m) => (m.handle as { immersive?: boolean } | undefined)?.immersive)
+  // Only a route that renders its own offline strip (handle.ownOfflineBanner) suppresses the shell's banner.
+  const ownOfflineBanner = matches.some((m) => (m.handle as { ownOfflineBanner?: boolean } | undefined)?.ownOfflineBanner)
   const level = topBar.titleLevel ?? titleLevelFor(topBar.trail)
   const closeNav = () => setNavOpen(false)
   const onActiveTap = (item: NavShellItem, event: MouseEvent) => {
     if (!item.to) return
     if (!isPlainPrimaryClick(event)) return
-    const action = activeTabTap({ pathname: location.pathname, tabTo: item.to, scrollY: window.scrollY })
+    const action = activeTabTap({ pathname: location.pathname, tabTo: item.to, scrollY: window.scrollY, isRoot: item.isRoot })
     // Prevented even when there is nothing to do: the NavLink would otherwise REPLACE the entry with a
     // forward view transition onto the page it is already on.
     event.preventDefault()
@@ -112,7 +120,7 @@ export function PortalShell({
       <MoreSheet open={moreOpen && native} onClose={() => setMoreOpen(false)} items={moreItems} />
       <EdgeSwipeBack />
       <div data-shell-column className="flex min-w-0 flex-1 flex-col">
-        <ShellTopBar {...topBar} titleLevel={level} onOpenNav={() => setNavOpen(true)} />
+        <ShellTopBar {...topBar} titleLevel={level} phoneMenu={phoneMenu} onOpenNav={() => setNavOpen(true)} />
         <main
           id={MAIN_CONTENT_ID}
           tabIndex={-1}
@@ -120,11 +128,14 @@ export function PortalShell({
           data-fab={fab && !immersive ? "" : undefined}
           className="lm-native-main @container/home w-full min-w-0 flex-1 overflow-x-hidden px-[72px] pt-1 pb-10 focus:outline-none max-shell-lg:px-3.5 max-shell-lg:pb-9 max-sidebar:pb-bottom-nav"
         >
-          <OfflineBanner
-            onRetry={() =>
-              void queryClient.refetchQueries({ type: "active", predicate: (query) => query.state.status === "error" })
-            }
-          />
+          {/* A route with its own offline strip (handle.ownOfflineBanner) hides this one, so two never stack. */}
+          {ownOfflineBanner ? null : (
+            <OfflineBanner
+              onRetry={() =>
+                void queryClient.refetchQueries({ type: "active", predicate: (query) => query.state.status === "error" })
+              }
+            />
+          )}
           <VerifyEmailBanner />
           <InstallBanner />
           {pending ? (
@@ -143,14 +154,18 @@ export function PortalShell({
       <BottomNav
         items={[
           ...bottomTabs,
-          {
-            id: "more",
-            label: "More",
-            icon: <List size={22} aria-hidden="true" />,
-            // Native phones get the titled sheet; tablet and desktop keep the drawer.
-            onClick: () => (native ? setMoreOpen(true) : setNavOpen(true)),
-            popup: { expanded: native ? moreOpen : navOpen },
-          },
+          ...(moreTab
+            ? [
+                {
+                  id: "more",
+                  label: "More",
+                  icon: <List size={22} aria-hidden="true" />,
+                  // Native phones get the titled sheet; tablet and desktop keep the drawer.
+                  onClick: () => (native ? setMoreOpen(true) : setNavOpen(true)),
+                  popup: { expanded: native ? moreOpen : navOpen },
+                } satisfies NavShellItem,
+              ]
+            : []),
         ]}
         emphasisId={bottomEmphasisId}
         // User decision (2026-11-13): re-tapping the active tab stays active wherever the tab bar shows, not gated to native.
