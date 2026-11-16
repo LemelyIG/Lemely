@@ -10,6 +10,7 @@ import { patchCurrentSession, patchOverviewSession } from "@/lib/studyPlanCache"
 import type {
   CreateStudyPlanRequest,
   CurrentStudyPlanDTO,
+  MoveSessionRequest,
   StudyPlanOverviewDTO,
   StudyPlanSessionDTO,
   StudyPlanWeekDTO,
@@ -101,6 +102,9 @@ export function useRebuildStudyPlans(): UseMutationResult<
       }
       return queryClient.invalidateQueries({ queryKey: studyPlanKeys.week })
     },
+    // Plans before the failing subject are already rebuilt server-side, so the
+    // cached week holds dead session ids. Refetch rather than keep them.
+    onError: () => queryClient.invalidateQueries({ queryKey: studyPlanKeys.all }),
   })
 }
 
@@ -123,6 +127,12 @@ export function useCompleteStudyPlanSession(): UseMutationResult<
         patchCurrentSession(c, session),
       )
     },
+    onError: (error) => {
+      if (error instanceof ApiError && (error.status === 404 || error.status === 409)) {
+        return queryClient.invalidateQueries({ queryKey: studyPlanKeys.week })
+      }
+      return undefined
+    },
   })
 }
 
@@ -141,7 +151,7 @@ export function useMoveStudyPlanSession(): UseMutationResult<
     mutationFn: ({ sessionId, date }) =>
       request<StudyPlanSessionDTO>(`/student/study-plan/sessions/${sessionId}/move`, {
         method: "POST",
-        body: JSON.stringify({ date }),
+        body: JSON.stringify({ date } satisfies MoveSessionRequest),
       }),
     onSuccess: (session, { subjectCode }) => {
       queryClient.setQueryData<StudyPlanOverviewDTO>(studyPlanKeys.week, (o) => patchOverviewSession(o, session))
