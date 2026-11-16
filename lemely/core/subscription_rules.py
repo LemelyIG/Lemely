@@ -15,9 +15,6 @@ from zoneinfo import ZoneInfo
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-#: Access continues this long after a failed renewal while Paymob retries (spec §2.6).
-GRACE_PERIOD: Final = timedelta(days=3)
-
 #: A first-payment checkout older than this can be replaced by a new one. Paymob intentions
 #: expire after 3600 s (spec §5.1 step 2); the second hour absorbs a late callback.
 STALE_CHECKOUT_AFTER: Final = timedelta(hours=2)
@@ -26,11 +23,6 @@ STALE_CHECKOUT_AFTER: Final = timedelta(hours=2)
 #: (research 02 §6), so a month is 30 days and a year 360, and Lemely's period matches the
 #: Paymob billing cycle exactly.
 PERIOD_DAYS: Final[Mapping[str, int]] = MappingProxyType({"monthly": 30, "yearly": 360})
-
-#: How many days Paymob keeps retrying a failed renewal; the plan sync sends it as an integer
-#: ``retrial_days``. It matches ``GRACE_PERIOD``, so access ends when the retries do. Revised
-#: UD-7 (Paymob skill audit, I4): a null ``retrial_days`` may mean "no retries", so it is set.
-PAYMOB_RETRIAL_DAYS: Final = 3
 
 #: The zone Paymob's timestamps without an offset are read in. Paymob's live samples show a
 #: naive timestamp in webhook bodies and an offset on REST responses, so a naive one looks
@@ -185,9 +177,7 @@ def renewal_period_start(*, current_period_end: datetime | None, charged_at: dat
 
 __all__ = [
     "AMOUNT_SYNC_WINDOW",
-    "GRACE_PERIOD",
     "PAYMOB_ACCOUNT_TZ",
-    "PAYMOB_RETRIAL_DAYS",
     "PERIOD_DAYS",
     "STALE_CHECKOUT_AFTER",
     "calendar_month_bounds",

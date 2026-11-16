@@ -43,6 +43,7 @@ from tests.subscription_fixtures import (
     T0,
     FakePaymobClient,
     charge,
+    ensure_billing_settings,
     paymob_settings,
     remote_subscription,
     seed_subscription,
@@ -72,6 +73,7 @@ def _database() -> Iterator[sessionmaker[Session]]:
 
 @pytest.fixture
 def pg_sessionmaker(_database: sessionmaker[Session]) -> Iterator[sessionmaker[Session]]:
+    ensure_billing_settings(_database)  # grace is the admin setting; the teardown truncates it
     yield from emptied_after(_database)
     with _database.begin() as session:
         session.execute(sa.text("TRUNCATE paymob_events CASCADE"))

@@ -45,7 +45,7 @@ from lemely.db.models.billing_ops import (
 )
 from lemely.db.models.usage import EstimatorInputKind, UsageEstimator, UsageRate
 from lemely.db.plan_terms_repo import subscribers_to_move
-from lemely.db.subscription_repo import PlanNotPurchasable, PlanSyncFailed
+from lemely.db.subscription_repo import PlanNotPurchasable, PlanSyncFailed, current_grace_days
 from lemely.db.subscription_repo import sync_paymob_plan as link_paymob_plan
 from lemely.db.usage_catalogue_repo import (
     SIGNUP_STUDENT_PACK,
@@ -302,6 +302,7 @@ _PLAN_TIER_AUDIT: Final = (
     "paymob_plan_mode",
     "paymob_plan_synced_price_minor",
     "paymob_plan_synced_frequency",
+    "paymob_plan_synced_retrial_days",
 )
 #: The columns a ``plan_tier_terms`` row snapshots. Changing one inserts the next terms version
 #: in the same transaction as the tier edit, so the tier always equals its latest terms row.
@@ -392,18 +393,22 @@ class CatalogueSnapshot:
     free_allowances: list[FreeAllowanceView]
     usage_rates: list[UsageRate]
     usage_estimators: list[UsageEstimator]
+    #: ``billing_settings.grace_days`` as read with the tiers, for :func:`paymob_drift`.
+    grace_days: int
     tier_counts: Mapping[uuid.UUID, TierCounts] = field(default_factory=dict)
     auto_topup_counts: Mapping[uuid.UUID, int] = field(default_factory=dict)
     auto_topup_cap_below_price_counts: Mapping[uuid.UUID, int] = field(default_factory=dict)
     price_change_notice_days: int = _DEFAULT_NOTICE_DAYS
 
 
-def paymob_drift(tier: PlanTier, key_mode: str) -> DriftState:
+def paymob_drift(tier: PlanTier, key_mode: str, grace_days: int) -> DriftState:
     """How the tier compares with the Paymob plan it is linked to.
 
     ``not_synced`` (no plan), ``drifted`` (the plan was made under the other key mode, which
-    cannot be charged with these keys, or the price or frequency changed since the sync),
-    ``unverified`` (a plan set outside the admin sync: no stamps to compare) or ``in_sync``.
+    cannot be charged with these keys, the price or frequency changed since the sync, or the
+    plan's stamped ``retrial_days`` differs from the admin ``grace_days``), ``unverified`` (a plan
+    set outside the admin sync, or made before ``retrial_days`` was stamped: nothing to compare)
+    or ``in_sync``. A plan is never re-created on its own: the admin presses Sync (UD13-C).
     """
     if tier.paymob_plan_id is None:
         return "not_synced"
@@ -414,6 +419,10 @@ def paymob_drift(tier: PlanTier, key_mode: str) -> DriftState:
     if tier.paymob_plan_synced_price_minor != tier.price_minor or (
         tier.paymob_plan_synced_frequency != paymob_frequency(tier.interval.value)
     ):
+        return "drifted"
+    if tier.paymob_plan_synced_retrial_days is None:
+        return "unverified"
+    if tier.paymob_plan_synced_retrial_days != grace_days:
         return "drifted"
     return "in_sync"
 
@@ -619,6 +628,11 @@ class AdminCatalogueService:
         """Whether Paymob can change an existing subscription's renewal amount (sandbox S14)."""
         return self._settings.subscription_amount_updatable
 
+    def grace_days(self) -> int:
+        """The admin grace days a tier's Paymob plan is compared with (one read, never cached)."""
+        with self._sm() as s:
+            return current_grace_days(s)
+
     def auto_topup_counts(self) -> Mapping[uuid.UUID, int]:
         """Enabled auto top-up settings per credit pack (one grouped query)."""
         with self._sm() as s:
@@ -660,6 +674,7 @@ class AdminCatalogueService:
                         )
                     )
                 ),
+                grace_days=current_grace_days(s),
                 tier_counts=_tier_counts(s),
                 auto_topup_counts=_auto_topup_counts(s),
                 auto_topup_cap_below_price_counts=_auto_topup_cap_below_price_counts(s),
@@ -794,7 +809,7 @@ class AdminCatalogueService:
                 tier = s.get(PlanTier, plan_tier_id, with_for_update=True)
                 if tier is None:
                     raise AdminNotFoundError("plan_tier_not_found")
-                if paymob_drift(tier, self.key_mode) == "in_sync":
+                if paymob_drift(tier, self.key_mode, current_grace_days(s)) == "in_sync":
                     raise AdminConflictError(
                         "already_in_sync", "This tier already matches its Paymob plan."
                     )

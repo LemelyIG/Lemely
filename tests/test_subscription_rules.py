@@ -8,9 +8,7 @@ import pytest
 
 from lemely.core.subscription_rules import (
     AMOUNT_SYNC_WINDOW,
-    GRACE_PERIOD,
     PAYMOB_ACCOUNT_TZ,
-    PAYMOB_RETRIAL_DAYS,
     PERIOD_DAYS,
     STALE_CHECKOUT_AFTER,
     calendar_month_bounds,
@@ -39,16 +37,8 @@ GOOD_CHARGE = {
 def test_constants() -> None:
     assert dict(PERIOD_DAYS) == {"monthly": 30, "yearly": 360}
     assert set(PERIOD_DAYS.values()) <= SUBSCRIPTION_FREQUENCIES
-    assert timedelta(days=3) == GRACE_PERIOD
     assert timedelta(hours=2) == STALE_CHECKOUT_AFTER
     assert timedelta(days=2) == AMOUNT_SYNC_WINDOW
-
-
-def test_the_paymob_retry_window_is_three_whole_days() -> None:
-    """Revised UD-7: ``retrial_days`` is set, as an integer, to the grace period's days."""
-    assert PAYMOB_RETRIAL_DAYS == 3
-    assert type(PAYMOB_RETRIAL_DAYS) is int
-    assert timedelta(days=PAYMOB_RETRIAL_DAYS) == GRACE_PERIOD
 
 
 def test_period_end_adds_the_paymob_cycle() -> None:

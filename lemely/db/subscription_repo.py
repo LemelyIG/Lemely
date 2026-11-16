@@ -36,8 +36,6 @@ from sqlalchemy.exc import IntegrityError
 
 from lemely.core.subscription_rules import (
     AMOUNT_SYNC_WINDOW,
-    GRACE_PERIOD,
-    PAYMOB_RETRIAL_DAYS,
     STALE_CHECKOUT_AFTER,
     expected_renewal_amount_minor,
     is_successful_charge,
@@ -126,7 +124,7 @@ SUBSCRIPTION_SWEEP_BATCH: Final = 200
 #: How far ahead of ``current_period_end`` a genuine failure can arrive. Paymob bills on a Cairo
 #: calendar date while ``current_period_end`` is a UTC instant (about a day of difference), and
 #: a renewal paid late on a retry day restarts our period at the charge while Paymob may keep
-#: its own schedule (up to ``PAYMOB_RETRIAL_DAYS``): so a failure for an unpaid renewal can land
+#: its own schedule (up to the plan's ``retrial_days``): so a failure for an unpaid renewal can land
 #: up to roughly 3 days 6 hours before the period end (S13 sandbox checklist to confirm). The
 #: window errs wide on purpose: a failure is ignored on the period alone only when the period
 #: runs further ahead than this (the renewal is certainly paid); closer than this, it is
@@ -139,7 +137,7 @@ EARLY_CHARGE_WINDOW: Final = timedelta(days=3, hours=6)
 NEXT_BILLING_LATER_TOLERANCE: Final = timedelta(days=2)
 
 #: How far it may sit before our end. A late retry restarts our period at the charge while Paymob
-#: keeps its own schedule (up to ``PAYMOB_RETRIAL_DAYS``), so the early-charge window is normal.
+#: keeps its own schedule (up to the plan's ``retrial_days``), so the early-charge window is normal.
 NEXT_BILLING_EARLIER_TOLERANCE: Final = EARLY_CHARGE_WINDOW
 
 #: Subscription to the period end its ``next_billing`` disagreement was alerted for (per process).
@@ -292,10 +290,36 @@ class NoCreditRate(SubscriptionError):
         self.reason = reason
 
 
+class GraceSettingMissing(SubscriptionError):
+    """``billing_settings`` has no row: the grace length is unknown, so nothing is guessed.
+
+    Raised before a grace deadline is set or a Paymob plan is created (the plan's ``retrial_days``
+    is the same setting). The migration and ``create_all`` both insert the row, so its absence is a
+    damaged database; the operator is alerted.
+    """
+
+    code: ClassVar[str] = "grace_setting_missing"
+
+
 class PlanSyncFailed(SubscriptionError):
     """Paymob answered a plan creation without a usable plan id; the tier stays unlinked."""
 
     code: ClassVar[str] = "plan_sync_failed"
+
+
+def current_grace_days(session: Session) -> int:
+    """The admin grace length: ``billing_settings.grace_days`` (1 to 7, ``id = 1``).
+
+    It is the days a failed renewal keeps access and the ``retrial_days`` a new Paymob plan is
+    created with (UD13-C). Read in the caller's transaction, no lock, never cached. Fails closed
+    like :func:`_credit_validity_months`: a missing row is :class:`GraceSettingMissing` (alerted),
+    and no constant stands in for it.
+    """
+    configured = session.scalar(select(BillingSettings.grace_days).where(BillingSettings.id == 1))
+    if configured is None:
+        alerts.error("grace_setting_missing", alert=True)
+        raise GraceSettingMissing("Payments are temporarily unavailable")
+    return int(configured)
 
 
 def subscription_webhook_url(settings: PaymobSettings) -> str:
@@ -331,7 +355,8 @@ def sync_paymob_plan(
     The tier row is locked ``FOR UPDATE`` and the caller commits. Every refusal happens before
     Paymob is called. Owned by Phase 05 with this exact signature (index R9). Phase 07 calls it
     from the admin catalogue. Beside ``tier.paymob_plan_id`` and ``tier.paymob_plan_mode`` (the
-    key mode the plan was created under, audit I8) it stamps the price and frequency it sent
+    key mode the plan was created under, audit I8) it stamps the price, frequency and
+    ``retrial_days`` (the admin grace days, :func:`current_grace_days`) it sent
     (``paymob_plan_synced_*``), and it logs ``paymob_plan_linked`` only after the commit.
 
     Raises:
@@ -353,6 +378,8 @@ def sync_paymob_plan(
         return tier.paymob_plan_id
     if settings.moto_integration_id is None:
         raise PlanNotPurchasable("Paymob subscriptions need a MOTO integration id")
+    # The setting read here is what is sent and what is stamped: one value, this transaction.
+    retrial_days = current_grace_days(session)
     try:
         created = client.create_plan(
             name=tier.code,
@@ -360,7 +387,7 @@ def sync_paymob_plan(
             amount_cents=tier.price_minor,
             integration_id=settings.moto_integration_id,
             webhook_url=subscription_webhook_url(settings),
-            retrial_days=PAYMOB_RETRIAL_DAYS,
+            retrial_days=retrial_days,
             use_transaction_amount=True,
         )
     except PaymobError as exc:
@@ -382,6 +409,7 @@ def sync_paymob_plan(
     # refuses an unlinked tier), so the stamp is written with it: same row, lock and transaction.
     tier.paymob_plan_synced_price_minor = tier.price_minor
     tier.paymob_plan_synced_frequency = paymob_frequency(tier.interval.value)
+    tier.paymob_plan_synced_retrial_days = retrial_days
     _log_linked_after_commit(session, tier.id, plan_id)
     return plan_id
 
@@ -2355,7 +2383,9 @@ class SubscriptionService:
     # -- grace and expiry (spec §2.6, §5.2) --------------------------------------------
 
     def mark_past_due(self, subscription_id: uuid.UUID, *, now: datetime) -> Subscription:
-        """A renewal failed: ``past_due`` with ``grace_until = now + GRACE_PERIOD``.
+        """A renewal failed: ``past_due`` with ``grace_until = now + grace_days``.
+
+        ``grace_days`` is the admin setting, read here (:func:`current_grace_days`).
 
         A subscription that is not ``active`` is returned unchanged (see :meth:`_mark_past_due`).
         The caller commits.
@@ -3591,7 +3621,7 @@ class SubscriptionService:
         """
         if subscription.status is not SubscriptionStatus.active:
             return
-        grace_until = now + GRACE_PERIOD
+        grace_until = now + timedelta(days=current_grace_days(self._session))
         subscription.status = SubscriptionStatus.past_due
         subscription.grace_until = grace_until
         _bump(subscription)
@@ -3951,6 +3981,7 @@ __all__ = [
     "TRIGGER_SUSPENDED",
     "AlreadySubscribed",
     "DowngradeUnavailable",
+    "GraceSettingMissing",
     "InvalidExtraSeats",
     "InvalidPlanChange",
     "MalformedWebhook",
@@ -3968,6 +3999,7 @@ __all__ = [
     "TriggerHandler",
     "convert_payment_to_credits",
     "credit_units_for_amount",
+    "current_grace_days",
     "handle_subscription_first",
     "handle_subscription_renewal",
     "lock_paymob_transaction",

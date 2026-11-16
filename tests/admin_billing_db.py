@@ -218,6 +218,7 @@ def add_plan_tier(
     paymob_plan_mode: str | None = None,
     synced_price_minor: int | None = None,
     synced_frequency: int | None = None,
+    synced_retrial_days: int | None = None,
 ) -> uuid.UUID:
     """Insert one active plan tier (its terms version 1 is written by the database trigger)."""
     tier_id = uuid.uuid4()
@@ -239,6 +240,7 @@ def add_plan_tier(
                 paymob_plan_mode=paymob_plan_mode,
                 paymob_plan_synced_price_minor=synced_price_minor,
                 paymob_plan_synced_frequency=synced_frequency,
+                paymob_plan_synced_retrial_days=synced_retrial_days,
                 is_active=True,
             )
         )

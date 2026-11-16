@@ -64,7 +64,9 @@ CatalogueService = Annotated[AdminCatalogueService, Depends(get_admin_catalogue_
 # -- DTO mapping ------------------------------------------------------------------
 
 
-def plan_tier_dto(t: PlanTier, key_mode: str, counts: TierCounts | None = None) -> PlanTierDTO:
+def plan_tier_dto(
+    t: PlanTier, key_mode: str, grace_days: int, counts: TierCounts | None = None
+) -> PlanTierDTO:
     counts = counts or TierCounts()
     return PlanTierDTO(
         id=str(t.id),
@@ -85,7 +87,7 @@ def plan_tier_dto(t: PlanTier, key_mode: str, counts: TierCounts | None = None) 
         liveSubscriptionCount=counts.live,
         pendingMoves=counts.pending_moves,
         paymobPlanId=t.paymob_plan_id,
-        paymobDrift=paymob_drift(t, key_mode),
+        paymobDrift=paymob_drift(t, key_mode, grace_days),
     )
 
 
@@ -141,7 +143,9 @@ def usage_estimator_dto(e: UsageEstimator) -> UsageEstimatorDTO:
 
 
 def _tier_response(service: AdminCatalogueService, tier: PlanTier) -> PlanTierDTO:
-    return plan_tier_dto(tier, service.key_mode, service.tier_counts().get(tier.id))
+    return plan_tier_dto(
+        tier, service.key_mode, service.grace_days(), service.tier_counts().get(tier.id)
+    )
 
 
 # -- area 1: catalogue ----------------------------------------------------------
@@ -152,7 +156,10 @@ def get_catalogue(service: CatalogueService) -> AdminCatalogueDTO:
     snap = service.catalogue()
     mode = service.key_mode
     return AdminCatalogueDTO(
-        planTiers=[plan_tier_dto(t, mode, snap.tier_counts.get(t.id)) for t in snap.plan_tiers],
+        planTiers=[
+            plan_tier_dto(t, mode, snap.grace_days, snap.tier_counts.get(t.id))
+            for t in snap.plan_tiers
+        ],
         creditPacks=[
             credit_pack_dto(
                 p,

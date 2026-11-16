@@ -34,6 +34,7 @@ from lemely.db.models.billing import (
     PlanTierTerms,
     Subscription,
 )
+from lemely.db.models.billing_ops import BillingSettings
 from lemely.db.models.enums import PlanInterval, Role, SubscriptionStatus
 from lemely.db.models.usage import UsageEstimator, UsageRate
 from lemely.db.usage_catalogue_repo import SIGNUP_STUDENT_PACK
@@ -244,6 +245,7 @@ def test_sync_stamps_price_and_frequency_and_shows_drift_after_a_price_change(
         row = session.get(PlanTier, tier)
         assert row is not None
         assert (row.paymob_plan_synced_price_minor, row.paymob_plan_synced_frequency) == (20000, 30)
+        assert row.paymob_plan_synced_retrial_days == 3 == call["retrial_days"]
         assert row.paymob_plan_mode == "test"
 
     # A price edit through the API is refused until T13 (see the terms tests); move it directly.
@@ -256,6 +258,43 @@ def test_sync_stamps_price_and_frequency_and_shows_drift_after_a_price_change(
     assert sync_row.before["paymob_plan_id"] is None
     assert sync_row.after["paymob_plan_id"] == 9001
     assert sync_row.after["paymob_plan_synced_price_minor"] == 20000
+
+
+def test_changing_grace_days_marks_synced_tiers_drifted_until_synced_again(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    tier = add_plan_tier(sm, code="student_monthly", price_minor=20000)
+    paymob = FakePaymobClient()
+    client = admin_client(sm, admin, paymob=paymob)
+    assert client.post(f"{P}/tiers/{tier}/sync", json={"reason": "first"}).status_code == 200
+
+    try:
+        with sm.begin() as session:
+            session.execute(sa.update(BillingSettings).values(grace_days=4))
+        [listed] = client.get(f"{P}/catalogue").json()["planTiers"]
+        assert listed["paymobDrift"] == "drifted"
+
+        resync = client.post(f"{P}/tiers/{tier}/sync", json={"reason": "grace days moved"})
+        assert resync.status_code == 200, resync.text
+        assert resync.json()["paymobDrift"] == "in_sync"
+        assert [c["retrial_days"] for name, c in paymob.calls if name == "create_plan"] == [3, 4]
+    finally:
+        with sm.begin() as session:
+            session.execute(sa.update(BillingSettings).values(grace_days=3))
+
+
+def test_a_tier_linked_before_retrial_days_was_stamped_is_unverified(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    add_plan_tier(
+        sm,
+        paymob_plan_id=7001,
+        paymob_plan_mode="test",
+        synced_price_minor=20000,
+        synced_frequency=30,
+    )
+    [listed] = admin_client(sm, admin).get(f"{P}/catalogue").json()["planTiers"]
+    assert listed["paymobDrift"] == "unverified"
 
 
 def test_a_yearly_tier_is_stamped_with_the_yearly_frequency(
@@ -280,6 +319,7 @@ def test_a_tier_linked_under_test_keys_is_drifted_when_the_keys_are_live(
         paymob_plan_mode="test",
         synced_price_minor=20000,
         synced_frequency=30,
+        synced_retrial_days=3,
     )
     test_keys = admin_client(sm, admin).get(f"{P}/catalogue").json()["planTiers"]
     assert [t["paymobDrift"] for t in test_keys] == ["in_sync"]
@@ -301,16 +341,17 @@ def test_paymob_drift_states() -> None:
             "paymob_plan_mode": "test",
             "paymob_plan_synced_price_minor": 20000,
             "paymob_plan_synced_frequency": 30,
+            "paymob_plan_synced_retrial_days": 3,
         }
         base.update(fields)
         return PlanTier(**base)
 
-    assert paymob_drift(tier(paymob_plan_id=None, paymob_plan_mode=None), "test") == "not_synced"
-    assert paymob_drift(tier(paymob_plan_synced_price_minor=None), "test") == "unverified"
-    assert paymob_drift(tier(), "test") == "in_sync"
-    assert paymob_drift(tier(price_minor=30000), "test") == "drifted"
-    assert paymob_drift(tier(paymob_plan_synced_frequency=360), "test") == "drifted"
-    assert paymob_drift(tier(), "live") == "drifted"
+    assert paymob_drift(tier(paymob_plan_id=None, paymob_plan_mode=None), "test", 3) == "not_synced"
+    assert paymob_drift(tier(paymob_plan_synced_price_minor=None), "test", 3) == "unverified"
+    assert paymob_drift(tier(), "test", 3) == "in_sync"
+    assert paymob_drift(tier(price_minor=30000), "test", 3) == "drifted"
+    assert paymob_drift(tier(paymob_plan_synced_frequency=360), "test", 3) == "drifted"
+    assert paymob_drift(tier(), "live", 3) == "drifted"
 
 
 @pytest.mark.parametrize(
@@ -1397,6 +1438,7 @@ def test_a_drifted_tier_can_be_synced_again(sm: sessionmaker[Session], admin: uu
         paymob_plan_mode="test",
         synced_price_minor=15000,
         synced_frequency=30,
+        synced_retrial_days=3,
     )
     paymob = FakePaymobClient()
     resp = admin_client(sm, admin, paymob=paymob).post(

@@ -9,7 +9,8 @@ This test scans every file under ``lemely/`` and fails on:
 * a call ``add_months(..., <int literal>)`` in ``lemely/db/``: a grant's expiry must come from
   ``billing_settings.credit_validity_months``.
 
-``GRACE_PERIOD`` and ``PAYMOB_RETRIAL_DAYS`` join the forbidden names with T18 (UD13-C).
+``GRACE_PERIOD`` and ``PAYMOB_RETRIAL_DAYS`` joined the forbidden names with T18 (UD13-C): grace
+and Paymob's ``retrial_days`` both come from ``billing_settings.grace_days``.
 """
 
 from __future__ import annotations
@@ -38,7 +39,9 @@ MIGRATIONS_DIR: Final = "db/migrations/"
 FORBIDDEN_NAMES: Final = frozenset(
     {
         "CREDIT_EXPIRY_MONTHS",
+        "GRACE_PERIOD",
         "MAX_EXTRA_SEATS_AT_CHECKOUT",
+        "PAYMOB_RETRIAL_DAYS",
         "TEACHER_SIGNUP_VALIDITY",
     }
 )
@@ -170,6 +173,10 @@ def test_a_removed_rate_name_is_flagged_however_it_comes_back() -> None:
         "CREDIT_EXPIRY_MONTHS = 12\n",
         "MAX_EXTRA_SEATS_AT_CHECKOUT: int = 200\n",
         "from x import TEACHER_SIGNUP_VALIDITY\n",
+        "GRACE_PERIOD: Final = timedelta(days=3)\n",
+        "from lemely.core.subscription_rules import GRACE_PERIOD\n",
+        "def f(now):\n    return now + rules.GRACE_PERIOD\n",
+        "PAYMOB_RETRIAL_DAYS = 3\n",
         "def f():\n    return rules.MAX_EXTRA_SEATS_AT_CHECKOUT\n",
     )
     for source in forms:
