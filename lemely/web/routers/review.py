@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import math
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, NoReturn
@@ -144,9 +145,12 @@ def _decode_cursor(cursor: str, sort: ReviewSort) -> SortKey:
             _, cursor_sort, flag, value, created_at_str, item_id_str = parts
             if cursor_sort != sort:
                 raise ValueError("cursor belongs to another sort")
+            sort_value = float(value)
+            if not math.isfinite(sort_value):
+                raise ValueError("cursor sort value is not finite")
             return (
                 int(flag),
-                float(value),
+                sort_value,
                 datetime.fromisoformat(created_at_str),
                 uuid.UUID(item_id_str),
             )
@@ -290,8 +294,8 @@ def list_review_queue(
     previous page (an unparseable cursor is a 422, never a 500 or a silent
     reset to page one).
 
-    ``total`` (C3d) is the count of every item matching ``class_id``/
-    ``reason``/``min_age_hours``, ignoring ``limit``/``cursor`` — computed by
+    ``total`` (C3d) is the count of every item matching every filter
+    (``class_id``/``reason``/``subject``/``q``/``min_age_hours``), ignoring ``limit``/``cursor`` — computed by
     ``service.list_queue`` from the same single query that produces the page,
     so `total` can never drift from (or leak beyond) what the page itself is
     allowed to see. Cursor filtering and limit padding/slicing live entirely

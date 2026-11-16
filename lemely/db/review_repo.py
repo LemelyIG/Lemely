@@ -286,8 +286,8 @@ class ReviewQueuePage:
     ``rows`` is the requested page — padded to ``limit + 1`` when ``limit``
     was given, exactly as :meth:`ReviewService.list_queue` has always done, so
     the caller can still tell ``has_more`` without a second query. ``total``
-    is the count of every row matching ``class_id``/``reason``/
-    ``min_age_hours`` *ignoring* ``cursor`` and ``limit`` — computed from the
+    is the count of every row matching every filter (class, reason, subject,
+    ``search``, min age) *ignoring* ``cursor`` and ``limit`` — computed from the
     same single query that produced ``rows``, so it can never drift from (or
     be scoped differently than) the page itself.
     """
@@ -512,7 +512,8 @@ class ReviewService:
         as before.
 
         :attr:`ReviewQueuePage.total` is always the count of every row
-        matching ``class_id``/``reason``/``min_age_hours`` *before* ``cursor``
+        matching every filter (class, reason, subject, ``search``, min age)
+        *before* ``cursor``
         and ``limit`` are applied — cursor/limit are pagination over one
         query's result set, not a narrower query, so ``total`` and ``rows``
         can never fall out of sync with each other or with the tenant scope.
@@ -616,7 +617,7 @@ class ReviewService:
         # within each half (T-07's "prioritised list"). The `item_id`
         # tiebreak makes this order (and therefore cursor pagination over it)
         # stable when two rows from different sources share a `created_at`.
-        # Under the L5 sorts the same total order is `review_sort_key`.
+        # The final order is `review_sort_key` (applied below, after filters).
         if min_age_hours is not None:
             results = [row for row in results if row.waiting_hours >= min_age_hours]
         facet_codes = sorted({row.subject_code for row in results if row.subject_code})

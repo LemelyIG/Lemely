@@ -7,14 +7,14 @@ Converters live in :mod:`lemely.web.routers.review`.
 
 from __future__ import annotations
 
+from pydantic import Field
+
 #: Re-exported from :data:`lemely.core.schemas.PointVerdictWire`, the same
 #: ``Literal`` :attr:`~lemely.core.schemas.PointVerdict.verdict` is annotated
 #: with; mirrors ``lemely.db.review_repo.PointVerdictWire``, the other
 #: re-export of the same alias. The wire boundary is where this ``Literal``
 #: is load-bearing — pyright, not mypy, is what catches a plain ``str``
 #: reaching it (see ``ReviewItemPointDTO.verdict``'s docstring).
-from pydantic import Field
-
 from lemely.core.schemas import PointVerdictWire as PointVerdictWire
 from lemely.web.schemas import ApiModel
 
@@ -85,8 +85,8 @@ class ReviewQueueListDTO(ApiModel):
     fetch the next page; ``null`` once the caller's whole queue fits on this
     page.
 
-    ``total`` is the count of items matching the request's filters
-    (``class_id``/``reason``/``min_age_hours``), ignoring ``limit``/``cursor``
+    ``total`` is the count of items matching every request filter
+    (``class_id``/``reason``/``subject``/``q``/``min_age_hours``), ignoring ``limit``/``cursor``
     — the same tenant scope as ``items`` (C3d).
     """
 

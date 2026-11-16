@@ -4292,3 +4292,89 @@ def test_l5_default_sort_and_legacy_cursor_still_work(
     ).json()
     assert _l5_ids(first) != _l5_ids(second)
     assert first["total"] == second["total"] == 3
+
+
+def test_l5_tenancy_isolates_facets_search_total_and_history_across_teachers(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """Two teachers share subject codes, student names and q terms; each sees only their own."""
+    _use_review_service(client, review_service)
+    teacher_a, _, ids_a = _l5_seed(
+        pg_sessionmaker,
+        class_service,
+        student_name="Zainab Shared",
+        subject_code="0580",
+        questions=[_question("1", awarded=0, maximum=2)],
+    )
+    teacher_b, _, ids_b = _l5_seed(
+        pg_sessionmaker,
+        class_service,
+        student_name="Zainab Shared",
+        subject_code="0580",
+        questions=[_question("1", awarded=0, maximum=2), _question("2", awarded=0, maximum=3)],
+    )
+    # B alone also owns a subject A has never seen.
+    _l5_seed(
+        pg_sessionmaker,
+        class_service,
+        teacher=teacher_b,
+        class_name="Chem B",
+        student_name="Zainab Shared",
+        subject_code="0620",
+        questions=[_question("1", awarded=0, maximum=2)],
+    )
+
+    _auth_as(client, teacher_a, Role.teacher)
+    body_a = client.get("/api/teacher/review").json()
+    assert body_a["subjectCodes"] == ["0580"]
+    assert body_a["total"] == 1
+    assert _l5_ids(body_a) == [str(ids_a["1"])]
+    hit_a = client.get("/api/teacher/review", params={"q": "Zainab"}).json()
+    assert hit_a["total"] == 1
+    assert _l5_ids(hit_a) == [str(ids_a["1"])]
+    sub_a = client.get("/api/teacher/review", params={"subject": "0620"}).json()
+    assert sub_a["total"] == 0
+    assert _l5_ids(sub_a) == []
+
+    _auth_as(client, teacher_b, Role.teacher)
+    body_b = client.get("/api/teacher/review").json()
+    assert body_b["subjectCodes"] == ["0580", "0620"]
+    assert body_b["total"] == 3
+    assert {str(i) for i in ids_b.values()} <= set(_l5_ids(body_b))
+    assert str(ids_a["1"]) not in _l5_ids(body_b)
+
+    # A fresh teacher, created AFTER other teachers' data exists, has no history.
+    fresh = _seed_user(pg_sessionmaker, Role.teacher)
+    _auth_as(client, fresh, Role.teacher)
+    body_f = client.get("/api/teacher/review").json()
+    assert body_f["total"] == 0
+    assert body_f["subjectCodes"] == []
+    assert body_f["hasHistory"] is False
+    assert client.get("/api/teacher/review", params={"q": "Zainab"}).json()["total"] == 0
+
+
+@pytest.mark.parametrize("bad", ["nan", "inf", "-inf"])
+def test_l5_cursor_with_non_finite_sort_value_is_a_422(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    bad: str,
+) -> None:
+    import base64
+
+    teacher, _ = _l5_three(pg_sessionmaker, class_service)
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+    cursor = client.get("/api/teacher/review", params={"sort": "lost", "limit": 1}).json()[
+        "nextCursor"
+    ]
+    parts = base64.urlsafe_b64decode(cursor.encode()).decode().split("|")
+    assert len(parts) == 6
+    parts[3] = bad
+    forged = base64.urlsafe_b64encode("|".join(parts).encode()).decode()
+    resp = client.get("/api/teacher/review", params={"sort": "lost", "limit": 1, "cursor": forged})
+    assert resp.status_code == 422
