@@ -106,7 +106,7 @@ export function ParentShell() {
         homeTo: "/parent",
         homeLabel: "Lemely, your children",
         items: sidebarItems,
-        lead: <ChildSwitcher />,
+        lead: <ChildSwitcher className="w-full" />,
         user: profile.data ? (
           <ShellUserBlock name={profileName(profile.data)} avatarUrl={profile.data.avatarUrl} detail={null} />
         ) : (

@@ -56,7 +56,7 @@ describe("student tab bar (mock h6.js TAB6, Plan in the Subjects slot by user ru
     expect(read("portals/student/shell.tsx")).toMatch(/moreTab=\{false\}\s+phoneMenu\b/)
     const bar = read("components/shell/ShellTopBar.tsx")
     expect(bar).toMatch(/phoneMenu\?: boolean/)
-    expect(bar).toContain('cn(SHELL_ICON_BUTTON, "shell-lg:hidden", !phoneMenu && "max-shell-sm:hidden")')
+    expect(bar).toContain('cn(SHELL_ICON_BUTTON, "shell-lg:hidden", !phoneMenu && "max-shell-sm:hidden"')
     expect(bar).toContain("aria-label={navLabel}")
     expect(read("components/shell/PortalShell.tsx")).toMatch(/phoneMenu = false/)
     // Teacher and parent keep the default: they never pass it.
@@ -92,5 +92,14 @@ describe("student tab bar (mock h6.js TAB6, Plan in the Subjects slot by user ru
     expect(shell).toMatch(/id: "subjects"/)
     expect(shell).toMatch(/id: "more"/)
     expect(shell).toContain("studentOverflowItems(navItems)")
+  })
+})
+
+describe("student phone menu on native detail routes", () => {
+  it("steps aside for the back control on a native detail route, and stays on tab roots", () => {
+    const bar = read("components/shell/ShellTopBar.tsx")
+    expect(bar).toMatch(/phoneMenu && level === "detail" && "native:hidden"/)
+    // The rule is scoped to a detail level: no unconditional native:hidden on the button.
+    expect(bar).not.toMatch(/"shell-lg:hidden",\s*"native:hidden"/)
   })
 })

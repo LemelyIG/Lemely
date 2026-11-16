@@ -14,8 +14,15 @@ describe("parent portal uses the shared shell", () => {
     const shell = read("portals/parent/shell.tsx")
     expect(shell).toContain("<PortalShell")
     expect(shell).toContain('portal="parent"')
-    expect(shell).toContain("lead: <ChildSwitcher />")
+    // The rail pill spans the rail (mock rail2 .kid is full width).
+    expect(shell).toContain('lead: <ChildSwitcher className="w-full" />')
     expect(shell).toContain('<ChildSwitcher className="shell-lg:hidden" />')
+  })
+  it("the switcher pill gives its name up below 414px so the page title keeps its room", () => {
+    const pill = read("portals/parent/ChildSwitcher.tsx")
+    expect(pill).toContain("truncate max-phone:hidden")
+    // The select still names the control and carries the current child for assistive tech.
+    expect(pill).toContain('aria-label="Choose which child to view"')
   })
   it("the old bespoke header is gone", () => {
     const index = read("portals/parent/index.tsx")

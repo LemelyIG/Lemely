@@ -24,7 +24,7 @@ function Initial({ name }: { name: string }) {
  * Only on a child route. With one child it is a plain name label (no ring or caret), not a control,
  * so the parent always sees whose data this is; with two or more a native select
  * sits over the pill, so it is keyboard- and screen-reader-complete and keeps the
- * old switcher's tails (switchChildPath). While the list loads a same-size
+ * old switcher's tails (switchChildPath). On a phone narrower than 414px the pill shows the initial and the caret only. While the list loads a same-size
  * placeholder holds the space so the top bar does not jump; on an error or an
  * unknown child it renders nothing and the trail still names the page.
  */
@@ -45,14 +45,15 @@ export function ChildSwitcher({ className }: { className?: string }) {
     return (
       <span className={cn("inline-flex min-h-11 max-w-full min-w-0 flex-none items-center gap-2 text-label text-on-surface", className)}>
         <Initial name={current.displayName} />
-        <span className="truncate">{current.displayName}</span>
+        <span className="truncate max-phone:max-w-20">{current.displayName}</span>
       </span>
     )
   }
   return (
     <span className={cn(PILL, "cursor-pointer focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-primary", className)}>
       <Initial name={current.displayName} />
-      <span aria-hidden="true" className="truncate">
+      {/* Below 414px the name gives its room to the page title (390 left "Ph" of "Physics"): the initial and the caret stay, and the select's value is still read out. */}
+      <span aria-hidden="true" className="truncate max-phone:hidden">
         {current.displayName}
       </span>
       <CaretDown size={12} weight="bold" aria-hidden="true" className="flex-none" />

@@ -72,7 +72,7 @@ export function ShellTree({ labelledBy, rows, currentId, fallbackId = null, empt
                 name="chev"
                 className="text-on-surface-variant transition-transform duration-200 group-aria-expanded:rotate-90 rtl:-scale-x-100 rtl:group-aria-expanded:rotate-90"
               />
-              <span className="min-w-0 flex-1 truncate [text-box:trim-both_cap_alphabetic]">{row.label}</span>
+              <span className="min-w-0 flex-1 truncate">{row.label}</span>
               {row.trailing ? (
                 <small className="ms-auto font-mono text-2xs font-medium tabular-nums text-on-surface-variant">
                   {row.trailing}
