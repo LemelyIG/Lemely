@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api"
+import { formatBillingDate } from "@/lib/billingFormat"
 import { PHONE_CHECKOUT_HEADING, isCheckoutPhoneRequired } from "@/lib/phone"
 
 /*
@@ -78,6 +79,7 @@ const TERMINAL = new Set([
   "seat_charge_overdue",
   "invalid_seats",
   "invalid_extra_seats",
+  "period_not_started",
 ])
 
 export function isTerminalRefusal(err: unknown): boolean {
@@ -100,8 +102,21 @@ function wantsCancelAndResubscribe(err: unknown): boolean {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
+/** When the already-paid next period starts (`period_not_started`), as an ISO instant, or null. */
+function opensAt(err: unknown): string | null {
+  if (!(err instanceof ApiError)) return null
+  const v = (err.detail as Record<string, unknown> | undefined)?.opensAt
+  return typeof v === "string" && !Number.isNaN(Date.parse(v)) ? v : null
+}
+
 /** Conflicts whose wording depends on facts in the refusal. */
 function detailedConflict(code: string, err: unknown): string | null {
+  if (code === "period_not_started") {
+    const at = opensAt(err)
+    return at
+      ? `Your next period is already paid. Plan and seat changes open on ${formatBillingDate(at)}.`
+      : "Your next period is already paid. Plan and seat changes open when it starts."
+  }
   if (code === "upgrade_unavailable" && wantsCancelAndResubscribe(err)) {
     return "Can't upgrade mid-period. Cancel at period end, then subscribe to the new plan."
   }

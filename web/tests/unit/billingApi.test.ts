@@ -22,6 +22,7 @@ import {
 import { usageApi } from "@/lib/hooks/useUsageApi"
 import { billingErrorCode, billingFailureMessage, isTerminalRefusal } from "@/lib/billingOutcome"
 import { billingPaths } from "@/lib/billingPaths"
+import { formatBillingDate } from "@/lib/billingFormat"
 
 const req = vi.mocked(request)
 
@@ -246,6 +247,16 @@ describe("billing failure copy", () => {
   it("tells a payer whose monthly limit is below the pack price to raise it", () => {
     const e = new ApiError(409, "409", { error: "cap_below_pack_price", message: "monthly_cap_minor < pack.price_minor" })
     expect(billingFailureMessage(e, "save auto top-up")).toBe("Your monthly limit is below the pack price. Raise it to keep auto top-up working.")
+  })
+
+  it("says when plan and seat changes open after an early-renewed period (409 period_not_started)", () => {
+    const e = new ApiError(409, "409", { error: "period_not_started", message: "x", opensAt: "2026-12-01T00:00:00Z" })
+    expect(billingFailureMessage(e, "add seats")).toBe(`Your next period is already paid. Plan and seat changes open on ${formatBillingDate("2026-12-01T00:00:00Z")}.`)
+    // A refusal without a usable date still says something true, and never prints the field.
+    const bare = new ApiError(409, "409", { error: "period_not_started", message: "x", opensAt: "soon" })
+    expect(billingFailureMessage(bare, "add seats")).toBe("Your next period is already paid. Plan and seat changes open when it starts.")
+    // Retrying cannot work until the period starts: the button stays off.
+    expect(isTerminalRefusal(e)).toBe(true)
   })
 
   it("marks refusals that fail the same way again as terminal, and transient ones as not", () => {
