@@ -16,6 +16,7 @@ from lemely.db.session import get_sessionmaker
 from lemely.io.paymob.client import PaymobClient
 from lemely.web.billing_jobs import reconcile_pending_payments
 from lemely.web.deps import get_settings
+from lemely.web.merchant_charge_deps import MerchantChargeDeps
 from lemely.web.ratelimit import SlidingWindowLimiter
 from lemely.web.subscription_deps import SubscriptionDeps
 
@@ -43,6 +44,14 @@ def get_billing_sessionmaker() -> sessionmaker[Session]:
 def get_subscription_deps() -> SubscriptionDeps:
     """The subscription routes' collaborators (Paymob billing Phase 05)."""
     return SubscriptionDeps(get_billing_sessionmaker(), get_paymob_client(), get_settings().paymob)
+
+
+@lru_cache(maxsize=1)
+def get_merchant_charge_deps() -> MerchantChargeDeps:
+    """The upgrade, seat and auto top-up routes' collaborators (Paymob billing Phase 06)."""
+    return MerchantChargeDeps(
+        get_billing_sessionmaker(), get_paymob_client(), get_settings().paymob
+    )
 
 
 def get_subscription_jobs() -> SubscriptionDeps | None:
@@ -200,6 +209,7 @@ def reset_billing_singletons() -> None:
         get_public_catalogue_limiter.cache_clear()
         get_public_catalogue_cache.cache_clear()
         get_subscription_deps.cache_clear()
+        get_merchant_charge_deps.cache_clear()
         get_subscription_checkout_limiter.cache_clear()
         get_subscription_webhook_limiter.cache_clear()
 
@@ -209,6 +219,7 @@ __all__ = [
     "get_billing_reconcile_job",
     "get_billing_sessionmaker",
     "get_checkout_limiter",
+    "get_merchant_charge_deps",
     "get_paymob_client",
     "get_public_catalogue_cache",
     "get_public_catalogue_limiter",

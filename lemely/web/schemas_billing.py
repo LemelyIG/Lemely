@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid  # noqa: TC003 - pydantic reads the type at runtime
 from datetime import datetime  # noqa: TC003 - pydantic reads the type at runtime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -99,6 +99,14 @@ class PaymentStatusDTO(ApiModel):
     currency: str
     description: str
     paidAt: datetime | None = None
+    #: Credits an upgrade or seat payment was turned into when its effect was void at settle
+    #: time (the plan ended, the period rolled, a later change landed); ``None`` otherwise.
+    creditedUnits: int | None = None
+    #: What a paid upgrade or seat payment came to: ``applied`` (the change took effect),
+    #: ``credited`` (turned into ``creditedUnits``) or ``needs_attention`` (paid, but neither
+    #: applied nor converted, e.g. no credit rate: the payment was received and is being handled).
+    #: ``None`` for any other purpose and for a payment not yet paid.
+    outcome: Literal["applied", "credited", "needs_attention"] | None = None
 
 
 class ReceiptDTO(ApiModel):

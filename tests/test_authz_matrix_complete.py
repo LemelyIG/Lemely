@@ -81,7 +81,12 @@ ALL_ROLES = frozenset(role.value for role in Role)
 
 # (method, path) → the guard that route must carry. Reviewed, not inferred.
 EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
-    # ── TEACHER (37) ────────────────────
+    # ── TEACHER (40) ────────────────────
+    # Billing phase 06: only a teacher holds seats, and only the paying teacher acts on them
+    # (404 for any other teacher; the acting-teacher header is never read).
+    ("POST", "/api/billing/subscriptions/{subscription_id}/seats/quote"): TEACHER,
+    ("POST", "/api/billing/subscriptions/{subscription_id}/seats"): TEACHER,
+    ("PUT", "/api/billing/subscriptions/{subscription_id}/seats/pending"): TEACHER,
     ("POST", "/api/classes"): TEACHER,
     ("DELETE", "/api/classes/{class_id}"): TEACHER,
     ("PATCH", "/api/classes/{class_id}"): TEACHER,
@@ -156,7 +161,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/school/teachers"): SCHOOL_ADMIN,
     ("POST", "/api/school/teachers/invite"): SCHOOL_ADMIN,
     ("POST", "/api/school/teachers/{teacher_id}/remove"): SCHOOL_ADMIN,
-    # ── PLATFORM_ADMIN (50) ────────────────────
+    # ── PLATFORM_ADMIN (54) ────────────────────
     # P4.7 (UI spec X-01/X-02/X-03), and the first routes in the product gated
     # to this role. Note what the 403 sweep below therefore proves here: a
     # `school_admin` is denied every one of them. There is no super-role, and
@@ -226,6 +231,9 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/admin/billing/credit-rates"): PLATFORM_ADMIN,
     ("PUT", "/api/admin/billing/credit-rates/{currency}"): PLATFORM_ADMIN,
     ("POST", "/api/admin/billing/credit-rates/{currency}/clear"): PLATFORM_ADMIN,
+    ("GET", "/api/admin/billing/llm-prices"): PLATFORM_ADMIN,
+    ("PUT", "/api/admin/billing/llm-prices/{model}"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/billing/llm-prices/{model}/clear"): PLATFORM_ADMIN,
     # ── TEACHER_OR_SCHOOL_ADMIN (7) ────────────────────
     ("GET", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
     ("POST", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
@@ -337,7 +345,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/tutoring/blocks"): STUDENT_OR_TEACHER,
     ("POST", "/api/tutoring/blocks"): STUDENT_OR_TEACHER,
     ("DELETE", "/api/tutoring/blocks/{counterpart_id}"): STUDENT_OR_TEACHER,
-    # ── TUTORING_PARTY (11) ────────────────────
+    # ── TUTORING_PARTY (15) ────────────────────
     # Tutoring R1 (SPEC §c.1): target visibility (O12, O19) is object-level.
     ("POST", "/api/tutoring/reports"): TUTORING_PARTY,
     # Billing (spec 2026-11-02 §5.5, §7): the same three roles buy and pay.
@@ -359,6 +367,14 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/billing/subscriptions"): TUTORING_PARTY,
     ("POST", "/api/billing/subscriptions/{subscription_id}/downgrade"): TUTORING_PARTY,
     ("POST", "/api/billing/subscriptions/{subscription_id}/cancel"): TUTORING_PARTY,
+    # Billing phase 06: role half only. Upgrade and auto top-up are payer-only (one identical 404
+    # for a beneficiary, a stranger, an unlinked parent), a parent manages auto top-up only for a
+    # linked student, and both checkout POSTs share the payer's checkout budget
+    # (tests/test_web_billing_charges.py).
+    ("POST", "/api/billing/subscriptions/{subscription_id}/upgrade/quote"): TUTORING_PARTY,
+    ("POST", "/api/billing/subscriptions/{subscription_id}/upgrade"): TUTORING_PARTY,
+    ("GET", "/api/billing/auto-topup"): TUTORING_PARTY,
+    ("PUT", "/api/billing/auto-topup"): TUTORING_PARTY,
     # ── AUTH_ANY (23) ────────────────────
     # Billing phase 04: usage estimate, meter and history answer only about the caller.
     ("POST", "/api/usage/estimate"): AUTH_ANY,

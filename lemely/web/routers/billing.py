@@ -18,6 +18,12 @@ public fields only). Every other route is students, parents and teachers only
   only themselves; the acting-teacher header is ignored, as billing is never a
   team permission.
 
+Phase 06 adds the merchant charges. Upgrade, seat purchase and auto top-up are the payer's alone
+(``MerchantChargeService`` answers a beneficiary, a stranger and an unlinked parent with the one
+404); the three seat routes are teacher-only and, like every billing route, never read the
+acting-teacher header. Upgrade and seat purchase open a 3DS checkout (201 ``CheckoutDTO``) and
+share the payer's checkout budget.
+
 A payer with no valid phone gets a 422 ``{"code": "phone_required", "message": ...}`` before
 anything is written (UD-11: no placeholder number is ever sent to Paymob).
 
@@ -35,10 +41,13 @@ from datetime import UTC, datetime
 from typing import Annotated, Final, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker  # noqa: TC002 - FastAPI reads the type at runtime
 
+from lemely.db.auto_topup_repo import AutoTopupView, get_auto_topup, put_auto_topup
 from lemely.db.billing_repo import (
     BillingService,
+    CheckoutResult,
     CheckoutUnavailable,
     NotLinkedToBeneficiary,
     PhoneRequired,
@@ -51,7 +60,21 @@ from lemely.db.billing_repo import (
     saved_cards_for,
 )
 from lemely.db.billing_summary import build_billing_summary, is_linked_student
-from lemely.db.models.billing import PlanAudience, PlanTier, Subscription
+from lemely.db.merchant_charge_repo import (
+    ChargeQuote,
+    MerchantChargeError,
+    MerchantChargeService,
+    SeatsExceedNewTier,
+    SeatsNotSold,
+)
+from lemely.db.models.billing import (
+    Payment,
+    PaymentPurpose,
+    PaymentStatus,
+    PlanAudience,
+    PlanTier,
+    Subscription,
+)
 from lemely.db.models.enums import Role
 from lemely.db.subscription_repo import SeatsInsufficient, SubscriptionError
 from lemely.io.paymob.client import PaymobClient  # noqa: TC001 - FastAPI reads the type at runtime
@@ -61,11 +84,15 @@ from lemely.web.deps_billing import (
     PublicCatalogueCache,
     get_billing_sessionmaker,
     get_checkout_limiter,
+    get_merchant_charge_deps,
     get_paymob_client,
     get_public_catalogue_cache,
     get_public_catalogue_limiter,
     get_subscription_checkout_limiter,
     get_subscription_deps,
+)
+from lemely.web.merchant_charge_deps import (
+    MerchantChargeDeps,  # noqa: TC001 - FastAPI reads the type at runtime
 )
 from lemely.web.phone_http import checkout_phone_required
 from lemely.web.ratelimit import (
@@ -87,6 +114,15 @@ from lemely.web.schemas_billing import (
     SavedCardList,
     SavedCardView,
 )
+from lemely.web.schemas_billing_charges import (
+    AutoTopupDTO,
+    AutoTopupRequest,
+    ChargeQuoteDTO,
+    ExtraSeatsRequest,
+    SeatReductionRequest,
+    SeatsDTO,
+    UpgradeRequest,
+)
 from lemely.web.schemas_subscriptions import (
     BillingSummaryDTO,
     CreditLotDTO,
@@ -107,6 +143,8 @@ from lemely.web.subscription_deps import (
 )
 
 require_billing_party: Final = require_role(Role.student, Role.parent, Role.teacher)
+#: The seat routes: only a teacher holds seats, and the acting-teacher header is never read.
+require_seat_payer: Final = require_role(Role.teacher)
 
 router = APIRouter(prefix="/api/billing")
 
@@ -287,6 +325,43 @@ def checkout_pack(
     return CheckoutDTO(paymentId=str(result.payment_id), checkoutUrl=result.checkout_url)
 
 
+#: The purposes whose payment can end as credits instead of the change it priced (UD-P2).
+_CHARGE_PURPOSES: Final = (PaymentPurpose.upgrade_proration, PaymentPurpose.extra_seats)
+
+
+def _charge_outcome(
+    session: Session, payment: Payment
+) -> Literal["applied", "credited", "needs_attention"] | None:
+    """What a paid upgrade or seat payment came to, for the return page's third state.
+
+    ``credited``: it was turned into credits (``grant_units`` is stamped). ``applied``: the
+    subscription now carries what was bought (the target tier, or at least the bought seats).
+    ``needs_attention``: paid, yet neither (no credit rate fails the conversion closed, so the
+    money was received and an operator handles it): the page must not read "done". ``None`` for
+    any other purpose, a payment not yet paid, and a queued renewal seat payment.
+    """
+    if (
+        payment.purpose not in _CHARGE_PURPOSES
+        or payment.status is not PaymentStatus.paid
+        or payment.dedupe_key is not None
+    ):
+        return None
+    if payment.grant_units is not None:
+        return "credited"
+    sub = (
+        None
+        if payment.subscription_id is None
+        else session.get(Subscription, payment.subscription_id)
+    )
+    if sub is None:
+        return "needs_attention"
+    if payment.purpose is PaymentPurpose.upgrade_proration:
+        applied = sub.plan_tier_id == payment.plan_tier_id
+    else:
+        applied = (sub.extra_seats or 0) >= (payment.seat_quantity or 0)
+    return "applied" if applied else "needs_attention"
+
+
 @router.get("/payments/{payment_id}", response_model=PaymentStatusDTO)
 def get_payment(
     payment_id: uuid.UUID,
@@ -300,6 +375,7 @@ def get_payment(
         )
         if payment is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown payment")
+        is_charge = payment.purpose in _CHARGE_PURPOSES
         return PaymentStatusDTO(
             paymentId=str(payment.id),
             status=payment.status.value,
@@ -308,6 +384,8 @@ def get_payment(
             currency=payment.currency,
             description=describe_payment(session, payment),
             paidAt=payment.paid_at,
+            creditedUnits=payment.grant_units if is_charge else None,
+            outcome=_charge_outcome(session, payment),
         )
 
 
@@ -603,3 +681,329 @@ def cancel_subscription(
             return _changed_subscription(session, subscription, viewer)
     except SubscriptionError as exc:
         raise _subscription_error(exc) from exc
+
+
+# -- merchant charges (Phase 06, spec §4.5-§4.6, §7) --------------------------------------------
+
+#: The HTTP status of each ``MerchantChargeError`` code with a status of its own. Every other code
+#: is a conflict with the plan or the seats as they are now (409), and a code nobody mapped is a
+#: 409 too: each refusal is raised before any write, so "nothing was charged" stays true
+#: (``tests/test_web_billing_charges.py`` pins the map).
+_CHARGE_STATUS: Final = {
+    "not_found": status.HTTP_404_NOT_FOUND,
+    "tier_not_found": status.HTTP_404_NOT_FOUND,
+    "pack_not_found": status.HTTP_404_NOT_FOUND,
+    "card_not_found": status.HTTP_404_NOT_FOUND,
+    "invalid_seats": status.HTTP_422_UNPROCESSABLE_CONTENT,
+    "invalid_settings": status.HTTP_422_UNPROCESSABLE_CONTENT,
+    "payments_unavailable": status.HTTP_503_SERVICE_UNAVAILABLE,
+    "unknown_payer": status.HTTP_403_FORBIDDEN,
+}
+
+#: The machine-readable facts a refusal carries to the client, by wire name.
+_CHARGE_EXTRA_KEYS: Final = {"in_use": "inUse", "capacity": "capacity", "extra_seats": "extraSeats"}
+
+
+def charge_error(exc: MerchantChargeError) -> HTTPException:
+    """The refusal as ``{"error": code, "message": text}`` plus the facts the page needs.
+
+    ``seats_exceed_new_tier`` adds ``inUse`` and ``capacity``; ``seats_not_sold`` adds
+    ``extraSeats`` (the teacher must reduce them first); ``upgrade_unavailable`` adds ``next``
+    when the fixed-amount fallback is the cause. A 503 and an unknown payer carry fixed copy.
+    """
+    code = exc.code
+    code_status = _CHARGE_STATUS.get(code, status.HTTP_409_CONFLICT)
+    detail: dict[str, object] = {"error": code, "message": str(exc)}
+    if code == "payments_unavailable":
+        detail["message"] = _UNAVAILABLE
+    elif code == "unknown_payer":
+        detail["message"] = "Billing is not available"
+    if isinstance(exc, SeatsExceedNewTier | SeatsNotSold):
+        for key, wire in _CHARGE_EXTRA_KEYS.items():
+            if key in exc.detail:
+                detail[wire] = exc.detail[key]
+    if "next" in exc.detail:
+        detail["next"] = exc.detail["next"]
+    return HTTPException(code_status, detail)
+
+
+def _quote_dto(quote: ChargeQuote) -> ChargeQuoteDTO:
+    return ChargeQuoteDTO(
+        amountMinor=quote.amount_minor,
+        currency=quote.currency,
+        allowanceUnits=quote.allowance_units,
+        periodEnd=quote.period_end,
+    )
+
+
+def _checkout_budget(limiter: SlidingWindowLimiter, user_id: str) -> None:
+    """Spend one of the payer's checkout attempts, or answer 429 with ``Retry-After``."""
+    if not limiter.allow(user_id):
+        retry = limiter.retry_after(user_id)
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            {"error": "rate_limited", "message": f"Too many checkout attempts; retry in {retry}s."},
+            headers={"Retry-After": str(retry)},
+        )
+
+
+def _start_charge_checkout(
+    deps: MerchantChargeDeps,
+    actor: uuid.UUID,
+    start: Callable[[MerchantChargeService], CheckoutResult],
+) -> CheckoutDTO:
+    """Run a payer-present checkout start and map its refusals; the 201 body is the checkout.
+
+    No ``session.begin()``: Phase 02's intention checkout commits inside the call. A refusal
+    raises before that commit, so closing the session rolls the attempt back. A
+    ``CheckoutUnavailable`` is a true "nothing was charged": no client secret reached the browser.
+    """
+    try:
+        with deps.sessionmaker() as session:
+            result = start(deps.service(session))
+            session.commit()
+    except MerchantChargeError as exc:
+        raise charge_error(exc) from exc
+    except PhoneRequired as exc:
+        raise checkout_phone_required() from exc
+    except CheckoutUnavailable as exc:
+        raise _payments_unavailable() from exc
+    return CheckoutDTO(paymentId=str(result.payment_id), checkoutUrl=result.checkout_url)
+
+
+@router.post(
+    "/subscriptions/{subscription_id}/upgrade/quote",
+    response_model=ChargeQuoteDTO,
+)
+def quote_upgrade(
+    subscription_id: uuid.UUID,
+    body: UpgradeRequest,
+    auth: Annotated[AuthContext, Depends(require_billing_party)],
+    deps: Annotated[MerchantChargeDeps, Depends(get_merchant_charge_deps)],
+    clock: Annotated[Callable[[], datetime], Depends(get_billing_clock)],
+) -> ChargeQuoteDTO:
+    """What an upgrade would charge now; the payer only, and it writes nothing."""
+    try:
+        with deps.sessionmaker() as session:
+            quote = deps.service(session).quote_upgrade(
+                subscription_id=subscription_id,
+                actor_user_id=uuid.UUID(auth.user_id),
+                plan_tier_id=body.planTierId,
+                now=clock(),
+            )
+    except MerchantChargeError as exc:
+        raise charge_error(exc) from exc
+    return _quote_dto(quote)
+
+
+@router.post(
+    "/subscriptions/{subscription_id}/upgrade",
+    response_model=CheckoutDTO,
+    status_code=status.HTTP_201_CREATED,
+)
+def start_upgrade(
+    subscription_id: uuid.UUID,
+    body: UpgradeRequest,
+    auth: Annotated[AuthContext, Depends(require_billing_party)],
+    deps: Annotated[MerchantChargeDeps, Depends(get_merchant_charge_deps)],
+    clock: Annotated[Callable[[], datetime], Depends(get_billing_clock)],
+    limiter: Annotated[SlidingWindowLimiter, Depends(get_checkout_limiter)],
+) -> CheckoutDTO:
+    """Open the 3DS checkout of a prorated plan upgrade; the tier changes on the callback."""
+    _checkout_budget(limiter, auth.user_id)
+    actor = uuid.UUID(auth.user_id)
+    return _start_charge_checkout(
+        deps,
+        actor,
+        lambda service: service.start_upgrade_checkout(
+            subscription_id=subscription_id,
+            actor_user_id=actor,
+            plan_tier_id=body.planTierId,
+            now=clock(),
+        ),
+    )
+
+
+@router.post("/subscriptions/{subscription_id}/seats/quote", response_model=ChargeQuoteDTO)
+def quote_extra_seats(
+    subscription_id: uuid.UUID,
+    body: ExtraSeatsRequest,
+    auth: Annotated[AuthContext, Depends(require_seat_payer)],
+    deps: Annotated[MerchantChargeDeps, Depends(get_merchant_charge_deps)],
+    clock: Annotated[Callable[[], datetime], Depends(get_billing_clock)],
+) -> ChargeQuoteDTO:
+    """What ``seats`` extra seats would charge now; the paying teacher only."""
+    try:
+        with deps.sessionmaker() as session:
+            quote = deps.service(session).quote_extra_seats(
+                subscription_id=subscription_id,
+                actor_user_id=uuid.UUID(auth.user_id),
+                seats=body.seats,
+                now=clock(),
+            )
+    except MerchantChargeError as exc:
+        raise charge_error(exc) from exc
+    return _quote_dto(quote)
+
+
+@router.post(
+    "/subscriptions/{subscription_id}/seats",
+    response_model=CheckoutDTO,
+    status_code=status.HTTP_201_CREATED,
+)
+def start_extra_seats(
+    subscription_id: uuid.UUID,
+    body: ExtraSeatsRequest,
+    auth: Annotated[AuthContext, Depends(require_seat_payer)],
+    deps: Annotated[MerchantChargeDeps, Depends(get_merchant_charge_deps)],
+    clock: Annotated[Callable[[], datetime], Depends(get_billing_clock)],
+    limiter: Annotated[SlidingWindowLimiter, Depends(get_checkout_limiter)],
+) -> CheckoutDTO:
+    """Open the 3DS checkout of an extra-seat purchase; the seats are added on the callback."""
+    _checkout_budget(limiter, auth.user_id)
+    actor = uuid.UUID(auth.user_id)
+    return _start_charge_checkout(
+        deps,
+        actor,
+        lambda service: service.start_extra_seats_checkout(
+            subscription_id=subscription_id,
+            actor_user_id=actor,
+            seats=body.seats,
+            now=clock(),
+        ),
+    )
+
+
+@router.put("/subscriptions/{subscription_id}/seats/pending", response_model=SeatsDTO)
+def schedule_seat_reduction(
+    subscription_id: uuid.UUID,
+    body: SeatReductionRequest,
+    auth: Annotated[AuthContext, Depends(require_seat_payer)],
+    deps: Annotated[MerchantChargeDeps, Depends(get_merchant_charge_deps)],
+    clock: Annotated[Callable[[], datetime], Depends(get_billing_clock)],
+) -> SeatsDTO:
+    """Set the extra-seat total wanted from the next renewal (current count cancels it)."""
+    try:
+        with deps.sessionmaker.begin() as session:
+            sub = deps.service(session).schedule_seat_reduction(
+                subscription_id=subscription_id,
+                actor_user_id=uuid.UUID(auth.user_id),
+                extra_seats=body.extraSeats,
+                now=clock(),
+            )
+            return SeatsDTO(
+                extraSeats=sub.extra_seats or 0, pendingExtraSeats=sub.pending_extra_seats
+            )
+    except MerchantChargeError as exc:
+        raise charge_error(exc) from exc
+
+
+def _auto_topup_beneficiary(
+    session: Session, auth: AuthContext, requested: uuid.UUID | None
+) -> uuid.UUID:
+    """Whose balance the caller manages: themselves, or a linked student for a parent."""
+    caller = uuid.UUID(auth.user_id)
+    target = _requested_beneficiary(auth, caller, requested)
+    if auth.role == Role.parent.value and not is_linked_student(session, caller, target):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            {
+                "error": "not_linked_parent",
+                "message": "You can only manage auto top-up for a linked child",
+            },
+        )
+    return target
+
+
+def _auto_topup_dto(view: AutoTopupView) -> AutoTopupDTO:
+    return AutoTopupDTO(
+        beneficiaryId=str(view.beneficiary_user_id),
+        enabled=view.enabled,
+        thresholdUnits=view.threshold_units,
+        creditPackId=None if view.credit_pack_id is None else str(view.credit_pack_id),
+        savedCardId=None if view.saved_card_id is None else str(view.saved_card_id),
+        monthlyCapMinor=view.monthly_cap_minor,
+        spentThisMonthMinor=view.spent_this_month_minor,
+        currency=view.currency,
+        disabledReason=view.disabled_reason,
+    )
+
+
+@router.get("/auto-topup", response_model=AutoTopupDTO)
+def read_auto_topup(
+    auth: Annotated[AuthContext, Depends(require_billing_party)],
+    deps: Annotated[MerchantChargeDeps, Depends(get_merchant_charge_deps)],
+    clock: Annotated[Callable[[], datetime], Depends(get_billing_clock)],
+    beneficiaryId: uuid.UUID | None = None,
+) -> AutoTopupDTO:
+    """The auto top-up of one balance; a balance never set up reads as disabled."""
+    try:
+        with deps.sessionmaker() as session:
+            target = _auto_topup_beneficiary(session, auth, beneficiaryId)
+            view = get_auto_topup(
+                session,
+                payer_user_id=uuid.UUID(auth.user_id),
+                beneficiary_user_id=target,
+                now=clock(),
+            )
+    except MerchantChargeError as exc:
+        raise charge_error(exc) from exc
+    return _auto_topup_dto(view)
+
+
+def _is_unique_violation(exc: IntegrityError) -> bool:
+    """True for PostgreSQL's ``unique_violation`` (SQLSTATE 23505), whatever the driver calls it."""
+    orig = exc.orig
+    return "23505" in (getattr(orig, "sqlstate", None), getattr(orig, "pgcode", None))
+
+
+def _save_auto_topup(
+    deps: MerchantChargeDeps, auth: AuthContext, body: AutoTopupRequest, now: datetime
+) -> AutoTopupDTO:
+    with deps.sessionmaker.begin() as session:
+        target = _auto_topup_beneficiary(session, auth, body.beneficiaryId)
+        view = put_auto_topup(
+            session,
+            payer_user_id=uuid.UUID(auth.user_id),
+            beneficiary_user_id=target,
+            enabled=body.enabled,
+            threshold_units=body.thresholdUnits,
+            credit_pack_id=body.creditPackId,
+            saved_card_id=body.savedCardId,
+            monthly_cap_minor=body.monthlyCapMinor,
+            now=now,
+        )
+        return _auto_topup_dto(view)
+
+
+@router.put("/auto-topup", response_model=AutoTopupDTO)
+def save_auto_topup(
+    body: AutoTopupRequest,
+    auth: Annotated[AuthContext, Depends(require_billing_party)],
+    deps: Annotated[MerchantChargeDeps, Depends(get_merchant_charge_deps)],
+    clock: Annotated[Callable[[], datetime], Depends(get_billing_clock)],
+) -> AutoTopupDTO:
+    """Create or update the auto top-up of one balance (the payer only, consent stamped on).
+
+    Two first saves at once hit the unique constraint on the balance. The loser is retried once,
+    as an update (or as ``managed_by_another_payer`` if the winner was someone else); a second
+    collision is a 409, never a 500.
+    """
+    try:
+        try:
+            return _save_auto_topup(deps, auth, body, clock())
+        except IntegrityError as exc:
+            if not _is_unique_violation(exc):
+                raise
+            return _save_auto_topup(deps, auth, body, clock())
+    except IntegrityError as exc:
+        if not _is_unique_violation(exc):
+            raise
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {"error": "settings_changing", "message": "These settings changed; try again"},
+        ) from exc
+    except MerchantChargeError as exc:
+        raise charge_error(exc) from exc
+    except PhoneRequired as exc:
+        raise checkout_phone_required() from exc
