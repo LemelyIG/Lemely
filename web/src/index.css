@@ -449,7 +449,7 @@
   --native-tab-icon: 24px;                  /* --pf-tab-ico, both platforms */
   --native-tab-pad-top-ios: 6px;            /* preview iOS tab link padding-block-start */
   --native-tab-gap-ios: 2px;
-  --native-tab-emphasis-size: 44px;         /* the raised Correct tab's circle (nav-shells h-11 w-11) */
+  --native-tab-emphasis-size: 56px;         /* the raised Scan tab's squircle (nav-shells h-14 w-14, mock TAB6 .scanc) */
   --native-tab-emphasis-raise: 8px;         /* how far it sits above the labels' line; paint only, the layout box stays pill-high */
   --native-tab-pill-w: 64px;                /* --pf-pill-w/h: M3 active indicator */
   --native-tab-pill-h: 32px;

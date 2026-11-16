@@ -320,7 +320,7 @@ SHELL_CHECKS.push(
     app: STUDENT_HOME,
     async run(page) {
       const { dialog } = await openNavFromMore(page)
-      if (await dialog.getByRole("link", { name: "Upload a paper" }).isVisible()) throw new Error("sheet: Upload should be hidden (bottom bar has it)")
+      if (await dialog.getByRole("link", { name: "Scan a paper" }).isVisible()) throw new Error("sheet: Scan should be hidden (bottom bar has it)")
       // visibility:hidden drops the link from the accessibility tree, so find it by its label attribute.
       const visibility = await dialog.locator('a[aria-label="Lemely, overview"]').evaluate((el) => getComputedStyle(el).visibility)
       if (visibility !== "hidden") throw new Error("sheet: wordmark should be visibility:hidden")
@@ -473,7 +473,7 @@ SHELL_CHECKS.push(
       const current = dialog.locator('nav[data-settings-tabs="rail"] a[aria-current="page"]')
       if ((await current.textContent()) !== "Appearance") throw new Error("fresh load: Appearance tab is not current")
       const active = await page.locator('nav[aria-label="Main"] a.bg-primary-container').allTextContents()
-      if (active.length !== 1 || active[0].trim() !== "Overview") throw new Error(`fresh load: sidebar active ${JSON.stringify(active)}, expected Overview`)
+      if (active.length !== 1 || active[0].trim() !== "Home") throw new Error(`fresh load: sidebar active ${JSON.stringify(active)}, expected Home`)
       await dialog.getByRole("button", { name: "Close settings" }).last().click()
       await assertHidden(dialog, "settings dialog")
       if (new URL(page.url()).pathname !== "/student") throw new Error(`fresh load closed to ${page.url()}`)

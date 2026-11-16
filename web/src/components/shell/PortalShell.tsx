@@ -35,6 +35,8 @@ export interface PortalShellProps {
   /** Route tabs for the phone bar; the shell appends "More", which opens the drawer. */
   bottomTabs: NavShellItem[]
   bottomEmphasisId?: string
+  /** Append the shell's "More" cell (default true). The student bar has the mock's five tabs and no More: its overflow lives in the top bar's navigation sheet. */
+  moreTab?: boolean
   /** Accessible name of the drawer dialog. */
   drawerTitle: string
   /** The portal's gate query is pending: the content slot shows RouteSkeleton. */
@@ -62,6 +64,7 @@ export function PortalShell({
   topBar,
   bottomTabs,
   bottomEmphasisId,
+  moreTab = true,
   drawerTitle,
   pending,
   overlay,
@@ -143,14 +146,18 @@ export function PortalShell({
       <BottomNav
         items={[
           ...bottomTabs,
-          {
-            id: "more",
-            label: "More",
-            icon: <List size={22} aria-hidden="true" />,
-            // Native phones get the titled sheet; tablet and desktop keep the drawer.
-            onClick: () => (native ? setMoreOpen(true) : setNavOpen(true)),
-            popup: { expanded: native ? moreOpen : navOpen },
-          },
+          ...(moreTab
+            ? [
+                {
+                  id: "more",
+                  label: "More",
+                  icon: <List size={22} aria-hidden="true" />,
+                  // Native phones get the titled sheet; tablet and desktop keep the drawer.
+                  onClick: () => (native ? setMoreOpen(true) : setNavOpen(true)),
+                  popup: { expanded: native ? moreOpen : navOpen },
+                } satisfies NavShellItem,
+              ]
+            : []),
         ]}
         emphasisId={bottomEmphasisId}
         // User decision (2026-11-13): re-tapping the active tab stays active wherever the tab bar shows, not gated to native.

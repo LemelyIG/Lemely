@@ -128,7 +128,7 @@ export function NavShellLink({ item, className, children, onActiveClick, navStat
 export interface BottomNavProps extends HTMLAttributes<HTMLElement> {
   items: NavShellItem[]
   /** The `item.id` to render as a raised accent-circle emphasis tab (the
-   * student portal's "Correct a paper" tab) rather than an ordinary flat
+   * student portal's Scan tab) rather than an ordinary flat
    * icon+label cell. */
   emphasisId?: string
   /** Native frame: a tap on the tab that is already active (scroll to top, pop to root). */
@@ -173,8 +173,10 @@ export function BottomNav({ items, emphasisId, onActiveTap, className, ...props 
                   data-emphasis={emphasis || undefined}
                   className={cn(
                     "lm-native-tab-icon relative flex items-center justify-center",
+                    // Mock TAB6 `.scanc.soft`: a raised soft-Tide squircle, label visually hidden.
+                    // The primary ring keeps its edge >= 3:1 in both themes (the Tide fill alone is ~2:1 on light, ~1.4:1 on dark).
                     emphasis &&
-                      "-mt-5 h-11 w-11 rounded-full bg-primary text-on-primary shadow-[var(--shadow-float)]",
+                      "-mt-5 h-14 w-14 rounded-tile bg-inverse-primary text-primary ring-1 ring-primary shadow-[0_10px_18px_-12px_color-mix(in_oklch,var(--md-shadow)_45%,transparent)]",
                   )}
                 >
                   {isActive && item.activeIcon ? (
@@ -191,7 +193,7 @@ export function BottomNav({ items, emphasisId, onActiveTap, className, ...props 
                     </span>
                   ) : null}
                 </span>
-                <span className={cn("lm-native-tab-label text-xs", isActive && "font-medium")}>{item.label}</span>
+                <span className={cn("lm-native-tab-label text-xs", isActive && "font-medium", emphasis && "sr-only")}>{item.label}</span>
               </>
             )}
           </NavShellLink>
