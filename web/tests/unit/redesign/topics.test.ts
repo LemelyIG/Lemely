@@ -5,6 +5,7 @@ import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
 import { MASTERY, TopicChip, TopicChips, topicState } from "@/components/redesign"
+import { visibleTopics } from "@/components/redesign/topics"
 
 const TOPICS = [
   { topic: "Vectors", state: "work" as const, pct: 41 },
@@ -63,5 +64,24 @@ describe("topic chip css", () => {
   })
   it("never sets a state colour with an inverse token", () => {
     expect(css.match(/\.rd-chip[^{]*\{[^}]*--md-inverse/)).toBeNull()
+  })
+})
+
+describe("visibleTopics", () => {
+  it("hides secure topics while folded", () => {
+    expect(visibleTopics(TOPICS, true, false).map((t) => t.topic)).toEqual(["Vectors", "Algebra"])
+  })
+  it("shows every topic once opened, order kept", () => {
+    expect(visibleTopics(TOPICS, true, true).map((t) => t.topic)).toEqual(["Vectors", "Algebra", "Number", "Probability"])
+  })
+  it("shows every topic when folding is off", () => {
+    expect(visibleTopics(TOPICS, false, false)).toHaveLength(4)
+  })
+  it("has nothing to fold when no topic is secure", () => {
+    expect(visibleTopics(TOPICS.slice(0, 2), true, false)).toHaveLength(2)
+  })
+  it("folds to an empty list when every topic is secure", () => {
+    expect(visibleTopics(TOPICS.slice(2), true, false)).toEqual([])
+    expect(visibleTopics(TOPICS.slice(2), true, true)).toHaveLength(2)
   })
 })

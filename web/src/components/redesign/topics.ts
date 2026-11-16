@@ -19,3 +19,15 @@ export function topicState(pct: number): TopicState {
   if (fraction >= MASTERY.getting) return "getting"
   return "work"
 }
+
+export interface TopicEntry {
+  topic: string
+  state: TopicState
+  pct?: number
+}
+
+/** Topics to show: when folding is on and not yet opened, secure ones are hidden (the "N secure" chip stands in). */
+export function visibleTopics<T extends { state: TopicState }>(topics: readonly T[], foldSecure: boolean, open: boolean): T[] {
+  const folded = foldSecure && !open && topics.some((t) => t.state === "secure")
+  return folded ? topics.filter((t) => t.state !== "secure") : [...topics]
+}
