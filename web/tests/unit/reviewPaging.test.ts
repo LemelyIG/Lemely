@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { mergeReviewPages } from "@/portals/teacher/screens/Review"
+import { mergeReviewPages } from "@/portals/teacher/screens/review/reviewLabels"
 import type { ReviewQueueItem } from "@/lib/teacherTypes"
 
 /*

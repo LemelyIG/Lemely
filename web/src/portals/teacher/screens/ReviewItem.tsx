@@ -36,7 +36,7 @@ import {
   isIntegrityReason,
   paperIdentityLabel,
   reasonLabel,
-} from "./Review"
+} from "./review/reviewLabels"
 import { BackArrow, ForwardArrow } from "@/components/ui/inline-arrow"
 import { PageHeading } from "@/components/ui/page-heading"
 

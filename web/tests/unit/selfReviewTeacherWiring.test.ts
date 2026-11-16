@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { isIntegrityReason, reasonLabel, REASON_LABEL } from "@/portals/teacher/screens/Review"
+import { isIntegrityReason, reasonLabel, REASON_LABEL } from "@/portals/teacher/screens/review/reviewLabels"
 import { stripComments } from "./support/jsxSource"
 
 /*
@@ -42,7 +42,7 @@ describe("Review.tsx — student_evidence_unjudged is labelled and filterable", 
     // pass from REASON_LABEL above; this must appear specifically inside
     // the filter options array, which is what actually lets a teacher
     // select the reason in the UI.
-    const source = readSource("src/portals/teacher/screens/Review.tsx")
+    const source = readSource("src/portals/teacher/screens/review/reviewLabels.ts")
     const optionsStart = source.indexOf("const REASON_FILTER_OPTIONS")
     expect(optionsStart).toBeGreaterThan(-1)
     const arrayStart = source.indexOf("= [", optionsStart)
