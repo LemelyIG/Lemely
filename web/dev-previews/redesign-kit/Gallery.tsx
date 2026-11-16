@@ -43,6 +43,10 @@ function initialTheme(): Theme {
   return fromUrl === "dark" ? "dark" : "light"
 }
 
+function Caption({ children }: { children: ReactNode }) {
+  return <p className="m-0 text-xs text-on-surface-variant">{children}</p>
+}
+
 function Frame({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (
     <section id={id} className="grid scroll-mt-16 grid-cols-[minmax(0,1fr)] gap-3 border-b border-outline-variant py-8">
@@ -56,7 +60,7 @@ function Frame({ id, title, children }: { id: string; title: string; children: R
 }
 
 function Toolbar({ theme, setTheme, frozen, setFrozen }: { theme: Theme; setTheme: (t: Theme) => void; frozen: boolean; setFrozen: (f: boolean) => void }) {
-  const btn = "min-h-11 rounded-full border border-outline px-4 text-sm text-on-surface aria-pressed:bg-primary aria-pressed:text-on-primary"
+  const btn = "min-h-11 rounded-full border border-outline px-4 text-sm text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary aria-pressed:bg-primary aria-pressed:text-on-primary"
   return (
     <div role="toolbar" aria-label="Gallery controls" className="sticky top-0 z-50 flex flex-wrap items-center gap-2 border-b border-outline-variant bg-surface px-4 py-2 sm:px-6">
       <span className="me-auto text-sm font-medium text-on-surface">Redesign kit</span>
@@ -121,6 +125,13 @@ export function Gallery() {
         </Frame>
         <Frame id="F_P" title="StepsPath full">
           <StepsPath papers={P4} goal="A*" goalPct={85} goalCaption="68/80 · A* line" goalNote="7 to go" onSelect={() => {}} />
+          <Caption>marks only, no caption: the Mono line is built from got/max</Caption>
+          <StepsPath
+            papers={P4.map((p, i) => ({ id: p.id, label: p.label, grade: p.grade, pct: p.pct, marks: { got: [45, 48, 50, 61][i], max: 80 } }))}
+            goal="A*"
+            goalPct={85}
+            goalNote="7 to go"
+          />
         </Frame>
         <Frame id="S_P" title="StepsPath sparse">
           <StepsPath papers={P4.slice(3)} goal="A*" goalPct={85} goalCaption="68/80 · A* line" goalNote="7 to go" ghosts={3} />
@@ -130,6 +141,7 @@ export function Gallery() {
         </Frame>
         <Frame id="rows" title="H2Row, HairRows (plain, linked, selected)">
           <H2Row title="More marks to win" link={{ label: "All topics", to: "/" }} />
+          <H2Row title="Your path to A*" titleTo="/" />
           <H2Row title="Papers" right={<CountdownPill examDate="2027-05-14" now={NOW} subject={null} />} />
           <HairRows aria-label="Marks to win">
             <HairRow title="Algebra" sub="Practise · 10 min" trailing={<b>+7</b>} to="/" />
@@ -183,6 +195,7 @@ export function Gallery() {
         <Frame id="game" title="ComboChip, LevelBar, CountdownPill">
           <div className="flex flex-wrap items-center gap-3">
             <ComboChip count={1} />
+            <Caption>count 1 renders nothing: the chip appears from 2</Caption>
             <ComboChip count={2} />
             <ComboChip count={3} />
             <ComboChip count={27} />
@@ -195,6 +208,8 @@ export function Gallery() {
           <LevelBar level={7} xp={240} nextXp={500} />
           <LevelBar level={1} xp={0} nextXp={100} />
           <LevelBar level={30} xp={9800} nextXp={9800} />
+          <Caption>top level (no next level): a full bar, valuenow equals valuemax</Caption>
+          <LevelBar level={30} xp={12000} nextXp={0} />
         </Frame>
         <Frame id="FM" title="Switch on, off, disabled (pa.js .sw)">
           <Switch label="Weekly Maths email" defaultChecked layout="row" />

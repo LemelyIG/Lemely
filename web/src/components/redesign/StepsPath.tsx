@@ -29,6 +29,18 @@ export interface StepsPathProps {
   "aria-label"?: string
 }
 
+/** "68/80 · A* line" renders as the mock does: the marks in bold Mono, the line name under them. */
+function GoalCaption({ text }: { text: string }) {
+  const at = text.indexOf(" · ")
+  if (at < 0) return <span data-goal="">{text}</span>
+  return (
+    <span data-goal="">
+      <b>{text.slice(0, at)}</b>
+      {text.slice(at + 3)}
+    </span>
+  )
+}
+
 const css = (vars: Record<string, string | number>) => vars as CSSProperties
 
 /** The Steps grade path: one solid bar per paper, a solid goal block, letters on one baseline. */
@@ -83,7 +95,7 @@ export function StepsPath({ papers, goal, onSelect, goalPct = 100, goalCaption, 
             {papers.length ? "next" : ""}
           </span>
         ))}
-        {goal ? <span data-goal="">{goalCaption ?? `${goal} line`}</span> : null}
+        {goal ? <GoalCaption text={goalCaption ?? `${goal} line`} /> : null}
       </div>
     </div>
   )

@@ -38,9 +38,14 @@ describe("StepsPath", () => {
     expect(out.match(/class="rd-step"/g)).toHaveLength(4)
     expect(out.match(/data-current=""/g)).toHaveLength(2) // the bar and its label
     expect(out).toMatch(/data-goal=""[^>]*><b>A\*<\/b><span>7 to go<\/span>/)
-    expect(out).toContain('<span data-goal="">68/80 · A* line</span>')
+    expect(out).toContain('<span data-goal=""><b>68/80</b>A* line</span>')
     expect(out).toContain("<b>48/80</b>Jan") // marks become the Mono line when there is no caption
     expect(out).toMatch(/--n:4/)
+  })
+  it("a goal caption with a middle dot puts the marks in bold Mono over the line name (mock <b>68/80</b>A* line)", () => {
+    const out = html({ papers: PAPERS, goal: "A*", goalCaption: "68/80 · A* line" })
+    expect(out).toContain('<span data-goal=""><b>68/80</b>A* line</span>')
+    expect(html({ papers: PAPERS, goal: "A*", goalCaption: "Almost there" })).toContain('<span data-goal="">Almost there</span>')
   })
   it("the goal caption defaults to the grade's line", () => {
     expect(html({ papers: PAPERS, goal: "A" })).toContain('<span data-goal="">A line</span>')

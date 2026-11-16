@@ -48,10 +48,19 @@ describe("LevelBar", () => {
     expect(over).toContain('style="width:100%"')
     expect(over).toContain('aria-valuenow="500"')
     const top = renderToStaticMarkup(createElement(LevelBar, { level: 30, xp: 12000, nextXp: 0 }))
-    expect(top).toContain('style="width:0%"')
+    // The top level draws a full bar, so the picture agrees with valuenow === valuemax.
+    expect(top).toContain('style="width:100%"')
+    expect(top).toContain('aria-valuenow="12000"')
+    expect(top).toContain('aria-valuemax="12000"')
     expect(top).toContain("<small>12000 XP</small>")
     expect(top).not.toContain("aria-valuemax=\"0\"")
     expect(renderToStaticMarkup(createElement(LevelBar, { level: 1, xp: -20, nextXp: 100 }))).toContain('aria-valuenow="0"')
+    // Nothing earned and no next level: an empty bar, still consistent with aria.
+    expect(renderToStaticMarkup(createElement(LevelBar, { level: 1, xp: 0, nextXp: 0 }))).toContain('style="width:0%"')
+    // A NaN level reads as level 1, and fractional xp is rounded.
+    const nan = renderToStaticMarkup(createElement(LevelBar, { level: Number.NaN, xp: 240.6, nextXp: 500 }))
+    expect(nan).toContain("<b>Level 1</b>")
+    expect(nan).toContain("241 / 500 XP")
   })
 })
 

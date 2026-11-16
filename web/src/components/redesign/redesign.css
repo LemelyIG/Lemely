@@ -187,7 +187,9 @@ button.rd-step { cursor: pointer; }
 .rd-dot { display: inline-block; flex: none; border-radius: 50%; margin-inline-end: 6px; vertical-align: 1px; }
 .rd-h2row-right { flex: none; }
 .rd-h2row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.rd-h2 { margin: 0; font: 800 18px/1.25 var(--font-sans); letter-spacing: -0.01em; color: var(--md-on-surface); }
+.rd-h2 { margin: 0; font: 800 18px/1.25 var(--font-sans); color: var(--md-on-surface); }
+/* Schibsted at 700/800 sets a ~0.2em space that reads as "towin" next to a heavy w; the mock's static font reads wider. Heavy sans text gets a little word spacing, and no negative tracking. */
+.rd-h2, .rd-at > b, .rd-tile-title, .rd-bubble { word-spacing: 0.1em; }
 .rd-h2link { display: inline-flex; align-items: center; gap: 8px; color: inherit; text-decoration: none; min-height: 44px; }
 .rd-lnk {
   display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0;
@@ -222,16 +224,16 @@ a.rd-hairrow:hover .rd-at > b, button.rd-hairrow:hover .rd-at > b, button.rd-ran
 .rd-at > b { font: 700 15px/1.3 var(--font-sans); overflow-wrap: anywhere; }
 .rd-at > span { font: 400 13px/1.35 var(--font-sans); color: var(--md-on-surface-variant); }
 .rd-chev { flex: none; color: var(--md-on-surface-variant); }
-.rd-rank { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto 64px; align-items: center; gap: 10px; min-height: 60px; padding: 10px 0; }
+.rd-rank { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto 60px; align-items: center; gap: 8px; min-height: 60px; padding: 10px 0; }
 /* Selected must follow and outrank the base padding and the (0,2,1) hover fill. */
 .rd-hairrow.rd-selected, .rd-rank.rd-selected,
 a.rd-hairrow.rd-selected:hover, button.rd-hairrow.rd-selected:hover, button.rd-rank.rd-selected:hover { background: var(--md-primary-container); border-radius: 14px; padding-inline: 8px; }
-.rd-rank-bar { grid-template-columns: 24px minmax(0, 1fr) 96px 64px; }
+.rd-rank-bar { grid-template-columns: 20px minmax(0, 1fr) 84px 60px; }
 .rd-rank-n { font: 700 14px var(--font-mono); color: var(--md-on-surface-variant); text-align: center; }
 .rd-rank-m { position: relative; display: grid; justify-items: end; }
 .rd-rank-m b { font: 800 17px/1 var(--font-mono); color: var(--md-on-error-container); }
 .rd-rank-m small { margin-top: 2px; font: 600 12px var(--font-sans); color: var(--md-on-surface-variant); }
-.rd-rank-bar .rd-rank-m { min-width: 56px; }
+.rd-rank-bar .rd-rank-m { min-width: 52px; }
 .rd-rank-bar .rd-rank-m::before {
   content: ""; position: absolute; inset-inline-end: 0; bottom: -8px; height: 4px; width: var(--w, 0%);
   border-radius: 2px; background: color-mix(in oklch, var(--md-on-error-container) 75%, var(--md-surface));
@@ -262,7 +264,7 @@ a.rd-hairrow.rd-selected:hover, button.rd-hairrow.rd-selected:hover, button.rd-r
 .rd-chip.rd-chip-more { background: transparent; box-shadow: inset 0 0 0 1.5px var(--rd-chip-edge); }
 button.rd-chip { cursor: pointer; }
 button.rd-chip:active { transform: scale(0.97); }
-.rd-chips li:focus-visible { outline: 2.5px solid var(--md-primary); outline-offset: 2px; border-radius: 999px; }
+.rd-chips li:focus-visible { outline: 2.5px solid var(--md-primary); outline-offset: 2px; border-radius: 14px; }
 .rd-chip:focus-visible { outline: 2.5px solid var(--md-primary); outline-offset: 2px; }
 .rd-chip-legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 8px 0 0; font: 500 12px var(--font-sans); color: var(--md-on-surface-variant); }
 .rd-chip-legend span { display: inline-flex; align-items: center; gap: 6px; }
@@ -282,6 +284,7 @@ button.rd-chip:active { transform: scale(0.97); }
 .rd-tile[data-tone="mint"] { --rd-tile-bg: var(--md-success-container); --rd-tile-ink: var(--md-success-text); }
 .rd-tile[data-tone="coral"] { --rd-tile-bg: var(--md-error-container); --rd-tile-ink: var(--md-on-error-container); }
 .rd-tile[data-tone="gold"] { --rd-tile-bg: color-mix(in oklch, var(--md-tertiary-container) 45%, var(--md-surface-container-lowest)); --rd-tile-ink: var(--md-on-tertiary-container); }
+:root[data-theme="dark"] .rd-tile[data-tone="sea"] { --rd-tile-bg: color-mix(in oklch, var(--md-secondary) 22%, var(--md-surface-container-high)); --rd-tile-ink: var(--md-on-surface); }
 :root[data-theme="dark"] .rd-tile[data-tone="gold"] { --rd-tile-bg: color-mix(in oklch, var(--md-tertiary) 22%, var(--md-surface-container-high)); --rd-tile-ink: var(--md-on-surface); }
 /* Plan decision 6: Flashcards' violet (hue 300) has no Abyss token and tokens are frozen, so this is the one
    literal colour in the kit, scoped to this tone, one light and one dark value. */
@@ -300,6 +303,7 @@ button.rd-chip:active { transform: scale(0.97); }
 a.rd-tile, button.rd-tile { cursor: pointer; }
 a.rd-tile:hover, button.rd-tile:hover { filter: brightness(0.98); }
 a.rd-tile:active, button.rd-tile:active { transform: scale(0.97); }
+@media (prefers-reduced-motion: reduce) { .rd-tile { transition: none; } }
 .rd-tile:focus-visible { outline: 2.5px solid var(--md-primary); outline-offset: 2px; }
 .rd-tile[aria-disabled="true"] { opacity: 0.5; filter: saturate(0.6); cursor: not-allowed; }
 /* ── Walkthrough and ghost rows (t.css .walk2/.wn2, .sk2c) ────────────── */
