@@ -13,6 +13,7 @@ import type {
   AdminPlanTier,
   AdminRefund,
   AdminRefundRequest,
+  AdminVoidRequest,
   Audience,
   EstimatorCreate,
   EstimatorInputKind,
@@ -524,6 +525,12 @@ export function isForbidden(error: unknown): boolean {
 
 const REVERSE_NEEDS_FULL = "To stop it renewing, refund the full amount."
 
+/** The server's reason is the useful part ("The seats were bought in an earlier period."). */
+function reverseUnavailable(reason: string | null): string {
+  const why = reason ? ` ${/[.!?]$/.test(reason) ? reason : `${reason}.`}` : ""
+  return `The change can't be reversed.${why} Untick the box to return the money only.`
+}
+
 export const FRIENDLY: Record<string, string> = {
   stale_write: "Someone changed this while you were editing. The page now shows the current values. Close this and edit again.",
   credit_rate_exists: "A rate was set for this currency while you were editing. The page now shows it. Close this and edit again.",
@@ -543,7 +550,6 @@ export const FRIENDLY: Record<string, string> = {
   not_voidable: "This payment can't be voided any more. Refund it instead.",
   not_refundable: "Only a paid payment can be refunded.",
   reverse_needs_full_refund: REVERSE_NEEDS_FULL,
-  reverse_unavailable: "This purchase can't be stopped from renewing now. Untick the box to refund the money only.",
 }
 
 function serverMessage(err: unknown): string | null {
@@ -605,6 +611,7 @@ export function adminBillingFailureMessage(
   }
   if (status === 409 || status === 422) {
     const code = billingErrorCode(err)
+    if (code === "reverse_unavailable") return reverseUnavailable(serverMessage(err))
     if (code && FRIENDLY[code]) return FRIENDLY[code]
     return serverMessage(err) ?? "The server refused these values. Check each field and try again. Nothing was saved."
   }
@@ -672,17 +679,93 @@ export function refundBody(v: FormValues, reason: string): AdminRefundRequest {
   return v.reverseChange === true ? { amountMinor, reverseChange: true, reason } : { amountMinor, reason }
 }
 
+type ReversePayment = Pick<AdminPaymentRow, "purpose" | "convertedToCredits" | "creditedUnits">
+
 /**
- * Only an extra-seat or upgrade payment has a change to stop: a full refund of any other
- * purchase already ends or claws back everything, so the box would promise nothing.
+ * What the reverse box would do for this payment, or null when it would do nothing.
+ *  - `credits`: the payment became credits, which a money-only refund or void leaves in place.
+ *  - `renewal`: an applied seat or upgrade purchase, which keeps renewing on a money-only refund.
+ * Every other kind needs no box: a full refund already ends the plan or claws the credits back.
  */
-export function canReverse(p: Pick<AdminPaymentRow, "purpose">): boolean {
-  return p.purpose === "extra_seats" || p.purpose === "upgrade_proration"
+export function reverseKind(p: Pick<AdminPaymentRow, "purpose" | "convertedToCredits">): "credits" | "renewal" | null {
+  if (p.convertedToCredits) return "credits"
+  return p.purpose === "extra_seats" || p.purpose === "upgrade_proration" ? "renewal" : null
+}
+
+export function canReverse(p: Pick<AdminPaymentRow, "purpose" | "convertedToCredits">): boolean {
+  return reverseKind(p) !== null
+}
+
+function reverseField(p: ReversePayment, verb: "Refund" | "Void"): FieldSpec[] {
+  const kind = reverseKind(p)
+  if (kind === null) return []
+  const n = p.creditedUnits
+  const label =
+    kind === "credits"
+      ? `${verb} and take back ${n === null ? "its credits" : `the ${grouped(n)} ${n === 1 ? "credit" : "credits"}`}`
+      : `${verb} and stop it renewing`
+  return [{ name: "reverseChange", label, kind: "checkbox" }]
 }
 
 /** The refund form's fields; the reverse box appears only where it does something. */
-export function refundFieldsFor(p: Pick<AdminPaymentRow, "purpose">): FieldSpec[] {
-  return canReverse(p) ? [...REFUND_FIELDS, { name: "reverseChange", label: "Refund and stop it renewing", kind: "checkbox" }] : REFUND_FIELDS
+export function refundFieldsFor(p: ReversePayment): FieldSpec[] {
+  return [...REFUND_FIELDS, ...reverseField(p, "Refund")]
+}
+
+/** The void form's fields: the same box, with the same rules. */
+export function voidFieldsFor(p: ReversePayment): FieldSpec[] {
+  return reverseField(p, "Void")
+}
+
+export function voidBody(v: FormValues, reason: string): AdminVoidRequest {
+  return v.reverseChange === true ? { reverseChange: true, reason } : { reason }
+}
+
+/** The dialog note's first sentence: what a full refund (or void) does for this kind of payment. */
+function effectSentence(p: ReversePayment, what: "refund" | "void"): string {
+  const kind = reverseKind(p)
+  const money = what === "void" ? "A void" : "A refund"
+  if (kind === "credits") return `${money} returns the money only. Tick the box to take back the credits it became.`
+  if (kind === "renewal") {
+    const more = p.purpose === "upgrade_proration" ? " and take back its unspent allowance" : ""
+    return `${money} returns the money only. Tick the box to also stop it renewing${more}.`
+  }
+  if (p.purpose === "subscription_first" || p.purpose === "subscription_renewal") {
+    return `A full ${what} of the current period ends the plan and takes back its unspent allowance.`
+  }
+  return what === "void" ? "A void takes back unspent credits." : "A full refund takes back unspent credits. A partial refund leaves them in place."
+}
+
+export function refundNote(p: ReversePayment): string {
+  return `${effectSentence(p, "refund")} If Paymob does not answer, the outcome shows as unknown and a second refund is blocked until you check.`
+}
+
+export function voidNote(p: ReversePayment): string {
+  return `Paymob voids only same-day transactions. Use refund otherwise. ${effectSentence(p, "void")}`
+}
+
+/** One refund's reverse outcome in short, status-led words; null when there is nothing to report. */
+export function reverseOutcome(r: Pick<AdminRefund, "reverse">): { label: string; detail: string | null; tone: "neutral" | "error" } | null {
+  const effect = r.reverse?.effect
+  if (!effect) return null
+  switch (effect) {
+    case "same_as_full_refund":
+      return { label: "Nothing more to reverse", detail: null, tone: "neutral" }
+    case "credits_clawed_back":
+      return { label: "Credits taken back", detail: null, tone: "neutral" }
+    case "seat_reduction_scheduled":
+      return { label: "Seat reduction scheduled", detail: null, tone: "neutral" }
+    case "already_scheduled":
+      return { label: "Change already scheduled", detail: null, tone: "neutral" }
+    case "plan_ends_at_period_end":
+      return { label: "Renewal stopped", detail: "The plan ends at the end of the period.", tone: "neutral" }
+    case "downgrade_scheduled":
+      return { label: "Downgrade scheduled", detail: "It starts at the next renewal.", tone: "neutral" }
+    case "not_applied_partial":
+      return { label: "Change not reversed", detail: "Only part of the payment was refunded.", tone: "error" }
+    case "failed":
+      return { label: "Money returned, change not reversed", detail: r.reverse.reason, tone: "error" }
+  }
 }
 
 /** What a payment still has to give back: its amount less the refunds Paymob confirmed. */

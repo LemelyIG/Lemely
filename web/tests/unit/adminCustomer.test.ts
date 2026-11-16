@@ -33,7 +33,7 @@ beforeEach(() => {
 
 const detail = () => renderAt(h(CustomerDetail), "/platform/billing/customers/:userId", "/platform/billing/customers/u2")
 const refund = (over: Partial<AdminRefund>): AdminRefund => ({
-  id: "r1", kind: "refund", status: "unknown", amountMinor: 25000, reason: "duplicate", adminUserId: "a1", clawedBackUnits: 0, createdAt: "2026-11-05T10:00:00Z", updatedAt: "2026-11-05T10:00:00Z", ...over,
+  id: "r1", kind: "refund", status: "unknown", amountMinor: 25000, reason: "duplicate", adminUserId: "a1", clawedBackUnits: 0, reverse: { requested: false, effect: null, reason: null }, createdAt: "2026-11-05T10:00:00Z", updatedAt: "2026-11-05T10:00:00Z", ...over,
 })
 const withRefunds = (refunds: AdminRefund[], over: object = {}) => {
   s.customer = okQuery({ ...fx.customer, payments: [{ ...fx.adminPayment, refunds, ...over }] })

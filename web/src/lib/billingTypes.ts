@@ -872,6 +872,24 @@ export interface CustomerSearchResult {
   hits: CustomerHit[]
 }
 
+/** What a refund's `reverseChange` did, once the refund succeeded (`null` = nothing to report). */
+export type ReverseEffect =
+  | "same_as_full_refund"
+  | "credits_clawed_back"
+  | "seat_reduction_scheduled"
+  | "already_scheduled"
+  | "plan_ends_at_period_end"
+  | "downgrade_scheduled"
+  | "not_applied_partial"
+  | "failed"
+
+/** 07 `RefundDTO.reverse`. `reason` is set only with `failed`. */
+export interface AdminRefundReverse {
+  requested: boolean
+  effect: ReverseEffect | null
+  reason: string | null
+}
+
 export interface AdminRefund {
   id: string
   kind: "refund" | "void"
@@ -880,6 +898,7 @@ export interface AdminRefund {
   reason: string
   adminUserId: string
   clawedBackUnits: number
+  reverse: AdminRefundReverse
   createdAt: string
   updatedAt: string
 }
@@ -893,6 +912,9 @@ export interface AdminPaymentRow {
   amountMinor: number
   currency: string
   refundedMinor: number
+  /** The purchase became credits instead of applying (a superseded or unsellable checkout). */
+  convertedToCredits: boolean
+  creditedUnits: number | null
   paymobOrderId: string | null
   paymobTxnId: string | null
   planTierId: string | null
@@ -1050,6 +1072,11 @@ export interface AdminCancelRequest extends Reasoned {
 export interface AdminRefundRequest extends Reasoned {
   amountMinor: number | null
   /** Also stops what the purchase set up from renewing (UD-4). Sent only when ticked. */
+  reverseChange?: boolean
+}
+
+/** 07 `AdminVoidRequestDTO`: a void is always the whole payment. */
+export interface AdminVoidRequest extends Reasoned {
   reverseChange?: boolean
 }
 

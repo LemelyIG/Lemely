@@ -9,6 +9,11 @@ import {
   REFUND_FIELDS,
   canReverse,
   refundFieldsFor,
+  refundNote,
+  reverseOutcome,
+  voidBody,
+  voidFieldsFor,
+  voidNote,
   activatableTiers,
   activationBody,
   activationFields,
@@ -352,7 +357,7 @@ describe("customer action bodies", () => {
 })
 
 describe("refunds that may not have happened", () => {
-  const base = { id: "r1", kind: "refund" as const, amountMinor: 15000, reason: "dup", adminUserId: "a", clawedBackUnits: 0, createdAt: "", updatedAt: "" }
+  const base = { id: "r1", kind: "refund" as const, amountMinor: 15000, reason: "dup", adminUserId: "a", clawedBackUnits: 0, reverse: { requested: false, effect: null, reason: null }, createdAt: "", updatedAt: "" }
 
   it("calls an unknown outcome unknown, never a failure, and a refusal a refusal", () => {
     const unknown = refundOutcome({ ...base, status: "unknown" }, "EGP")
@@ -402,19 +407,63 @@ describe("refund: reverse the change", () => {
     expect("reverseChange" in refundBody({ amountMajor: "5" }, "dup")).toBe(false)
   })
 
-  it("offers the option only for purchases a reverse can undo", () => {
-    expect(canReverse({ purpose: "extra_seats" })).toBe(true)
-    expect(canReverse({ purpose: "upgrade_proration" })).toBe(true)
-    for (const purpose of ["credit_pack", "auto_topup", "subscription_first", "subscription_renewal"] as const) expect(canReverse({ purpose })).toBe(false)
-    expect(refundFieldsFor({ purpose: "extra_seats" }).map((f) => f.name)).toEqual(["amountMajor", "reverseChange"])
-    expect(refundFieldsFor({ purpose: "credit_pack" })).toEqual(REFUND_FIELDS)
+  const pay = (purpose: string, over: Record<string, unknown> = {}) => ({ purpose, convertedToCredits: false, creditedUnits: null, ...over }) as never
+
+  it("offers the box for applied seats and upgrades, and for any payment that became credits", () => {
+    expect(canReverse(pay("extra_seats"))).toBe(true)
+    expect(canReverse(pay("upgrade_proration"))).toBe(true)
+    // I1: a converted first payment keeps its credits on a money-only refund, so it needs the box.
+    expect(canReverse(pay("subscription_first", { convertedToCredits: true, creditedUnits: 400 }))).toBe(true)
+    for (const purpose of ["credit_pack", "auto_topup", "subscription_first", "subscription_renewal"]) expect(canReverse(pay(purpose))).toBe(false)
+    expect(refundFieldsFor(pay("extra_seats")).map((f) => f.name)).toEqual(["amountMajor", "reverseChange"])
+    expect(refundFieldsFor(pay("credit_pack"))).toEqual(REFUND_FIELDS)
+    expect(voidFieldsFor(pay("extra_seats")).map((f) => f.name)).toEqual(["reverseChange"])
+    expect(voidFieldsFor(pay("credit_pack"))).toEqual([])
   })
 
-  it("labels it as stopping renewal, never as undoing the purchase", () => {
-    const box = refundFieldsFor({ purpose: "extra_seats" }).find((f) => f.name === "reverseChange")
-    expect(box?.kind).toBe("checkbox")
-    expect(box?.label).toMatch(/stop it renewing/)
-    expect(box?.label).not.toMatch(/undo/i)
+  it("words the box by what it does: stop renewal for applied, take back credits for converted", () => {
+    const label = (f: ReturnType<typeof refundFieldsFor>) => f.find((x) => x.name === "reverseChange")?.label
+    expect(label(refundFieldsFor(pay("extra_seats")))).toBe("Refund and stop it renewing")
+    expect(label(refundFieldsFor(pay("upgrade_proration")))).toBe("Refund and stop it renewing")
+    expect(label(refundFieldsFor(pay("subscription_first", { convertedToCredits: true, creditedUnits: 1200 })))).toBe("Refund and take back the 1,200 credits")
+    expect(label(refundFieldsFor(pay("extra_seats", { convertedToCredits: true, creditedUnits: 1 })))).toBe("Refund and take back the 1 credit")
+    expect(label(voidFieldsFor(pay("extra_seats")))).toBe("Void and stop it renewing")
+    expect(label(voidFieldsFor(pay("upgrade_proration", { convertedToCredits: true, creditedUnits: 9 })))).toBe("Void and take back the 9 credits")
+    for (const f of [...refundFieldsFor(pay("extra_seats")), ...voidFieldsFor(pay("extra_seats"))]) expect(f.kind === "checkbox" ? f.label : "").not.toMatch(/undo/i)
+  })
+
+  it("builds the void body with reverseChange only when ticked", () => {
+    expect(voidBody({ reverseChange: true }, "dup")).toEqual({ reverseChange: true, reason: "dup" })
+    expect(voidBody({ reverseChange: false }, "dup")).toEqual({ reason: "dup" })
+    expect(voidBody({}, "dup")).toEqual({ reason: "dup" })
+  })
+
+  it("only promises a claw-back where one happens", () => {
+    const claw = /takes? back (this payment's )?(unspent )?credits/i
+    expect(refundNote(pay("credit_pack"))).toMatch(/takes back unspent credits/)
+    expect(refundNote(pay("subscription_renewal"))).toMatch(/ends the plan/)
+    // Seats have no credits; an upgrade or converted payment keeps them without the box.
+    expect(refundNote(pay("extra_seats"))).not.toMatch(claw)
+    expect(refundNote(pay("extra_seats"))).toMatch(/money only/)
+    expect(refundNote(pay("upgrade_proration"))).toMatch(/money only.*unspent allowance/)
+    expect(refundNote(pay("subscription_first", { convertedToCredits: true, creditedUnits: 5 }))).toMatch(/money only.*credits it became/)
+    expect(voidNote(pay("extra_seats"))).toMatch(/money only/)
+    expect(voidNote(pay("extra_seats"))).not.toMatch(claw)
+    expect(voidNote(pay("credit_pack"))).toMatch(/takes back unspent credits/)
+  })
+
+  it("shows each reverse outcome in short words, and nothing when there is none", () => {
+    const r = (effect: string | null, reason: string | null = null) => ({ reverse: { requested: effect !== null, effect, reason } }) as never
+    expect(reverseOutcome(r(null))).toBeNull()
+    expect(reverseOutcome({} as never)).toBeNull()
+    expect(reverseOutcome(r("plan_ends_at_period_end"))?.label).toBe("Renewal stopped")
+    expect(reverseOutcome(r("credits_clawed_back"))?.label).toBe("Credits taken back")
+    expect(reverseOutcome(r("seat_reduction_scheduled"))?.label).toBe("Seat reduction scheduled")
+    expect(reverseOutcome(r("downgrade_scheduled"))?.label).toBe("Downgrade scheduled")
+    expect(reverseOutcome(r("already_scheduled"))?.tone).toBe("neutral")
+    expect(reverseOutcome(r("not_applied_partial"))?.tone).toBe("error")
+    const failed = reverseOutcome(r("failed", "The seats were bought in an earlier period."))
+    expect(failed).toEqual({ label: "Money returned, change not reversed", detail: "The seats were bought in an earlier period.", tone: "error" })
   })
 
   it("refuses a partial amount before sending when it is ticked", () => {
@@ -425,15 +474,17 @@ describe("refund: reverse the change", () => {
     expect(refundAmountErrors({ amountMajor: "100", reverseChange: false }, 21000, "EGP")).toEqual([])
   })
 
-  it("maps the server's reverse refusals to short copy, on 422 and 409", () => {
+  it("maps the server's reverse refusals to short copy, keeping the reason", () => {
     for (const status of [422, 409]) {
       expect(adminBillingFailureMessage(new ApiError(status, "x", { code: "reverse_needs_full_refund", message: "raw" }), "refund")).toBe(
         "To stop it renewing, refund the full amount.",
       )
       const m = adminBillingFailureMessage(new ApiError(status, "x", { code: "reverse_unavailable", message: "The seats were bought in an earlier period." }), "refund")
-      expect(m).toMatch(/can't be stopped from renewing/)
-      expect(m).not.toMatch(/earlier period/)
+      expect(m).toBe("The change can't be reversed. The seats were bought in an earlier period. Untick the box to return the money only.")
+      expect(m).not.toMatch(/\bnow\b/)
     }
+    expect(adminBillingFailureMessage(new ApiError(422, "x", { code: "reverse_unavailable", message: "No extra seats are held" }), "refund")).toMatch(/held\. Untick/)
+    expect(adminBillingFailureMessage(new ApiError(422, "x", { code: "reverse_unavailable" }), "refund")).toBe("The change can't be reversed. Untick the box to return the money only.")
   })
 })
 

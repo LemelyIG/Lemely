@@ -10,6 +10,11 @@ import {
   refundAmountErrors,
   refundBody,
   refundFieldsFor,
+  refundNote,
+  reverseOutcome,
+  voidBody,
+  voidFieldsFor,
+  voidNote,
   refundOutcome,
   refundableMinor,
 } from "@/lib/adminBillingModel"
@@ -44,12 +49,19 @@ export function RefundHistory({ payment }: { payment: AdminPaymentRow }) {
     <ul className="m-0 flex list-none flex-col gap-2 p-0">
       {payment.refunds.map((r) => {
         const o = refundOutcome(r, payment.currency)
+        const rev = reverseOutcome(r)
         return (
           <li key={r.id} className="flex items-start gap-2 text-body-sm">
             {o.tone === "attention" ? <Warning size={16} aria-hidden className="mt-0.5 shrink-0 text-on-surface-variant" /> : null}
             <span className="min-w-0">
               <span className={cn("block font-medium", o.tone === "error" ? "text-error" : "text-on-surface")}>{o.label}</span>
               <span className="block text-on-surface-variant">{o.detail}</span>
+              {rev ? (
+                <span className={cn("block", rev.tone === "error" ? "text-error" : "text-on-surface-variant")}>
+                  {rev.label}
+                  {rev.detail ? `. ${rev.detail}` : ""}
+                </span>
+              ) : null}
               <span className="block text-on-surface-variant">Reason: {r.reason}</span>
             </span>
           </li>
@@ -137,12 +149,7 @@ export function PaymentActions({ payment }: { payment: AdminPaymentRow }) {
           toBody={(v, r) => ({ id: payment.id, body: refundBody(v, r) })}
           check={(v) => refundAmountErrors(v, remaining, payment.currency)}
           reload="Reload this page"
-          note={
-            <p className="m-0 text-body-sm text-on-surface">
-              A full refund takes back this payment's credits that are not yet spent. A partial refund leaves them in place. If Paymob does not
-              answer, the outcome is shown as unknown and a second refund is blocked until you check.
-            </p>
-          }
+          note={<p className="m-0 text-body-sm text-on-surface">{refundNote(payment)}</p>}
         />
       ) : null}
       {open === "void" ? (
@@ -150,13 +157,13 @@ export function PaymentActions({ payment }: { payment: AdminPaymentRow }) {
           open
           onClose={() => setOpen(null)}
           title="Void payment"
-          fields={[]}
+          fields={voidFieldsFor(payment)}
           initial={{}}
           submitLabel="Void"
           mutation={voidPayment}
-          toBody={(_v, r) => ({ id: payment.id, body: { reason: r } })}
+          toBody={(v, r) => ({ id: payment.id, body: voidBody(v, r) })}
           reload="Reload this page"
-          note={<p className="m-0 text-body-sm text-on-surface">Paymob voids only same-day transactions. Use refund otherwise. A void also takes back unspent credits.</p>}
+          note={<p className="m-0 text-body-sm text-on-surface">{voidNote(payment)}</p>}
         />
       ) : null}
     </>

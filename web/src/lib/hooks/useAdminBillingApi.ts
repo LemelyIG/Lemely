@@ -24,6 +24,7 @@ import type {
   AdminPaymentRow,
   AdminPaymentsPage,
   AdminRefundRequest,
+  AdminVoidRequest,
   BillingHealth,
   BillingSettings,
   BillingSettingsUpdate,
@@ -87,7 +88,7 @@ export const adminBillingApi = {
   cancelSubscription: (subId: string, b: AdminCancelRequest) =>
     request<CustomerDetail>(`${B}/subscriptions/${enc(subId)}/cancel`, post(b)),
   refund: (paymentId: string, b: AdminRefundRequest) => request<AdminPaymentRow>(`${B}/payments/${enc(paymentId)}/refund`, post(b)),
-  voidPayment: (paymentId: string, b: Reasoned) => request<AdminPaymentRow>(`${B}/payments/${enc(paymentId)}/void`, post(b)),
+  voidPayment: (paymentId: string, b: AdminVoidRequest) => request<AdminPaymentRow>(`${B}/payments/${enc(paymentId)}/void`, post(b)),
   reconcile: (paymentId: string, b: Reasoned) => request<AdminPaymentRow>(`${B}/payments/${enc(paymentId)}/reconcile`, post(b)),
   payments: (status: PaymentStatus | null, cursor: string | null) => {
     const p = new URLSearchParams()
