@@ -310,3 +310,30 @@ a.rd-tile:active, button.rd-tile:active { transform: scale(0.97); }
 .rd-ghostrows { display: grid; }
 .rd-ghostrow { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 11px 2px; }
 .rd-ghostrow + .rd-ghostrow { border-top: 1px solid var(--md-outline-variant); }
+/* ── Combo, level, countdown (pr.css .combo, t.css .lvl2/.lb/.pill4) ──── */
+.rd-combo {
+  display: inline-flex; align-items: center; gap: 3px; padding: 3px 9px 3px 6px; border-radius: 10px; white-space: nowrap;
+  font: 800 13px var(--font-mono); color: var(--md-on-tertiary-container); background: var(--md-tertiary-container);
+}
+/* The flame takes the chip's ink: --md-tertiary on --md-tertiary-container is 1.56:1 in light. */
+.rd-combo svg { color: currentColor; flex: none; }
+.rd-level { display: grid; gap: 4px; }
+.rd-level > b { font: 700 14px var(--font-sans); color: var(--md-on-surface); }
+.rd-level > small { font: 600 12px var(--font-mono); color: var(--md-on-surface-variant); }
+.rd-level-bar { display: block; height: 8px; border-radius: 4px; background: var(--md-surface-container-high); overflow: hidden; }
+/* Gold deepened toward its own ink so the fill holds 3:1 on the track in light (plain --md-tertiary is 1.59:1). */
+.rd-level-bar i { display: block; height: 100%; border-radius: 4px; background: color-mix(in oklch, var(--md-tertiary) 60%, var(--md-on-tertiary-container)); }
+.rd-pill {
+  position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 6px 11px;
+  border-radius: 12px; white-space: nowrap; text-decoration: none; font: 600 12.5px var(--font-sans);
+  color: var(--md-on-surface-variant); background: color-mix(in oklch, var(--md-surface-container-lowest) 70%, transparent);
+}
+.rd-pill[data-tone="near"] { color: var(--md-on-primary-container); background: var(--md-primary-container); }
+a.rd-pill::before { content: ""; position: absolute; inset: -8px -3px; }
+a.rd-pill:active { transform: scale(0.97); }
+a.rd-pill:focus-visible { outline: 2.5px solid var(--md-primary); outline-offset: 2px; }
+.rd-pill .rd-chev { opacity: 0.55; margin-inline-start: -2px; }
+@media (prefers-reduced-motion: no-preference) {
+  .rd-combo[data-bump] { animation: rd-bump 0.5s var(--ease-out); }
+}
+@keyframes rd-bump { 0% { transform: scale(0.4); } 60% { transform: scale(1.15); } }
