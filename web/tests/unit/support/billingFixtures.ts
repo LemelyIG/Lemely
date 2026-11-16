@@ -334,8 +334,8 @@ const llmModels: LlmModelPrice[] = [
     codeDefault: { inputUsdPerMtok: "0.3", outputUsdPerMtok: "2.5", cachedInputUsdPerMtok: "0.03", cacheWrite5mUsdPerMtok: null, cacheWrite1hUsdPerMtok: null, tiered: false, ...noTier, source: GEMINI_SOURCE, readOn: null },
     override: {
       model: "gemini-2.5-flash",
-      inputUsdPerMtok: "0.25",
-      outputUsdPerMtok: "2.2",
+      inputUsdPerMtok: "0.250000",
+      outputUsdPerMtok: "2.200000",
       ...noCache,
       ...noTier,
       version: 3,

@@ -168,6 +168,7 @@ export const useUpdateFreeAllowances = () => {
             saved.map((s) => FREE_LABEL[s.audience]),
             FREE_LABEL[update.audience],
             error,
+            saved,
           )
         }
       }

@@ -3,6 +3,7 @@ import { ApiError } from "@/lib/api"
 import { PartialSaveError, adminBillingFailureMessage, fieldErrors, visibleFields } from "@/lib/adminBillingModel"
 import {
   CREDIT_RATE_FIELDS,
+  advanceFree,
   SETTINGS_FIELDS,
   creditRateClearBody,
   creditRateSetBody,
@@ -217,6 +218,16 @@ describe("AI token prices", () => {
     expect(usdPerMtok("0.075000")).toBe("$0.075")
     expect(usdPerMtok("1250.5")).toBe("$1,250.50")
     expect(usdPerMtok(null)).toBe("None")
+  })
+})
+
+describe("free allowances after a half-saved pair", () => {
+  it("moves the audience that landed to the returned row and version, and leaves the other alone", () => {
+    const free = fx.adminCatalogue.freeAllowances
+    const row = { audience: "student" as const, creditPackId: "fs", units: 400, validDays: 90, version: 3 }
+    const next = advanceFree(free, new PartialSaveError(["a"], "b", new ApiError(500, "x"), [row]))
+    expect(next).toMatchObject({ studentSignupUnits: 400, studentSignupExpiryDays: 90, studentVersion: 3, teacherSignupUnits: 1000, teacherVersion: 3 })
+    expect(advanceFree(free, new ApiError(500, "x"))).toBe(free)
   })
 })
 

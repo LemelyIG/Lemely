@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { WarningCircle } from "@phosphor-icons/react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -33,7 +33,7 @@ import {
   versionRows,
   type VersionStatus,
 } from "@/lib/adminBillingModel"
-import { staleBlock } from "@/lib/adminRatesModel"
+import { advanceFree, staleBlock } from "@/lib/adminRatesModel"
 import { formatMoney } from "@/lib/billingFormat"
 import type { AdminCatalogue, AdminCreditPack, AdminPlanTier, FreeAllowances } from "@/lib/billingTypes"
 import {
@@ -487,9 +487,12 @@ export function Catalogue() {
   const createEstimator = useCreateEstimator()
   const updateFree = useUpdateFreeAllowances()
   const [dialog, setDialog] = useState<Dialog>(null)
+  // The free-allowance baseline once a half-saved pair has moved it forward (reset on open).
+  const freeBase = useRef<FreeAllowances | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const close = () => setDialog(null)
   const open = (d: Dialog) => {
+    freeBase.current = null
     setNotice(null)
     setDialog(d)
   }
@@ -646,8 +649,12 @@ export function Catalogue() {
               initial={freeValues(dialog.free)}
               submitLabel="Save allowances"
               mutation={updateFree}
-              toBody={(v, r) => freeChanges(v, r, dialog.free)}
-              check={(v) => (freeChanges(v, "unused", dialog.free).length === 0 ? ["Nothing has changed. Change a value to save."] : [])}
+              toBody={(v, r) => {
+                // A retry after a half-saved pair builds on what already landed.
+                freeBase.current = advanceFree(freeBase.current ?? dialog.free, updateFree.error)
+                return freeChanges(v, r, freeBase.current)
+              }}
+              check={(v) => (freeChanges(v, "unused", advanceFree(freeBase.current ?? dialog.free, updateFree.error)).length === 0 ? ["Nothing has changed. Change a value to save."] : [])}
               blocked={staleBlock(updateFree.error)}
               reload="Reload this page"
               onSaved={saved("Saved the free allowances.")}

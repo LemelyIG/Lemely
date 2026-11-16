@@ -6,6 +6,7 @@ import type {
   CreditRate,
   CreditRateClear,
   CreditRateSet,
+  FreeAllowances,
   LlmModelPrice,
   LlmPriceClear,
   LlmPriceSet,
@@ -78,6 +79,25 @@ export function isStaleWrite(error: unknown): boolean {
 /** A refused write whose form was built on old data must not offer the same submit again. */
 export function staleBlock(error: unknown): string | null {
   return isStaleWrite(error) ? "Close this to see the current values." : null
+}
+
+// ── Free allowances ─────────────────────────────────────────────────────────
+
+/**
+ * The allowances as they stand after a half-saved pair: each audience that landed takes the row
+ * the server returned (units, validity and the new version), so a retry sends only the rest, at
+ * the versions the form was built on.
+ */
+export function advanceFree(free: FreeAllowances, error: unknown): FreeAllowances {
+  if (!(error instanceof PartialSaveError)) return free
+  let next = free
+  for (const r of error.rows) {
+    next =
+      r.audience === "student"
+        ? { ...next, studentSignupUnits: r.units, studentSignupExpiryDays: r.validDays, studentVersion: r.version }
+        : { ...next, teacherSignupUnits: r.units, teacherSignupExpiryDays: r.validDays, teacherVersion: r.version }
+  }
+  return next
 }
 
 // ── Billing rules ───────────────────────────────────────────────────────────

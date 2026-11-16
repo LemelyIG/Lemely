@@ -219,6 +219,30 @@ describe("Catalogue writes", () => {
     ])
   })
 
+  it("after a half-saved pair, a retry sends only the audience that did not save, at its own version", async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(wrap(h(Catalogue)))
+    await user.click(screen.getByRole("button", { name: "Edit free allowances" }))
+    reason()
+    for (const [label, value] of [["Student free allowance (units)", "400"], ["Teacher signup credits (units)", "1200"]]) {
+      const input = screen.getByLabelText(label)
+      await user.clear(input)
+      await user.type(input, value)
+    }
+    await user.click(screen.getByRole("button", { name: "Save allowances" }))
+    await waitFor(() => expect((s.updateFree as Fake).mutate).toHaveBeenCalledTimes(1))
+    expect((s.updateFree as Fake).mutate.mock.calls[0][0].map((b: { audience: string }) => b.audience)).toEqual(["student", "teacher"])
+    // The student write landed (now version 3); the teacher write failed with a 5xx.
+    const landed = { audience: "student" as const, creditPackId: "fs", units: 400, validDays: null, version: 3 }
+    s.updateFree = fake({ isError: true, error: new PartialSaveError(["the student free allowance"], "the teacher signup credits", new ApiError(500, "x"), [landed]) })
+    rerender(wrap(h(Catalogue)))
+    await user.click(screen.getByRole("button", { name: "Save allowances" }))
+    await waitFor(() => expect((s.updateFree as Fake).mutate).toHaveBeenCalledTimes(1))
+    expect((s.updateFree as Fake).mutate.mock.calls[0][0]).toEqual([
+      { audience: "teacher", units: 1200, validDays: 30, expectedVersion: 3, reason: "because the price changed" },
+    ])
+  })
+
   it("blocks the resubmit when the second write of a pair was stale", async () => {
     const user = userEvent.setup()
     s.updateFree = fake({

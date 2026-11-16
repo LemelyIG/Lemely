@@ -25,6 +25,7 @@ import type {
   RateCreate,
   TierCreate,
   TierUpdate,
+  WireFreeAllowance,
 } from "@/lib/billingTypes"
 
 /* Pure form models for the admin billing console. Every write carries a reason (spec §8). Bodies
@@ -559,12 +560,15 @@ export class PartialSaveError extends Error {
   readonly saved: string[]
   readonly failed: string
   readonly original: unknown
-  constructor(saved: string[], failed: string, original: unknown) {
+  /** What the server returned for each write that landed, so a retry can build on it. */
+  readonly rows: WireFreeAllowance[]
+  constructor(saved: string[], failed: string, original: unknown, rows: WireFreeAllowance[] = []) {
     super("partial save")
     this.name = "PartialSaveError"
     this.saved = saved
     this.failed = failed
     this.original = original
+    this.rows = rows
   }
 }
 

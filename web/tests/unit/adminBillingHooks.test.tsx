@@ -66,6 +66,7 @@ describe("useUpdateFreeAllowances", () => {
     const partial = error as PartialSaveError
     expect(partial.saved).toEqual(["the student free allowance"])
     expect(partial.failed).toBe("the teacher signup credits")
+    expect(partial.rows).toEqual([saved("student", 400)])
     expect(adminBillingFailureMessage(partial, "save")).toBe(
       "the student free allowance was saved, but the teacher signup credits was not. The database refused these units.",
     )
