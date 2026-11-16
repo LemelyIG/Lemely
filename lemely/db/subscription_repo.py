@@ -82,10 +82,12 @@ from lemely.db.models.usage import GrantKind, UsageGrant
 from lemely.db.models.users import User
 from lemely.db.plan_terms_repo import (
     TierTerms,
+    allowed_terms_for_amount,
     current_terms_for,
+    other_version_priced_at,
+    renewal_amount,
     terms_for,
     terms_in_force_for_next_period,
-    terms_matching_amount,
     tier_terms,
 )
 from lemely.db.teacher_team_repo import TeacherTeamService
@@ -1214,6 +1216,8 @@ class _Applies(NamedTuple):
     pending: bool
     terms: bool
     move_to: int | None = None
+    explained: bool = True
+    """Whether the charge is the amount of the terms the subscriber is on or moves to."""
 
 
 def _renewal_applies(
@@ -1247,14 +1251,20 @@ def _renewal_applies(
         computed = _expected_renewal_amount(session, subscription, amount_updatable=True)
         apply_terms = apply_pending and charged_minor == computed
     move_to: int | None = None
-    if not apply_pending and amount_updatable and subscription.pending_plan_tier_id is None:
-        seats = (
-            subscription.pending_extra_seats
-            if subscription.pending_extra_seats is not None
-            else subscription.extra_seats or 0
-        )
-        matched = terms_matching_amount(session, subscription, charged_minor, extra_seats=seats)
-        if matched is not None:
+    explained = True
+    if not apply_pending and subscription.pending_plan_tier_id is None:
+        # Not the expected amount. It may still be the amount of the terms the subscriber is on
+        # (a deferred move, a pending seat change not yet at Paymob), or of their own announced
+        # pending version once due; nothing else explains it (an unannounced or not-yet-due
+        # version, a reverted one). Priced at the current seat count, the one the period is
+        # granted on; on a tie the current version wins.
+        matched = allowed_terms_for_amount(session, subscription, charged_minor)
+        explained = matched is not None
+        if (
+            matched is not None
+            and amount_updatable
+            and matched.terms_version != subscription.terms_version
+        ):
             move_to = matched.terms_version
             apply_terms = True
     if due and not apply_terms and not quiet:
@@ -1265,7 +1275,7 @@ def _renewal_applies(
             expected_minor=_expected_renewal_amount(session, subscription, amount_updatable=True),
             pending_terms_version=subscription.pending_terms_version,
         )
-    return _Applies(apply_pending, apply_terms, move_to)
+    return _Applies(apply_pending, apply_terms, move_to, explained)
 
 
 def _grant_renewal_period(
@@ -1445,31 +1455,26 @@ def _settle_renewal(
         session, subscription, payment.amount_minor, amount_updatable=amount_updatable
     )
     apply_pending, apply_terms = applies.pending, applies.terms
-    expected_now = _expected_renewal_amount(
-        session, subscription, amount_updatable=amount_updatable
-    )
-    behind = session.scalar(
-        select(PlanTier.terms_version).where(PlanTier.id == subscription.plan_tier_id)
-    )
-    if (
-        not apply_pending
-        and applies.move_to is None
-        and payment.amount_minor > expected_now
-        and behind is not None
-        and behind > subscription.terms_version
-    ):
-        # Accepted (it is the amount Paymob holds) but above what the terms this subscriber is on
-        # price to, while their tier has newer terms and none of them prices to the charge: they
-        # are charged more than their terms say and stay on the old ones. Never silent: someone
-        # refunds or credits. (A charge at a replaced amount on current terms is DV-12, not this.)
-        alerts.error(
-            "subscription_renewal_paid_above_expected",
-            subscription_id=str(subscription.id),
-            payment_id=str(payment.id),
-            charged_minor=payment.amount_minor,
-            expected_minor=expected_now,
-            alert=True,
+    if not applies.explained:
+        current_amount = renewal_amount(
+            terms_for(session, subscription), subscription.extra_seats or 0
         )
+        if payment.amount_minor > current_amount:
+            # Accepted (it is the amount Paymob holds) but above the terms this subscriber is on,
+            # and no version they may be moved to prices to it: a push an edit or a revert has
+            # overtaken. They paid more than their terms say and stay on them: never silent.
+            other = other_version_priced_at(session, subscription, payment.amount_minor)
+            alerts.error(
+                "subscription_renewal_paid_reverted_amount"
+                if other is not None
+                else "subscription_renewal_paid_above_expected",
+                subscription_id=str(subscription.id),
+                payment_id=str(payment.id),
+                charged_minor=payment.amount_minor,
+                billed_minor=current_amount,
+                priced_by_version=other,
+                alert=True,
+            )
     if not apply_pending and (
         subscription.pending_plan_tier_id is not None
         or subscription.pending_extra_seats is not None
@@ -2162,6 +2167,10 @@ class SubscriptionService:
             charged_at = now
         current_tier = session.get(PlanTier, subscription.plan_tier_id)
         expected = self.next_renewal_amount(subscription)
+        # What is owed if only a terms move is deferred: the terms the subscriber is on now.
+        billed = _billed_renewal_amount(
+            session, subscription, amount_updatable=self._settings.subscription_amount_updatable
+        )
         accepted = {expected}
         stamped = subscription.paymob_amount_minor
         if stamped is not None:
@@ -2187,7 +2196,7 @@ class SubscriptionService:
                 charged_minor=amount,
                 stamped_minor=stamped,
             )
-            if amount < expected:
+            if amount < expected and amount < billed:
                 # The payer paid what Paymob held, so the period is granted, but a change made
                 # since (an upgrade, added seats) is worth more than that: someone collects the
                 # difference.
@@ -2248,10 +2257,6 @@ class SubscriptionService:
                 alert=True,
             )
             return False
-        # Before the settle moves anything: what is owed if only a terms move is deferred.
-        billed = _billed_renewal_amount(
-            session, subscription, amount_updatable=self._settings.subscription_amount_updatable
-        )
         granted = _settle_renewal(
             session,
             subscription,

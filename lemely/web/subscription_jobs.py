@@ -14,7 +14,12 @@ import structlog
 from sqlalchemy import select
 
 from lemely.db.models.billing import Subscription
-from lemely.db.plan_terms_repo import fixed_path_move_ids, queue_terms_change_notices
+from lemely.db.plan_terms_repo import (
+    FixedPathEnd,
+    announce_fixed_path_end,
+    fixed_path_move_ids,
+    queue_terms_change_notices,
+)
 from lemely.db.seat_allowance_repo import grant_monthly_seat_allowances
 from lemely.db.teacher_team_repo import TeacherTeamService
 
@@ -82,7 +87,14 @@ def terms_move_fixed_path_job(deps: SubscriptionDeps, *, now: datetime) -> int:
                 )
                 if held is None or not fixed_path_move_ids(session, now=now, only=sub_id):
                     continue  # locked elsewhere or changed since the read: the next tick decides
+                sub = session.get(Subscription, sub_id)
+                assert sub is not None  # noqa: S101 - just locked
+                if announce_fixed_path_end(session, sub, now=now) is not FixedPathEnd.ANNOUNCED:
+                    continue  # the "plan ends" mail goes first and runs its notice period out
                 deps.service(session).schedule_cancel_as_system(sub_id, now=now)
+                # The marker of the platform's own cancel (a payer's keeps its notice stamp): an
+                # admin revert may withdraw it while Paymob has not been told.
+                sub.terms_notice_sent_at = None
             scheduled += 1
             log.info("subscription_terms_move_cancel_scheduled", subscription_id=str(sub_id))
         except Exception:

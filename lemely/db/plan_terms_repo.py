@@ -13,6 +13,7 @@ modules (which import nothing from the billing charge code) can use it.
 
 from __future__ import annotations
 
+import enum
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Final
@@ -22,7 +23,11 @@ import structlog
 from sqlalchemy.orm import aliased
 
 from lemely.core.billing_defaults import PRICE_CHANGE_NOTICE_DAYS
-from lemely.core.subscription_rules import period_end, subscription_amount_minor
+from lemely.core.subscription_rules import (
+    AMOUNT_SYNC_WINDOW,
+    period_end,
+    subscription_amount_minor,
+)
 from lemely.db.billing_notices import (
     enqueue_plan_terms_cancelled,
     enqueue_plan_terms_change,
@@ -37,6 +42,7 @@ from lemely.db.models.billing import (
 )
 from lemely.db.models.billing_ops import BillingSettings
 from lemely.db.models.team import TeacherMember, TeacherMemberKind, TeacherMemberStatus
+from lemely.db.models.tutoring import EmailOutbox
 
 if TYPE_CHECKING:
     import uuid
@@ -63,15 +69,15 @@ class TierTerms:
     seat_allowance_units: int
 
 
-def _as_terms(row: PlanTierTerms) -> TierTerms:
+def _as_terms(history: PlanTierTerms) -> TierTerms:
     return TierTerms(
-        plan_tier_id=row.plan_tier_id,
-        terms_version=row.terms_version,
-        price_minor=int(row.price_minor),
-        extra_seat_price_minor=int(row.extra_seat_price_minor),
-        allowance_units=int(row.allowance_units),
-        included_seats=int(row.included_seats),
-        seat_allowance_units=int(row.seat_allowance_units),
+        plan_tier_id=history.plan_tier_id,
+        terms_version=history.terms_version,
+        price_minor=int(history.price_minor),
+        extra_seat_price_minor=int(history.extra_seat_price_minor),
+        allowance_units=int(history.allowance_units),
+        included_seats=int(history.included_seats),
+        seat_allowance_units=int(history.seat_allowance_units),
     )
 
 
@@ -166,71 +172,100 @@ def renewal_amount(terms: TierTerms, extra_seats: int) -> int:
     )
 
 
-def same_terms(current: TierTerms, new: TierTerms) -> bool:
+def same_terms(cur_terms: TierTerms, new_terms: TierTerms) -> bool:
     """Identical in every billed term (the only change that may skip the notice)."""
     return (
-        current.price_minor,
-        current.extra_seat_price_minor,
-        current.allowance_units,
-        current.included_seats,
-        current.seat_allowance_units,
+        cur_terms.price_minor,
+        cur_terms.extra_seat_price_minor,
+        cur_terms.allowance_units,
+        cur_terms.included_seats,
+        cur_terms.seat_allowance_units,
     ) == (
-        new.price_minor,
-        new.extra_seat_price_minor,
-        new.allowance_units,
-        new.included_seats,
-        new.seat_allowance_units,
+        new_terms.price_minor,
+        new_terms.extra_seat_price_minor,
+        new_terms.allowance_units,
+        new_terms.included_seats,
+        new_terms.seat_allowance_units,
     )
 
 
-def price_terms_differ(current: TierTerms, new: TierTerms) -> bool:
+def price_terms_differ(cur_terms: TierTerms, new_terms: TierTerms) -> bool:
     """The price or the seat price differs (judged on the terms, not on the seats held today)."""
     return (
-        current.price_minor != new.price_minor
-        or current.extra_seat_price_minor != new.extra_seat_price_minor
+        cur_terms.price_minor != new_terms.price_minor
+        or cur_terms.extra_seat_price_minor != new_terms.extra_seat_price_minor
     )
 
 
-def move_is_worse(current: TierTerms, new: TierTerms) -> bool:
+def move_is_worse(cur_terms: TierTerms, new_terms: TierTerms) -> bool:
     """A move is worse when any term costs more or gives less: it waits the full notice period.
 
     Judged on the terms alone. A seat price that rises is worse whatever number of extra seats the
-    subscriber holds today, because a later seat purchase would be priced at it (UD13-A, UD13-G).
+    subscriber holds today, because a later seat purchase would be priced at it. A seat price that
+    falls to 0 is worse too: the tier then sells no extra seats, and a subscriber holding some
+    loses them at the renewal (UD13-A, UD13-G).
     """
     return (
-        new.price_minor > current.price_minor
-        or new.extra_seat_price_minor > current.extra_seat_price_minor
-        or new.allowance_units < current.allowance_units
-        or new.included_seats < current.included_seats
-        or new.seat_allowance_units < current.seat_allowance_units
+        new_terms.price_minor > cur_terms.price_minor
+        or new_terms.extra_seat_price_minor > cur_terms.extra_seat_price_minor
+        or (cur_terms.extra_seat_price_minor > 0 and new_terms.extra_seat_price_minor == 0)
+        or new_terms.allowance_units < cur_terms.allowance_units
+        or new_terms.included_seats < cur_terms.included_seats
+        or new_terms.seat_allowance_units < cur_terms.seat_allowance_units
     )
 
 
-def terms_matching_amount(
-    session: Session, subscription: Subscription, amount_minor: int, *, extra_seats: int
+def allowed_terms_for_amount(
+    session: Session, subscription: Subscription, amount_minor: int
 ) -> TierTerms | None:
-    """The newer version of the subscription's tier whose renewal amount is ``amount_minor``.
+    """The terms a renewal charged at ``amount_minor`` may be settled on, or ``None``.
 
-    For a renewal charged at an amount an earlier push left at Paymob (a later edit moved the
-    pending version on before the charge): that amount belongs to a known version, and the
-    subscriber is moved to it. Versions newer than the one they are on are considered; the pending
-    version wins a tie, then the highest. ``None`` when no version prices to the amount.
+    Only two versions are allowed: the subscriber's CURRENT one, and their own pending version once
+    it was announced and its effective date has passed for this period (the same rule as
+    :func:`terms_in_force_for_next_period`). The amount is priced at the CURRENT seat count, the one
+    the period is granted on. A version the subscriber was never told about, or whose notice has
+    not run out, can never match; on a tie the current version wins.
     """
-    rows = session.scalars(
+    seats = subscription.extra_seats or 0
+    current = terms_for(session, subscription)
+    if renewal_amount(current, seats) == amount_minor:
+        return current
+    effective_at = subscription.pending_terms_effective_at
+    end = subscription.current_period_end
+    if (
+        subscription.pending_terms_version is not None
+        and subscription.terms_notice_sent_at is not None
+        and effective_at is not None
+        and end is not None
+        and end >= effective_at
+    ):
+        pending = pending_terms_for(session, subscription)
+        if pending is not None and renewal_amount(pending, seats) == amount_minor:
+            return pending
+    return None
+
+
+def other_version_priced_at(
+    session: Session, subscription: Subscription, amount_minor: int
+) -> int | None:
+    """A version of the tier other than the subscriber's current one that prices to the amount.
+
+    For the alert that names the cause of an unexplained charge (a push an edit or a revert has
+    since overtaken): the highest such version, or ``None``.
+    """
+    seats = subscription.extra_seats or 0
+    versions = session.scalars(
         sa.select(PlanTierTerms)
         .where(
             PlanTierTerms.plan_tier_id == subscription.plan_tier_id,
-            PlanTierTerms.terms_version > subscription.terms_version,
+            PlanTierTerms.terms_version != subscription.terms_version,
         )
         .order_by(PlanTierTerms.terms_version.desc())
     ).all()
-    matches = [
-        _as_terms(r) for r in rows if renewal_amount(_as_terms(r), extra_seats) == amount_minor
-    ]
-    for terms in matches:
-        if terms.terms_version == subscription.pending_terms_version:
-            return terms
-    return matches[0] if matches else None
+    for history in versions:
+        if renewal_amount(_as_terms(history), seats) == amount_minor:
+            return int(history.terms_version)
+    return None
 
 
 def first_applies_at(period_end_at: datetime, interval: str, effective_at: datetime) -> datetime:
@@ -324,11 +359,32 @@ def queue_terms_change_notices(
                 .limit(limit)
             )
         )
+        reverts = list(
+            session.scalars(
+                sa.select(S.id)
+                .where(*_platform_cancelled_filters(S))
+                .order_by(S.created_at, S.id)
+                .limit(limit)
+            )
+        )
     handled = 0
     for sub_id in ids:
         try:
             with sm.begin() as session:
                 handled += _announce_one(
+                    session, sub_id, now=now, amount_updatable=amount_updatable
+                )
+        except Exception:
+            log.error(
+                "terms_change_notice_failed",
+                subscription_id=str(sub_id),
+                alert=True,
+                exc_info=True,
+            )
+    for sub_id in reverts:
+        try:
+            with sm.begin() as session:
+                handled += _revert_platform_cancelled_one(
                     session, sub_id, now=now, amount_updatable=amount_updatable
                 )
         except Exception:
@@ -354,56 +410,41 @@ def _announce_one(
     if row is None:
         return 0  # changed or locked since the read: the next tick decides
     sub, tier = row
-    current = terms_for(session, sub)
-    new = current_terms_for(session, tier)
+    cur_terms = terms_for(session, sub)
+    new_terms = current_terms_for(session, tier)
     seats = sub.pending_extra_seats if sub.pending_extra_seats is not None else sub.extra_seats or 0
-    if same_terms(current, new):
-        # An admin revert (or a no-op edit): nothing changes for this subscriber. Any pending move
-        # is cancelled, and one that had been announced is taken back.
-        announced = sub.pending_terms_version is not None and sub.terms_notice_sent_at is not None
-        sub.terms_version = new.terms_version
-        sub.pending_terms_version = None
-        sub.pending_terms_effective_at = None
-        sub.terms_notice_sent_at = None
-        sub.version = (sub.version or 0) + 1
-        if announced:
-            enqueue_plan_terms_cancelled(session, subscription=sub, terms_version=new.terms_version)
-        log.info(
-            "subscription_terms_move_cancelled",
-            subscription_id=str(sub.id),
-            terms_version=new.terms_version,
-            announced=announced,
-        )
+    if same_terms(cur_terms, new_terms):
+        _take_back(session, sub, new_terms, now=now, amount_updatable=amount_updatable)
         return 1
-    worse = move_is_worse(current, new)
-    price_changes = price_terms_differ(current, new)
-    amount_changes = renewal_amount(new, seats) != renewal_amount(current, seats)
+    worse = move_is_worse(cur_terms, new_terms)
+    price_changes = price_terms_differ(cur_terms, new_terms)
+    amount_changes = renewal_amount(new_terms, seats) != renewal_amount(cur_terms, seats)
     full_notice = worse or (price_changes and not amount_updatable)
     effective_at = now + timedelta(days=_notice_days(session)) if full_notice else now
-    sub.pending_terms_version = new.terms_version
+    sub.pending_terms_version = new_terms.terms_version
     sub.pending_terms_effective_at = effective_at
     sub.version = (sub.version or 0) + 1
     entitlements_change = (
-        new.allowance_units != current.allowance_units
-        or new.included_seats != current.included_seats
-        or new.seat_allowance_units != current.seat_allowance_units
+        new_terms.allowance_units != cur_terms.allowance_units
+        or new_terms.included_seats != cur_terms.included_seats
+        or new_terms.seat_allowance_units != cur_terms.seat_allowance_units
     )
     seats_over = 0
     if tier.audience is PlanAudience.teacher:
-        capacity = new.included_seats + (seats if new.extra_seat_price_minor > 0 else 0)
+        capacity = new_terms.included_seats + (seats if new_terms.extra_seat_price_minor > 0 else 0)
         seats_over = max(0, _seats_held(session, sub.user_id) - capacity)
     assert tier.interval is not None  # noqa: S101 - a plan that renews has an interval
     applies_at = first_applies_at(sub.current_period_end or now, tier.interval.value, effective_at)
     sub.terms_notice_sent_at = now
     if amount_changes and not amount_updatable:
         enqueue_plan_terms_ends(
-            session, subscription=sub, terms_version=new.terms_version, ends_at=applies_at
+            session, subscription=sub, terms_version=new_terms.terms_version, ends_at=applies_at
         )
     else:
         enqueue_plan_terms_change(
             session,
             subscription=sub,
-            terms_version=new.terms_version,
+            terms_version=new_terms.terms_version,
             applies_at=applies_at,
             price_changes=price_changes,
             entitlements_change=entitlements_change,
@@ -412,11 +453,141 @@ def _announce_one(
     log.info(
         "subscription_terms_change_noticed",
         subscription_id=str(sub.id),
-        terms_version=new.terms_version,
+        terms_version=new_terms.terms_version,
         worse=worse,
         effective_at=effective_at.isoformat(),
     )
     return 1
+
+
+def _take_back(
+    session: Session,
+    sub: Subscription,
+    new_terms: TierTerms,
+    *,
+    now: datetime,
+    amount_updatable: bool,
+    cancelled_by_platform: bool = False,
+) -> None:
+    """An admin revert: the tier's terms equal the ones the subscriber is on. Cancel the move.
+
+    The subscriber moves to the tier's version at once (identical terms: nothing changes for
+    them), the pending move is cleared, and a move that had been announced is taken back by mail.
+    When the platform's own fixed-path cancel for that move was scheduled and Paymob has not been
+    told, it is withdrawn too. When Paymob's pushed amount is still the reverted one inside the
+    amount-sync window, the amount is marked uncertain so the sweep puts the right one back.
+    """
+    announced = sub.pending_terms_version is not None and (
+        sub.terms_notice_sent_at is not None or cancelled_by_platform
+    )
+    seats = sub.pending_extra_seats if sub.pending_extra_seats is not None else sub.extra_seats or 0
+    end = sub.current_period_end
+    if (
+        amount_updatable
+        and sub.paymob_amount_minor is not None
+        and end is not None
+        and end - now <= AMOUNT_SYNC_WINDOW
+        and sub.paymob_amount_minor != renewal_amount(new_terms, seats)
+    ):
+        sub.amount_sync_uncertain_at = now
+    if cancelled_by_platform:
+        sub.cancel_at_period_end = False
+    sub.terms_version = new_terms.terms_version
+    sub.pending_terms_version = None
+    sub.pending_terms_effective_at = None
+    sub.terms_notice_sent_at = None
+    sub.version = (sub.version or 0) + 1
+    if announced:
+        enqueue_plan_terms_cancelled(
+            session, subscription=sub, terms_version=new_terms.terms_version
+        )
+    log.info(
+        "subscription_terms_move_cancelled",
+        subscription_id=str(sub.id),
+        terms_version=new_terms.terms_version,
+        announced=announced,
+        cancel_withdrawn=cancelled_by_platform,
+    )
+
+
+def _revert_platform_cancelled_one(
+    session: Session, sub_id: uuid.UUID, *, now: datetime, amount_updatable: bool
+) -> int:
+    """Withdraw the platform's fixed-path cancel when the admin has since reverted the move.
+
+    The marker of a platform cancel is a cancelling row with a pending move and no notice stamp
+    (the job clears the stamp when it schedules the cancel; a payer's own cancel keeps it), not yet
+    pushed to Paymob. Nothing is withdrawn once Paymob holds the cancel.
+    """
+    S = Subscription
+    row = session.execute(
+        sa.select(S, PlanTier)
+        .join(PlanTier, PlanTier.id == S.plan_tier_id)
+        .where(S.id == sub_id, *_platform_cancelled_filters(S))
+        .with_for_update(of=S, skip_locked=True)
+    ).first()
+    if row is None:
+        return 0
+    sub, tier = row
+    new_terms = current_terms_for(session, tier)
+    if not same_terms(terms_for(session, sub), new_terms):
+        return 0
+    _take_back(
+        session,
+        sub,
+        new_terms,
+        now=now,
+        amount_updatable=amount_updatable,
+        cancelled_by_platform=True,
+    )
+    return 1
+
+
+def _platform_cancelled_filters(S: type[Subscription]) -> list[sa.ColumnElement[bool]]:
+    return [
+        S.status.in_(PLAN_LIVE_STATUSES),
+        S.payer_user_id.is_not(None),
+        S.is_manually_activated.is_(False),
+        S.cancel_at_period_end.is_(True),
+        S.paymob_cancelled_at.is_(None),
+        S.pending_terms_version.is_not(None),
+        S.terms_notice_sent_at.is_(None),
+    ]
+
+
+class FixedPathEnd(enum.Enum):
+    """What the fixed-path job does after looking at a move's "your plan ends" notice."""
+
+    SENT = "sent"  # the mail was written now: wait out the notice period before cancelling
+    TOO_LATE = "too_late"  # the period ends sooner than the notice period: no mail, no cancel
+    ANNOUNCED = "announced"  # the subscriber was already told (or has notices off): cancel
+
+
+def announce_fixed_path_end(session: Session, sub: Subscription, *, now: datetime) -> FixedPathEnd:
+    """Make sure the payer has been told the plan ends, at least the notice period ahead.
+
+    The notice sent when the edit was seen may have said "your plan changes" only (a seat price
+    edit at no seats held: the amount changed later). The mail naming the end date is written here
+    and the notice clock restarts, so the cancel waits until the period end is at least the notice
+    period after it. A period that ends sooner is neither mailed nor cancelled: it renews and the
+    move waits for the next one.
+    """
+    version = sub.pending_terms_version
+    end = sub.current_period_end
+    assert version is not None and end is not None  # noqa: S101 - the selection guarantees both
+    seen = session.scalar(
+        sa.select(EmailOutbox.id).where(EmailOutbox.dedupe_key == f"terms_ends:{sub.id}:{version}")
+    )
+    if seen is not None:
+        return FixedPathEnd.ANNOUNCED
+    if end < now + timedelta(days=_notice_days(session)):
+        return FixedPathEnd.TOO_LATE
+    written = enqueue_plan_terms_ends(session, subscription=sub, terms_version=version, ends_at=end)
+    if not written:
+        return FixedPathEnd.ANNOUNCED  # notices are off for this payer: nothing to wait for
+    sub.terms_notice_sent_at = now
+    sub.version = (sub.version or 0) + 1
+    return FixedPathEnd.SENT
 
 
 def fixed_path_move_ids(
@@ -446,9 +617,9 @@ def fixed_path_move_ids(
     pending = aliased(PlanTierTerms)
     seats = sa.func.coalesce(S.pending_extra_seats, S.extra_seats, 0)
 
-    def amount(t: type[PlanTierTerms]) -> sa.ColumnElement[int]:
-        return t.price_minor + sa.case(
-            (t.extra_seat_price_minor > 0, seats * t.extra_seat_price_minor), else_=0
+    def amount(alias: type[PlanTierTerms]) -> sa.ColumnElement[int]:
+        return alias.price_minor + sa.case(
+            (alias.extra_seat_price_minor > 0, seats * alias.extra_seat_price_minor), else_=0
         )
 
     stmt = (
@@ -490,11 +661,15 @@ def fixed_path_move_ids(
 
 __all__ = [
     "TERMS_NOTICE_BATCH",
+    "FixedPathEnd",
     "TierTerms",
+    "allowed_terms_for_amount",
+    "announce_fixed_path_end",
     "current_terms_for",
     "first_applies_at",
     "fixed_path_move_ids",
     "move_is_worse",
+    "other_version_priced_at",
     "pending_terms_for",
     "price_terms_differ",
     "queue_terms_change_notices",
@@ -502,7 +677,6 @@ __all__ = [
     "same_terms",
     "terms_for",
     "terms_in_force_for_next_period",
-    "terms_matching_amount",
     "tier_for_terms",
     "tier_terms",
 ]

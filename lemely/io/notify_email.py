@@ -598,30 +598,38 @@ class PlanTermsEnds(EmailContext):
         )
 
     def detail(self) -> str | None:
-        return "To continue, subscribe again at the new price once your plan has ended."
+        return (
+            "To keep learning with Lemely, open billing once your plan has ended and subscribe "
+            "again at the new price. You keep full access until then."
+        )
 
     def path(self) -> str:
         return "/billing"
 
 
 class PlanTermsCancelled(EmailContext):
-    """A plan change announced earlier will not happen (the admin reverted the edit).
+    """A plan change announced earlier has been cancelled (the admin reverted the edit).
 
+    The copy does not promise a price: the payment processor may still hold the amount of the
+    announced change until it is corrected, so a renewal taken before then is put right afterwards.
     No amount, plan name or card detail travels in the mail (UD13-E).
     """
 
     template: ClassVar[str] = "plan_terms_cancelled"
     notification_type: ClassVar[NotificationType] = NotificationType.billing
-    subject: ClassVar[str] = "The change to your Lemely plan will not happen"
+    subject: ClassVar[str] = "The change to your Lemely plan has been cancelled"
     button: ClassVar[str] = "Open billing"
 
     subscription_id: uuid.UUID
 
     def lead(self) -> str:
-        return "The change to your Lemely plan that we told you about will not happen."
+        return "The change to your Lemely plan that we told you about has been cancelled."
 
     def detail(self) -> str | None:
-        return "Your plan stays as it is and you do not need to do anything."
+        return (
+            "Your plan stays on its current terms. If a payment is taken at the earlier amount "
+            "before our systems catch up, we will put it right."
+        )
 
     def path(self) -> str:
         return "/billing"

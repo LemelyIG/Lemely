@@ -361,27 +361,20 @@ _SKIPPED_DIRS = ("db/models/", "db/migrations/")
 #: grandfathering leak: an existing subscriber would see an admin edit at once.
 _ALLOWED: Final = frozenset(
     {
-        # The history reader: these receive a ``TierTerms`` (or a history row) under a short name.
-        "db/plan_terms_repo.py::_announce_one",
-        "db/plan_terms_repo.py::_as_terms",
-        "db/plan_terms_repo.py::amount",
-        "db/plan_terms_repo.py::move_is_worse",
-        "db/plan_terms_repo.py::price_terms_differ",
-        "db/plan_terms_repo.py::same_terms",
         # New purchases: checkout pricing, the Paymob plan sync, the seat-cover check of the plan
         # being bought.
         "db/subscription_repo.py::_line_items",
-        "db/subscription_repo.py::_require_seats_covered",
-        "db/subscription_repo.py::_sellable_tier",
-        "db/subscription_repo.py::create_subscription_checkout",
+        "db/subscription_repo.py::SubscriptionService._require_seats_covered",
+        "db/subscription_repo.py::SubscriptionService._sellable_tier",
+        "db/subscription_repo.py::SubscriptionService.create_subscription_checkout",
         "db/subscription_repo.py::sync_paymob_plan",
         # The admin catalogue: edits and lists tiers, the activation queue and a manual activation
         # (a new purchase priced at the current terms, which it stamps).
         "db/admin_billing_repo.py::_check_tier_shape",
         "db/admin_billing_repo.py::paymob_drift",
-        "db/admin_billing_repo.py::update_plan_tier",
-        "db/admin_customer_repo.py::manual_activation",
-        "db/admin_repo.py::pending_activations",
+        "db/admin_billing_repo.py::AdminCatalogueService.update_plan_tier",
+        "db/admin_customer_repo.py::AdminCustomerService.manual_activation",
+        "db/admin_repo.py::PlatformAdminService.pending_activations",
         "web/routers/admin.py::activation_queue",
         "web/routers/admin_billing.py::credit_pack_dto",
         "web/routers/admin_billing.py::plan_tier_dto",
@@ -403,16 +396,18 @@ def _is_tier_receiver(node: ast.expr) -> bool:
 
 
 def _tier_term_reads(tree: ast.AST) -> list[tuple[str, int, str]]:
-    """``(enclosing function, line, text)`` for every ``<tier>.<term>`` attribute read."""
+    """``(qualified function, line, text)`` for every ``<tier>.<term>`` attribute read.
+
+    The qualified name joins the enclosing classes and functions (``Service.method.helper``), so a
+    same-named function elsewhere in a module never inherits an exemption.
+    """
     found: list[tuple[str, int, str]] = []
 
     def walk(node: ast.AST, function: str) -> None:
         for child in ast.iter_child_nodes(node):
-            name = (
-                child.name
-                if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef)
-                else function
-            )
+            name = function
+            if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                name = child.name if function == "<module>" else f"{function}.{child.name}"
             if (
                 isinstance(child, ast.Attribute)
                 and child.attr in _TERM_ATTRS
@@ -479,4 +474,33 @@ def test_the_scan_allows_a_named_function_and_nothing_else_in_its_module(tmp_pat
     )
     assert _scan_violations(tmp_path, frozenset({"db/somewhere.py::priced"})) == [
         "db/somewhere.py:4 tier.allowance_units in leaky"
+    ]
+
+
+def test_an_exemption_is_qualified_by_class_and_never_covers_a_same_named_function(
+    tmp_path: Path,
+) -> None:
+    bad = tmp_path / "db"
+    bad.mkdir()
+    (bad / "somewhere.py").write_text(
+        "class Svc:\n    def priced(self, tier):\n        return tier.price_minor\n"
+        "def priced(tier):\n    return tier.price_minor\n",
+        encoding="utf-8",
+    )
+    assert _scan_violations(tmp_path, frozenset({"db/somewhere.py::Svc.priced"})) == [
+        "db/somewhere.py:5 tier.price_minor in priced"
+    ]
+
+
+def test_the_scan_catches_a_tier_read_in_a_function_nested_in_an_exempt_one(
+    tmp_path: Path,
+) -> None:
+    bad = tmp_path / "db"
+    bad.mkdir()
+    (bad / "somewhere.py").write_text(
+        "def outer(tier):\n    def amount(t):\n        return t.price_minor\n    return amount\n",
+        encoding="utf-8",
+    )
+    assert _scan_violations(tmp_path, frozenset({"db/somewhere.py::outer"})) == [
+        "db/somewhere.py:3 t.price_minor in outer.amount"
     ]

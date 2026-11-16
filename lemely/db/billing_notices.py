@@ -185,8 +185,9 @@ def enqueue_plan_terms_ends(
 ) -> bool:
     """Queue the "your plan ends on DATE, subscribe again" notice (the fixed-amount path).
 
-    Shares the dedupe key of :func:`enqueue_plan_terms_change`: a terms version is announced one
-    way only. ``False`` as for that function.
+    Its own dedupe key (``terms_ends:``): the move may first have been announced as a plain change
+    (a seat price edit with no seats held) and the "your plan ends" mail still has to go out when
+    the change turns out to alter the amount. ``False`` as for :func:`enqueue_plan_terms_change`.
 
     Raises:
         ValueError: ``ends_at`` is naive.
@@ -200,7 +201,7 @@ def enqueue_plan_terms_ends(
         recipient_user_id=subscription.payer_user_id,
         template="plan_terms_ends",
         context={"subscription_id": subscription.id, "ends_at": ends_at.astimezone(UTC)},
-        dedupe_key=f"terms_change:{subscription.id}:{terms_version}",
+        dedupe_key=f"terms_ends:{subscription.id}:{terms_version}",
     )
 
 

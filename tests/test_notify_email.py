@@ -624,6 +624,7 @@ def test_terms_ends_says_the_plan_ends_and_to_subscribe_again() -> None:
     )
     assert "ends on 10 Dec 2026" in text
     assert "subscribe again" in text.lower()
+    assert "open billing" in text.lower()  # how to re-subscribe
     assert "EGP" not in text
 
 
@@ -637,12 +638,13 @@ def test_terms_contexts_refuse_extra_keys_and_naive_instants() -> None:
         validate_context("plan_terms_ends", {"subscription_id": str(SUBSCRIPTION_ID)})
 
 
-def test_terms_cancelled_says_the_change_will_not_happen_and_carries_no_amount() -> None:
+def test_terms_cancelled_says_the_change_is_cancelled_and_carries_no_amount() -> None:
     subject, html_body, text = render_email(
         "plan_terms_cancelled", {"subscription_id": str(SUBSCRIPTION_ID)}, app_base_url=BASE_URL
     )
-    assert "will not happen" in text
-    assert "will not happen" in subject
+    assert "has been cancelled" in text
+    assert "has been cancelled" in subject
+    assert "price" not in text.lower()  # the copy promises no price: the processor may lag
     assert not re.search(r"\d[\d,.]*\s*(EGP|SAR|AED|OMR|USD)|EGP|\$", html_body + text)
     assert f"{BASE_URL}/billing" in text
 
