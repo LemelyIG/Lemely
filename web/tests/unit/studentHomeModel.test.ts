@@ -238,9 +238,11 @@ describe("rows and blocks", () => {
 
   it("grade floor", () => {
     const floor = floorVm(makeHome())
-    expect(floor[2]).toEqual({ code: "0606", name: "Add Maths", grade: "B", sub: "9 pts to A", to: "/student/subject/0606" })
+    expect(floor[2]).toEqual({ code: "0606", name: "Add Maths", grade: "B", sub: "9 marks to A", to: "/student/subject/0606" })
     const top = floorVm(makeHome({ floor: [{ ...makeHome().floor[0], grade: "A*", nextGrade: null, pointsToNext: null }] }))
     expect(top[0].sub).toBe("Top grade")
+    const noGap = floorVm(makeHome({ floor: [{ ...makeHome().floor[0], grade: "B", nextGrade: "A", pointsToNext: null }] }))
+    expect(noGap[0].sub).toBe("On the way to A")
   })
 
   it("last paper, win rows, streak pill", () => {

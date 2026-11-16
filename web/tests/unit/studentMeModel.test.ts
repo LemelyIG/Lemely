@@ -52,7 +52,7 @@ describe("Me view model", () => {
     expect(strip[11]!.on).toBe(false)
     expect(streakLine(xp())).toEqual({ main: "9-day streak", best: "best 14" })
     expect(streakLine(xp({ streak: { current: 0, longest: 0, lastActiveOn: null, freezesAvailable: 0 } }))).toEqual({
-      main: "No streak yet",
+      main: "Start a streak today",
       best: null,
     })
   })
@@ -97,7 +97,7 @@ describe("Me view model", () => {
     ])
     expect(peopleVm({ classes: undefined, rank: null, friends: 0, parents: 0 }).map((d) => d.sub)).toEqual([
       null,
-      "Not ranked yet",
+      "Join a class to rank",
       "Add a friend",
       "Invite a parent",
     ])
@@ -107,7 +107,7 @@ describe("Me view model", () => {
     expect(subjectsVm(makeHome())[2]).toEqual({
       grade: "B",
       title: "Additional Mathematics",
-      sub: "0606 · 2 papers · 9 pts to A",
+      sub: "0606 · 2 papers · 9 marks to A",
       to: "/student/subject/0606",
     })
     const home = makeHome({ activity: [{ kind: "paper", title: "Paper marked", sub: "Mathematics P4 · B", at: "2026-11-10T10:00:00+00:00" }] })

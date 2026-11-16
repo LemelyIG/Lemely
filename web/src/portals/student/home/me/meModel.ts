@@ -7,7 +7,7 @@
 import type { Profile } from "@/lib/meTypes"
 import type { StudentHome } from "@/lib/studentHomeTypes"
 import type { XpDay, XpProfile, XpSource } from "@/lib/xpTypes"
-import { plural, relativeDay, shortSubject } from "../model"
+import { gradeGapLabel, plural, relativeDay, shortSubject } from "../model"
 import { homeRoutes, practiceTarget } from "../routes"
 
 const GRADE_ORDER = ["U", "G", "F", "E", "D", "C", "B", "A", "A*"]
@@ -76,7 +76,7 @@ export function streakStrip(xp: XpProfile, days = 14): { day: string; on: boolea
 
 export function streakLine(xp: XpProfile): { main: string; best: string | null } {
   const { current, longest } = xp.streak
-  if (current === 0 && longest === 0) return { main: "No streak yet", best: null }
+  if (current === 0 && longest === 0) return { main: "Start a streak today", best: null }
   return { main: `${current}-day streak`, best: longest > 0 ? `best ${longest}` : null }
 }
 
@@ -131,7 +131,7 @@ export function peopleVm(input: {
   const sub = <T,>(v: T | undefined, f: (v: T) => string) => (v === undefined ? null : f(v))
   return [
     { id: "classes", label: "Classes", sub: sub(input.classes, (n) => `${n} ${n === 1 ? "class" : "classes"}`), to: homeRoutes.classes },
-    { id: "standings", label: "Standings", sub: input.rank === undefined ? null : input.rank === null ? "Not ranked yet" : ordinal(input.rank), to: homeRoutes.standings },
+    { id: "standings", label: "Standings", sub: input.rank === undefined ? null : input.rank === null ? "Join a class to rank" : ordinal(input.rank), to: homeRoutes.standings },
     { id: "friends", label: "Friends", sub: sub(input.friends, (n) => (n === 0 ? "Add a friend" : plural(n, "friend"))), to: homeRoutes.friends },
     { id: "parents", label: "Parents", sub: sub(input.parents, (n) => (n === 0 ? "Invite a parent" : `${n} linked`)), to: homeRoutes.parents },
   ] as const
@@ -144,7 +144,7 @@ export function subjectsVm(home: StudentHome) {
     sub: [
       f.code,
       plural(f.papers, "paper"),
-      f.nextGrade && f.pointsToNext != null ? `${f.pointsToNext} pts to ${f.nextGrade}` : "Top grade",
+      gradeGapLabel(f),
     ].join(" · "),
     to: homeRoutes.subject(f.code),
   }))

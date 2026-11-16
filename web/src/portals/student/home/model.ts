@@ -431,12 +431,18 @@ export function weekVm(home: StudentHome) {
   })
 }
 
+/** The line under a subject grade: marks to the next grade, never "Top grade" while one exists. */
+export function gradeGapLabel(f: { nextGrade: string | null; pointsToNext: number | null }): string {
+  if (!f.nextGrade) return "Top grade"
+  return f.pointsToNext != null ? `${plural(f.pointsToNext, "mark")} to ${f.nextGrade}` : `On the way to ${f.nextGrade}`
+}
+
 export function floorVm(home: StudentHome) {
   return home.floor.map((f) => ({
     code: f.code,
     name: shortSubject(f.name),
     grade: f.grade,
-    sub: f.nextGrade && f.pointsToNext != null ? `${f.pointsToNext} pts to ${f.nextGrade}` : "Top grade",
+    sub: gradeGapLabel(f),
     to: homeRoutes.subject(f.code),
   }))
 }
