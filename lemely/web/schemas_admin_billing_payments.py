@@ -19,6 +19,13 @@ from lemely.web.schemas_admin_billing import (  # noqa: TC001 - pydantic field t
 )
 
 
+class AdminVoidRequestDTO(ApiModel):
+    """A void is always full, so there is no amount. ``reverseChange`` also undoes the purchase."""
+
+    reverseChange: bool = False
+    reason: Reason
+
+
 class AdminRefundRequestDTO(ApiModel):
     """``amountMinor`` ``None`` refunds everything not yet refunded.
 

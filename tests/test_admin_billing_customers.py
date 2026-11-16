@@ -75,10 +75,11 @@ JOB_KEYS = {
 PAYMENT_KEYS = {
     "id", "payerUserId", "beneficiaryUserId", "purpose", "status", "amountMinor", "currency",
     "refundedMinor", "paymobOrderId", "paymobTxnId", "planTierId", "creditPackId",
-    "subscriptionId", "seatQuantity", "createdAt", "paidAt", "refunds",
+    "subscriptionId", "seatQuantity", "convertedToCredits", "creditedUnits",
+    "createdAt", "paidAt", "refunds",
 }  # fmt: skip
 REFUND_KEYS = {
-    "id", "kind", "status", "amountMinor", "reason", "adminUserId", "clawedBackUnits",
+    "id", "kind", "status", "amountMinor", "reason", "adminUserId", "clawedBackUnits", "reverse",
     "createdAt", "updatedAt", "paymentId", "currency",
 }  # fmt: skip
 MEMBER_KEYS = {

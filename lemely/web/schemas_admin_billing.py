@@ -215,6 +215,28 @@ class UsageEstimatorVersionDTO(ApiModel):
 # -- payments (shared by the customer view and the problem queue) ----------------
 
 
+#: What a requested reverse did, by the service's own outcomes. ``failed``: the money was
+#: returned but the undo could not run (``reason`` says why); an operator is alerted.
+ReverseEffectName = Literal[
+    "same_as_full_refund",
+    "credits_clawed_back",
+    "seat_reduction_scheduled",
+    "already_scheduled",
+    "plan_ends_at_period_end",
+    "downgrade_scheduled",
+    "not_applied_partial",
+    "failed",
+]
+
+
+class ReverseOutcomeDTO(ApiModel):
+    """``effect`` is ``None`` while there is no outcome: not requested, or not succeeded yet."""
+
+    requested: bool
+    effect: ReverseEffectName | None
+    reason: str | None
+
+
 class RefundDTO(ApiModel):
     id: str
     paymentId: str
@@ -225,6 +247,7 @@ class RefundDTO(ApiModel):
     reason: str
     adminUserId: str
     clawedBackUnits: int
+    reverse: ReverseOutcomeDTO
     createdAt: datetime
     updatedAt: datetime
 
@@ -244,6 +267,8 @@ class AdminPaymentRowDTO(ApiModel):
     creditPackId: str | None
     subscriptionId: str | None
     seatQuantity: int | None
+    convertedToCredits: bool
+    creditedUnits: int | None
     createdAt: datetime
     paidAt: datetime | None
     refunds: list[RefundDTO]

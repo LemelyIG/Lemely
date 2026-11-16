@@ -31,6 +31,7 @@ from lemely.db.models.billing import (
     LIVE_SUBSCRIPTION_STATUSES,
     AutoTopupSettings,
     CreditPack,
+    PaymentPurpose,
     PlanAudience,
     PlanTier,
     PlanTierTerms,
@@ -1099,7 +1100,11 @@ def _callback_refunded(last_callback: Mapping[str, object] | None) -> int:
 
 @dataclass(frozen=True, slots=True)
 class PaymentView:
-    """A payment with its refund attempts, oldest first (DV-19)."""
+    """A payment with its refund attempts, oldest first (DV-19).
+
+    ``reverse_effects`` holds, per refund id, the outcome of a requested reverse that has been
+    applied (read from the audit row that closed the refund; nothing else stores it).
+    """
 
     payment: Payment
     refunds: list[PaymentRefund] = field(default_factory=list)
@@ -1112,12 +1117,42 @@ class PaymentView:
         records it in ``last_callback.refunded_amount_cents``.
         """
         console = sum(
+#: Purposes that buy credits by design. Their ``grant_units`` is the purchase itself, not a
+#: conversion of a payment that bought nothing (UD-3).
+CREDIT_PURCHASE_PURPOSES: Final = frozenset({PaymentPurpose.credit_pack, PaymentPurpose.auto_topup})
+
+
+@dataclass(frozen=True, slots=True)
+class ReverseEffect:
+    """What the undo of a refund or void came to, as its closing audit row recorded it.
+
+    ``effect`` is the audit's ``reverse_effect``; ``reason`` is the service's explanation when
+    the undo could not run after the money had moved.
+    """
+
+    effect: str
+    reason: str | None = None
+
+
             r.amount_minor
             for r in self.refunds
             if r.status is RefundStatus.succeeded and r.kind is RefundKind.refund
         )
         return max(console, _callback_refunded(self.payment.last_callback))
 
+    reverse_effects: Mapping[uuid.UUID, ReverseEffect] = field(default_factory=dict)
+
+    @property
+    def credited_units(self) -> int | None:
+        """Credits a payment that bought nothing was turned into (UD-3), else ``None``.
+
+        The same stamp the checkout-return page reads (``grant_units``). A pack or top-up is
+        excluded: it carries the stamp because credits are what it sells.
+        """
+        payment = self.payment
+        if payment.purpose in CREDIT_PURCHASE_PURPOSES:
+            return None
+        return payment.grant_units
 
 def payment_views(session: Session, payments: Sequence[Payment]) -> list[PaymentView]:
     """Attach refunds to ``payments`` in one query, keeping the input order."""
@@ -1130,7 +1165,46 @@ def payment_views(session: Session, payments: Sequence[Payment]) -> list[Payment
             .order_by(PaymentRefund.created_at, PaymentRefund.id)
         ):
             by_payment[refund.payment_id].append(refund)
-    return [PaymentView(payment=p, refunds=by_payment[p.id]) for p in payments]
+    effects = _reverse_effects(session, by_payment)
+    return [
+        PaymentView(payment=p, refunds=by_payment[p.id], reverse_effects=effects.get(p.id, {}))
+        for p in payments
+    ]
+
+
+def _reverse_effects(
+    session: Session, by_payment: Mapping[uuid.UUID, Sequence[PaymentRefund]]
+) -> dict[uuid.UUID, dict[uuid.UUID, ReverseEffect]]:
+    """Per payment, the reverse outcome of each succeeded refund that asked for one."""
+    wanted: dict[uuid.UUID, dict[str, uuid.UUID]] = {}
+    for payment_id, refunds in by_payment.items():
+        ids = {
+            str(r.id): r.id
+            for r in refunds
+            if r.reverse_change and r.status is RefundStatus.succeeded
+        }
+        if ids:
+            wanted[payment_id] = ids
+    found: dict[uuid.UUID, dict[uuid.UUID, ReverseEffect]] = {}
+    if not wanted:
+        return found
+    for row in session.scalars(
+        select(AdminAuditLog).where(
+            AdminAuditLog.target_kind == AuditTarget.PAYMENT.value,
+            AdminAuditLog.target_id.in_(list(wanted)),
+            AdminAuditLog.action == AuditAction.PAYMENT_REFUND_SUCCEEDED.value,
+        )
+    ):
+        after = row.after or {}
+        effect = after.get("reverse_effect")
+        refund_id = wanted[row.target_id].get(str(after.get("refund_id")))
+        if refund_id is None or not isinstance(effect, str):
+            continue
+        reason = after.get("reverse_reason")
+        found.setdefault(row.target_id, {})[refund_id] = ReverseEffect(
+            effect, reason if isinstance(reason, str) else None
+        )
+    return found
 
 
 __all__ = [
@@ -1150,6 +1224,7 @@ __all__ = [
     "PaymentView",
     "PaymobCallError",
     "PlanTierFields",
+    "CREDIT_PURCHASE_PURPOSES",
     "ReasonRequiredError",
     "already_applied",
     "audited",
@@ -1161,3 +1236,4 @@ __all__ = [
     "snapshot",
     "to_jsonable",
 ]
+    "ReverseEffect",

@@ -39,6 +39,7 @@ from sqlalchemy.exc import OperationalError
 
 from lemely.core.keyset import CursorError, decode_cursor, encode_cursor
 from lemely.db.admin_billing_repo import (
+    CREDIT_PURCHASE_PURPOSES,
     AdminConflictError,
     AdminInvalidError,
     AdminNotFoundError,
@@ -115,7 +116,7 @@ REFUND_UNCLEAR_FOR: Final = timedelta(minutes=60)
 _QUEUE_LIMIT = 100
 _REFUNDABLE: Final = frozenset({PaymentStatus.paid, PaymentStatus.partially_refunded})
 _IN_FLIGHT: Final = frozenset({RefundStatus.requested, RefundStatus.unknown})
-_CLAWBACK_PURPOSES: Final = frozenset({PaymentPurpose.credit_pack, PaymentPurpose.auto_topup})
+_CLAWBACK_PURPOSES: Final = CREDIT_PURCHASE_PURPOSES
 #: A subscription payment's refund ends the plan through Phase 05 (UD-6 (a)); a proration or an
 #: extra-seat payment changes nothing unless the admin asks to reverse it (UD-4).
 _SUBSCRIPTION_PURPOSES: Final = frozenset(

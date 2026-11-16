@@ -34,6 +34,7 @@ from lemely.web.schemas_admin_billing import AdminPaymentRowDTO, ReasonDTO
 from lemely.web.schemas_admin_billing_payments import (
     AdminPaymentsPageDTO,
     AdminRefundRequestDTO,
+    AdminVoidRequestDTO,
     ProblemQueueDTO,
     WebhookFailureDTO,
     WebhookKind,
@@ -96,10 +97,15 @@ def refund_payment(
 
 @router.post("/payments/{payment_id}/void", response_model=AdminPaymentRowDTO)
 def void_payment(
-    payment_id: uuid.UUID, body: ReasonDTO, service: PaymentsService, auth: AdminAuth
+    payment_id: uuid.UUID, body: AdminVoidRequestDTO, service: PaymentsService, auth: AdminAuth
 ) -> AdminPaymentRowDTO:
     with mapped_errors():
-        view = service.void(payment_id, admin_user_id=admin_id(auth), reason=body.reason)
+        view = service.void(
+            payment_id,
+            admin_user_id=admin_id(auth),
+            reason=body.reason,
+            reverse_change=body.reverseChange,
+        )
     return payment_row_dto(view)
 
 

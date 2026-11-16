@@ -1585,3 +1585,166 @@ def test_reversing_a_seat_purchase_that_was_never_applied_is_422(
     resp = _reversing(_client(sm, admin, paymob), w["payment"])
     assert (resp.status_code, resp.json()["detail"]["code"]) == (422, "reverse_unavailable")
     assert paymob.calls == [] and _statuses(sm) == []
+
+
+# -- P08: what the payment row says about conversion and the reverse -----------------------------
+
+
+def _voiding(client: TestClient, payment: uuid.UUID, **extra: Any) -> Any:
+    return client.post(f"{BASE}/{payment}/void", json={"reason": "undo it", **extra})
+
+
+def _listed(client: TestClient, payment: uuid.UUID) -> dict[str, Any]:
+    """The payment as the admin payments list reads it back (not the action's own response)."""
+    items = client.get(BASE).json()["items"]
+    return next(i for i in items if i["id"] == str(payment))
+
+
+def _converted_subscription_payment(sm: sessionmaker[Session], *, units: int | None) -> uuid.UUID:
+    student = add_user(sm, Role.student)
+    tier = add_plan_tier(sm, price_minor=10000)
+    sub = add_subscription(sm, student, tier)
+    payment = add_payment(
+        sm, payer=student, purpose=PaymentPurpose.credit_pack, amount_minor=10000, paymob_txn_id=9
+    )
+    with sm.begin() as session:
+        row = session.get(Payment, payment)
+        assert row is not None
+        row.purpose = PaymentPurpose.subscription_first
+        row.credit_pack_id = None
+        row.subscription_id = sub
+        row.plan_tier_id = tier
+        row.grant_units = units
+    if units is not None:
+        grant(sm, student, units=units, kind=GrantKind.credit_pack, payment_id=payment)
+    return payment
+
+
+def test_a_payment_converted_to_credits_says_so_and_how_many(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    converted = _converted_subscription_payment(sm, units=400)
+    row = _listed(_client(sm, admin), converted)
+    assert (row["convertedToCredits"], row["creditedUnits"]) == (True, 400)
+
+
+def test_a_credit_pack_and_an_applied_payment_are_not_converted(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    """A pack carries ``grant_units`` too (its own snapshot), so units alone prove nothing."""
+    _, pack = _pack_bought_and_partly_spent(sm)
+    with sm.begin() as session:
+        row = session.get(Payment, pack)
+        assert row is not None
+        row.grant_units = 400
+    seats = _teacher_with_seats(sm)["payment"]
+    plain = _converted_subscription_payment(sm, units=None)
+    client = _client(sm, admin)
+    for payment in (pack, seats, plain):
+        listed = _listed(client, payment)
+        assert (listed["convertedToCredits"], listed["creditedUnits"]) == (False, None)
+
+
+def test_a_refund_row_states_no_reverse_when_none_was_asked(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _teacher_with_seats(sm)
+    body = _refund(_client(sm, admin), w["payment"]).json()
+    assert body["refunds"][0]["reverse"] == {"requested": False, "effect": None, "reason": None}
+
+
+def test_a_void_can_reverse_the_change_and_the_audit_rows_say_so(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _teacher_with_seats(sm, held=3, bought=2)
+    client = _client(sm, admin)
+    resp = _voiding(client, w["payment"], reverseChange=True)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "voided"
+    assert _sub_row(sm, w["sub"]).pending_extra_seats == 1
+    [void] = resp.json()["refunds"]
+    assert void["kind"] == "void"
+    assert void["reverse"] == {
+        "requested": True,
+        "effect": "seat_reduction_scheduled",
+        "reason": None,
+    }
+    assert _listed(client, w["payment"])["refunds"][0]["reverse"] == void["reverse"]
+    [asked] = audit_rows(sm, AuditAction.PAYMENT_VOID_REQUESTED)
+    assert asked.after["reverse_change"] is True  # type: ignore[index]
+    [done] = audit_rows(sm, AuditAction.PAYMENT_REFUND_SUCCEEDED)
+    assert done.after["reverse_effect"] == "seat_reduction_scheduled"  # type: ignore[index]
+
+
+def test_a_void_without_the_flag_stays_money_only(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _teacher_with_seats(sm)
+    resp = _voiding(_client(sm, admin), w["payment"])
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["refunds"][0]["reverse"]["requested"] is False
+    assert _sub_row(sm, w["sub"]).pending_extra_seats is None
+    [asked] = audit_rows(sm, AuditAction.PAYMENT_VOID_REQUESTED)
+    assert asked.after["reverse_change"] is False  # type: ignore[index]
+
+
+def test_a_void_reverse_the_seat_api_refuses_is_422_before_any_row_or_paymob_call(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _teacher_with_seats(sm)
+    with sm.begin() as session:
+        row = session.get(Payment, w["payment"])
+        assert row is not None
+        row.dedupe_key = f"extra_seat_renewal:{uuid.uuid4()}:1"
+    paymob = FakePaymobClient()
+    resp = _voiding(_client(sm, admin, paymob), w["payment"], reverseChange=True)
+    assert (resp.status_code, resp.json()["detail"]["code"]) == (422, "reverse_unavailable")
+    assert paymob.calls == [] and _statuses(sm) == []
+
+
+def test_a_reverse_that_failed_after_the_money_moved_is_reported_as_failed_with_its_reason(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _teacher_with_seats(sm)
+
+    class PlanLapses(FakePaymobClient):
+        def refund(self, **kwargs: Any) -> dict[str, Any]:
+            with sm.begin() as session:
+                sub = session.get(Subscription, w["sub"])
+                assert sub is not None
+                sub.status = SubscriptionStatus.past_due
+            return {"id": 1, "success": True}
+
+    client = _client(sm, admin, PlanLapses())
+    body = _reversing(client, w["payment"]).json()
+    [refund] = body["refunds"]
+    assert refund["status"] == "succeeded"
+    assert refund["reverse"]["requested"] is True
+    assert refund["reverse"]["effect"] == "failed"
+    assert refund["reverse"]["reason"]  # the service's own words, for the admin
+    assert _listed(client, w["payment"])["refunds"][0]["reverse"] == refund["reverse"]
+
+
+def test_the_reverse_effect_is_read_back_for_credits_and_for_a_pack(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    converted = _converted_subscription_payment(sm, units=400)
+    _, pack = _pack_bought_and_partly_spent(sm)
+    client = _client(sm, admin)
+    assert _reversing(client, converted).json()["refunds"][0]["reverse"]["effect"] == (
+        "credits_clawed_back"
+    )
+    assert _reversing(client, pack).json()["refunds"][0]["reverse"]["effect"] == (
+        "same_as_full_refund"
+    )
+
+
+def test_a_refused_refund_asked_to_reverse_has_no_effect_yet(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _teacher_with_seats(sm)
+    paymob = FakePaymobClient()
+    paymob.refund_result = PaymobError("refused", status_code=400)
+    [refund] = _reversing(_client(sm, admin, paymob), w["payment"]).json()["refunds"]
+    assert refund["status"] == "failed"
+    assert refund["reverse"] == {"requested": True, "effect": None, "reason": None}
