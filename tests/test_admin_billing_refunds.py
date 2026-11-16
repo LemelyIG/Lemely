@@ -877,6 +877,7 @@ def _teacher_with_seats(
         row.credit_pack_id = None
         row.subscription_id = sub
         row.seat_quantity = bought
+        row.applied_at = row.paid_at
         row.plan_tier_id = tier
         subscription = session.get(Subscription, sub)
         assert subscription is not None
@@ -1075,6 +1076,7 @@ def _upgraded(
             row.credit_pack_id = None
             row.subscription_id = sub
             row.plan_tier_id = tier
+            row.applied_at = row.paid_at if purpose is PaymentPurpose.upgrade_proration else None
         period = session.scalars(
             sa.select(SubscriptionPeriod).where(SubscriptionPeriod.subscription_id == sub)
         ).one()
@@ -1238,6 +1240,7 @@ def _third_tier_upgrade(
         row = session.get(Payment, second)
         assert row is not None
         row.purpose = PaymentPurpose.upgrade_proration
+        row.applied_at = row.paid_at
         row.credit_pack_id = None
         row.subscription_id = w["sub"]
         row.plan_tier_id = pro
@@ -1421,6 +1424,7 @@ def _second_seat_purchase(sm: sessionmaker[Session], w: dict[str, Any], bought: 
         row.credit_pack_id = None
         row.subscription_id = w["sub"]
         row.seat_quantity = bought
+        row.applied_at = row.paid_at
         row.plan_tier_id = w["tier"]
     return pid
 
@@ -1521,3 +1525,63 @@ def test_the_reverse_replaces_a_dearer_scheduled_downgrade_with_the_previous_tie
         sub.pending_plan_tier_id = mid
     assert _reversing(_client(sm, admin), w["upgrade"]).status_code == 200
     assert _sub_row(sm, w["sub"]).pending_plan_tier_id == w["previous"]
+
+
+# -- the applied marker (payments.applied_at, migration 0059) -------------------------------------
+
+
+def test_a_paid_but_unapplied_upgrade_is_not_the_previous_upgrade_even_when_it_looks_like_one(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    """basic -> plus -> (a dearer ``max``, paid but voided, unconverted) -> pro: reverse = plus."""
+    w = _upgraded(sm)
+    future = datetime.now(UTC) + timedelta(minutes=5)
+    pro_payment = _third_tier_upgrade(sm, w, first_paid_at=future)
+    top = add_plan_tier(sm, code=f"student_max_{uuid.uuid4().hex[:6]}", price_minor=25000)
+    voided = add_payment(
+        sm,
+        payer=w["student"],
+        amount_minor=1000,
+        paymob_txn_id=11,
+        paid_at=future + timedelta(minutes=30),
+        created_at=NOW - timedelta(days=2),
+    )
+    with sm.begin() as session:
+        row = session.get(Payment, voided)
+        assert row is not None
+        row.purpose = PaymentPurpose.upgrade_proration
+        row.credit_pack_id = None
+        row.subscription_id = w["sub"]
+        row.plan_tier_id = top
+        assert row.applied_at is None and row.grant_units is None  # voided, never converted
+    resp = _reversing(_client(sm, admin), pro_payment)
+    assert resp.status_code == 200, resp.text
+    assert _sub_row(sm, w["sub"]).pending_plan_tier_id == w["target"]  # plus, not max
+
+
+def test_reversing_an_upgrade_that_was_never_applied_is_422(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _upgraded(sm)
+    with sm.begin() as session:
+        row = session.get(Payment, w["upgrade"])
+        assert row is not None
+        row.applied_at = None
+    paymob = FakePaymobClient()
+    resp = _reversing(_client(sm, admin, paymob), w["upgrade"])
+    assert (resp.status_code, resp.json()["detail"]["code"]) == (422, "reverse_unavailable")
+    assert paymob.calls == [] and _statuses(sm) == []
+
+
+def test_reversing_a_seat_purchase_that_was_never_applied_is_422(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    w = _teacher_with_seats(sm)
+    with sm.begin() as session:
+        row = session.get(Payment, w["payment"])
+        assert row is not None
+        row.applied_at = None
+    paymob = FakePaymobClient()
+    resp = _reversing(_client(sm, admin, paymob), w["payment"])
+    assert (resp.status_code, resp.json()["detail"]["code"]) == (422, "reverse_unavailable")
+    assert paymob.calls == [] and _statuses(sm) == []

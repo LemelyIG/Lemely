@@ -906,6 +906,8 @@ class AdminPaymentsService:
             raise _ReverseUnavailableError(
                 "A renewal seat charge paid for seats that already existed."
             )
+        if payment.applied_at is None:
+            raise _ReverseUnavailableError("The purchase never added seats.")
         if sub.current_period_start is None or payment.created_at < sub.current_period_start:
             raise _ReverseUnavailableError("The seats were bought in an earlier period.")
         quantity = payment.seat_quantity or 0
@@ -949,6 +951,7 @@ class AdminPaymentsService:
                 Payment.subscription_id == sub.id,
                 Payment.purpose == PaymentPurpose.extra_seats,
                 Payment.id != payment.id,
+                Payment.applied_at.is_not(None),
                 Payment.created_at >= sub.current_period_start,
                 Payment.id.in_(applied),
             )
@@ -966,6 +969,8 @@ class AdminPaymentsService:
         period's payment, the version stamped on the period; for an earlier upgrade, no newer
         version was written after that upgrade was paid.
         """
+        if payment.applied_at is None:
+            raise _ReverseUnavailableError("The upgrade never changed the plan.")
         if sub.plan_tier_id != payment.plan_tier_id:
             raise _ReverseUnavailableError("The upgrade is no longer the plan being billed.")
         if sub.cancel_at_period_end:  # the plan ends at renewal anyway: nothing left to undo
@@ -993,7 +998,7 @@ class AdminPaymentsService:
                         PaymentStatus.voided,
                     )
                 ),
-                Payment.grant_units.is_(None),
+                Payment.applied_at.is_not(None),  # it moved the tier (a voided one did not)
                 Payment.id != payment.id,
                 Payment.paid_at >= period.period_start,
                 Payment.paid_at < payment.paid_at,
