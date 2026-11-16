@@ -227,6 +227,7 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
       )}
       bottomEmphasisId="scan"
       moreTab={false}
+      phoneMenu
     />
   )
 }

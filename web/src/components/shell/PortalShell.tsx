@@ -37,6 +37,8 @@ export interface PortalShellProps {
   bottomEmphasisId?: string
   /** Append the shell's "More" cell (default true). The student bar has the mock's five tabs and no More: its overflow lives in the top bar's navigation sheet. */
   moreTab?: boolean
+  /** Show the top bar's menu button on phones too (default false). Set when the bar has no More cell to open the drawer. */
+  phoneMenu?: boolean
   /** Accessible name of the drawer dialog. */
   drawerTitle: string
   /** The portal's gate query is pending: the content slot shows RouteSkeleton. */
@@ -65,6 +67,7 @@ export function PortalShell({
   bottomTabs,
   bottomEmphasisId,
   moreTab = true,
+  phoneMenu = false,
   drawerTitle,
   pending,
   overlay,
@@ -115,7 +118,7 @@ export function PortalShell({
       <MoreSheet open={moreOpen && native} onClose={() => setMoreOpen(false)} items={moreItems} />
       <EdgeSwipeBack />
       <div data-shell-column className="flex min-w-0 flex-1 flex-col">
-        <ShellTopBar {...topBar} titleLevel={level} onOpenNav={() => setNavOpen(true)} />
+        <ShellTopBar {...topBar} titleLevel={level} phoneMenu={phoneMenu} onOpenNav={() => setNavOpen(true)} />
         <main
           id={MAIN_CONTENT_ID}
           tabIndex={-1}

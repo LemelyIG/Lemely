@@ -81,10 +81,10 @@ describe("student and teacher render the shared shell sidebar", () => {
 })
 
 describe("student and teacher shells mount BottomNav with the five labels in order", () => {
-  it("student/shell.tsx passes its four tabs to PortalShell in order", () => {
+  it("student/shell.tsx passes its five tabs (no More cell) to PortalShell in order", () => {
     const source = stripComments(read("portals/student/shell.tsx"))
     expect(source).toMatch(/<PortalShell\b/)
-    expect(source).toMatch(/"Overview"[\s\S]*"Correct"[\s\S]*"Classes"[\s\S]*"Profile"/)
+    expect(source).toMatch(/"Home"[\s\S]*"Practice"[\s\S]*"Scan a paper"[\s\S]*"Plan"[\s\S]*"Me"/)
   })
 
   it("PortalShell mounts BottomNav and appends More after the portal's tabs", () => {

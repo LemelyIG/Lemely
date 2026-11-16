@@ -52,6 +52,17 @@ describe("student tab bar (mock h6.js TAB6, Plan in the Subjects slot by user ru
     expect(index).toMatch(/path: "plan",\s*element: <PlanEntry \/>/)
   })
 
+  it("the student phone top bar keeps the menu button that opens the navigation sheet", () => {
+    expect(read("portals/student/shell.tsx")).toMatch(/moreTab=\{false\}\s+phoneMenu\b/)
+    const bar = read("components/shell/ShellTopBar.tsx")
+    expect(bar).toMatch(/phoneMenu\?: boolean/)
+    expect(bar).toContain('cn(SHELL_ICON_BUTTON, "shell-lg:hidden", !phoneMenu && "max-shell-sm:hidden")')
+    expect(bar).toContain("aria-label={navLabel}")
+    expect(read("components/shell/PortalShell.tsx")).toMatch(/phoneMenu = false/)
+    // Teacher and parent keep the default: they never pass it.
+    expect(read("portals/teacher/index.tsx")).not.toContain("phoneMenu")
+  })
+
   it("the raised tab is a soft Tide squircle with a visually hidden label", () => {
     const out = renderToStaticMarkup(
       createElement(

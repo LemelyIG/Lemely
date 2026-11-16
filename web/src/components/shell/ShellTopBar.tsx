@@ -28,6 +28,8 @@ export interface ShellTopBarProps {
   /** Breadcrumb trail; rendered only when it has more than one crumb. */
   trail: readonly Crumb[]
   onOpenNav: () => void
+  /** Keep the menu button on phones (default false: the tab bar's More cell opens the drawer there). The student bar has no More cell. */
+  phoneMenu?: boolean
   /** aria-label of the menu button, e.g. "Open teacher navigation". */
   navLabel: string
   /** The portal's own bar buttons (Create, Upload), already styled with SHELL_BUTTON_*. */
@@ -75,6 +77,7 @@ export function ShellTopBar({
   title,
   trail,
   onOpenNav,
+  phoneMenu = false,
   navLabel,
   actions,
   notifications,
@@ -113,7 +116,7 @@ export function ShellTopBar({
           // Same variant as the sidebar rail's `shell-lg:flex` (1248px), so exactly
           // one of {sidebar column, menu button} shows. The bar's drawer margins
           // (`max-shell-lg:`) follow the same breakpoint.
-          className={cn(SHELL_ICON_BUTTON, "shell-lg:hidden max-shell-sm:hidden")}
+          className={cn(SHELL_ICON_BUTTON, "shell-lg:hidden", !phoneMenu && "max-shell-sm:hidden")}
         >
           <ShellIcon name="menu" />
         </button>
