@@ -300,36 +300,42 @@ const creditRate: CreditRate = {
 
 const noCache = { cachedInputUsdPerMtok: null, cacheWrite5mUsdPerMtok: null, cacheWrite1hUsdPerMtok: null }
 const noTier = { tierThresholdTokens: null, tier2InputUsdPerMtok: null, tier2OutputUsdPerMtok: null }
+const CLAUDE_SOURCE = "https://platform.claude.com/docs/en/about-claude/pricing"
+const GEMINI_SOURCE = "built-in table, lemely.io.gemini"
 
-/** One tiered built-in with an override, one flat built-in, one the code does not price. */
+/**
+ * Shaped like the backend's `GET /llm-prices`: the one tiered code row is `claude-haiku-5-5`
+ * (100k tokens, cache rates present, normalised strings); Gemini rows are flat and read from the
+ * built-in table; a model the code does not price has no `codeDefault`.
+ */
 const llmModels: LlmModelPrice[] = [
   {
-    model: "gemini-3-pro",
-    provider: "gemini",
+    model: "claude-haiku-5-5",
+    provider: "anthropic",
     codeDefault: {
-      inputUsdPerMtok: "2.000000",
-      outputUsdPerMtok: "12.000000",
-      cachedInputUsdPerMtok: "0.200000",
-      cacheWrite5mUsdPerMtok: null,
-      cacheWrite1hUsdPerMtok: null,
+      inputUsdPerMtok: "0.1",
+      outputUsdPerMtok: "0.5",
+      cachedInputUsdPerMtok: "0.01",
+      cacheWrite5mUsdPerMtok: "0.125",
+      cacheWrite1hUsdPerMtok: "0.2",
       tiered: true,
-      tierThresholdTokens: 200000,
-      tier2InputUsdPerMtok: "4.000000",
-      tier2OutputUsdPerMtok: "18.000000",
-      source: "ai.google.dev/pricing",
-      readOn: "2026-10-01",
+      tierThresholdTokens: 100000,
+      tier2InputUsdPerMtok: "0.5",
+      tier2OutputUsdPerMtok: "2.5",
+      source: CLAUDE_SOURCE,
+      readOn: "2026-10-19",
     },
     override: null,
     seenInLast30Days: true,
   },
   {
-    model: "claude-haiku-4-5",
-    provider: "anthropic",
-    codeDefault: { inputUsdPerMtok: "1.000000", outputUsdPerMtok: "5.000000", ...noCache, tiered: false, ...noTier, source: "anthropic.com/pricing", readOn: "2026-10-01" },
+    model: "gemini-2.5-flash",
+    provider: "gemini",
+    codeDefault: { inputUsdPerMtok: "0.3", outputUsdPerMtok: "2.5", cachedInputUsdPerMtok: "0.03", cacheWrite5mUsdPerMtok: null, cacheWrite1hUsdPerMtok: null, tiered: false, ...noTier, source: GEMINI_SOURCE, readOn: null },
     override: {
-      model: "claude-haiku-4-5",
-      inputUsdPerMtok: "0.900000",
-      outputUsdPerMtok: "4.500000",
+      model: "gemini-2.5-flash",
+      inputUsdPerMtok: "0.25",
+      outputUsdPerMtok: "2.2",
       ...noCache,
       ...noTier,
       version: 3,
@@ -338,7 +344,8 @@ const llmModels: LlmModelPrice[] = [
     },
     seenInLast30Days: false,
   },
-  { model: "future-model-x", provider: "unknown", codeDefault: null, override: null, seenInLast30Days: true },
+  { model: "gemini-3-pro-preview", provider: "gemini", codeDefault: null, override: null, seenInLast30Days: true },
+  { model: "claude-future-x", provider: "anthropic", codeDefault: null, override: null, seenInLast30Days: false },
 ]
 
 const adminPayment: AdminPaymentRow = {

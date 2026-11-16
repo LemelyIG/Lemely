@@ -48,7 +48,7 @@ export function CreditConversion({ saved }: { saved: (what: string) => () => voi
       <QueryState
         query={query}
         skeleton={<ListSkeleton rows={1} />}
-        error={{ heading: "Couldn't load the conversion rates" }}
+        error={{ heading: "Couldn't load the conversion rates", compact: true }}
         isEmpty={(rates) => rates.length === 0}
         empty={<Empty>No rate set. Payments that would become credits stay paid and raise an alert.</Empty>}
       >

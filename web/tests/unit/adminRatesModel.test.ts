@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { ApiError } from "@/lib/api"
-import { adminBillingFailureMessage, fieldErrors, visibleFields } from "@/lib/adminBillingModel"
+import { PartialSaveError, adminBillingFailureMessage, fieldErrors, visibleFields } from "@/lib/adminBillingModel"
 import {
   CREDIT_RATE_FIELDS,
   SETTINGS_FIELDS,
@@ -122,9 +122,16 @@ describe("AI token prices", () => {
   const names = (m: typeof tiered, v: Record<string, string | boolean>) => visibleFields(llmPriceFields(m), v, null).map((f) => f.name)
 
   it("starts from the override, else from the built-in price", () => {
-    expect(llmPriceValues(tiered)).toMatchObject({ inputUsdPerMtok: "2", outputUsdPerMtok: "12", cachedInputUsdPerMtok: "0.2", tierThresholdTokens: "200000", tier2InputUsdPerMtok: "4" })
-    expect(llmPriceValues(flat)).toMatchObject({ inputUsdPerMtok: "0.9", outputUsdPerMtok: "4.5" })
+    expect(llmPriceValues(tiered)).toMatchObject({ inputUsdPerMtok: "0.1", outputUsdPerMtok: "0.5", tierThresholdTokens: "100000", tier2InputUsdPerMtok: "0.5", tier2OutputUsdPerMtok: "2.5" })
+    expect(llmPriceValues(flat)).toMatchObject({ inputUsdPerMtok: "0.25", outputUsdPerMtok: "2.2" })
     expect(llmPriceValues(unpriced)).toMatchObject({ inputUsdPerMtok: "", outputUsdPerMtok: "" })
+  })
+
+  it("leaves the cache rates empty (use the built-in rate) unless an override already set them", () => {
+    expect(llmPriceValues(tiered)).toMatchObject({ cachedInputUsdPerMtok: "", cacheWrite5mUsdPerMtok: "", cacheWrite1hUsdPerMtok: "" })
+    const withCache = { ...flat, override: { ...flat.override!, cachedInputUsdPerMtok: "0.02" } }
+    expect(llmPriceValues(withCache).cachedInputUsdPerMtok).toBe("0.02")
+    expect(llmPriceBody(values(tiered), "r", tiered)).toMatchObject({ cachedInputUsdPerMtok: null, cacheWrite5mUsdPerMtok: null })
   })
 
   it("warns about a flat rate only for a tiered built-in row whose override has no tier 2", () => {
@@ -148,14 +155,21 @@ describe("AI token prices", () => {
 
   it("flags prices under 1/100 or over 100 times the built-in, and sends the flag when ticked", () => {
     expect(unusualRateNames(values(flat), flat)).toEqual([])
-    expect(unusualRateNames(values(flat, { inputUsdPerMtok: "0.009" }), flat)).toEqual(["inputUsdPerMtok"])
-    expect(unusualRateNames(values(flat, { outputUsdPerMtok: "501" }), flat)).toEqual(["outputUsdPerMtok"])
-    expect(unusualRateNames(values(flat, { outputUsdPerMtok: "500" }), flat)).toEqual([])
+    expect(unusualRateNames(values(flat, { inputUsdPerMtok: "0.002" }), flat)).toEqual(["inputUsdPerMtok"])
+    expect(unusualRateNames(values(flat, { outputUsdPerMtok: "251" }), flat)).toEqual(["outputUsdPerMtok"])
+    expect(unusualRateNames(values(flat, { outputUsdPerMtok: "250" }), flat)).toEqual([])
     expect(unusualRateNames(values(unpriced, { inputUsdPerMtok: "9999" }), unpriced)).toEqual([])
-    const typo = values(flat, { inputUsdPerMtok: "0.009" })
+    const typo = values(flat, { inputUsdPerMtok: "0.002" })
     expect(llmConfirmChecks(typo, flat)).toHaveLength(1)
     expect(llmPriceBody({ ...typo, confirmUnusualPrice: true }, "r", flat)).toMatchObject({ confirmUnusualPrice: true })
     expect(llmPriceBody(values(flat), "r", flat)).not.toHaveProperty("confirmUnusualPrice")
+  })
+
+  it("sends confirmDropTier whenever it is ticked, even for a row the page sees as flat (the server reads the vendor row)", () => {
+    const err = new ApiError(422, "x", { code: "override_drops_tier", message: "m" })
+    expect(visibleFields(llmPriceFields(flat), values(flat), err).map((f) => f.name)).toContain("confirmDropTier")
+    expect(llmPriceBody(values(flat, { confirmDropTier: true }), "r", flat).confirmDropTier).toBe(true)
+    expect(llmPriceBody(values(flat), "r", flat)).not.toHaveProperty("confirmDropTier")
   })
 
   it("shows a confirmation the server asked for even when the form did not predict it", () => {
@@ -169,7 +183,7 @@ describe("AI token prices", () => {
     const body = llmPriceBody(values(flat, { inputUsdPerMtok: "0.95", cachedInputUsdPerMtok: "0.100000" }), "match vendor", flat)
     expect(body).toEqual({
       inputUsdPerMtok: "0.95",
-      outputUsdPerMtok: "4.5",
+      outputUsdPerMtok: "2.2",
       cachedInputUsdPerMtok: "0.1",
       cacheWrite5mUsdPerMtok: null,
       cacheWrite1hUsdPerMtok: null,
@@ -180,7 +194,7 @@ describe("AI token prices", () => {
       reason: "match vendor",
     })
     expect(typeof body.inputUsdPerMtok).toBe("string")
-    expect(llmPriceBody(values(tiered), "r", tiered)).toMatchObject({ expectedVersion: null, tierThresholdTokens: 200000, tier2InputUsdPerMtok: "4" })
+    expect(llmPriceBody(values(tiered), "r", tiered)).toMatchObject({ expectedVersion: null, tierThresholdTokens: 100000, tier2InputUsdPerMtok: "0.5" })
   })
 
   it("needs input and output, bounds them, and keeps the three tier fields together", () => {
@@ -206,7 +220,36 @@ describe("AI token prices", () => {
   })
 })
 
+describe("ranges match the server's ceilings", () => {
+  it("code execution hour at most 100", () => {
+    const e = (v: string) => fieldErrors(SETTINGS_FIELDS, { ...settingsValues(settings), codeExecutionUsdPerHour: v }).codeExecutionUsdPerHour
+    expect(e("100")).toBeUndefined()
+    expect(e("100.01")).toBe("Code execution (USD per container hour) must be above 0 and at most 100.")
+    expect(e("500")).toBeDefined()
+  })
+
+  it("units per piaster at most 100,000", () => {
+    const e = (v: string) => fieldErrors(CREDIT_RATE_FIELDS, { unitsPerMinor: v }).unitsPerMinor
+    expect(e("100000")).toBeUndefined()
+    expect(e("100000.5")).toBe("Units per piaster must be above 0 and at most 100,000.")
+  })
+
+  it("tier 2 threshold from 1 to 10,000,000 tokens", () => {
+    const e = (v: string) => fieldErrors(llmPriceFields(tiered), { ...llmPriceValues(tiered), tierThresholdTokens: v }).tierThresholdTokens
+    expect(e("10000000")).toBeUndefined()
+    expect(e("10000001")).toBe("Tier 2 starts above (input tokens) must be a whole number from 1 to 10,000,000.")
+    expect(e("0")).toBeDefined()
+  })
+})
+
 describe("stale writes and friendly codes", () => {
+  it("sees a stale write behind a half-saved allowance pair", () => {
+    const pair = new PartialSaveError(["the student free allowance"], "the teacher signup credits", api(409, "stale_write"))
+    expect(isStaleWrite(pair)).toBe(true)
+    expect(staleBlock(pair)).not.toBeNull()
+    expect(staleBlock(new PartialSaveError(["a"], "b", api(422, "unusual_price")))).toBeNull()
+  })
+
   it("reads every reload code, and blocks the same submit afterwards", () => {
     for (const code of ["stale_write", "credit_rate_exists", "credit_rate_not_set", "llm_price_exists", "llm_price_not_set"]) {
       expect(isStaleWrite(api(409, code))).toBe(true)

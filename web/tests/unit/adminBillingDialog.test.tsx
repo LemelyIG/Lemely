@@ -7,7 +7,7 @@ import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ApiError } from "@/lib/api"
-import { PACK_UPDATE_FIELDS, packUpdateBody, packValues } from "@/lib/adminBillingModel"
+import { PartialSaveError, PACK_UPDATE_FIELDS, packUpdateBody, packValues } from "@/lib/adminBillingModel"
 import { fx } from "./support/billingFixtures"
 import { fakeMutation, okQuery } from "./support/billingRender"
 
@@ -199,6 +199,35 @@ describe("Catalogue writes", () => {
     expect((s.updateFree as Fake).mutate.mock.calls[0][0]).toEqual([
       { audience: "teacher", units: 1200, validDays: 30, expectedVersion: 3, reason: "because the price changed" },
     ])
+  })
+
+  it("sends the versions and values the dialog was opened on, even after the catalogue refetches", async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(wrap(h(Catalogue)))
+    await user.click(screen.getByRole("button", { name: "Edit free allowances" }))
+    reason()
+    const student = screen.getByLabelText("Student free allowance (units)")
+    await user.clear(student)
+    await user.type(student, "400")
+    // Another admin changed the teacher credits (v4) while this dialog was open.
+    s.catalogue = okQuery({ ...fx.adminCatalogue, freeAllowances: { ...fx.adminCatalogue.freeAllowances, teacherSignupUnits: 5000, teacherVersion: 4 } })
+    rerender(wrap(h(Catalogue)))
+    await user.click(screen.getByRole("button", { name: "Save allowances" }))
+    await waitFor(() => expect((s.updateFree as Fake).mutate).toHaveBeenCalledTimes(1))
+    expect((s.updateFree as Fake).mutate.mock.calls[0][0]).toEqual([
+      { audience: "student", units: 400, validDays: null, expectedVersion: 2, reason: "because the price changed" },
+    ])
+  })
+
+  it("blocks the resubmit when the second write of a pair was stale", async () => {
+    const user = userEvent.setup()
+    s.updateFree = fake({
+      isError: true,
+      error: new PartialSaveError(["the student free allowance"], "the teacher signup credits", new ApiError(409, "x", { code: "stale_write", message: "m" })),
+    })
+    render(wrap(h(Catalogue)))
+    await user.click(screen.getByRole("button", { name: "Edit free allowances" }))
+    expect((screen.getByRole("button", { name: "Save allowances" }) as HTMLButtonElement).disabled).toBe(true)
   })
 
   it("shows an unset signup pack as Not set and requires a value for it", async () => {

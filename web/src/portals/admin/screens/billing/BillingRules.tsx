@@ -44,7 +44,9 @@ function Values({ s }: { s: BillingSettings }) {
 export function BillingRules({ saved }: { saved: (what: string) => () => void }) {
   const query = useBillingSettings()
   const update = useUpdateBillingSettings()
-  const [editing, setEditing] = useState(false)
+  // The row the dialog was opened on: its version and its diff baseline stay fixed while the
+  // section refetches, so typed values never go out under a newer version.
+  const [editing, setEditing] = useState<BillingSettings | null>(null)
   const current = query.data
 
   return (
@@ -53,27 +55,28 @@ export function BillingRules({ saved }: { saved: (what: string) => () => void })
       hint="Apply from the moment you save. Credits and payments already made keep the terms they had."
       action={
         current ? (
-          <Button variant="secondary" onClick={() => setEditing(true)} aria-label="Edit billing rules">
+          <Button variant="secondary" onClick={() => setEditing(current)} aria-label="Edit billing rules">
             Edit
           </Button>
         ) : null
       }
     >
-      <QueryState query={query} skeleton={<ListSkeleton rows={2} />} error={{ heading: "Couldn't load the billing rules" }}>
+      <QueryState query={query} skeleton={<ListSkeleton rows={2} />} error={{ heading: "Couldn't load the billing rules", compact: true }}>
         {(s) => (
           <>
             <Values s={s} />
             {editing ? (
               <ReasonedFormDialog
+                key={editing.version}
                 open
-                onClose={() => setEditing(false)}
+                onClose={() => setEditing(null)}
                 title="Billing rules"
                 fields={SETTINGS_FIELDS}
-                initial={settingsValues(s)}
+                initial={settingsValues(editing)}
                 submitLabel="Save rules"
                 mutation={update}
-                toBody={(v, r) => settingsBody(v, r, s)}
-                check={(v) => settingsNothingChanged(v, s)}
+                toBody={(v, r) => settingsBody(v, r, editing)}
+                check={(v) => settingsNothingChanged(v, editing)}
                 blocked={staleBlock(update.error)}
                 reload="Reload this page"
                 onSaved={saved("Saved the billing rules.")}

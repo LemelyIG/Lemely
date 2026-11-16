@@ -35,7 +35,7 @@ import {
 } from "@/lib/adminBillingModel"
 import { staleBlock } from "@/lib/adminRatesModel"
 import { formatMoney } from "@/lib/billingFormat"
-import type { AdminCatalogue, AdminCreditPack, AdminPlanTier } from "@/lib/billingTypes"
+import type { AdminCatalogue, AdminCreditPack, AdminPlanTier, FreeAllowances } from "@/lib/billingTypes"
 import {
   useAdminCatalogue,
   useCreateEstimator,
@@ -62,7 +62,7 @@ type Dialog =
   | { kind: "pack"; pack: AdminCreditPack | null }
   | { kind: "rate" }
   | { kind: "estimator" }
-  | { kind: "free" }
+  | { kind: "free"; free: FreeAllowances }
   | null
 
 const n = (v: number) => new Intl.NumberFormat().format(v)
@@ -354,7 +354,7 @@ function Body({ c, open, saved }: { c: AdminCatalogue; open: (d: Dialog) => void
         title="Free allowances"
         hint="What a new account starts with. These are not for sale."
         action={
-          <Button variant="secondary" onClick={() => open({ kind: "free" })} aria-label="Edit free allowances">
+          <Button variant="secondary" onClick={() => open({ kind: "free", free })} aria-label="Edit free allowances">
             Edit
           </Button>
         }
@@ -643,11 +643,11 @@ export function Catalogue() {
               onClose={close}
               title="Free allowances"
               fields={FREE_FIELDS}
-              initial={freeValues(c.freeAllowances)}
+              initial={freeValues(dialog.free)}
               submitLabel="Save allowances"
               mutation={updateFree}
-              toBody={(v, r) => freeChanges(v, r, c.freeAllowances)}
-              check={(v) => (freeChanges(v, "unused", c.freeAllowances).length === 0 ? ["Nothing has changed. Change a value to save."] : [])}
+              toBody={(v, r) => freeChanges(v, r, dialog.free)}
+              check={(v) => (freeChanges(v, "unused", dialog.free).length === 0 ? ["Nothing has changed. Change a value to save."] : [])}
               blocked={staleBlock(updateFree.error)}
               reload="Reload this page"
               onSaved={saved("Saved the free allowances.")}

@@ -58,15 +58,20 @@ function Rates({ r }: { r: LlmRates }) {
   )
 }
 
+/** What a call costs with no price for its model: a Gemini model falls back to the Flash rates, a Claude one has none. */
+function unpricedEffect(provider: string): string {
+  return provider === "gemini" ? "Calls use the Flash rates." : "Calls to it are not priced without an override."
+}
+
 function BuiltIn({ m }: { m: LlmModelPrice }) {
   const d = m.codeDefault
   if (d === null) {
-    return <span className="text-body-sm text-on-surface-variant">No built-in price. Calls to this model are not priced without an override.</span>
+    return <span className="text-body-sm text-on-surface-variant">No built-in price. {unpricedEffect(m.provider)}</span>
   }
   return (
     <div className="flex flex-col gap-1">
       <Rates r={d} />
-      <span className="text-body-sm text-on-surface-variant">
+      <span className="break-all text-body-sm text-on-surface-variant" title={d.source}>
         Source {d.source}
         {d.readOn ? `, read ${DAY.format(new Date(`${d.readOn}T00:00:00Z`))}` : ""}
       </span>
@@ -192,7 +197,7 @@ export function LlmPrices({ saved }: { saved: (what: string) => () => void }) {
       <QueryState
         query={query}
         skeleton={<ListSkeleton rows={3} />}
-        error={{ heading: "Couldn't load the AI prices" }}
+        error={{ heading: "Couldn't load the AI prices", compact: true }}
         isEmpty={(models) => models.length === 0}
         empty={<Empty>No models yet. A model appears here once the product prices or uses it.</Empty>}
       >
@@ -233,7 +238,7 @@ export function LlmPrices({ saved }: { saved: (what: string) => () => void }) {
           note={
             <p className="m-0 text-body-sm text-on-surface">
               {dialog.model.codeDefault === null
-                ? "This model has no built-in price. Once cleared, calls to it are not priced."
+                ? `This model has no built-in price. Once cleared, ${unpricedEffect(dialog.model.provider).replace(/^C/, "c")}`
                 : "Calls go back to the built-in price."}
             </p>
           }

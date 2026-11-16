@@ -1,5 +1,5 @@
 import { billingErrorCode } from "@/lib/billingOutcome"
-import type { FieldSpec, FormValues } from "@/lib/adminBillingModel"
+import { PartialSaveError, type FieldSpec, type FormValues } from "@/lib/adminBillingModel"
 import type {
   BillingSettings,
   BillingSettingsUpdate,
@@ -16,6 +16,11 @@ import type {
  * Bodies match `lemely/web/schemas_admin_billing_settings.py`. Ranges mirror
  * `billing_settings_repo.validate_settings`; the server stays the authority and a refusal shows
  * its own sentence. */
+
+/** The server's own ceilings (`CODE_EXECUTION_HOUR_MAX`, `billing_settings_repo.RATE_MAX`, `TIER_THRESHOLD_MAX`). */
+const CODE_HOUR_MAX = 100
+const RATE_MAX = 100_000
+const TIER_THRESHOLD_MAX = 10_000_000
 
 const str = (v: FormValues, k: string) => String(v[k] ?? "").trim()
 
@@ -65,13 +70,14 @@ export function usdPerMtok(text: string | null): string {
 const RELOAD_CODES = new Set(["stale_write", "credit_rate_exists", "credit_rate_not_set", "llm_price_exists", "llm_price_not_set"])
 
 export function isStaleWrite(error: unknown): boolean {
-  const code = billingErrorCode(error)
+  // A half-saved allowance pair wraps the failure of its second write.
+  const code = billingErrorCode(error instanceof PartialSaveError ? error.original : error)
   return code !== null && RELOAD_CODES.has(code)
 }
 
 /** A refused write whose form was built on old data must not offer the same submit again. */
 export function staleBlock(error: unknown): string | null {
-  return isStaleWrite(error) ? "Reloaded with the current values." : null
+  return isStaleWrite(error) ? "Close this to see the current values." : null
 }
 
 // ── Billing rules ───────────────────────────────────────────────────────────
@@ -102,8 +108,8 @@ export const SETTINGS_FIELDS: FieldSpec[] = [
     kind: "decimal",
     optional: true,
     places: 6,
-    max: 10_000,
-    hint: "Empty means the built-in rate.",
+    max: CODE_HOUR_MAX,
+    hint: "Empty means the built-in rate. Up to 100.",
   },
   {
     name: "confirmUnusualPrice",
@@ -158,8 +164,8 @@ export const CREDIT_RATE_FIELDS: FieldSpec[] = [
     label: "Units per piaster",
     kind: "decimal",
     places: 6,
-    max: 1_000_000,
-    hint: "Credits a customer gets for each piaster paid. 1 EGP is 100 piasters.",
+    max: RATE_MAX,
+    hint: "Credits a customer gets for each piaster paid. 1 EGP is 100 piasters. Up to 100,000.",
   },
 ]
 
@@ -231,7 +237,7 @@ export function llmPriceFields(model: LlmModelPrice): FieldSpec[] {
     rate("cachedInputUsdPerMtok", "Cached input", true, "Empty uses the built-in rate."),
     rate("cacheWrite5mUsdPerMtok", "Cache write, 5 minutes", true),
     rate("cacheWrite1hUsdPerMtok", "Cache write, 1 hour", true),
-    { name: "tierThresholdTokens", label: "Tier 2 starts above (input tokens)", kind: "number", optional: true, positive: true, hint: "Tier fields go together, or all stay empty." },
+    { name: "tierThresholdTokens", label: "Tier 2 starts above (input tokens)", kind: "number", optional: true, min: 1, max: TIER_THRESHOLD_MAX, hint: "Tier fields go together, or all stay empty." },
     rate("tier2InputUsdPerMtok", "Tier 2 input", true, "Cache prices in tier 2 scale with this: tier 2 input ÷ input."),
     rate("tier2OutputUsdPerMtok", "Tier 2 output", true),
     {
@@ -262,9 +268,11 @@ export function llmPriceValues(model: LlmModelPrice): FormValues {
   return {
     inputUsdPerMtok: text(src?.inputUsdPerMtok),
     outputUsdPerMtok: text(src?.outputUsdPerMtok),
-    cachedInputUsdPerMtok: text(src?.cachedInputUsdPerMtok),
-    cacheWrite5mUsdPerMtok: text(src?.cacheWrite5mUsdPerMtok),
-    cacheWrite1hUsdPerMtok: text(src?.cacheWrite1hUsdPerMtok),
+    // Cache rates stay empty ("use the built-in rate") unless an override already set them, so a
+    // saved override does not pin today's table.
+    cachedInputUsdPerMtok: text(model.override?.cachedInputUsdPerMtok),
+    cacheWrite5mUsdPerMtok: text(model.override?.cacheWrite5mUsdPerMtok),
+    cacheWrite1hUsdPerMtok: text(model.override?.cacheWrite1hUsdPerMtok),
     tierThresholdTokens: src?.tierThresholdTokens == null ? "" : String(src.tierThresholdTokens),
     tier2InputUsdPerMtok: text(src?.tier2InputUsdPerMtok),
     tier2OutputUsdPerMtok: text(src?.tier2OutputUsdPerMtok),
@@ -303,7 +311,8 @@ export function llmPriceBody(v: FormValues, reason: string, model: LlmModelPrice
     expectedVersion: model.override?.version ?? null,
     reason,
   }
-  if (v.confirmDropTier === true && dropsTier(v, model)) body.confirmDropTier = true
+  // Whatever the page guessed: the server may demand it for a vendor tier the page cannot see.
+  if (v.confirmDropTier === true) body.confirmDropTier = true
   if (v.confirmUnusualPrice === true) body.confirmUnusualPrice = true
   return body
 }

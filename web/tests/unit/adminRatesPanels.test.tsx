@@ -115,6 +115,60 @@ describe("Billing rules", () => {
   })
 })
 
+describe("a 409 after a real submit", () => {
+  it("billing rules: refetched data never changes what an open dialog sends, and a 409 then blocks it", async () => {
+    const client = new QueryClient()
+    const el = () => h(QueryClientProvider, { client }, h(MemoryRouter, null, h(BillingRules, { saved })))
+    const user = userEvent.setup()
+    const { rerender } = render(el())
+    await user.click(screen.getByRole("button", { name: "Edit billing rules" }))
+    const grace = screen.getByLabelText("Grace days")
+    await user.clear(grace)
+    await user.type(grace, "5")
+    reason()
+    // Another admin raises the seat ceiling and the section refetches while the dialog is open.
+    s.settings = okQuery({ ...fx.billingSettings, version: 5, maxExtraSeats: 300 })
+    rerender(el())
+    await user.click(screen.getByRole("button", { name: "Save rules" }))
+    await waitFor(() => expect((s.update as Fake).mutate).toHaveBeenCalledTimes(1))
+    expect((s.update as Fake).mutate.mock.calls[0][0]).toEqual({ graceDays: 5, expectedVersion: 4, reason: "because the market moved" })
+    // The server answers stale_write: the dialog stays and will not send again.
+    s.update = fakeMutation({ isError: true, error: stale("stale_write") })
+    rerender(el())
+    const dlg = screen.getByRole("dialog")
+    expect(within(dlg).getByRole("alert").textContent).toMatch(/Someone changed this while you were editing/)
+    expect((within(dlg).getByRole("button", { name: "Save rules" }) as HTMLButtonElement).disabled).toBe(true)
+    expect(within(dlg).getByText("Close this to see the current values.")).toBeTruthy()
+  })
+
+  it("AI price: submit, then 409, then blocked", async () => {
+    const client = new QueryClient()
+    const el = () => h(QueryClientProvider, { client }, h(MemoryRouter, null, h(LlmPrices, { saved })))
+    const user = userEvent.setup()
+    const { rerender } = render(el())
+    await user.click(screen.getAllByRole("button", { name: "Edit override for gemini-2.5-flash" })[0])
+    fireEvent.change(screen.getByLabelText("Input (USD per million tokens)"), { target: { value: "0.26" } })
+    reason()
+    await user.click(screen.getByRole("button", { name: "Save override" }))
+    await waitFor(() => expect((s.setPrice as Fake).mutate).toHaveBeenCalledTimes(1))
+    s.setPrice = fakeMutation({ isError: true, error: stale("stale_write") })
+    rerender(el())
+    expect((within(screen.getByRole("dialog")).getByRole("button", { name: "Save override" }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it("a ticked server-asked flat-rate box is sent on a row the page sees as flat", async () => {
+    s.setPrice = fakeMutation({ isError: true, error: new ApiError(422, "x", { code: "override_drops_tier", message: "m" }) })
+    const user = userEvent.setup()
+    render(wrap(h(LlmPrices, { saved })))
+    await user.click(screen.getAllByRole("button", { name: "Edit override for gemini-2.5-flash" })[0])
+    reason()
+    await user.click(screen.getByLabelText("Charge one flat rate at every length"))
+    await user.click(screen.getByRole("button", { name: "Save override" }))
+    await waitFor(() => expect((s.setPrice as Fake).mutate).toHaveBeenCalledTimes(1))
+    expect((s.setPrice as Fake).mutate.mock.calls[0][0].body.confirmDropTier).toBe(true)
+  })
+})
+
 describe("Credit conversion", () => {
   it("shows the rate both ways, with who changed it", () => {
     render(wrap(h(CreditConversion, { saved })))
@@ -188,11 +242,14 @@ describe("AI token prices", () => {
     render(wrap(h(LlmPrices, { saved })))
     const table = within(screen.getByRole("table", { hidden: true }))
     // The cards below `lg` hold the same rows in the DOM, hidden by CSS only.
-    expect(table.getAllByText("gemini-3-pro").length).toBe(1)
-    expect(table.getByText(/No built-in price/)).toBeTruthy()
+    expect(table.getAllByText("claude-haiku-5-5").length).toBe(1)
+    expect(table.getByText(/No built-in price. Calls use the Flash rates/)).toBeTruthy()
+    expect(table.getByText(/No built-in price. Calls to it are not priced without an override/)).toBeTruthy()
     expect(table.getAllByText("Used in the last 30 days").length).toBe(2)
-    expect(table.getByText("Not used in the last 30 days")).toBeTruthy()
-    expect(table.getAllByText("$0.90").length).toBe(1)
+    expect(table.getAllByText("Not used in the last 30 days").length).toBe(2)
+    expect(table.getAllByText("$0.25").length).toBe(1)
+    // The 57-character source URL has no break point, so it must be allowed to wrap.
+    expect(table.getByText(/platform\.claude\.com/).className).toContain("break-all")
   })
 
   it("explains that a lower price lowers what customers are charged", () => {
@@ -203,7 +260,7 @@ describe("AI token prices", () => {
   it("warns about a flat rate only on a tiered built-in row, and holds the save until it is ticked", async () => {
     const user = userEvent.setup()
     render(wrap(h(LlmPrices, { saved })))
-    await user.click(screen.getAllByRole("button", { name: "Set override for gemini-3-pro" })[0])
+    await user.click(screen.getAllByRole("button", { name: "Set override for claude-haiku-5-5" })[0])
     const dlg = screen.getByRole("dialog")
     expect(within(dlg).queryByText("This override charges the same rate at every prompt length.")).toBeNull()
     for (const f of ["Tier 2 starts above (input tokens)", "Tier 2 input", "Tier 2 output"]) fireEvent.change(within(dlg).getByLabelText(f), { target: { value: "" } })
@@ -220,7 +277,7 @@ describe("AI token prices", () => {
   it("never shows the flat-rate warning on a flat built-in row", async () => {
     const user = userEvent.setup()
     render(wrap(h(LlmPrices, { saved })))
-    await user.click(screen.getAllByRole("button", { name: "Edit override for claude-haiku-4-5" })[0])
+    await user.click(screen.getAllByRole("button", { name: "Edit override for gemini-2.5-flash" })[0])
     expect(screen.queryByText("This override charges the same rate at every prompt length.")).toBeNull()
     expect(screen.queryByLabelText("Charge one flat rate at every length")).toBeNull()
   })
@@ -228,9 +285,9 @@ describe("AI token prices", () => {
   it("asks for the unusual-price confirmation on a typo-sized price and sends it with decimal strings", async () => {
     const user = userEvent.setup()
     render(wrap(h(LlmPrices, { saved })))
-    await user.click(screen.getAllByRole("button", { name: "Edit override for claude-haiku-4-5" })[0])
+    await user.click(screen.getAllByRole("button", { name: "Edit override for gemini-2.5-flash" })[0])
     const dlg = screen.getByRole("dialog")
-    fireEvent.change(within(dlg).getByLabelText("Input (USD per million tokens)"), { target: { value: "0.009" } })
+    fireEvent.change(within(dlg).getByLabelText("Input (USD per million tokens)"), { target: { value: "0.002" } })
     reason()
     await user.click(within(dlg).getByRole("button", { name: "Save override" }))
     expect((s.setPrice as Fake).mutate).not.toHaveBeenCalled()
@@ -238,36 +295,40 @@ describe("AI token prices", () => {
     await user.click(within(dlg).getByRole("button", { name: "Save override" }))
     await waitFor(() => expect((s.setPrice as Fake).mutate).toHaveBeenCalledTimes(1))
     expect((s.setPrice as Fake).mutate.mock.calls[0][0]).toMatchObject({
-      model: "claude-haiku-4-5",
-      body: { inputUsdPerMtok: "0.009", outputUsdPerMtok: "4.5", confirmUnusualPrice: true, expectedVersion: 3 },
+      model: "gemini-2.5-flash",
+      body: { inputUsdPerMtok: "0.002", outputUsdPerMtok: "2.2", confirmUnusualPrice: true, expectedVersion: 3 },
     })
   })
 
   it("explains tier 2 cache scaling in the form", async () => {
     const user = userEvent.setup()
     render(wrap(h(LlmPrices, { saved })))
-    await user.click(screen.getAllByRole("button", { name: "Set override for gemini-3-pro" })[0])
+    await user.click(screen.getAllByRole("button", { name: "Set override for claude-haiku-5-5" })[0])
     expect(screen.getByText(/Cache prices in tier 2 scale with this/)).toBeTruthy()
   })
 
-  it("warns that clearing an unpriced model leaves its calls unpriced, and sends the version", async () => {
-    s.models = okQuery([{ ...fx.llmModels[2], override: { ...fx.llmModels[1].override!, model: "future-model-x" } }])
+  it.each([
+    ["gemini-3-pro-preview", /Once cleared, calls use the Flash rates/],
+    ["claude-future-x", /Once cleared, calls to it are not priced without an override/],
+  ])("clearing the override of %s says what a call costs afterwards, and sends the version", async (model, copy) => {
+    const base = fx.llmModels.find((m) => m.model === model)!
+    s.models = okQuery([{ ...base, override: { ...fx.llmModels[1].override!, model } }])
     const user = userEvent.setup()
     render(wrap(h(LlmPrices, { saved })))
-    await user.click(screen.getAllByRole("button", { name: "Clear override for future-model-x" })[0])
+    await user.click(screen.getAllByRole("button", { name: `Clear override for ${model}` })[0])
     const dlg = screen.getByRole("dialog")
-    expect(within(dlg).getByText(/Once cleared, calls to it are not priced/)).toBeTruthy()
+    expect(within(dlg).getByText(copy)).toBeTruthy()
     reason()
     await user.click(within(dlg).getByRole("button", { name: "Clear override" }))
     await waitFor(() => expect((s.clearPrice as Fake).mutate).toHaveBeenCalledTimes(1))
-    expect((s.clearPrice as Fake).mutate.mock.calls[0][0]).toEqual({ model: "future-model-x", body: { expectedVersion: 3, reason: "because the market moved" } })
+    expect((s.clearPrice as Fake).mutate.mock.calls[0][0]).toEqual({ model, body: { expectedVersion: 3, reason: "because the market moved" } })
   })
 
   it("on a 409 stays open, says someone changed it, and blocks the old version", async () => {
     s.setPrice = fakeMutation({ isError: true, error: stale("llm_price_exists") })
     const user = userEvent.setup()
     render(wrap(h(LlmPrices, { saved })))
-    await user.click(screen.getAllByRole("button", { name: "Set override for gemini-3-pro" })[0])
+    await user.click(screen.getAllByRole("button", { name: "Set override for claude-haiku-5-5" })[0])
     const dlg = screen.getByRole("dialog")
     expect(within(dlg).getByRole("alert").textContent).toMatch(/override was set/)
     expect((within(dlg).getByRole("button", { name: "Save override" }) as HTMLButtonElement).disabled).toBe(true)
