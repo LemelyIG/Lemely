@@ -261,6 +261,7 @@ a.rd-hairrow.rd-selected:hover, button.rd-hairrow.rd-selected:hover, button.rd-r
 .rd-chip.rd-chip-more { background: transparent; box-shadow: inset 0 0 0 1.5px var(--rd-chip-edge); }
 button.rd-chip { cursor: pointer; }
 button.rd-chip:active { transform: scale(0.97); }
+.rd-chips li:focus-visible { outline: 2.5px solid var(--md-primary); outline-offset: 2px; border-radius: 999px; }
 .rd-chip:focus-visible { outline: 2.5px solid var(--md-primary); outline-offset: 2px; }
 .rd-chip-legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 8px 0 0; font: 500 12px var(--font-sans); color: var(--md-on-surface-variant); }
 .rd-chip-legend span { display: inline-flex; align-items: center; gap: 6px; }

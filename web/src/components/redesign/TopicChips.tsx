@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react"
 import { SmallChevron, TopicGlyph } from "./icons"
 import { TopicChip } from "./TopicChip"
-import { TOPIC_STATE_LABEL, visibleTopics, type TopicState } from "./topics"
+import { TOPIC_STATE_LABEL, focusTarget, topicKeys, topicsSignature, visibleTopics, type TopicState } from "./topics"
 import "./redesign.css"
 
 export interface TopicChipsProps {
@@ -17,17 +17,23 @@ const ORDER: TopicState[] = ["work", "getting", "secure"]
 
 export function TopicChips({ topics, foldSecure = false, onSelect }: TopicChipsProps) {
   const [open, setOpen] = useState(false)
-  const [seen, setSeen] = useState(topics)
+  const signature = topicsSignature(topics)
+  const [seen, setSeen] = useState(signature)
   const listRef = useRef<HTMLUListElement>(null)
   const justOpened = useRef(false)
-  // A new topics list starts folded again (adjusted during render, no effect needed).
-  if (seen !== topics) {
-    setSeen(topics)
+  // Different topic content starts folded again; an inline-built identical list does not.
+  if (seen !== signature) {
+    setSeen(signature)
     setOpen(false)
   }
   const secureCount = topics.filter((t) => t.state === "secure").length
   const folded = foldSecure && !open && secureCount > 0
-  const shown = visibleTopics(topics, foldSecure, open)
+  const keys = topicKeys(topics)
+  const shown = visibleTopics(
+    topics.map((t, i) => ({ ...t, key: keys[i] })),
+    foldSecure,
+    open,
+  )
   const firstSecure = shown.findIndex((t) => t.state === "secure")
 
   // The fold button unmounts on activation: hand focus to the first revealed secure chip.
@@ -35,7 +41,7 @@ export function TopicChips({ topics, foldSecure = false, onSelect }: TopicChipsP
     if (!open || !justOpened.current) return
     justOpened.current = false
     const target = listRef.current?.querySelector<HTMLElement>("[data-first-revealed]")
-    target?.querySelector<HTMLElement>("button")?.focus() ?? target?.focus()
+    focusTarget(target, target?.querySelector<HTMLElement>("button"))?.focus()
   }, [open])
 
   return (
@@ -43,7 +49,7 @@ export function TopicChips({ topics, foldSecure = false, onSelect }: TopicChipsP
       <ul className="rd-chips" role="list" ref={listRef}>
         {shown.map((t, i) => (
           <li
-            key={`${t.topic}-${i}`}
+            key={t.key}
             {...(open && foldSecure && i === firstSecure ? { "data-first-revealed": "", tabIndex: -1 } : {})}
           >
             <TopicChip topic={t.topic} state={t.state} pct={t.pct} onClick={onSelect ? () => onSelect(t.topic) : undefined} />

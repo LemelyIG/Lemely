@@ -5,7 +5,7 @@ import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
 import { MASTERY, TopicChip, TopicChips, topicState } from "@/components/redesign"
-import { visibleTopics } from "@/components/redesign/topics"
+import { focusTarget, topicKeys, topicsSignature, visibleTopics } from "@/components/redesign/topics"
 
 const TOPICS = [
   { topic: "Vectors", state: "work" as const, pct: 41 },
@@ -83,5 +83,21 @@ describe("visibleTopics", () => {
   it("folds to an empty list when every topic is secure", () => {
     expect(visibleTopics(TOPICS.slice(2), true, false)).toEqual([])
     expect(visibleTopics(TOPICS.slice(2), true, true)).toHaveLength(2)
+  })
+})
+
+describe("fold helpers", () => {
+  it("focus target prefers the chip button over its list item", () => {
+    expect(focusTarget("li", "button")).toBe("button")
+    // The old `button?.focus() ?? li.focus()` ran li.focus() always, because focus() returns undefined.
+    expect(focusTarget("li", null)).toBe("li")
+    expect(focusTarget(null, null)).toBeUndefined()
+  })
+  it("signature is content based", () => {
+    expect(topicsSignature(TOPICS)).toBe(topicsSignature(TOPICS.map((t) => ({ ...t }))))
+    expect(topicsSignature(TOPICS)).not.toBe(topicsSignature(TOPICS.slice(1)))
+  })
+  it("keys are unique on duplicates and stable across folding", () => {
+    expect(topicKeys([{ topic: "A" }, { topic: "A" }, { topic: "B" }])).toEqual(["A#0", "A#1", "B#0"])
   })
 })
