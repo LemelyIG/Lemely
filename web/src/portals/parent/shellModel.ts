@@ -17,14 +17,20 @@ export interface ParentTab {
 
 const childBase = (childId: string) => `/parent/children/${encodeURIComponent(childId)}`
 
-/** With no child (none linked yet, or still loading) the child tabs go to the children list, matched exactly. */
+/** With no child (none linked, still loading, or the list failed) only Overview (the children list, matched exactly) and Inbox remain: Topics and Tutoring would repeat the same target and all light up at once. */
 export function parentTabs(childId: string | null): ParentTab[] {
-  const base = childId ? childBase(childId) : null
+  if (!childId) {
+    return [
+      { id: "overview", label: "Overview", to: "/parent", end: true },
+      { id: "inbox", label: "Inbox", to: "/parent/notifications", end: false },
+    ]
+  }
+  const base = childBase(childId)
   return [
-    { id: "overview", label: "Overview", to: base ?? "/parent", end: true },
-    { id: "topics", label: "Topics", to: base ? `${base}/topics` : "/parent", end: !base },
+    { id: "overview", label: "Overview", to: base, end: true },
+    { id: "topics", label: "Topics", to: `${base}/topics`, end: false },
     { id: "inbox", label: "Inbox", to: "/parent/notifications", end: false },
-    { id: "tutoring", label: "Tutoring", to: base ? `${base}/tutoring` : "/parent", end: !base },
+    { id: "tutoring", label: "Tutoring", to: `${base}/tutoring`, end: false },
   ]
 }
 

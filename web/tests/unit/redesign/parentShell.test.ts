@@ -57,13 +57,8 @@ describe("an unknown childId never reaches the tabs or links", () => {
   it("no param stays null", () => {
     expect(validChildParam(null, ["c1"])).toBeNull()
   })
-  it("pending: the tabs fall back to the children list, not to the raw URL child", () => {
-    expect(parentTabs(resolveChildId(validChildParam("c1", []), [], null)).map((t) => t.to)).toEqual([
-      "/parent",
-      "/parent",
-      "/parent/notifications",
-      "/parent",
-    ])
+  it("pending: the tabs are Overview (children list) and Inbox, not the raw URL child", () => {
+    expect(parentTabs(resolveChildId(validChildParam("c1", []), [], null)).map((t) => t.to)).toEqual(["/parent", "/parent/notifications"])
   })
   it("the shell feeds the validated param, not the raw one, to tabs, trail and back target", () => {
     const shell = read("portals/parent/shell.tsx")

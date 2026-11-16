@@ -10,9 +10,13 @@ describe("parentTabs (mock pa.js ptab)", () => {
       { id: "tutoring", label: "Tutoring", to: "/parent/children/c1/tutoring", end: false },
     ])
   })
-  it("without a child every child tab goes to the children list, exactly", () => {
+  it("without a child there is one Overview tab to the children list, exactly, and the Inbox; no duplicate targets", () => {
     const tabs = parentTabs(null)
-    expect(tabs.filter((t) => t.id !== "inbox").every((t) => t.to === "/parent" && t.end)).toBe(true)
+    expect(tabs.map((t) => t.id)).toEqual(["overview", "inbox"])
+    expect(tabs[0]).toMatchObject({ to: "/parent", end: true })
+    // At most one tab can match /parent, so at most one is highlighted and carries aria-current.
+    const targets = tabs.map((t) => t.to)
+    expect(new Set(targets).size).toBe(targets.length)
   })
   it("encodes the id", () => {
     expect(parentTabs("a/b")[0].to).toBe("/parent/children/a%2Fb")
