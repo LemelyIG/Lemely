@@ -35,7 +35,7 @@ export function HomeScreen({ home }: { home: StudentHome }) {
         <HomeTopRow pill={vm.streakPill} exam={vm.exam} examTo={vm.today.planTo} localDate={home.localDate} />
       </header>
 
-      <div className="flex flex-col gap-[22px] md:grid md:grid-cols-2 md:items-start md:gap-x-9 md:gap-y-6 xl:grid-cols-[minmax(0,.95fr)_minmax(0,1.1fr)_minmax(0,.95fr)]">
+      <div className="flex flex-col gap-[22px] md:grid md:grid-cols-2 md:items-start md:gap-x-9 md:gap-y-6 xl:grid-cols-[minmax(0,.95fr)_minmax(0,1.1fr)_minmax(364px,.95fr)]">
         <section aria-label="Binny" className="flex flex-col gap-[18px] md:pt-2">
           <HomeStage stage={vm.stage} onNotNow={notNow} />
           <MomentRows rows={vm.also.phone} className="md:hidden" />
@@ -56,7 +56,7 @@ export function HomeScreen({ home }: { home: StudentHome }) {
           week={vm.week}
           planTo={vm.today.planTo}
           allPapersTo={vm.allPapersTo}
-          className="hidden md:col-span-2 md:grid md:grid-cols-3 md:gap-10 md:border-t md:border-outline-variant md:pt-6 xl:col-span-1 xl:grid-cols-1 xl:gap-6 xl:border-s xl:border-t-0 xl:ps-8 xl:pt-4"
+          className="hidden md:col-span-2 md:grid md:grid-cols-2 md:gap-x-10 md:gap-y-6 md:border-t md:border-outline-variant md:pt-6 xl:col-span-1 xl:grid-cols-1 xl:gap-6 xl:border-s xl:border-t-0 xl:ps-8 xl:pt-4"
         />
       </div>
     </div>

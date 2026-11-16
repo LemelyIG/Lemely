@@ -6,7 +6,7 @@ import type { HomeVm } from "./model"
 
 export function WeekStrip({ days, className }: { days: HomeVm["week"]; className?: string }) {
   return (
-    <ol aria-label="This week" className={cn("grid grid-cols-7 gap-1", className)}>
+    <ol aria-label="This week" className={cn("grid grid-cols-7 gap-0.5", className)}>
       {days.map((d) => (
         <li key={d.day}>
           <Link
