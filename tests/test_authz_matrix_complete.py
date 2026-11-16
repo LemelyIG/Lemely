@@ -404,7 +404,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/teacher/review/{item_id}/dismiss"): STAFF,
     ("POST", "/api/teacher/review/{item_id}/resolve"): STAFF,
     ("GET", "/api/teacher/students/{student_id}"): STAFF,
-    # ── STUDENT (80) ────────────────────
+    # ── STUDENT (84) ────────────────────
     # Tutoring S1-S5, S14, S15 (SPEC §c.1): the caller's own bookings only (O5); a
     # parent reads them through PA1-PA3. S15 records the safety notice (row 16 ii).
     ("GET", "/api/student/bookings"): STUDENT,
@@ -453,8 +453,12 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/student/flashcards/decks/generate"): STUDENT,
     ("DELETE", "/api/student/flashcards/decks/{deck_id}"): STUDENT,
     ("GET", "/api/student/flashcards/decks/{deck_id}"): STUDENT,
+    ("PATCH", "/api/student/flashcards/decks/{deck_id}"): STUDENT,
+    ("GET", "/api/student/flashcards/decks/{deck_id}/generation"): STUDENT,
+    ("POST", "/api/student/flashcards/decks/{deck_id}/generation/retry"): STUDENT,
     ("POST", "/api/student/flashcards/decks/{deck_id}/cards"): STUDENT,
     ("GET", "/api/student/flashcards/due"): STUDENT,
+    ("GET", "/api/student/flashcards/weak-topics"): STUDENT,
     ("GET", "/api/student/friends"): STUDENT,
     ("POST", "/api/student/friends/requests"): STUDENT,
     ("DELETE", "/api/student/friends/{friendship_id}"): STUDENT,
