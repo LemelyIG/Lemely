@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
 import { PhoneEntryForm } from "@/components/phone-entry-form"
 import { PHONE_CHECKOUT_BODY, PHONE_CHECKOUT_HEADING } from "@/lib/phone"
 

@@ -1,4 +1,5 @@
-import { useState } from "react"
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 */
+import { useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { ListSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
@@ -14,7 +15,7 @@ import { ReasonedFormDialog } from "./ReasonedFormDialog"
 const n = (v: number) => new Intl.NumberFormat("en-US").format(v)
 const plural = (v: number, word: string) => `${n(v)} ${word}${v === 1 ? "" : "s"}`
 
-function Rule({ label, children }: { label: string; children: React.ReactNode }) {
+function Rule({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div>
       <dt className="text-on-surface-variant">{label}</dt>

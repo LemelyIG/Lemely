@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 */
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { ListSkeleton } from "@/components/ui/loading-shapes"

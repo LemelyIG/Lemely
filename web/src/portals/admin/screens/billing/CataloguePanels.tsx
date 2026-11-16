@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S3 R5 V3 */
 import type { ReactNode } from "react"
 import { formatUtc } from "@/lib/adminBillingModel"
 
