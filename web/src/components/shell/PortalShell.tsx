@@ -92,7 +92,7 @@ export function PortalShell({
   const onActiveTap = (item: NavShellItem, event: MouseEvent) => {
     if (!item.to) return
     if (!isPlainPrimaryClick(event)) return
-    const action = activeTabTap({ pathname: location.pathname, tabTo: item.to, scrollY: window.scrollY })
+    const action = activeTabTap({ pathname: location.pathname, tabTo: item.to, scrollY: window.scrollY, isRoot: item.isRoot })
     // Prevented even when there is nothing to do: the NavLink would otherwise REPLACE the entry with a
     // forward view transition onto the page it is already on.
     event.preventDefault()

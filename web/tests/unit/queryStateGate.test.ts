@@ -176,6 +176,11 @@ const ALLOWLIST: { path: string; reason: string }[] = [
       "loads data, but its one consumer degrades: a failed profile read renders `the email on your account`, a complete sentence, where an error panel would announce a failure the reader does not need to act on",
   },
   {
+    path: "src/portals/student/screens/SubjectEntry.tsx",
+    reason:
+      "loads data, but it is a redirect-only interim tab root: RouteSkeleton while pending, then a Navigate (to the first subject, or Home when there is none), so there is no content an error panel could stand in for",
+  },
+  {
     path: "src/portals/teacher/screens/ClassRoster.tsx",
     reason:
       "loads no data: renders the class detail from `useClassDetailContext()`, which its parent layout fetches and gates; imports only the enrol/remove mutations",

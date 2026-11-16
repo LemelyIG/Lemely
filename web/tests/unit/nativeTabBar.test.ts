@@ -3,6 +3,8 @@ import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
 import { activeTabTap, isPlainPrimaryClick } from "@/components/shell/tabTap"
+import { isTabRoot, titleLevelFor } from "@/components/shell/largeTitle"
+import { isStudentSubjectRoot, STUDENT_PLAN_TO, STUDENT_PRACTICE_TO } from "@/portals/student/shellNav"
 
 const SRC = join(fileURLToPath(new URL("../../", import.meta.url)), "src")
 const css = readFileSync(join(SRC, "index.css"), "utf8")
@@ -103,5 +105,34 @@ describe("isPlainPrimaryClick (final review minor 1)", () => {
     expect(isPlainPrimaryClick({ ...click, shiftKey: true })).toBe(false)
     expect(isPlainPrimaryClick({ ...click, altKey: true })).toBe(false)
     expect(isPlainPrimaryClick({ ...click, button: 1 })).toBe(false)
+  })
+})
+
+describe("redirecting tab roots (Practice and Plan land on a subject page)", () => {
+  it("treats the subject page as the root: /student/practice/:code and /student/plan/:code, one segment only", () => {
+    for (const p of ["/student/practice/0580", "/student/practice/0580/", "/student/plan/0580"]) expect(isStudentSubjectRoot(p), p).toBe(true)
+    for (const p of ["/student/practice", "/student/practice/set/a1", "/student/plan/0580/session/s1", "/student/flashcards/0580", "/student/classes/7"])
+      expect(isStudentSubjectRoot(p), p).toBe(false)
+  })
+  it("re-tapping Practice on a subject page scrolls to top instead of popping to the redirect", () => {
+    const tap = (pathname: string, tabTo: string, scrollY: number) =>
+      activeTabTap({ pathname, tabTo, scrollY, isRoot: isStudentSubjectRoot })
+    expect(tap("/student/practice/0580", STUDENT_PRACTICE_TO, 300)).toBe("scroll-top")
+    expect(tap("/student/practice/0580", STUDENT_PRACTICE_TO, 0)).toBe("none")
+    expect(tap("/student/plan/9709", STUDENT_PLAN_TO, 200)).toBe("scroll-top")
+    // Drilled in deeper than the subject page: still pops.
+    expect(tap("/student/practice/set/a1", STUDENT_PRACTICE_TO, 0)).toBe("pop-root")
+    expect(tap("/student/plan/0580/session/s1", STUDENT_PLAN_TO, 0)).toBe("pop-root")
+  })
+  it("without the predicate (teacher, parent) the old behaviour holds", () => {
+    expect(activeTabTap({ pathname: "/student/practice/0580", tabTo: STUDENT_PRACTICE_TO, scrollY: 0 })).toBe("pop-root")
+  })
+  it("the subject page gets the root title level", () => {
+    const tabs = ["/student", STUDENT_PRACTICE_TO, "/student/correct", STUDENT_PLAN_TO, "/student/profile"]
+    const level = (p: string) => titleLevelFor([{}, {}], isTabRoot(p, tabs, isStudentSubjectRoot))
+    expect(level("/student/practice/0580")).toBe("root")
+    expect(level("/student/plan/0580")).toBe("root")
+    expect(level("/student/practice/set/a1")).toBe("detail")
+    expect(level("/student/plan/0580/session/s1")).toBe("detail")
   })
 })

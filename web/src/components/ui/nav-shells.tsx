@@ -1,5 +1,5 @@
 import type { HTMLAttributes, MouseEvent, ReactNode } from "react"
-import { NavLink, useMatch } from "react-router-dom"
+import { Link, NavLink, useMatch } from "react-router-dom"
 import { useDialogExitClick } from "@/lib/nav/dialogExit"
 import type { NavDirectionState } from "@/lib/nav/navDirectionState"
 import { cn } from "@/lib/utils"
@@ -52,6 +52,9 @@ export interface NavShellItem {
    * active for an out-of-cap class page but not for one of its own visible
    * rows — see `classesItemActive` in `portals/teacher/data.ts`). */
   active?: boolean
+  /** A tab whose `to` only redirects (student Practice, Plan) names the page that stands in as its root: a re-tap
+   * there scrolls to top rather than navigating, and the page gets the root title level. Optional, off by default. */
+  isRoot?: (pathname: string) => boolean
   /** Small trailing marker — unread count, review-queue depth, etc. */
   badge?: string | number
   /** Rendered in the filled badge style (Abyss variant only): a count that
@@ -80,19 +83,33 @@ export function NavShellLink({ item, className, children, onActiveClick, navStat
   const isActiveNow = !!item.to && !!routeMatch
   const dialogExitClick = useDialogExitClick(item.to ?? "/", { viewTransition: true })
   if (item.to) {
+    const linkProps = {
+      to: item.to,
+      viewTransition: true,
+      state: navState,
+      onPointerEnter: item.prefetch,
+      onTouchStart: item.prefetch,
+      onFocus: item.prefetch,
+    }
+    const onClick = (event: MouseEvent<HTMLAnchorElement>) => {
+      if (isActiveNow || item.active) onActiveClick?.(event)
+      dialogExitClick(event)
+    }
+    // A row lit through `item.active` that the router does not match (Practice on flashcards, parent Topics on
+    // /weaknesses, the Settings dialog) is current too. NavLink sets aria-current only on its own match and
+    // cannot be told otherwise, so that row is a plain Link that states it explicitly.
+    if (item.active && !isActiveNow) {
+      return (
+        <Link {...linkProps} onClick={onClick} aria-current="page" className={className(true)}>
+          {children(true)}
+        </Link>
+      )
+    }
     return (
       <NavLink
-        to={item.to}
+        {...linkProps}
         end={item.end}
-        viewTransition
-        state={navState}
-        onPointerEnter={item.prefetch}
-        onTouchStart={item.prefetch}
-        onFocus={item.prefetch}
-        onClick={(event) => {
-          if (isActiveNow || item.active) onActiveClick?.(event)
-          dialogExitClick(event)
-        }}
+        onClick={onClick}
         className={({ isActive }) => className(isActive || !!item.active)}
       >
         {({ isActive }) => children(isActive || !!item.active)}

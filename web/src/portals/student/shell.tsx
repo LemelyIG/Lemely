@@ -36,7 +36,7 @@ import {
   studentShellTrail,
   type NavItem,
 } from "./data"
-import { STUDENT_PLAN_TO, STUDENT_PRACTICE_TO, isPlanSection, isPracticeSection, studentOverflowItems, underDialogActive } from "./shellNav"
+import { STUDENT_PLAN_TO, STUDENT_PRACTICE_TO, isPlanSection, isPracticeSection, isStudentSubjectRoot, studentOverflowItems, underDialogActive } from "./shellNav"
 
 export const STUDENT_SETTINGS_BASE = "/student/settings"
 
@@ -136,7 +136,7 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
       : shellItem
   })
   const trail = studentShellTrail(pagePath)
-  const titleLevel = titleLevelFor(trail, isTabRoot(pagePath, STUDENT_BOTTOM_TABS.map((tab) => tab.to)))
+  const titleLevel = titleLevelFor(trail, isTabRoot(pagePath, STUDENT_BOTTOM_TABS.map((tab) => tab.to), isStudentSubjectRoot))
   // Practice also owns flashcards, and Plan its subject weeks: sections the tab's own URL match would miss.
   const practiceActive = isPracticeSection(pagePath)
   const planActive = isPlanSection(pagePath)
@@ -224,6 +224,8 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
           icon: <tab.icon size={22} aria-hidden="true" />,
           activeIcon: <tab.icon size={22} weight="fill" aria-hidden="true" />,
           active: sectionActive(tab.id) ?? under(tab.to, tab.end),
+          // Practice and Plan only redirect to a subject page: that page is the tab's root.
+          isRoot: tab.id === "practice" || tab.id === "plan" ? isStudentSubjectRoot : undefined,
           prefetch: tab.id === "scan" ? prefetchCorrectPaper.onPointerEnter : undefined,
         }),
       )}

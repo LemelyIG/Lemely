@@ -48,8 +48,8 @@ describe("student tab bar (mock h6.js TAB6, Plan in the Subjects slot by user ru
 
   it("mounts /student/practice and /student/plan as the interim entries", () => {
     const index = read("portals/student/index.tsx")
-    expect(index).toMatch(/path: "practice",\s*element: <PracticeEntry \/>/)
-    expect(index).toMatch(/path: "plan",\s*element: <PlanEntry \/>/)
+    expect(index).toMatch(/path: "practice",\s*element: <SubjectEntry section="practice" \/>/)
+    expect(index).toMatch(/path: "plan",\s*element: <SubjectEntry section="plan" \/>/)
   })
 
   it("the student phone top bar keeps the menu button that opens the navigation sheet", () => {
@@ -111,5 +111,24 @@ describe("student phone top bar on iOS: the title clears every action", () => {
     // The title insets in index.css reserve three 44px actions per side: the trailing group may never exceed three.
     const css = read("index.css")
     expect(css).toContain("--native-title-inset-ios: 144px")
+  })
+})
+
+describe("aria-current follows every lit row, not only the ones NavLink matched", () => {
+  const render = (path: string, items: Parameters<typeof BottomNav>[0]["items"]) =>
+    renderToStaticMarkup(createElement(MemoryRouter, { initialEntries: [path] }, createElement(BottomNav, { items })))
+  it("a row lit through item.active (Practice on flashcards) announces aria-current=page", () => {
+    const out = render("/student/flashcards/0580", [
+      { id: "practice", label: "Practice", to: "/student/practice", icon: createElement("svg"), active: true },
+      { id: "plan", label: "Plan", to: "/student/plan", icon: createElement("svg") },
+    ])
+    const practice = out.match(/<a[^>]*href="\/student\/practice"[^>]*>/)?.[0] ?? ""
+    const plan = out.match(/<a[^>]*href="\/student\/plan"[^>]*>/)?.[0] ?? ""
+    expect(practice).toContain('aria-current="page"')
+    expect(plan).not.toContain("aria-current")
+  })
+  it("a row the router matches still announces it", () => {
+    const out = render("/student/plan/0580", [{ id: "plan", label: "Plan", to: "/student/plan", icon: createElement("svg") }])
+    expect(out).toContain('aria-current="page"')
   })
 })
