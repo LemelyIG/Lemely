@@ -604,6 +604,29 @@ class PlanTermsEnds(EmailContext):
         return "/billing"
 
 
+class PlanTermsCancelled(EmailContext):
+    """A plan change announced earlier will not happen (the admin reverted the edit).
+
+    No amount, plan name or card detail travels in the mail (UD13-E).
+    """
+
+    template: ClassVar[str] = "plan_terms_cancelled"
+    notification_type: ClassVar[NotificationType] = NotificationType.billing
+    subject: ClassVar[str] = "The change to your Lemely plan will not happen"
+    button: ClassVar[str] = "Open billing"
+
+    subscription_id: uuid.UUID
+
+    def lead(self) -> str:
+        return "The change to your Lemely plan that we told you about will not happen."
+
+    def detail(self) -> str | None:
+        return "Your plan stays as it is and you do not need to do anything."
+
+    def path(self) -> str:
+        return "/billing"
+
+
 _TEMPLATE_CLASSES: Final[tuple[type[EmailContext], ...]] = (
     BookingRequested,
     BookingRequestedFamily,
@@ -622,6 +645,7 @@ _TEMPLATE_CLASSES: Final[tuple[type[EmailContext], ...]] = (
     ExtraSeatsChargeFailed,
     PlanTermsChange,
     PlanTermsEnds,
+    PlanTermsCancelled,
 )
 
 #: Every template, keyed by the name stored in ``email_outbox.template``.
@@ -639,6 +663,7 @@ BILLING_EMAIL_TEMPLATES: Final[frozenset[str]] = frozenset(
         ExtraSeatsChargeFailed.template,
         PlanTermsChange.template,
         PlanTermsEnds.template,
+        PlanTermsCancelled.template,
     }
 )
 
@@ -866,6 +891,7 @@ __all__ = [
     "ExtraSeatsChargeFailed",
     "InvalidEmailContext",
     "MockTransactionalEmailProvider",
+    "PlanTermsCancelled",
     "PlanTermsChange",
     "PlanTermsEnds",
     "ResendTransactionalEmailProvider",

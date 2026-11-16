@@ -11,7 +11,7 @@ import ast
 import uuid
 from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 import pytest
 import sqlalchemy as sa
@@ -335,39 +335,71 @@ _TERM_ATTRS = frozenset(
         "seat_allowance_units",
     }
 )
-#: Names a ``PlanTier`` is bound to in ``lemely/``: ``tier.price_minor`` and friends are tier reads.
+#: Receiver names a ``PlanTier`` (or a row of one) is bound to in ``lemely/``. ``terms``,
+#: ``new_terms`` and friends hold a ``TierTerms`` and are the right thing to read from. An
+#: attribute chain ending in ``.tier`` (``s.tier.price_minor``) is a tier read whatever precedes it.
 _TIER_NAMES = frozenset(
-    {"tier", "plan_tier", "target", "current", "old_tier", "new_tier", "current_tier", "PlanTier"}
-)
-_ROOT = Path(__file__).resolve().parent.parent / "lemely"
-#: Modules that may read the tier's own columns anywhere: the history writer and reader, the
-#: admin catalogue (edits and lists tiers), the public catalogue and the admin manual activation
-#: (a new purchase is priced at the current terms and stamps them).
-_ANY_FUNCTION = frozenset(
     {
-        "db/plan_terms_repo.py",
-        "db/admin_billing_repo.py",
-        "db/admin_repo.py",
-        "db/admin_customer_repo.py",
-        "db/billing_repo.py",
-        "web/routers/admin.py",
-        "web/routers/admin_billing.py",
-        "web/routers/billing.py",
+        "tier",
+        "plan_tier",
+        "target",
+        "current",
+        "old_tier",
+        "new_tier",
+        "current_tier",
+        "target_tier",
+        "t",
+        "row",
+        "p",
+        "PlanTier",
     }
 )
-#: Modules that may read them only inside the named functions: the new-purchase paths (checkout
-#: pricing, the Paymob plan sync, the seat-cover check for the plan being bought).
-_ONLY_IN = {
-    "db/subscription_repo.py": frozenset(
-        {
-            "sync_paymob_plan",
-            "_line_items",
-            "create_subscription_checkout",
-            "_sellable_tier",
-            "_require_seats_covered",
-        }
-    ),
-}
+_ROOT = Path(__file__).resolve().parent.parent / "lemely"
+_SKIPPED_DIRS = ("db/models/", "db/migrations/")
+
+#: The functions that may read a tier's own term columns, each named. A read anywhere else is a
+#: grandfathering leak: an existing subscriber would see an admin edit at once.
+_ALLOWED: Final = frozenset(
+    {
+        # The history reader: these receive a ``TierTerms`` (or a history row) under a short name.
+        "db/plan_terms_repo.py::_announce_one",
+        "db/plan_terms_repo.py::_as_terms",
+        "db/plan_terms_repo.py::amount",
+        "db/plan_terms_repo.py::move_is_worse",
+        "db/plan_terms_repo.py::price_terms_differ",
+        "db/plan_terms_repo.py::same_terms",
+        # New purchases: checkout pricing, the Paymob plan sync, the seat-cover check of the plan
+        # being bought.
+        "db/subscription_repo.py::_line_items",
+        "db/subscription_repo.py::_require_seats_covered",
+        "db/subscription_repo.py::_sellable_tier",
+        "db/subscription_repo.py::create_subscription_checkout",
+        "db/subscription_repo.py::sync_paymob_plan",
+        # The admin catalogue: edits and lists tiers, the activation queue and a manual activation
+        # (a new purchase priced at the current terms, which it stamps).
+        "db/admin_billing_repo.py::_check_tier_shape",
+        "db/admin_billing_repo.py::paymob_drift",
+        "db/admin_billing_repo.py::update_plan_tier",
+        "db/admin_customer_repo.py::manual_activation",
+        "db/admin_repo.py::pending_activations",
+        "web/routers/admin.py::activation_queue",
+        "web/routers/admin_billing.py::credit_pack_dto",
+        "web/routers/admin_billing.py::plan_tier_dto",
+        # The public catalogue (new customers get the current terms).
+        "db/billing_repo.py::active_catalogue",
+        "web/routers/billing.py::_render_public_catalogue",
+        "web/routers/billing.py::get_catalogue",
+        # KNOWN LEAK (review I-4): ``_plan_tier_dto`` also serves the subscriber's own summary,
+        # which must show ``terms_for(sub)``. Remove this line when I-4 splits it.
+        "web/routers/billing.py::_plan_tier_dto",
+    }
+)
+
+
+def _is_tier_receiver(node: ast.expr) -> bool:
+    if isinstance(node, ast.Name):
+        return node.id in _TIER_NAMES
+    return isinstance(node, ast.Attribute) and node.attr == "tier"
 
 
 def _tier_term_reads(tree: ast.AST) -> list[tuple[str, int, str]]:
@@ -384,25 +416,23 @@ def _tier_term_reads(tree: ast.AST) -> list[tuple[str, int, str]]:
             if (
                 isinstance(child, ast.Attribute)
                 and child.attr in _TERM_ATTRS
-                and isinstance(child.value, ast.Name)
-                and child.value.id in _TIER_NAMES
+                and _is_tier_receiver(child.value)
             ):
-                found.append((function, child.lineno, f"{child.value.id}.{child.attr}"))
+                found.append((function, child.lineno, f"{ast.unparse(child.value)}.{child.attr}"))
             walk(child, name)
 
     walk(tree, "<module>")
     return found
 
 
-def _scan_violations(root: Path) -> list[str]:
+def _scan_violations(root: Path, allowed: frozenset[str] = _ALLOWED) -> list[str]:
     violations: list[str] = []
     for path in sorted(root.rglob("*.py")):
         rel = path.relative_to(root).as_posix()
-        if rel in _ANY_FUNCTION or rel.startswith(("db/models/", "db/migrations/")):
+        if rel.startswith(_SKIPPED_DIRS):
             continue
-        allowed = _ONLY_IN.get(rel, frozenset())
         for function, line, text in _tier_term_reads(ast.parse(path.read_text(encoding="utf-8"))):
-            if function not in allowed:
+            if f"{rel}::{function}" not in allowed:
                 violations.append(f"{rel}:{line} {text} in {function}")
     return violations
 
@@ -411,10 +441,42 @@ def test_no_module_prices_or_grants_for_a_subscriber_from_the_live_tier() -> Non
     assert _scan_violations(_ROOT) == []
 
 
-def test_the_scan_catches_a_tier_read_in_a_renewal_reader(tmp_path: Path) -> None:
+def test_every_allow_list_entry_still_reads_a_tier() -> None:
+    """A stale entry would hide a future leak in a function that no longer needs the exemption."""
+    reads = {
+        f"{path.relative_to(_ROOT).as_posix()}::{function}"
+        for path in _ROOT.rglob("*.py")
+        if not path.relative_to(_ROOT).as_posix().startswith(_SKIPPED_DIRS)
+        for function, _, _ in _tier_term_reads(ast.parse(path.read_text(encoding="utf-8")))
+    }
+    assert sorted(_ALLOWED - reads) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def grant(tier):\n    return tier.allowance_units\n",
+        "def grant(t):\n    return t.price_minor\n",
+        "def grant(row):\n    return row.included_seats\n",
+        "def grant(s):\n    return s.tier.extra_seat_price_minor\n",
+        "def grant(s):\n    return s.subscription.tier.seat_allowance_units\n",
+    ],
+)
+def test_the_scan_catches_a_tier_read_by_any_receiver_style(tmp_path: Path, source: str) -> None:
+    bad = tmp_path / "db"
+    bad.mkdir()
+    (bad / "somewhere.py").write_text(source, encoding="utf-8")
+    assert len(_scan_violations(tmp_path, frozenset())) == 1
+
+
+def test_the_scan_allows_a_named_function_and_nothing_else_in_its_module(tmp_path: Path) -> None:
     bad = tmp_path / "db"
     bad.mkdir()
     (bad / "somewhere.py").write_text(
-        "def grant(tier):\n    return tier.allowance_units\n", encoding="utf-8"
+        "def priced(tier):\n    return tier.price_minor\n"
+        "def leaky(tier):\n    return tier.allowance_units\n",
+        encoding="utf-8",
     )
-    assert _scan_violations(tmp_path) == ["db/somewhere.py:2 tier.allowance_units in grant"]
+    assert _scan_violations(tmp_path, frozenset({"db/somewhere.py::priced"})) == [
+        "db/somewhere.py:4 tier.allowance_units in leaky"
+    ]

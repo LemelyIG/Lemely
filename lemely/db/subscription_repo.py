@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_FLOOR, Decimal
 from functools import partial
-from typing import TYPE_CHECKING, ClassVar, Final
+from typing import TYPE_CHECKING, ClassVar, Final, NamedTuple
 
 import sqlalchemy as sa
 import structlog
@@ -85,6 +85,8 @@ from lemely.db.plan_terms_repo import (
     current_terms_for,
     terms_for,
     terms_in_force_for_next_period,
+    terms_matching_amount,
+    tier_terms,
 )
 from lemely.db.teacher_team_repo import TeacherTeamService
 from lemely.db.usage_ledger_repo import GrantAlreadyExpired, UsageLedger
@@ -1135,13 +1137,15 @@ def _period_terms(
     *,
     with_pending: bool,
     with_terms: bool | None = None,
+    move_to: int | None = None,
 ) -> tuple[PlanTier, TierTerms, int]:
     """The tier, its terms and the extra seats the next period uses.
 
     ``with_pending`` applies the pending plan and seat changes. ``with_terms`` (default: the same)
     applies the pending terms move, which the fixed-amount path refuses when it would change the
-    amount. Without either the subscriber keeps the terms they are on. A tier that sells no extra
-    seats holds none, whatever the row says.
+    amount. ``move_to`` names the version a charge's amount belongs to (a push an edit has since
+    overtaken) and wins over the pending move. Without any the subscriber keeps the terms they are
+    on. A tier that sells no extra seats holds none, whatever the row says.
     """
     apply_terms = with_pending if with_terms is None else with_terms
     pending_tier_id = subscription.pending_plan_tier_id if with_pending else None
@@ -1150,6 +1154,11 @@ def _period_terms(
         raise RuntimeError(f"subscription {subscription.id} has no plan tier")
     if tier.id != subscription.plan_tier_id:
         terms = current_terms_for(session, tier)  # a plan change moves to the target's terms
+    elif move_to is not None:
+        moved = tier_terms(session, tier.id, move_to)
+        if moved is None:
+            raise RuntimeError(f"plan tier {tier.id} has no terms version {move_to}")
+        terms = moved
     elif apply_terms:
         terms = terms_in_force_for_next_period(session, subscription)
     else:
@@ -1160,6 +1169,23 @@ def _period_terms(
         else subscription.extra_seats or 0
     )
     return tier, terms, seats if terms.extra_seat_price_minor > 0 else 0
+
+
+def _billed_renewal_amount(
+    session: Session, subscription: Subscription, *, amount_updatable: bool = True
+) -> int:
+    """The renewal amount on the terms the subscriber is on now, pending seat changes included.
+
+    What is owed if a pending terms move is deferred: a charge at this amount is not underpaid.
+    """
+    _, terms, seats = _period_terms(session, subscription, with_pending=True, with_terms=False)
+    return expected_renewal_amount_minor(
+        price_minor=terms.price_minor,
+        extra_seats=seats,
+        extra_seat_price_minor=terms.extra_seat_price_minor,
+        paymob_amount_minor=subscription.paymob_amount_minor,
+        amount_updatable=amount_updatable,
+    )
 
 
 def _expected_renewal_amount(
@@ -1182,6 +1208,14 @@ def _expected_renewal_amount(
     )
 
 
+class _Applies(NamedTuple):
+    """What a renewal charge applies: pending plan and seat changes, a terms move, and a version."""
+
+    pending: bool
+    terms: bool
+    move_to: int | None = None
+
+
 def _renewal_applies(
     session: Session,
     subscription: Subscription,
@@ -1189,14 +1223,17 @@ def _renewal_applies(
     *,
     amount_updatable: bool,
     quiet: bool = False,
-) -> tuple[bool, bool]:
-    """``(apply_pending, apply_terms)`` for a renewal charged at ``charged_minor`` (DV-12, UD13-A).
+) -> _Applies:
+    """What a renewal charged at ``charged_minor`` applies (DV-12, UD13-A).
 
     The pending tier and seat changes apply iff the charge is the expected amount. The pending
     terms move applies iff the charge is also the amount the NEW terms compute to: on the
     fixed-amount path the expected amount is the stamp whatever the terms say, so a move that
     changes the amount is never applied there (the sweep scheduled a cancel instead), while a move
-    that leaves it unchanged is. A deferred move stays pending and is logged (unless ``quiet``).
+    that leaves it unchanged is. A charge that is not the expected amount but is the amount of a
+    newer version (an edit after the push moved the pending version on) moves the subscriber to
+    that version: they paid its price, so they get its terms. A deferred move stays pending and is
+    logged (unless ``quiet``).
     """
     expected = _expected_renewal_amount(session, subscription, amount_updatable=amount_updatable)
     apply_pending = charged_minor == expected
@@ -1209,15 +1246,26 @@ def _renewal_applies(
     if due:
         computed = _expected_renewal_amount(session, subscription, amount_updatable=True)
         apply_terms = apply_pending and charged_minor == computed
-        if not apply_terms and not quiet:
-            log.warning(
-                "subscription_terms_move_deferred",
-                subscription_id=str(subscription.id),
-                charged_minor=charged_minor,
-                expected_minor=computed,
-                pending_terms_version=subscription.pending_terms_version,
-            )
-    return apply_pending, apply_terms
+    move_to: int | None = None
+    if not apply_pending and amount_updatable and subscription.pending_plan_tier_id is None:
+        seats = (
+            subscription.pending_extra_seats
+            if subscription.pending_extra_seats is not None
+            else subscription.extra_seats or 0
+        )
+        matched = terms_matching_amount(session, subscription, charged_minor, extra_seats=seats)
+        if matched is not None:
+            move_to = matched.terms_version
+            apply_terms = True
+    if due and not apply_terms and not quiet:
+        log.warning(
+            "subscription_terms_move_deferred",
+            subscription_id=str(subscription.id),
+            charged_minor=charged_minor,
+            expected_minor=_expected_renewal_amount(session, subscription, amount_updatable=True),
+            pending_terms_version=subscription.pending_terms_version,
+        )
+    return _Applies(apply_pending, apply_terms, move_to)
 
 
 def _grant_renewal_period(
@@ -1229,6 +1277,7 @@ def _grant_renewal_period(
     now: datetime,
     apply_pending: bool,
     apply_terms: bool,
+    move_to: int | None = None,
 ) -> SubscriptionPeriod:
     """Start the paid period: move the subscription, insert the period, grant the allowance.
 
@@ -1244,7 +1293,11 @@ def _grant_renewal_period(
             was changed.
     """
     tier, terms, seats = _period_terms(
-        session, subscription, with_pending=apply_pending, with_terms=apply_terms
+        session,
+        subscription,
+        with_pending=apply_pending,
+        with_terms=apply_terms,
+        move_to=move_to,
     )
     assert tier.interval is not None  # noqa: S101 - the caller checked
     moved_terms = terms.terms_version != subscription.terms_version
@@ -1270,15 +1323,20 @@ def _grant_renewal_period(
                     subscription.terms_version = terms.terms_version
                     subscription.pending_terms_version = None
                     subscription.pending_terms_effective_at = None
+                    subscription.terms_notice_sent_at = None
                 subscription.plan_tier_id = tier.id
                 subscription.pending_plan_tier_id = None
                 subscription.extra_seats = seats
                 subscription.pending_extra_seats = None
-            if apply_terms and moved_terms and tier.id == subscription.plan_tier_id:
+            if moved_terms and tier.id == subscription.plan_tier_id:
                 # The renewal was charged at the new terms' amount: the subscriber is on them now.
+                # A pending move to a still newer version stays pending (its own notice stands).
+                pending_version = subscription.pending_terms_version
                 subscription.terms_version = terms.terms_version
-                subscription.pending_terms_version = None
-                subscription.pending_terms_effective_at = None
+                if pending_version is None or terms.terms_version >= pending_version:
+                    subscription.pending_terms_version = None
+                    subscription.pending_terms_effective_at = None
+                    subscription.terms_notice_sent_at = None
             if not live and subscription.paymob_cancelled_at is not None:
                 # A late charge on a plan whose Paymob subscription is already cancelled: the paid
                 # period runs, but Paymob never charges again. End it at the period end as a
@@ -1383,9 +1441,35 @@ def _settle_renewal(
             payment_id=str(payment.id),
             alert=True,
         )
-    apply_pending, apply_terms = _renewal_applies(
+    applies = _renewal_applies(
         session, subscription, payment.amount_minor, amount_updatable=amount_updatable
     )
+    apply_pending, apply_terms = applies.pending, applies.terms
+    expected_now = _expected_renewal_amount(
+        session, subscription, amount_updatable=amount_updatable
+    )
+    behind = session.scalar(
+        select(PlanTier.terms_version).where(PlanTier.id == subscription.plan_tier_id)
+    )
+    if (
+        not apply_pending
+        and applies.move_to is None
+        and payment.amount_minor > expected_now
+        and behind is not None
+        and behind > subscription.terms_version
+    ):
+        # Accepted (it is the amount Paymob holds) but above what the terms this subscriber is on
+        # price to, while their tier has newer terms and none of them prices to the charge: they
+        # are charged more than their terms say and stay on the old ones. Never silent: someone
+        # refunds or credits. (A charge at a replaced amount on current terms is DV-12, not this.)
+        alerts.error(
+            "subscription_renewal_paid_above_expected",
+            subscription_id=str(subscription.id),
+            payment_id=str(payment.id),
+            charged_minor=payment.amount_minor,
+            expected_minor=expected_now,
+            alert=True,
+        )
     if not apply_pending and (
         subscription.pending_plan_tier_id is not None
         or subscription.pending_extra_seats is not None
@@ -1399,7 +1483,11 @@ def _settle_renewal(
             ),
         )
     tier, _, _ = _period_terms(
-        session, subscription, with_pending=apply_pending, with_terms=apply_terms
+        session,
+        subscription,
+        with_pending=apply_pending,
+        with_terms=apply_terms,
+        move_to=applies.move_to,
     )
     if tier.interval is None:
         alerts.error(
@@ -1418,6 +1506,7 @@ def _settle_renewal(
             now=now,
             apply_pending=apply_pending,
             apply_terms=apply_terms,
+            move_to=applies.move_to,
         )
     except _OtherPlanLive:
         _note_charge_kept(subscription, payment, reason="other_plan_live")
@@ -2112,7 +2201,7 @@ class SubscriptionService:
         mismatch = (
             current_tier is None or currency != current_tier.currency or amount not in accepted
         )
-        apply_pending, apply_terms = _renewal_applies(
+        applies = _renewal_applies(
             session,
             subscription,
             amount,
@@ -2120,7 +2209,11 @@ class SubscriptionService:
             quiet=True,
         )
         tier, _, seats = _period_terms(
-            session, subscription, with_pending=apply_pending, with_terms=apply_terms
+            session,
+            subscription,
+            with_pending=applies.pending,
+            with_terms=applies.terms,
+            move_to=applies.move_to,
         )
         payment = Payment(
             id=uuid.uuid4(),
@@ -2155,6 +2248,10 @@ class SubscriptionService:
                 alert=True,
             )
             return False
+        # Before the settle moves anything: what is owed if only a terms move is deferred.
+        billed = _billed_renewal_amount(
+            session, subscription, amount_updatable=self._settings.subscription_amount_updatable
+        )
         granted = _settle_renewal(
             session,
             subscription,
@@ -2163,9 +2260,11 @@ class SubscriptionService:
             now=now,
             amount_updatable=self._settings.subscription_amount_updatable,
         )
-        if granted and amount < expected and not via_previous:
+        if granted and amount < expected and amount < billed and not via_previous:
             # Accepted at the stamp, which lags what is now owed (an upgrade or seats not yet at
             # Paymob, or a PUT whose outcome is unknown): never silent, someone collects the rest.
+            # A deferred terms rise is not that: the period was granted on the old terms, which the
+            # charge covers (``billed``), so nothing is owed.
             alerts.error(
                 "subscription_renewal_underpaid",
                 subscription_id=str(subscription.id),
@@ -2627,6 +2726,15 @@ class SubscriptionService:
         stopping at ``limit`` hits. Nothing is a candidate on the fixed-amount fallback path
         (Paymob cannot change the amount there) or once the period is over (``sync_renewal_amount``
         refuses it).
+
+        Only ``active`` rows are swept, on purpose (UD13-A review M-6). A ``past_due`` row is in
+        Paymob's own retry of a charge that failed: whether an amount PUT while Paymob is
+        retrying changes that retry, and whether the retried charge could then land twice, is not
+        something the sandbox (S14 tested ``active`` subscriptions only) has shown, and the PUT
+        is money. Its retry therefore charges the amount Paymob holds, which the renewal
+        acceptance takes (DV-12) and defers a pending terms move on, with no false underpaid page
+        (the baseline is the billed terms). The move happens at the first renewal after the row is
+        ``active`` again.
         """
         if not self._settings.subscription_amount_updatable:
             return []

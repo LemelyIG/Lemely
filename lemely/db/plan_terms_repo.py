@@ -23,7 +23,11 @@ from sqlalchemy.orm import aliased
 
 from lemely.core.billing_defaults import PRICE_CHANGE_NOTICE_DAYS
 from lemely.core.subscription_rules import period_end, subscription_amount_minor
-from lemely.db.billing_notices import enqueue_plan_terms_change, enqueue_plan_terms_ends
+from lemely.db.billing_notices import (
+    enqueue_plan_terms_cancelled,
+    enqueue_plan_terms_change,
+    enqueue_plan_terms_ends,
+)
 from lemely.db.models.billing import (
     PLAN_LIVE_STATUSES,
     PlanAudience,
@@ -162,14 +166,71 @@ def renewal_amount(terms: TierTerms, extra_seats: int) -> int:
     )
 
 
-def move_is_worse(current: TierTerms, new: TierTerms, *, extra_seats: int) -> bool:
-    """A move is worse for the subscriber when it costs more or gives less (full notice period)."""
+def same_terms(current: TierTerms, new: TierTerms) -> bool:
+    """Identical in every billed term (the only change that may skip the notice)."""
     return (
-        renewal_amount(new, extra_seats) > renewal_amount(current, extra_seats)
+        current.price_minor,
+        current.extra_seat_price_minor,
+        current.allowance_units,
+        current.included_seats,
+        current.seat_allowance_units,
+    ) == (
+        new.price_minor,
+        new.extra_seat_price_minor,
+        new.allowance_units,
+        new.included_seats,
+        new.seat_allowance_units,
+    )
+
+
+def price_terms_differ(current: TierTerms, new: TierTerms) -> bool:
+    """The price or the seat price differs (judged on the terms, not on the seats held today)."""
+    return (
+        current.price_minor != new.price_minor
+        or current.extra_seat_price_minor != new.extra_seat_price_minor
+    )
+
+
+def move_is_worse(current: TierTerms, new: TierTerms) -> bool:
+    """A move is worse when any term costs more or gives less: it waits the full notice period.
+
+    Judged on the terms alone. A seat price that rises is worse whatever number of extra seats the
+    subscriber holds today, because a later seat purchase would be priced at it (UD13-A, UD13-G).
+    """
+    return (
+        new.price_minor > current.price_minor
+        or new.extra_seat_price_minor > current.extra_seat_price_minor
         or new.allowance_units < current.allowance_units
         or new.included_seats < current.included_seats
         or new.seat_allowance_units < current.seat_allowance_units
     )
+
+
+def terms_matching_amount(
+    session: Session, subscription: Subscription, amount_minor: int, *, extra_seats: int
+) -> TierTerms | None:
+    """The newer version of the subscription's tier whose renewal amount is ``amount_minor``.
+
+    For a renewal charged at an amount an earlier push left at Paymob (a later edit moved the
+    pending version on before the charge): that amount belongs to a known version, and the
+    subscriber is moved to it. Versions newer than the one they are on are considered; the pending
+    version wins a tie, then the highest. ``None`` when no version prices to the amount.
+    """
+    rows = session.scalars(
+        sa.select(PlanTierTerms)
+        .where(
+            PlanTierTerms.plan_tier_id == subscription.plan_tier_id,
+            PlanTierTerms.terms_version > subscription.terms_version,
+        )
+        .order_by(PlanTierTerms.terms_version.desc())
+    ).all()
+    matches = [
+        _as_terms(r) for r in rows if renewal_amount(_as_terms(r), extra_seats) == amount_minor
+    ]
+    for terms in matches:
+        if terms.terms_version == subscription.pending_terms_version:
+            return terms
+    return matches[0] if matches else None
 
 
 def first_applies_at(period_end_at: datetime, interval: str, effective_at: datetime) -> datetime:
@@ -238,10 +299,14 @@ def queue_terms_change_notices(
 
     Per row: ``pending_terms_version`` is the tier's current version and ``terms_notice_sent_at``
     is ``now``. ``pending_terms_effective_at`` is ``now`` plus ``billing_settings.
-    price_change_notice_days`` when the move is worse for this subscriber, else ``now``. The payer
-    gets one notice (UD13-E: no amount) in the same transaction, unless nothing the subscriber can
-    see changes. On the fixed-amount path (``amount_updatable`` false) a move that changes the
-    renewal amount cannot be charged, so the notice says the plan ends and to subscribe again.
+    price_change_notice_days`` when the move is worse (judged on the terms, not the seats held
+    today), else ``now``. On the fixed-amount path (``amount_updatable`` false) any move of the
+    price or the seat price gets the full notice period, up or down: the move ends the plan, so a
+    price cut never takes effect at once. The payer gets one notice (UD13-E: no amount) in the same
+    transaction; a move identical in every billed term skips it. A move identical to the terms the
+    subscriber is on (an admin revert) cancels a pending move and, when that move had been
+    announced, says so. On the fixed path a move that changes the renewal amount cannot be
+    charged, so the notice says the plan ends and to subscribe again.
 
     Raises:
         ValueError: ``limit`` is below 1.
@@ -292,12 +357,32 @@ def _announce_one(
     current = terms_for(session, sub)
     new = current_terms_for(session, tier)
     seats = sub.pending_extra_seats if sub.pending_extra_seats is not None else sub.extra_seats or 0
-    worse = move_is_worse(current, new, extra_seats=seats)
-    effective_at = now + timedelta(days=_notice_days(session)) if worse else now
+    if same_terms(current, new):
+        # An admin revert (or a no-op edit): nothing changes for this subscriber. Any pending move
+        # is cancelled, and one that had been announced is taken back.
+        announced = sub.pending_terms_version is not None and sub.terms_notice_sent_at is not None
+        sub.terms_version = new.terms_version
+        sub.pending_terms_version = None
+        sub.pending_terms_effective_at = None
+        sub.terms_notice_sent_at = None
+        sub.version = (sub.version or 0) + 1
+        if announced:
+            enqueue_plan_terms_cancelled(session, subscription=sub, terms_version=new.terms_version)
+        log.info(
+            "subscription_terms_move_cancelled",
+            subscription_id=str(sub.id),
+            terms_version=new.terms_version,
+            announced=announced,
+        )
+        return 1
+    worse = move_is_worse(current, new)
+    price_changes = price_terms_differ(current, new)
+    amount_changes = renewal_amount(new, seats) != renewal_amount(current, seats)
+    full_notice = worse or (price_changes and not amount_updatable)
+    effective_at = now + timedelta(days=_notice_days(session)) if full_notice else now
     sub.pending_terms_version = new.terms_version
     sub.pending_terms_effective_at = effective_at
     sub.version = (sub.version or 0) + 1
-    price_changes = renewal_amount(new, seats) != renewal_amount(current, seats)
     entitlements_change = (
         new.allowance_units != current.allowance_units
         or new.included_seats != current.included_seats
@@ -307,12 +392,10 @@ def _announce_one(
     if tier.audience is PlanAudience.teacher:
         capacity = new.included_seats + (seats if new.extra_seat_price_minor > 0 else 0)
         seats_over = max(0, _seats_held(session, sub.user_id) - capacity)
-    if not (price_changes or entitlements_change or seats_over):
-        return 1  # a change the subscriber cannot see (an unused seat price): moves without a mail
     assert tier.interval is not None  # noqa: S101 - a plan that renews has an interval
     applies_at = first_applies_at(sub.current_period_end or now, tier.interval.value, effective_at)
     sub.terms_notice_sent_at = now
-    if price_changes and not amount_updatable:
+    if amount_changes and not amount_updatable:
         enqueue_plan_terms_ends(
             session, subscription=sub, terms_version=new.terms_version, ends_at=applies_at
         )
@@ -347,11 +430,18 @@ def fixed_path_move_ids(
 
     For the fixed-amount path (Paymob cannot change the amount): such a move is never applied by a
     renewal, so the plan is cancelled at its period end instead. Due means
-    ``current_period_end >= pending_terms_effective_at``; a cancelling or plan-changing
-    subscription is not a candidate. A move that leaves the amount unchanged is not one: it applies
-    at the renewal. ``only`` narrows the answer to one row (the caller's re-check under its lock).
+    ``current_period_end >= pending_terms_effective_at`` AND the period ends no sooner than the
+    notice period after the email (``terms_notice_sent_at`` plus ``price_change_notice_days``): a
+    move that became amount-changing after the notice (a seat bought since) never cancels a plan
+    sooner than the subscriber was promised. A cancelling or plan-changing subscription is not a
+    candidate. A move that leaves the amount unchanged is not one: it applies at the renewal.
+    ``only`` narrows the answer to one row (the caller's re-check under its lock).
     """
     S = Subscription
+    notice_days = sa.func.coalesce(
+        sa.select(BillingSettings.price_change_notice_days).scalar_subquery(),
+        PRICE_CHANGE_NOTICE_DAYS,
+    )
     current = aliased(PlanTierTerms)
     pending = aliased(PlanTierTerms)
     seats = sa.func.coalesce(S.pending_extra_seats, S.extra_seats, 0)
@@ -384,6 +474,9 @@ def fixed_path_move_ids(
             S.pending_plan_tier_id.is_(None),
             S.pending_terms_version.is_not(None),
             S.current_period_end >= S.pending_terms_effective_at,
+            S.terms_notice_sent_at.is_not(None),
+            S.current_period_end
+            >= S.terms_notice_sent_at + sa.func.make_interval(0, 0, 0, notice_days),
             S.current_period_end > now,
             amount(current) != amount(pending),
         )
@@ -403,10 +496,13 @@ __all__ = [
     "fixed_path_move_ids",
     "move_is_worse",
     "pending_terms_for",
+    "price_terms_differ",
     "queue_terms_change_notices",
     "renewal_amount",
+    "same_terms",
     "terms_for",
     "terms_in_force_for_next_period",
+    "terms_matching_amount",
     "tier_for_terms",
     "tier_terms",
 ]

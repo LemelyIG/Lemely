@@ -204,12 +204,33 @@ def enqueue_plan_terms_ends(
     )
 
 
+def enqueue_plan_terms_cancelled(
+    session: Session, *, subscription: Subscription, terms_version: int
+) -> bool:
+    """Queue the "the change to your plan will not happen" notice (an admin reverted the edit).
+
+    Sent only for a move that had been announced. No amount is stated. One per subscription and
+    terms version. ``False`` when the subscription has no payer, the payer switched billing notices
+    off, or it is already queued.
+    """
+    if subscription.payer_user_id is None:
+        return False
+    return enqueue_in_session(
+        session,
+        recipient_user_id=subscription.payer_user_id,
+        template="plan_terms_cancelled",
+        context={"subscription_id": subscription.id},
+        dedupe_key=f"terms_change_cancelled:{subscription.id}:{terms_version}",
+    )
+
+
 __all__ = [
     "SubscriptionNoticeKind",
     "enqueue_auto_topup_card_missing",
     "enqueue_auto_topup_failed",
     "enqueue_auto_topup_phone_required",
     "enqueue_extra_seats_charge_failed",
+    "enqueue_plan_terms_cancelled",
     "enqueue_plan_terms_change",
     "enqueue_plan_terms_ends",
     "enqueue_subscription_notice",

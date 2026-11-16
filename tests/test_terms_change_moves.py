@@ -31,6 +31,8 @@ from lemely.db.plan_terms_repo import (
     first_applies_at,
     fixed_path_move_ids,
     queue_terms_change_notices,
+    terms_for,
+    terms_in_force_for_next_period,
 )
 from lemely.db.subscription_repo import TRIGGER_SUCCESS, SubscriptionService
 from lemely.db.teacher_team_repo import TeacherTeamService
@@ -113,7 +115,9 @@ def _mail(sm: sessionmaker[Session], recipient: uuid.UUID) -> list[EmailOutbox]:
                 sa.select(EmailOutbox)
                 .where(
                     EmailOutbox.recipient_user_id == recipient,
-                    EmailOutbox.template.in_(("plan_terms_change", "plan_terms_ends")),
+                    EmailOutbox.template.in_(
+                        ("plan_terms_change", "plan_terms_ends", "plan_terms_cancelled")
+                    ),
                 )
                 .order_by(EmailOutbox.created_at, EmailOutbox.id)
             )
@@ -321,20 +325,6 @@ def test_a_pending_downgrade_is_not_noticed_about_the_tier_it_leaves(
     edit_tier_terms(sm, tier, price_minor=14_000)
     assert _notify(sm) == 0
     assert _mail(sm, owner) == []
-
-
-def test_a_change_the_subscriber_cannot_see_moves_without_a_mail(
-    sm: sessionmaker[Session],
-) -> None:
-    tier = seed_tier(sm, price_minor=10_000, extra_seat_price_minor=0)
-    owner, sid = _linked(sm, tier, period_end=END)
-    # A seat price on a tier that sold none: the student holds no seats, so nothing changes.
-    edit_tier_terms(sm, tier, extra_seat_price_minor=500)
-    _notify(sm)
-    assert _mail(sm, owner) == []
-    sub = _sub(sm, sid)
-    assert sub.pending_terms_version == 2
-    assert sub.terms_notice_sent_at is None
 
 
 def test_the_applies_date_is_the_first_period_end_on_or_after_the_effective_date() -> None:
@@ -568,3 +558,237 @@ def test_the_tier_row_is_untouched_by_the_notice(sm: sessionmaker[Session]) -> N
         row = session.get(PlanTier, tier)
         assert row is not None
         assert (row.terms_version, row.price_minor) == (2, 14_000)
+
+
+# -- review fixes (P07-T16 review: I-1, I-2, I-3, M-1, M-3, M-4) ------------------------------
+
+
+def _set_extra_seats(sm: sessionmaker[Session], sid: uuid.UUID, seats: int) -> None:
+    with sm.begin() as session:
+        session.execute(
+            sa.update(Subscription).where(Subscription.id == sid).values(extra_seats=seats)
+        )
+
+
+def _teacher_with_seat_price(
+    sm: sessionmaker[Session], *, period_end: datetime = END
+) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+    teacher = seed_user(sm, Role.teacher)
+    tier = seed_tier(
+        sm,
+        audience=PlanAudience.teacher,
+        price_minor=10_000,
+        included_seats=3,
+        extra_seat_price_minor=500,
+    )
+    _, sid = _linked(sm, tier, user=teacher, period_end=period_end)
+    return teacher, tier, sid
+
+
+def test_a_seat_price_rise_is_noticed_and_waits_the_full_period_whatever_seats_are_held(
+    sm: sessionmaker[Session],
+) -> None:
+    """I-1: judged on the terms, so a later seat purchase cannot reprice the plan unannounced."""
+    teacher, tier, sid = _teacher_with_seat_price(sm)
+    edit_tier_terms(sm, tier, extra_seat_price_minor=900)
+    _notify(sm)  # 0 extra seats held: the renewal amount does not change today
+    sub = _sub(sm, sid)
+    assert sub.pending_terms_effective_at == NOW0 + NOTICE
+    (mail,) = _mail(sm, teacher)
+    assert mail.template == "plan_terms_change"
+    assert mail.context["price_changes"] is True
+    _set_extra_seats(sm, sid, 2)  # a seat purchase lands mid-period
+    with sm() as session:
+        sub = session.get(Subscription, sid)
+        assert sub is not None
+        # This period keeps the old seat price; the renewal after the notice period moves to 900.
+        assert terms_for(session, sub).extra_seat_price_minor == 500
+        assert terms_in_force_for_next_period(session, sub).extra_seat_price_minor == 900
+
+
+def test_a_seat_price_rise_then_a_seat_purchase_never_cancels_inside_the_notice_period(
+    sm: sessionmaker[Session],
+) -> None:
+    """I-1 on the fixed path: the amount changed only after the notice, still a full notice."""
+    teacher, tier, sid = _teacher_with_seat_price(sm, period_end=NOW0 + timedelta(days=5))
+    edit_tier_terms(sm, tier, extra_seat_price_minor=900)
+    _notify(sm, updatable=False)
+    assert len(_mail(sm, teacher)) == 1
+    _set_extra_seats(sm, sid, 2)
+    deps = SubscriptionDeps(
+        sm, FakePaymobClient(), paymob_settings(subscription_amount_updatable=False)
+    )
+    # The period ends 5 days after the notice: sooner than the 14 days promised.
+    assert terms_move_fixed_path_job(deps, now=NOW0 + timedelta(days=2)) == 0
+    assert _sub(sm, sid).cancel_at_period_end is False
+
+
+def test_a_seat_price_rise_then_a_seat_purchase_cancels_only_after_the_notice_period(
+    sm: sessionmaker[Session],
+) -> None:
+    teacher, tier, sid = _teacher_with_seat_price(sm)  # the period ends 29 days after the notice
+    edit_tier_terms(sm, tier, extra_seat_price_minor=900)
+    _notify(sm, updatable=False)
+    _set_extra_seats(sm, sid, 2)
+    deps = SubscriptionDeps(
+        sm, FakePaymobClient(), paymob_settings(subscription_amount_updatable=False)
+    )
+    assert terms_move_fixed_path_job(deps, now=NOW0 + timedelta(days=2)) == 1
+    assert _sub(sm, sid).cancel_at_period_end is True
+    end = _sub(sm, sid).current_period_end
+    assert end is not None
+    assert end >= NOW0 + NOTICE  # the plan runs to the period end
+    assert len(_mail(sm, teacher)) == 1
+
+
+def test_a_price_cut_on_the_fixed_path_waits_the_full_notice_period(
+    sm: sessionmaker[Session],
+) -> None:
+    """I-2: the move ends the plan, so even a cut gets the full notice and never cancels at once."""
+    tier = seed_tier(sm, price_minor=10_000)
+    owner, sid = _linked(sm, tier, period_end=NOW0 + timedelta(days=1))
+    edit_tier_terms(sm, tier, price_minor=8_000)
+    _notify(sm, updatable=False)
+    assert _sub(sm, sid).pending_terms_effective_at == NOW0 + NOTICE
+    (mail,) = _mail(sm, owner)
+    assert mail.template == "plan_terms_ends"
+    # The plan's period ends tomorrow, before the notice period: it renews and is not cancelled.
+    assert str(mail.context["ends_at"]).startswith(
+        (NOW0 + timedelta(days=31)).strftime("%Y-%m-%dT%H:%M")
+    )
+    deps = SubscriptionDeps(
+        sm, FakePaymobClient(), paymob_settings(subscription_amount_updatable=False)
+    )
+    assert terms_move_fixed_path_job(deps, now=NOW0) == 0
+    assert _sub(sm, sid).cancel_at_period_end is False
+
+
+def test_a_price_cut_on_the_updatable_path_is_still_effective_at_once(
+    sm: sessionmaker[Session],
+) -> None:
+    tier = seed_tier(sm, price_minor=10_000)
+    _, sid = _linked(sm, tier, period_end=END)
+    edit_tier_terms(sm, tier, price_minor=8_000)
+    _notify(sm)
+    assert _sub(sm, sid).pending_terms_effective_at == NOW0
+
+
+def test_a_second_edit_inside_the_window_moves_to_the_version_the_charge_belongs_to(
+    sm: sessionmaker[Session],
+) -> None:
+    """I-3: v2 was pushed to Paymob, then v3 edited; the charge is v2's amount: v2's terms apply."""
+    tier = seed_tier(sm, price_minor=10_000, allowance_units=1_000)
+    owner, sid = _linked(sm, tier, period_end=END)
+    edit_tier_terms(sm, tier, price_minor=14_000, allowance_units=5_000)
+    _notify(sm)
+    _sweep(sm, END - timedelta(days=1))
+    assert _sub(sm, sid).paymob_amount_minor == 14_000
+    edit_tier_terms(sm, tier, price_minor=13_000, allowance_units=5_000)
+    _notify(sm, now=END - timedelta(hours=12))  # the v3 date now falls after this period's end
+    with capture_logs() as logs:
+        _renew(sm, 14_000)  # Paymob charged the stamp before any PUT back
+    sub = _sub(sm, sid)
+    assert sub.terms_version == 2  # they paid v2's price: they get v2's terms
+    assert _period_grants(sm, owner) == [5_000]
+    assert _periods(sm, sid)[-1].terms_version == 2
+    assert sub.pending_terms_version == 3  # the newer edit keeps its own notice and date
+    assert not [e for e in logs if e.get("alert")]
+
+
+def test_a_charge_that_matches_no_known_version_is_accepted_loudly_and_changes_nothing(
+    sm: sessionmaker[Session],
+) -> None:
+    tier = seed_tier(sm, price_minor=10_000, allowance_units=1_000)
+    owner, sid = _linked(sm, tier, amount=11_111, period_end=END)  # a stamp no terms price to
+    edit_tier_terms(sm, tier, price_minor=14_000)  # not noticed yet: the expected amount is 10 000
+    with capture_logs() as logs:
+        _renew(sm, 11_111)
+    alerts = [e["event"] for e in logs if e.get("alert")]
+    assert "subscription_renewal_paid_above_expected" in alerts
+    assert _sub(sm, sid).terms_version == 1
+    assert _period_grants(sm, owner) == [1_000]
+
+
+def test_a_deferred_rise_does_not_page_underpaid(sm: sessionmaker[Session]) -> None:
+    """M-1: the old-amount charge covers the old terms the period was granted on."""
+    tier = seed_tier(sm, price_minor=10_000, allowance_units=1_000)
+    _linked(sm, tier, period_end=END)
+    edit_tier_terms(sm, tier, price_minor=14_000, allowance_units=5_000)
+    _notify(sm)
+    with capture_logs() as logs:
+        _renew(sm, 10_000)
+    events = [e["event"] for e in logs]
+    assert "subscription_terms_move_deferred" in events
+    assert "subscription_renewal_underpaid" not in [e["event"] for e in logs if e.get("alert")]
+
+
+def test_a_real_underpayment_still_pages(sm: sessionmaker[Session]) -> None:
+    """The control for M-1: a pending upgrade not yet at Paymob is still someone's to collect."""
+    tier = seed_tier(sm, price_minor=10_000)
+    dearer = seed_tier(sm, price_minor=15_000)
+    _linked(sm, tier, period_end=END, pending_plan_tier_id=dearer)
+    with capture_logs() as logs:
+        _renew(sm, 10_000)
+    assert "subscription_renewal_underpaid" in [e["event"] for e in logs if e.get("alert")]
+
+
+def test_the_notice_stamp_is_cleared_when_the_move_applies_and_kept_when_it_is_deferred(
+    sm: sessionmaker[Session],
+) -> None:
+    """M-3."""
+    tier = seed_tier(sm, price_minor=10_000)
+    _, sid = _linked(sm, tier, period_end=END)
+    edit_tier_terms(sm, tier, price_minor=14_000)
+    _notify(sm)
+    _renew(sm, 10_000)  # deferred
+    assert _sub(sm, sid).terms_notice_sent_at == NOW0
+    _sweep(sm, END + timedelta(days=29))
+    _renew(sm, 14_000, txn=889, at=END + timedelta(days=30))
+    assert _sub(sm, sid).terms_notice_sent_at is None
+
+
+def test_an_admin_revert_cancels_the_pending_move_and_says_so(sm: sessionmaker[Session]) -> None:
+    """M-4: v2 was announced; v3 restores v1's terms."""
+    tier = seed_tier(sm, price_minor=10_000, allowance_units=1_000)
+    owner, sid = _linked(sm, tier, period_end=END)
+    edit_tier_terms(sm, tier, price_minor=14_000)
+    _notify(sm)
+    assert [m.template for m in _mail(sm, owner)] == ["plan_terms_change"]
+    edit_tier_terms(sm, tier, price_minor=10_000)  # the revert: identical to the subscriber's v1
+    assert _notify(sm, now=NOW0 + timedelta(days=1)) == 1
+    sub = _sub(sm, sid)
+    assert (sub.pending_terms_version, sub.pending_terms_effective_at) == (None, None)
+    assert sub.terms_notice_sent_at is None
+    assert sub.terms_version == 3  # identical terms: moved at once, nothing changes for them
+    templates = [m.template for m in _mail(sm, owner)]
+    assert templates == ["plan_terms_change", "plan_terms_cancelled"]
+    cancelled = _mail(sm, owner)[1]
+    assert "amount" not in " ".join(cancelled.context)
+    assert _notify(sm, now=NOW0 + timedelta(days=2)) == 0
+
+
+def test_a_revert_before_any_notice_sends_nothing(sm: sessionmaker[Session]) -> None:
+    tier = seed_tier(sm, price_minor=10_000)
+    owner, sid = _linked(sm, tier, period_end=END)
+    edit_tier_terms(sm, tier, price_minor=14_000)
+    edit_tier_terms(sm, tier, price_minor=10_000)
+    assert _notify(sm) == 1
+    assert _mail(sm, owner) == []
+    assert _sub(sm, sid).terms_version == 3
+
+
+def test_a_longer_notice_setting_after_the_email_delays_the_fixed_path_cancel(
+    sm: sessionmaker[Session],
+) -> None:
+    """The cancel never comes sooner than the CURRENT notice period after the email."""
+    tier = seed_tier(sm, price_minor=10_000)
+    _, sid = _linked(sm, tier, period_end=END)  # ends 29 days after the notice
+    edit_tier_terms(sm, tier, price_minor=14_000)
+    _notify(sm, updatable=False)  # effective NOW0 + 14 days, before this period ends
+    with sm.begin() as session:
+        session.execute(sa.text("UPDATE billing_settings SET price_change_notice_days = 40"))
+    deps = SubscriptionDeps(
+        sm, FakePaymobClient(), paymob_settings(subscription_amount_updatable=False)
+    )
+    assert terms_move_fixed_path_job(deps, now=NOW0 + timedelta(days=2)) == 0
+    assert _sub(sm, sid).cancel_at_period_end is False

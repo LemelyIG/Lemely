@@ -481,6 +481,7 @@ def test_billing_templates_are_disjoint_from_the_tutoring_spec() -> None:
         "extra_seats_charge_failed",
         "plan_terms_change",
         "plan_terms_ends",
+        "plan_terms_cancelled",
     } == BILLING_EMAIL_TEMPLATES
     assert set(EMAIL_TEMPLATES) >= BILLING_EMAIL_TEMPLATES
     assert BILLING_EMAIL_TEMPLATES.isdisjoint(set(VALID))
@@ -586,7 +587,7 @@ def _terms_change(**overrides: object) -> dict[str, object]:
 
 
 def test_terms_templates_are_cap_exempt_billing_templates() -> None:
-    for name in ("plan_terms_change", "plan_terms_ends"):
+    for name in ("plan_terms_change", "plan_terms_ends", "plan_terms_cancelled"):
         template = EMAIL_TEMPLATES[name]
         assert name in BILLING_EMAIL_TEMPLATES
         assert template.notification_type.value == "billing"  # type: ignore[attr-defined]
@@ -634,3 +635,21 @@ def test_terms_contexts_refuse_extra_keys_and_naive_instants() -> None:
         validate_context("plan_terms_change", _terms_change(applies_at="2026-12-10T09:00:00"))
     with pytest.raises(InvalidEmailContext):
         validate_context("plan_terms_ends", {"subscription_id": str(SUBSCRIPTION_ID)})
+
+
+def test_terms_cancelled_says_the_change_will_not_happen_and_carries_no_amount() -> None:
+    subject, html_body, text = render_email(
+        "plan_terms_cancelled", {"subscription_id": str(SUBSCRIPTION_ID)}, app_base_url=BASE_URL
+    )
+    assert "will not happen" in text
+    assert "will not happen" in subject
+    assert not re.search(r"\d[\d,.]*\s*(EGP|SAR|AED|OMR|USD)|EGP|\$", html_body + text)
+    assert f"{BASE_URL}/billing" in text
+
+
+def test_terms_cancelled_context_refuses_extra_keys() -> None:
+    assert validate_context("plan_terms_cancelled", {"subscription_id": str(SUBSCRIPTION_ID)})
+    with pytest.raises(InvalidEmailContext):
+        validate_context(
+            "plan_terms_cancelled", {"subscription_id": str(SUBSCRIPTION_ID), "amount_minor": 1}
+        )
