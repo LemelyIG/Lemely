@@ -1506,3 +1506,70 @@ def test_the_email_the_summary_and_the_renewal_shed_agree_on_the_seats_to_remove
     before = leaving()
     _renew(sm, 10_000)  # the renewal moves the subscriber to the new terms and sheds
     assert leaving() - before == expected
+
+
+def _price_zero_teacher_holding_extra_seats(
+    sm: sessionmaker[Session], *, stamp: int
+) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+    """The forced state: the period's terms sell no extra seats (seat price 0) yet the row still
+    holds two. No product path creates it, but a renewal charged off the expected amount does not
+    clear it, and the shed must then follow the TERMS, not the row."""
+    teacher = seed_user(sm, Role.teacher)
+    tier = seed_tier(
+        sm,
+        audience=PlanAudience.teacher,
+        price_minor=10_000,
+        included_seats=3,
+        extra_seat_price_minor=0,
+    )
+    _, sid = _linked(sm, tier, user=teacher, amount=stamp, extra_seats=2, period_end=END)
+    for _ in range(5):
+        seed_seat(sm, teacher_id=teacher, student_id=seed_user(sm, Role.student))
+    return teacher, tier, sid
+
+
+def _leaving_count(sm: sessionmaker[Session], teacher: uuid.UUID) -> int:
+    with sm() as session:
+        return int(
+            session.scalar(
+                sa.select(sa.func.count())
+                .select_from(TeacherMember)
+                .where(
+                    TeacherMember.teacher_user_id == teacher,
+                    TeacherMember.status == TeacherMemberStatus.leaving,
+                )
+            )
+            or 0
+        )
+
+
+def test_a_price_zero_row_that_still_holds_extra_seats_is_shed_by_the_terms_not_the_row(
+    sm: sessionmaker[Session],
+) -> None:
+    """R7-M1: the one case that tells the shared rule from the shed's old arithmetic. A charge
+    accepted at the stamp (10 500), not the expected amount (10 000), applies no seat count, so
+    the row keeps its two extras. Old rule: capacity 3 + 2, shed 0. Shared rule: the terms sell
+    no seats, capacity 3, shed 2."""
+    teacher, _, sid = _price_zero_teacher_holding_extra_seats(sm, stamp=10_500)
+    _renew(sm, 10_500, txn=5005)
+    assert _sub(sm, sid).extra_seats == 2  # the seat count was not applied
+    assert _leaving_count(sm, teacher) == 2
+
+
+def test_the_email_the_summary_and_the_shed_agree_on_a_price_zero_row_holding_extra_seats(
+    sm: sessionmaker[Session],
+) -> None:
+    """R7-M1: the agreement test's price-0 case, where the three could actually disagree."""
+    teacher, tier, sid = _price_zero_teacher_holding_extra_seats(sm, stamp=10_500)
+    edit_tier_terms(sm, tier, allowance_units=500)  # a worse move: noticed, due this renewal
+    _notify(sm)
+    (mail,) = _mail(sm, teacher)
+    with sm() as session:
+        sub = session.get(Subscription, sid)
+        assert sub is not None
+        change = pending_terms_change(session, sub, interval="monthly", amount_updatable=True)
+    assert change is not None
+    assert mail.context["seats_over"] == change.seats_to_remove == 2
+    _renew(sm, 10_500, txn=5006)  # charged at the stamp: the move is deferred, the row keeps 2
+    assert _sub(sm, sid).extra_seats == 2
+    assert _leaving_count(sm, teacher) == 2
