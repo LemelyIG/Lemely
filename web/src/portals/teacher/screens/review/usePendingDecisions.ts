@@ -2,6 +2,7 @@ import { useCallback, useEffect, useReducer, useRef } from "react"
 import { ApiError } from "@/lib/api"
 import type { ReviewDecision } from "@/lib/reviewApi"
 import { teacherMutationFailureMessage } from "@/lib/teacherOutcome"
+import { createDecisionScheduler } from "./decisionScheduler"
 import { BULK_TOAST_MS, INITIAL_DECISIONS, UNDO_WINDOW_MS, decisionsReducer } from "./pendingDecisions"
 
 type Commit = (d: ReviewDecision, opts: { keepalive: boolean }) => Promise<unknown>
@@ -20,8 +21,6 @@ export function usePendingDecisions(commit: Commit, onCommitted: (d: ReviewDecis
   const committedRef = useRef(onCommitted)
   commitRef.current = commit
   committedRef.current = onCommitted
-  const pending = useRef<ReviewDecision | null>(null)
-  const timer = useRef<number | null>(null)
   const noticeTimer = useRef<number | null>(null)
 
   const fire = useCallback((d: ReviewDecision, keepalive: boolean) => {
@@ -38,16 +37,15 @@ export function usePendingDecisions(commit: Commit, onCommitted: (d: ReviewDecis
       })
   }, [])
 
-  const flush = useCallback(
-    (keepalive = false) => {
-      if (timer.current !== null) window.clearTimeout(timer.current)
-      timer.current = null
-      const d = pending.current
-      pending.current = null
-      if (d) fire(d, keepalive)
-    },
-    [fire],
-  )
+  const scheduler = useRef<ReturnType<typeof createDecisionScheduler> | null>(null)
+  if (scheduler.current === null) {
+    scheduler.current = createDecisionScheduler({
+      fire,
+      setTimeout: (fn, ms) => window.setTimeout(fn, ms),
+      clearTimeout: (h) => window.clearTimeout(h as number),
+    })
+  }
+  const flush = useCallback((keepalive = false) => scheduler.current?.flush(keepalive), [])
 
   const hideNoticeAfter = useCallback((ms: number) => {
     if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current)
@@ -56,21 +54,15 @@ export function usePendingDecisions(commit: Commit, onCommitted: (d: ReviewDecis
 
   const decide = useCallback(
     (d: ReviewDecision) => {
-      flush()
-      pending.current = d
+      scheduler.current?.decide(d)
       dispatch({ type: "decide", decision: d })
-      timer.current = window.setTimeout(() => flush(), UNDO_WINDOW_MS)
       hideNoticeAfter(UNDO_WINDOW_MS)
     },
-    [flush, hideNoticeAfter],
+    [hideNoticeAfter],
   )
 
   const undo = useCallback(() => {
-    if (!pending.current) return
-    if (timer.current !== null) window.clearTimeout(timer.current)
-    timer.current = null
-    pending.current = null
-    dispatch({ type: "undo" })
+    if (scheduler.current?.undo()) dispatch({ type: "undo" })
   }, [])
 
   const bulkApproved = useCallback(
