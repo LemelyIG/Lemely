@@ -781,6 +781,8 @@ export function reverseOutcome(r: Pick<AdminRefund, "reverse">): { label: string
   const effect = r.reverse?.effect
   if (!effect) return null
   switch (effect) {
+    case "nothing_ended":
+      return { label: "No plan to end", detail: "The refund did not end a plan.", tone: "neutral" }
     case "same_as_full_refund":
       return { label: "Nothing more to reverse", detail: null, tone: "neutral" }
     case "credits_clawed_back":

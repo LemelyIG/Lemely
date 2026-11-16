@@ -933,6 +933,7 @@ export interface CustomerSearchResult {
 /** What a refund's `reverseChange` did, once the refund succeeded (`null` = nothing to report). */
 export type ReverseEffect =
   | "same_as_full_refund"
+  | "nothing_ended"
   | "credits_clawed_back"
   | "seat_reduction_scheduled"
   | "already_scheduled"
@@ -973,8 +974,8 @@ export interface AdminPaymentRow {
   /** The purchase became credits instead of applying (a superseded or unsellable checkout). */
   convertedToCredits: boolean
   creditedUnits: number | null
-  /** True for a renewal seat charge (seats that already existed): a reverse is always refused. Optional until the server sends it. */
-  seatRenewalCharge?: boolean
+  /** True for a renewal seat charge (seats that already existed): a reverse is always refused. */
+  seatRenewalCharge: boolean
   paymobOrderId: string | null
   paymobTxnId: string | null
   planTierId: string | null

@@ -358,7 +358,7 @@ const llmModels: LlmModelPrice[] = [
 
 const adminPayment: AdminPaymentRow = {
   id: "pay1", payerUserId: "u1", beneficiaryUserId: "u2", purpose: "subscription_first", status: "paid", amountMinor: 25000,
-  currency: "EGP", refundedMinor: 0, convertedToCredits: false, creditedUnits: null, paymobOrderId: "PM-1", paymobTxnId: "TX-1", planTierId: "t-s-m", creditPackId: null,
+  currency: "EGP", refundedMinor: 0, convertedToCredits: false, creditedUnits: null, seatRenewalCharge: false, paymobOrderId: "PM-1", paymobTxnId: "TX-1", planTierId: "t-s-m", creditPackId: null,
   subscriptionId: "sub1", seatQuantity: null, createdAt: "2026-11-01T09:00:00Z", paidAt: "2026-11-01T09:01:00Z", refunds: [],
 }
 

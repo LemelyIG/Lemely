@@ -460,6 +460,7 @@ describe("refund: reverse the change", () => {
     expect(reverseOutcome({} as never)).toBeNull()
     expect(reverseOutcome(r("plan_ends_at_period_end"))?.label).toBe("Renewal stopped")
     expect(reverseOutcome(r("credits_clawed_back"))?.label).toBe("Credits taken back")
+    expect(reverseOutcome(r("nothing_ended"))).toEqual({ label: "No plan to end", detail: "The refund did not end a plan.", tone: "neutral" })
     expect(reverseOutcome(r("seat_reduction_scheduled"))?.label).toBe("Seat reduction scheduled")
     expect(reverseOutcome(r("downgrade_scheduled"))?.label).toBe("Downgrade scheduled")
     expect(reverseOutcome(r("already_scheduled"))?.tone).toBe("neutral")
@@ -474,6 +475,11 @@ describe("refund: reverse the change", () => {
     expect(refundAmountErrors({ amountMajor: "210", reverseChange: true }, 21000, "EGP")).toEqual([])
     expect(refundAmountErrors({ amountMajor: "", reverseChange: true }, 21000, "EGP")).toEqual([])
     expect(refundAmountErrors({ amountMajor: "100", reverseChange: false }, 21000, "EGP")).toEqual([])
+  })
+
+  it("words every effect the server can send", () => {
+    const effects = ["same_as_full_refund", "nothing_ended", "credits_clawed_back", "seat_reduction_scheduled", "already_scheduled", "plan_ends_at_period_end", "downgrade_scheduled", "not_applied_partial", "failed"]
+    for (const effect of effects) expect(reverseOutcome({ reverse: { requested: true, effect, reason: null } } as never)?.label, effect).toBeTruthy()
   })
 
   it("words the full-amount rule by what is reversed", () => {

@@ -21,7 +21,7 @@ import { PaymentActions, RefundHistory } from "@/portals/admin/screens/billing/P
 
 const row = (over: Partial<AdminPaymentRow> = {}): AdminPaymentRow => ({
   id: "pay1", payerUserId: "u1", beneficiaryUserId: "u1", purpose: "extra_seats", status: "paid", amountMinor: 21000, currency: "EGP",
-  refundedMinor: 0, convertedToCredits: false, creditedUnits: null, paymobOrderId: "PM-1", paymobTxnId: "T-1", planTierId: null, creditPackId: null, subscriptionId: "s1", seatQuantity: 2,
+  refundedMinor: 0, convertedToCredits: false, creditedUnits: null, seatRenewalCharge: false, paymobOrderId: "PM-1", paymobTxnId: "T-1", planTierId: null, creditPackId: null, subscriptionId: "s1", seatQuantity: 2,
   createdAt: "2026-11-05T08:00:00Z", paidAt: "2026-11-05T08:01:00Z", refunds: [], ...over,
 })
 
