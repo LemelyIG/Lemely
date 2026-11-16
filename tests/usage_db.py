@@ -89,6 +89,11 @@ def emptied_after(factory: sessionmaker[Session]) -> Iterator[sessionmaker[Sessi
     yield factory
     with factory.begin() as session:
         session.execute(sa.text("TRUNCATE users, usage_rates, usage_estimators CASCADE"))
+        # ``billing_settings.updated_by`` references users, so the cascade empties it too: put
+        # its single row back as ``create_all`` leaves it, since billing reads fail closed (UD-13).
+        session.execute(
+            sa.text("INSERT INTO billing_settings (id) VALUES (1) ON CONFLICT DO NOTHING")
+        )
 
 
 def add_user(factory: sessionmaker[Session], role: Role = Role.student) -> uuid.UUID:
