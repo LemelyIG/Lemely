@@ -7,6 +7,8 @@ import {
   FORGIVE_FIELDS,
   GRANT_FIELDS,
   REFUND_FIELDS,
+  canReverse,
+  refundFieldsFor,
   activatableTiers,
   activationBody,
   activationFields,
@@ -390,6 +392,48 @@ describe("refunds that may not have happened", () => {
     expect(adminBillingFailureMessage(err, "forgive this debt", { reload: "Reload this page" })).toMatch(/^The connection dropped.*Reload this page to check before trying again\.$/)
     expect(adminBillingFailureMessage(err, "save")).toMatch(/Reload the catalogue/)
     expect(adminBillingFailureMessage(new ApiError(409, "x", { code: "refund_in_flight" }), "refund")).toMatch(/waiting on Paymob/)
+  })
+})
+
+describe("refund: reverse the change", () => {
+  it("sends reverseChange only when it is ticked", () => {
+    expect(refundBody({ amountMajor: "", reverseChange: true }, "dup")).toEqual({ amountMinor: null, reverseChange: true, reason: "dup" })
+    expect("reverseChange" in refundBody({ amountMajor: "", reverseChange: false }, "dup")).toBe(false)
+    expect("reverseChange" in refundBody({ amountMajor: "5" }, "dup")).toBe(false)
+  })
+
+  it("offers the option only for purchases a reverse can undo", () => {
+    expect(canReverse({ purpose: "extra_seats" })).toBe(true)
+    expect(canReverse({ purpose: "upgrade_proration" })).toBe(true)
+    for (const purpose of ["credit_pack", "auto_topup", "subscription_first", "subscription_renewal"] as const) expect(canReverse({ purpose })).toBe(false)
+    expect(refundFieldsFor({ purpose: "extra_seats" }).map((f) => f.name)).toEqual(["amountMajor", "reverseChange"])
+    expect(refundFieldsFor({ purpose: "credit_pack" })).toEqual(REFUND_FIELDS)
+  })
+
+  it("labels it as stopping renewal, never as undoing the purchase", () => {
+    const box = refundFieldsFor({ purpose: "extra_seats" }).find((f) => f.name === "reverseChange")
+    expect(box?.kind).toBe("checkbox")
+    expect(box?.label).toMatch(/stop it renewing/)
+    expect(box?.label).not.toMatch(/undo/i)
+  })
+
+  it("refuses a partial amount before sending when it is ticked", () => {
+    const msg = "To stop it renewing, refund the full amount."
+    expect(refundAmountErrors({ amountMajor: "100", reverseChange: true }, 21000, "EGP")).toEqual([msg])
+    expect(refundAmountErrors({ amountMajor: "210", reverseChange: true }, 21000, "EGP")).toEqual([])
+    expect(refundAmountErrors({ amountMajor: "", reverseChange: true }, 21000, "EGP")).toEqual([])
+    expect(refundAmountErrors({ amountMajor: "100", reverseChange: false }, 21000, "EGP")).toEqual([])
+  })
+
+  it("maps the server's reverse refusals to short copy, on 422 and 409", () => {
+    for (const status of [422, 409]) {
+      expect(adminBillingFailureMessage(new ApiError(status, "x", { code: "reverse_needs_full_refund", message: "raw" }), "refund")).toBe(
+        "To stop it renewing, refund the full amount.",
+      )
+      const m = adminBillingFailureMessage(new ApiError(status, "x", { code: "reverse_unavailable", message: "The seats were bought in an earlier period." }), "refund")
+      expect(m).toMatch(/can't be stopped from renewing/)
+      expect(m).not.toMatch(/earlier period/)
+    }
   })
 })
 

@@ -3,13 +3,13 @@ import { useState } from "react"
 import { Warning } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import {
-  REFUND_FIELDS,
   canVoid,
   majorFromMinor,
   openRefunds,
   paymentActionState,
   refundAmountErrors,
   refundBody,
+  refundFieldsFor,
   refundOutcome,
   refundableMinor,
 } from "@/lib/adminBillingModel"
@@ -130,7 +130,7 @@ export function PaymentActions({ payment }: { payment: AdminPaymentRow }) {
           open
           onClose={() => setOpen(null)}
           title="Refund payment"
-          fields={REFUND_FIELDS}
+          fields={refundFieldsFor(payment)}
           initial={{ amountMajor: majorFromMinor(remaining) }}
           submitLabel="Refund"
           mutation={refund}

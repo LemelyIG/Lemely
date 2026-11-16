@@ -521,6 +521,8 @@ export function isForbidden(error: unknown): boolean {
   return error instanceof ApiError && error.status === 403
 }
 
+const REVERSE_NEEDS_FULL = "To stop it renewing, refund the full amount."
+
 export const FRIENDLY: Record<string, string> = {
   stale_write: "Someone changed this while you were editing. The page now shows the current values. Close this and edit again.",
   credit_rate_exists: "A rate was set for this currency while you were editing. The page now shows it. Close this and edit again.",
@@ -539,6 +541,8 @@ export const FRIENDLY: Record<string, string> = {
   refund_in_flight: "A refund on this payment is still waiting on Paymob. Check with Paymob before trying another.",
   not_voidable: "This payment can't be voided any more. Refund it instead.",
   not_refundable: "Only a paid payment can be refunded.",
+  reverse_needs_full_refund: REVERSE_NEEDS_FULL,
+  reverse_unavailable: "This purchase can't be stopped from renewing now. Untick the box to refund the money only.",
 }
 
 function serverMessage(err: unknown): string | null {
@@ -660,7 +664,21 @@ export const REFUND_FIELDS: FieldSpec[] = [
   { name: "amountMajor", label: "Refund amount (EGP, empty = everything refundable)", kind: "money", optional: true, positive: true },
 ]
 export function refundBody(v: FormValues, reason: string): AdminRefundRequest {
-  return { amountMinor: str(v, "amountMajor") === "" ? null : minorFromMajor(str(v, "amountMajor")), reason }
+  const amountMinor = str(v, "amountMajor") === "" ? null : minorFromMajor(str(v, "amountMajor"))
+  return v.reverseChange === true ? { amountMinor, reverseChange: true, reason } : { amountMinor, reason }
+}
+
+/**
+ * Only an extra-seat or upgrade payment has a change to stop: a full refund of any other
+ * purchase already ends or claws back everything, so the box would promise nothing.
+ */
+export function canReverse(p: Pick<AdminPaymentRow, "purpose">): boolean {
+  return p.purpose === "extra_seats" || p.purpose === "upgrade_proration"
+}
+
+/** The refund form's fields; the reverse box appears only where it does something. */
+export function refundFieldsFor(p: Pick<AdminPaymentRow, "purpose">): FieldSpec[] {
+  return canReverse(p) ? [...REFUND_FIELDS, { name: "reverseChange", label: "Refund and stop it renewing", kind: "checkbox" }] : REFUND_FIELDS
 }
 
 /** What a payment still has to give back: its amount less the refunds Paymob confirmed. */
@@ -693,6 +711,7 @@ export function canVoid(p: Pick<AdminPaymentRow, "status" | "refundedMinor">): b
 export function refundAmountErrors(v: FormValues, remainingMinor: number, currency: string): string[] {
   const minor = str(v, "amountMajor") === "" ? null : minorFromMajor(str(v, "amountMajor"))
   if (minor !== null && minor > remainingMinor) return [`Only ${formatMoney(remainingMinor, currency)} is left to refund on this payment.`]
+  if (v.reverseChange === true && minor !== null && minor !== remainingMinor) return [REVERSE_NEEDS_FULL]
   return []
 }
 

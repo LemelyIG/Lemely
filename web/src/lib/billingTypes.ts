@@ -1049,6 +1049,8 @@ export interface AdminCancelRequest extends Reasoned {
 /** 07 `AdminRefundRequestDTO` (`null` = the full refundable amount). */
 export interface AdminRefundRequest extends Reasoned {
   amountMinor: number | null
+  /** Also stops what the purchase set up from renewing (UD-4). Sent only when ticked. */
+  reverseChange?: boolean
 }
 
 export interface AdminPaymentsPage {
