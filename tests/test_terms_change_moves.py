@@ -1427,11 +1427,35 @@ def test_a_charge_on_a_plan_that_has_already_ended_tells_the_payer_it_will_be_re
     assert _sub(sm, sid).current_period_end == END  # nothing was granted
 
 
-def test_a_charge_kept_for_another_reason_sends_the_payer_nothing(
+def test_a_charge_on_a_checkout_that_never_activated_is_kept_and_sends_the_payer_nothing(
     sm: sessionmaker[Session],
 ) -> None:
-    """The words do not fit a checkout that never activated: that stays alert-only."""
+    """R6-M1: an ``expired`` row that never ran (``activated_at`` unset) takes the
+    ``never_activated`` keep path. A row with ``activated_at`` would be reactivated instead and
+    never get here, which is why this fixture must not set it. The words of the "plan ended"
+    mail do not fit, so the payer is told nothing and only the alert fires."""
     tier = seed_tier(sm, price_minor=10_000)
-    owner, _ = _linked(sm, tier, status=SubscriptionStatus.expired, period_end=END)
-    _renew(sm, 10_000, txn=992, at=END + timedelta(hours=3), updatable=False)
+    owner, sid = _linked(
+        sm, tier, status=SubscriptionStatus.expired, period_end=END, activated_at=None
+    )
+    with capture_logs() as logs:
+        _renew(sm, 10_000, txn=992, at=END + timedelta(hours=3), updatable=False)
+    kept = [e for e in logs if e["event"] == "subscription_charge_on_ended_subscription"]
+    assert [e["reason"] for e in kept] == ["never_activated"]  # really the keep path
+    assert _charge_mails(sm, owner) == []
+    assert _sub(sm, sid).current_period_end == END  # nothing was granted
+
+
+@pytest.mark.parametrize("status", [SubscriptionStatus.rejected, SubscriptionStatus.inactive])
+def test_a_charge_on_a_row_that_is_not_a_plan_is_kept_and_sends_the_payer_nothing(
+    sm: sessionmaker[Session], status: SubscriptionStatus
+) -> None:
+    """R6-M1: this pins the "cancelled only" guard. A rejected or inactive row is kept (the alert
+    names ``not_a_plan``) but "after your plan ended" would be untrue, so no mail goes out."""
+    tier = seed_tier(sm, price_minor=10_000)
+    owner, _ = _linked(sm, tier, status=status, period_end=END)
+    with capture_logs() as logs:
+        _renew(sm, 10_000, txn=993, at=END + timedelta(hours=3), updatable=False)
+    kept = [e for e in logs if e["event"] == "subscription_charge_on_ended_subscription"]
+    assert [e["reason"] for e in kept] == ["not_a_plan"]
     assert _charge_mails(sm, owner) == []
