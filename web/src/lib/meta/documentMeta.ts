@@ -93,6 +93,8 @@ export interface PageMeta {
   /** Native frame: a full-screen task route. The phone tab bar hides on iOS/Android and
    * `<main>` drops its tab-bar padding. Omitted everywhere else. */
   immersive?: true
+  /** The route renders its own offline strip, so the shell hides its banner there. Omitted everywhere else, including immersive routes that have none (no route sets it yet). */
+  ownOfflineBanner?: true
 }
 
 /** The product name, appended to every page title. */

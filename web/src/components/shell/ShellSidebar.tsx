@@ -26,6 +26,8 @@ export interface ShellSidebarProps {
   groups?: readonly ShellSidebarGroup[]
   /** The foot's primary action (Upload). Hidden in the phone sheet, where the bottom bar has it. */
   footerAction?: ReactNode
+  /** Rail only, under the wordmark and above the nav list: the parent child switcher (mock pa.js rail2 .kid). Below shell-lg the top bar carries it, so the drawer would show a second one. */
+  lead?: ReactNode
   user: ReactNode
   /** Drawer only: renders the close button in the head. */
   onClose?: () => void
@@ -55,7 +57,7 @@ function Group({ group }: { group: ShellSidebarGroup }) {
  * rail is a sticky column from `shell-lg`; the drawer variant is the same
  * content inside `NavDrawer variant="shell"` (a floating drawer, a bottom
  * sheet on phones). */
-export function ShellSidebar({ variant, navLabel, homeTo, homeLabel, items, groups, footerAction, user, onClose }: ShellSidebarProps) {
+export function ShellSidebar({ variant, navLabel, homeTo, homeLabel, items, groups, footerAction, lead, user, onClose }: ShellSidebarProps) {
   const rail = variant === "rail"
   return (
     <nav aria-label={navLabel} className={cn("flex-col gap-4 text-on-surface", rail ? RAIL : DRAWER)}>
@@ -74,6 +76,7 @@ export function ShellSidebar({ variant, navLabel, homeTo, homeLabel, items, grou
           </button>
         ) : null}
       </div>
+      {rail && lead ? <div className="flex px-0.5">{lead}</div> : null}
       <ShellNavList items={items} />
       {groups?.map((group) => <Group key={group.id} group={group} />)}
       <div className="mt-auto flex flex-col gap-3 border-t border-outline-variant pt-4">

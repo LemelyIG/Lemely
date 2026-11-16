@@ -79,6 +79,7 @@ const PlacementTest = lazy(() =>
 const PlacementResult = lazy(() =>
   import("./screens/placement/PlacementResult").then((m) => ({ default: m.PlacementResult })),
 )
+const SubjectEntry = lazy(() => import("./screens/SubjectEntry").then((m) => ({ default: m.SubjectEntry })))
 const PracticeGenerator = lazy(() =>
   import("./screens/practice/PracticeGenerator").then((m) => ({ default: m.PracticeGenerator })),
 )
@@ -260,6 +261,12 @@ export const studentRoute: RouteObject = {
       element: <CorrectPaper />,
       handle: { title: "Mark a paper", skeleton: "page-header", immersive: true },
     },
+    // F1: the Plan tab's root. It redirects to the first subject's study plan; L9 swaps this element.
+    {
+      path: "plan",
+      element: <SubjectEntry section="plan" />,
+      handle: { title: "Study plan", skeleton: "page-header" },
+    },
     {
       path: "plan/:subjectCode",
       element: <StudyPlanWeek />,
@@ -390,6 +397,12 @@ export const studentRoute: RouteObject = {
       path: "placement/result/:assignmentId",
       element: <PlacementResult />,
       handle: { title: "Placement result", skeleton: "page-header" },
+    },
+    // F1: the Practice tab's root. L4 swaps this element for the Practice hub.
+    {
+      path: "practice",
+      element: <SubjectEntry section="practice" />,
+      handle: { title: "Practice", skeleton: "list" },
     },
     {
       path: "practice/:subjectCode",

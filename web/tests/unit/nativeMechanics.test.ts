@@ -324,9 +324,9 @@ describe("min-h-dvh alone, no min-h-screen fallback", () => {
   const DVH_SITES = [
     "components/route-error.tsx",
     "portals/misc/FullPageState.tsx",
-    "portals/parent/index.tsx",
     "portals/auth/Login.tsx",
     // The student and teacher layouts are components/shell/PortalShell.tsx.
+  // The parent layout is components/shell/PortalShell.tsx too (F1).
     "components/shell/PortalShell.tsx",
     "portals/settings/SettingsFrame.tsx",
     "portals/admin/index.tsx",
