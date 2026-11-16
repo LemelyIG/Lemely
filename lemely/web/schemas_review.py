@@ -70,6 +70,9 @@ class ReviewQueueItemDTO(ApiModel):
     aiAwardedMarks: int | None
     maximumMarks: int | None
     confidenceScore: float | None
+    reviewReason: str | None = None
+    """The marker's own reason text (``QuestionResult.review_reason``). Technical;
+    the client maps it to a short plain line and never shows it raw in a row."""
 
 
 class ReviewQueueListDTO(ApiModel):
@@ -124,6 +127,11 @@ class ReviewItemPointDTO(ApiModel):
     evidenceSpan: str
     ecfApplied: bool
     rationale: str | None
+    ordinal: int = 0
+    markType: str | None = None
+    tariff: int = 1
+    groupKey: str | None = None
+    groupMaxMarks: int | None = None
 
 
 class ReviewItemDetailDTO(ApiModel):
@@ -211,6 +219,8 @@ class ReviewItemDetailDTO(ApiModel):
     question has a box: the crop route serves only attempt-backed items. See
     ``ReviewItemDetail.has_source_box``.
     The client never receives the coordinates themselves."""
+    sourcePage: int | None = None
+    """1-based page the answer is on, when ``hasSourceBox``. Labels the whole-page view."""
 
 
 class ResolveReviewRequestDTO(ApiModel):

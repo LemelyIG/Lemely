@@ -217,6 +217,7 @@ class ReviewQueueRow:
     ai_awarded_marks: int | None
     maximum_marks: int | None
     confidence_score: float | None
+    review_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,6 +307,14 @@ class ReviewItemPoint:
     # failed to narrow can still carry one
     ecf_applied: bool  # I7: True only when verdict was reached after an ECF re-mark
     rationale: str | None  # the marker's own reasoning for this point, either path
+    # L5: the scheme structure the tick stepper needs. Snapshotted on
+    # `QuestionResultPoint` (see its docstring); defaults keep every existing
+    # constructor valid.
+    ordinal: int = 0
+    mark_type: str | None = None
+    tariff: int = 1
+    group_key: str | None = None
+    group_max_marks: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -352,6 +361,9 @@ class ReviewItemDetail:
     image and never does the arithmetic, and coordinates on the wire would be
     student-derived data with no consumer. False is the common case.
     """
+    source_page: int | None = None
+    """0-based page the answer box sits on, set only when ``has_source_box``.
+    The page number is not a coordinate: the box itself never leaves the server."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -573,6 +585,11 @@ class ReviewService:
                         evidence_span=p.evidence_span,
                         ecf_applied=p.ecf_applied,
                         rationale=p.rationale,
+                        ordinal=p.ordinal,
+                        mark_type=p.mark_type,
+                        tariff=p.tariff,
+                        group_key=p.group_key,
+                        group_max_marks=p.group_max_marks,
                     )
                     for p in qr.points
                 ]
@@ -595,6 +612,7 @@ class ReviewService:
             has_source_box = (
                 qr is not None and qr.source_box_page is not None and attempt.upload_id is not None
             )
+            source_page = qr.source_box_page if has_source_box and qr is not None else None
         return ReviewItemDetail(
             row=row,
             student_answer=qr.student_answer if qr is not None else None,
@@ -615,6 +633,7 @@ class ReviewService:
             resolved_at=item.resolved_at,
             points=points,
             has_source_box=has_source_box,
+            source_page=source_page,
         )
 
     def get_item_crop_source(
@@ -1322,6 +1341,7 @@ def _to_row(
         ai_awarded_marks=qr.awarded_marks if qr is not None else None,
         maximum_marks=qr.maximum_marks if qr is not None else None,
         confidence_score=qr.confidence_score if qr is not None else None,
+        review_reason=qr.review_reason if qr is not None else None,
     )
 
 
@@ -1446,6 +1466,7 @@ def _to_console_row(
         ai_awarded_marks=question.awarded_marks if question is not None else None,
         maximum_marks=question.maximum_marks if question is not None else None,
         confidence_score=question.confidence_score if question is not None else None,
+        review_reason=question.review_reason if question is not None else None,
     )
 
 

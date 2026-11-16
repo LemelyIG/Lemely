@@ -30,6 +30,7 @@ from lemely.core.loose_schemas import (
     AnswerPoint,
     MarkScheme,
     MarkSchemeMetadata,
+    MathMarkType,
     PaperType,
     SchemeFormat,
 )
@@ -3878,3 +3879,114 @@ def test_two_concurrent_crops_are_served_one_after_the_other(
     assert len(windows) == 2, windows
     (_, first_end), (second_start, _) = windows
     assert first_end <= second_start, f"the two renders overlapped: {windows}"
+
+
+# ---------------------------------------------------------------------------
+# L5 redesign: queue reason line, point structure, source page.
+# ---------------------------------------------------------------------------
+
+
+def _l5_grouped_scheme() -> MarkScheme:
+    """p1 stands alone (M1); p2/p3 are an either/or pair (A1 or B1)."""
+    return MarkScheme(
+        metadata=_point_scheme().metadata,
+        questions=[
+            SchemeQuestion(
+                id="1",
+                marks=2,
+                type=SchemeQuestionType.RECALL,
+                answer_points=[
+                    AnswerPoint(
+                        id="p1", point="Expands the bracket", marks=1, math_mark_type=MathMarkType.M
+                    ),
+                    AnswerPoint(
+                        id="p2", point="Constant -4 (exact)", marks=1, math_mark_type=MathMarkType.A
+                    ),
+                    AnswerPoint(
+                        id="p3",
+                        point="Follow-through quadratic",
+                        marks=1,
+                        math_mark_type=MathMarkType.B,
+                        is_alternative=True,
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+def test_l5_queue_row_carries_the_markers_review_reason(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    student = _seed_user(pg_sessionmaker, Role.student, display_name="Layla")
+    cls = class_service.create_class(teacher, "Maths 10B")
+    assert cls.join_code is not None
+    class_service.join_by_code(student, cls.join_code)
+    question = _question("1", awarded=1, maximum=2)
+    question.review_reason = "confidence 0.30 below review threshold 0.90"
+    AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=str(student), report=_report([question])
+    )
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+
+    row = client.get("/api/teacher/review").json()["items"][0]
+    assert row["reviewReason"] == "confidence 0.30 below review threshold 0.90"
+
+
+def test_l5_detail_points_carry_tariff_type_order_and_either_or_group(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    student = _seed_user(pg_sessionmaker, Role.student, display_name="Layla")
+    cls = class_service.create_class(teacher, "Maths 10B")
+    assert cls.join_code is not None
+    class_service.join_by_code(student, cls.join_code)
+    AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=str(student),
+        report=_report([_question("1", awarded=1, maximum=2)]),
+        mark_scheme=_l5_grouped_scheme(),
+    )
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+    item_id = client.get("/api/teacher/review").json()["items"][0]["itemId"]
+
+    points = client.get(f"/api/teacher/review/{item_id}").json()["points"]
+    assert [p["markPointId"] for p in points] == ["p1", "p2", "p3"]
+    assert [p["ordinal"] for p in points] == [0, 1, 2]
+    assert [p["markType"] for p in points] == ["M", "A", "B"]
+    assert [p["tariff"] for p in points] == [1, 1, 1]
+    assert points[0]["groupKey"] is None
+    assert points[0]["groupMaxMarks"] is None
+    assert points[1]["groupKey"] is not None
+    assert points[1]["groupKey"].startswith("alt:")
+    assert points[2]["groupKey"] == points[1]["groupKey"]
+    assert points[1]["groupMaxMarks"] == 1
+
+
+def test_l5_detail_reports_the_one_based_source_page_only_when_a_box_exists(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    boxed_teacher, boxed_id = _seed_boxed_review_item(
+        pg_sessionmaker, class_service, storage=storage_backend, scan=_synthetic_scan()
+    )
+    boxless_teacher, boxless_id = _seed_boxed_review_item(
+        pg_sessionmaker, class_service, storage=storage_backend, scan=_synthetic_scan(), page=None
+    )
+    _use_review_service(client, review_service)
+
+    _auth_as(client, boxed_teacher, Role.teacher)
+    assert client.get(f"/api/teacher/review/{boxed_id}").json()["sourcePage"] == _MARKED_PAGE + 1
+    _auth_as(client, boxless_teacher, Role.teacher)
+    assert client.get(f"/api/teacher/review/{boxless_id}").json()["sourcePage"] is None

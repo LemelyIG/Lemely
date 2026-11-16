@@ -159,6 +159,7 @@ def _row_to_dto(row: ReviewQueueRow) -> ReviewQueueItemDTO:
         aiAwardedMarks=row.ai_awarded_marks,
         maximumMarks=row.maximum_marks,
         confidenceScore=row.confidence_score,
+        reviewReason=row.review_reason,
     )
 
 
@@ -180,6 +181,11 @@ def _point_to_dto(point: ReviewItemPoint) -> ReviewItemPointDTO:
         evidenceSpan=point.evidence_span,
         ecfApplied=point.ecf_applied,
         rationale=point.rationale,
+        ordinal=point.ordinal,
+        markType=point.mark_type,
+        tariff=point.tariff,
+        groupKey=point.group_key,
+        groupMaxMarks=point.group_max_marks,
     )
 
 
@@ -226,6 +232,7 @@ def _detail_to_dto(detail: ReviewItemDetail) -> ReviewItemDetailDTO:
         resolvedAt=detail.resolved_at.isoformat() if detail.resolved_at else None,
         points=[_point_to_dto(p) for p in detail.points],
         hasSourceBox=detail.has_source_box,
+        sourcePage=detail.source_page + 1 if detail.source_page is not None else None,
     )
 
 
