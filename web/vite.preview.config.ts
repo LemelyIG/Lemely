@@ -56,6 +56,7 @@ export default defineConfig({
         "student-home-a": previewEntry("student-home-a"),
         "student-home-b": previewEntry("student-home-b"),
         "student-home-c": previewEntry("student-home-c"),
+        "redesign-kit": previewEntry("redesign-kit"),
       },
     },
   },

@@ -44,9 +44,9 @@ const ROOT = path.join(import.meta.dirname, "..", "..")
  * layout is ever added, it belongs here as much as in that file.
  */
 // The student and teacher layouts are components/shell/PortalShell.tsx (portal shell spec).
+// The parent layout is components/shell/PortalShell.tsx too (F1).
 const PORTAL_LAYOUTS = [
   "src/components/shell/PortalShell.tsx",
-  "src/portals/parent/index.tsx",
   "src/portals/admin/index.tsx",
 ] as const
 
