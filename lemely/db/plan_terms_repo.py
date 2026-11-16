@@ -34,10 +34,14 @@ from lemely.db.billing_notices import (
 )
 from lemely.db.models.billing import (
     PLAN_LIVE_STATUSES,
+    Payment,
+    PaymentPurpose,
+    PaymentStatus,
     PlanAudience,
     PlanTier,
     PlanTierTerms,
     Subscription,
+    SubscriptionPeriod,
 )
 from lemely.db.models.billing_ops import BillingSettings
 from lemely.db.models.team import TeacherMember, TeacherMemberKind, TeacherMemberStatus
@@ -458,6 +462,7 @@ def _take_back(
     new_terms: TierTerms,
     *,
     cancelled_by_platform: bool = False,
+    announce: bool = True,
 ) -> None:
     """An admin revert: the tier's terms equal the ones the subscriber is on. Cancel the move.
 
@@ -471,8 +476,10 @@ def _take_back(
     sweep puts the right one back is accepted on the current terms with an alert
     (``subscription_renewal_paid_reverted_amount``).
     """
-    announced = sub.pending_terms_version is not None and (
-        sub.terms_notice_sent_at is not None or cancelled_by_platform
+    announced = (
+        announce
+        and sub.pending_terms_version is not None
+        and (sub.terms_notice_sent_at is not None or cancelled_by_platform)
     )
     if cancelled_by_platform:
         sub.cancel_at_period_end = False
@@ -520,8 +527,32 @@ def _revert_platform_cancelled_one(
     new_terms = current_terms_for(session, tier)
     if not same_terms(terms_for(session, sub), new_terms):
         return 0
+    if _has_kept_charge(session, sub):
+        # A charge was kept for a refund on this plan: the cancel stays (the plan ends, no period
+        # was granted for that money) and nobody is told it continues. The move is cleared so this
+        # is alerted once; an operator decides what the payer is owed.
+        log.error(
+            "subscription_terms_revert_after_kept_charge",
+            subscription_id=str(sub.id),
+            alert=True,
+        )
+        _take_back(session, sub, new_terms, announce=False)
+        return 1
     _take_back(session, sub, new_terms, cancelled_by_platform=True)
     return 1
+
+
+def _has_kept_charge(session: Session, sub: Subscription) -> bool:
+    """A paid renewal in the current period that bought no period (kept for a refund)."""
+    stmt = sa.select(Payment.id).where(
+        Payment.subscription_id == sub.id,
+        Payment.purpose == PaymentPurpose.subscription_renewal,
+        Payment.status == PaymentStatus.paid,
+        ~sa.exists().where(SubscriptionPeriod.payment_id == Payment.id),
+    )
+    if sub.current_period_start is not None:
+        stmt = stmt.where(Payment.paid_at >= sub.current_period_start)
+    return session.scalar(stmt.limit(1)) is not None
 
 
 def _platform_cancelled_filters(S: type[Subscription]) -> list[sa.ColumnElement[bool]]:
@@ -532,6 +563,8 @@ def _platform_cancelled_filters(S: type[Subscription]) -> list[sa.ColumnElement[
         S.cancel_at_period_end.is_(True),
         S.cancel_source == "platform_terms",
         S.paymob_cancelled_at.is_(None),
+        # A suspended plan is not reported live by a revert: its cancel stays.
+        S.suspended_at.is_(None),
         S.pending_terms_version.is_not(None),
     ]
 

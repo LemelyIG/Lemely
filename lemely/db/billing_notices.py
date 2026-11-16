@@ -205,6 +205,24 @@ def enqueue_plan_terms_ends(
     )
 
 
+def enqueue_charge_after_plan_end(
+    session: Session, *, payer_user_id: uuid.UUID, payment_id: uuid.UUID
+) -> bool:
+    """Queue the "we received a payment after your plan was set to end; we will refund it" notice.
+
+    For a renewal charge kept without a period because the platform had cancelled the plan for a
+    price change. No amount is stated. One per payment. ``True`` when a row was written; ``False``
+    when billing notices are off or this payment's notice is already queued.
+    """
+    return enqueue_in_session(
+        session,
+        recipient_user_id=payer_user_id,
+        template="charge_after_plan_end",
+        context={"payment_id": payment_id},
+        dedupe_key=f"charge_after_plan_end:{payment_id}",
+    )
+
+
 def enqueue_plan_terms_cancelled(
     session: Session,
     *,
@@ -236,6 +254,7 @@ __all__ = [
     "enqueue_auto_topup_card_missing",
     "enqueue_auto_topup_failed",
     "enqueue_auto_topup_phone_required",
+    "enqueue_charge_after_plan_end",
     "enqueue_extra_seats_charge_failed",
     "enqueue_plan_terms_cancelled",
     "enqueue_plan_terms_change",

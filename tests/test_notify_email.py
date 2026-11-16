@@ -482,6 +482,7 @@ def test_billing_templates_are_disjoint_from_the_tutoring_spec() -> None:
         "plan_terms_change",
         "plan_terms_ends",
         "plan_terms_cancelled",
+        "charge_after_plan_end",
     } == BILLING_EMAIL_TEMPLATES
     assert set(EMAIL_TEMPLATES) >= BILLING_EMAIL_TEMPLATES
     assert BILLING_EMAIL_TEMPLATES.isdisjoint(set(VALID))
@@ -587,7 +588,12 @@ def _terms_change(**overrides: object) -> dict[str, object]:
 
 
 def test_terms_templates_are_cap_exempt_billing_templates() -> None:
-    for name in ("plan_terms_change", "plan_terms_ends", "plan_terms_cancelled"):
+    for name in (
+        "plan_terms_change",
+        "plan_terms_ends",
+        "plan_terms_cancelled",
+        "charge_after_plan_end",
+    ):
         template = EMAIL_TEMPLATES[name]
         assert name in BILLING_EMAIL_TEMPLATES
         assert template.notification_type.value == "billing"  # type: ignore[attr-defined]
@@ -679,3 +685,28 @@ def test_terms_cancelled_for_a_withdrawn_cancel_says_the_plan_renews_and_charges
     assert "cancel your plan in billing" in text
     assert "cancelled" in subject
     assert not re.search(r"\d[\d,.]*\s*(EGP|SAR|AED|OMR|USD)|EGP|\$", text)
+
+
+PAYMENT_ID_FOR_REFUND = uuid.UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+
+
+def test_charge_after_plan_end_says_it_will_be_refunded_and_states_no_amount() -> None:
+    subject, html_body, text = render_email(
+        "charge_after_plan_end", {"payment_id": str(PAYMENT_ID_FOR_REFUND)}, app_base_url=BASE_URL
+    )
+    assert "after it was set to end" in text
+    assert "refund it" in text
+    assert "refunded" in subject
+    assert not re.search(r"\d[\d,.]*\s*(EGP|SAR|AED|OMR|USD)|EGP|\$", html_body + text)
+    assert f"{BASE_URL}/billing" in text
+
+
+def test_charge_after_plan_end_context_refuses_extra_keys_and_a_missing_payment() -> None:
+    assert validate_context("charge_after_plan_end", {"payment_id": str(PAYMENT_ID_FOR_REFUND)})
+    with pytest.raises(InvalidEmailContext):
+        validate_context(
+            "charge_after_plan_end",
+            {"payment_id": str(PAYMENT_ID_FOR_REFUND), "amount_minor": 1},
+        )
+    with pytest.raises(InvalidEmailContext):
+        validate_context("charge_after_plan_end", {})

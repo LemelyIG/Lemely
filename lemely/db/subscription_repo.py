@@ -48,7 +48,7 @@ from lemely.core.subscription_rules import (
     seat_capacity_for,
     subscription_amount_minor,
 )
-from lemely.db.billing_notices import enqueue_subscription_notice
+from lemely.db.billing_notices import enqueue_charge_after_plan_end, enqueue_subscription_notice
 from lemely.db.billing_repo import (
     INTENTION_EXPIRATION_SECONDS,
     BillingService,
@@ -1410,15 +1410,21 @@ def _note_charge_kept(subscription: Subscription, payment: Payment, *, reason: s
     )
 
 
-def _keep_charge_after_terms_cancel(subscription: Subscription, payment: Payment) -> bool:
+def _keep_charge_after_terms_cancel(
+    session: Session, subscription: Subscription, payment: Payment
+) -> bool:
     """A renewal charge landed on a plan the platform cancelled for a terms move: no new period.
 
     The payer was told the plan ends, so a period is never granted for it (UD-2 (c), as for a
     charge on a cancelled plan): the payment stays ``paid`` and an operator refunds it. The cancel
     is pushed to Paymob by the next sweep, which already selects such a row (Paymob charges at
     most ``EARLY_CHARGE_WINDOW`` before the period end, where the hold has ended); the webhook
-    transaction never calls Paymob (DV-15). Always ``False``: nothing was granted.
+    transaction never calls Paymob (DV-15). The payer is told (no amount) that the payment will be
+    refunded, once per payment. Always ``False``: nothing was granted.
     """
+    enqueue_charge_after_plan_end(
+        session, payer_user_id=payment.payer_user_id, payment_id=payment.id
+    )
     alerts.error(
         "subscription_charge_after_terms_cancel",
         subscription_id=str(subscription.id),
@@ -2300,7 +2306,7 @@ class SubscriptionService:
             and subscription.cancel_source == "platform_terms"
             and subscription.status in PLAN_LIVE_STATUSES
         ):
-            return _keep_charge_after_terms_cancel(subscription, payment)
+            return _keep_charge_after_terms_cancel(session, subscription, payment)
         granted = _settle_renewal(
             session,
             subscription,
@@ -3810,9 +3816,10 @@ class SubscriptionService:
             return
         if subscription.cancel_at_period_end:
             if subscription.cancel_source == "platform_terms" and subscription.suspended_at is None:
-                # The platform's held cancel: Paymob is now suspended too. Record it as a
-                # suspension's, so an admin revert of the move cannot report a suspended plan live.
-                subscription.cancel_source = "suspension"
+                # The platform's cancel stays the platform's (its push timing, and the refusal to
+                # grant a period for a charge, depend on that source); only the suspension is
+                # stamped. A revert skips a suspended row, so it never reports a suspended plan
+                # live, and a resume clears just this stamp (:meth:`_on_resumed`).
                 subscription.suspended_at = now
                 _bump(subscription)
                 log.info("subscription_suspended_in_paymob", subscription_id=str(subscription.id))
@@ -3851,6 +3858,13 @@ class SubscriptionService:
                 status=subscription.status.value,
                 alert=True,
             )
+            return
+        if subscription.cancel_source == "platform_terms":
+            # The platform's own terms-move cancel survives a resume: only the suspension stamp
+            # goes. A lost resume therefore cannot bring back a plan that renews at the old price.
+            subscription.suspended_at = None
+            _bump(subscription)
+            log.info("subscription_resumed_in_paymob", subscription_id=str(subscription.id))
             return
         subscription.cancel_at_period_end = False
         subscription.cancel_source = None

@@ -649,6 +649,34 @@ class PlanTermsCancelled(EmailContext):
         return "/billing"
 
 
+class ChargeAfterPlanEnd(EmailContext):
+    """A renewal payment arrived after the plan was set to end, so it will be refunded.
+
+    The platform cancelled the plan for a price change and the payment processor charged before
+    the cancel reached it. No period was granted. The mail carries no amount, plan name or card
+    detail (UD13-E); the context holds the payment id only.
+    """
+
+    template: ClassVar[str] = "charge_after_plan_end"
+    notification_type: ClassVar[NotificationType] = NotificationType.billing
+    subject: ClassVar[str] = "A payment on your Lemely plan will be refunded"
+    button: ClassVar[str] = "Open billing"
+
+    payment_id: uuid.UUID
+
+    def lead(self) -> str:
+        return "We received a payment for your Lemely plan after it was set to end."
+
+    def detail(self) -> str | None:
+        return (
+            "We will refund it, so you do not need to do anything. Your plan still ends on the "
+            "date we told you."
+        )
+
+    def path(self) -> str:
+        return "/billing"
+
+
 _TEMPLATE_CLASSES: Final[tuple[type[EmailContext], ...]] = (
     BookingRequested,
     BookingRequestedFamily,
@@ -668,6 +696,7 @@ _TEMPLATE_CLASSES: Final[tuple[type[EmailContext], ...]] = (
     PlanTermsChange,
     PlanTermsEnds,
     PlanTermsCancelled,
+    ChargeAfterPlanEnd,
 )
 
 #: Every template, keyed by the name stored in ``email_outbox.template``.
@@ -686,6 +715,7 @@ BILLING_EMAIL_TEMPLATES: Final[frozenset[str]] = frozenset(
         PlanTermsChange.template,
         PlanTermsEnds.template,
         PlanTermsCancelled.template,
+        ChargeAfterPlanEnd.template,
     }
 )
 
@@ -909,6 +939,7 @@ __all__ = [
     "AutoTopupCardMissing",
     "AutoTopupFailed",
     "AutoTopupPhoneRequired",
+    "ChargeAfterPlanEnd",
     "EmailContext",
     "ExtraSeatsChargeFailed",
     "InvalidEmailContext",

@@ -39,6 +39,7 @@ from lemely.db.plan_terms_repo import (
 )
 from lemely.db.subscription_repo import (
     EARLY_CHARGE_WINDOW,
+    TRIGGER_RESUMED,
     TRIGGER_SUCCESS,
     TRIGGER_SUSPENDED,
     SubscriptionService,
@@ -1036,8 +1037,9 @@ def test_a_plan_the_payer_was_told_will_end_is_cancelled_at_paymob_before_it_can
 def test_a_charge_on_a_held_platform_cancel_grants_nothing_and_asks_for_a_refund(
     sm: sessionmaker[Session],
 ) -> None:
-    """R3-C1: Paymob charged before the push. No period, the payment is kept, the cancel goes
-    out on the next sweep, and the alert names the cause (not "our cancel did not take effect")."""
+    """R3-C1: Paymob charged before the hold ended. No period, the payment is kept, the payer is
+    told it will be refunded, and the alert names the cause (not "our cancel did not take
+    effect"). The cancel goes out when the window opens: a charge does not open it."""
     owner, sid, _ = _fixed_cancelled(sm)
     charged = PUSH_FROM - timedelta(hours=1)  # one hour before the hold ends
     with capture_logs() as logs:
@@ -1049,8 +1051,31 @@ def test_a_charge_on_a_held_platform_cancel_grants_nothing_and_asks_for_a_refund
     assert (sub.cancel_at_period_end, sub.cancel_source) == (True, "platform_terms")
     assert _period_grants(sm, owner) == []
     assert [p.status.value for p in _renewals(sm, sid)] == ["paid"]  # kept for the refund
-    assert _push_cancels(sm, charged + timedelta(hours=2)).calls_to("cancel_subscription")
+    # Ten minutes after the charge the window is still closed: nothing is pushed yet.
+    assert _push_cancels(sm, charged + timedelta(minutes=10)).calls_to("cancel_subscription") == []
+    assert _sub(sm, sid).paymob_cancelled_at is None
+    assert _push_cancels(sm, PUSH_FROM).calls_to("cancel_subscription")  # the window opens
     assert _sub(sm, sid).paymob_cancelled_at is not None
+
+
+def test_a_kept_charge_tells_the_payer_once_and_states_no_amount(
+    sm: sessionmaker[Session],
+) -> None:
+    """R4-M3: "we received a payment after your plan was set to end; we will refund it"."""
+    owner, sid, _ = _fixed_cancelled(sm)
+    _renew(sm, 10_000, txn=901, at=PUSH_FROM - timedelta(hours=1), updatable=False)
+    with sm() as session:
+        rows = list(
+            session.scalars(
+                sa.select(EmailOutbox).where(
+                    EmailOutbox.recipient_user_id == owner,
+                    EmailOutbox.template == "charge_after_plan_end",
+                )
+            )
+        )
+    assert len(rows) == 1
+    assert set(rows[0].context) == {"payment_id"}  # no amount, no plan, no card
+    assert rows[0].dedupe_key == f"charge_after_plan_end:{rows[0].context['payment_id']}"
 
 
 def test_a_charge_after_the_push_also_grants_nothing(sm: sessionmaker[Session]) -> None:
@@ -1192,25 +1217,106 @@ def test_a_due_cut_overtaken_by_a_later_notice_does_not_page_underpaid(
     ]
 
 
-def test_a_suspension_on_a_held_platform_cancel_is_recorded_and_a_revert_leaves_it(
-    sm: sessionmaker[Session],
-) -> None:
-    """R3-M2: Paymob suspends while the platform's cancel is held; a revert must not report a
-    suspended plan live or tell the payer it will renew."""
-    owner, sid, tier = _fixed_cancelled(sm)
+def _paymob_event(sm: sessionmaker[Session], trigger: str, state: str, at: datetime) -> None:
     client = FakePaymobClient()
-    client.subscriptions[PID] = remote_subscription(PID, state="suspended")
+    client.subscriptions[PID] = remote_subscription(PID, state=state)
     with sm.begin() as session:
         _service(session, client, updatable=False).apply_renewal_webhook(
-            subscription_webhook(TRIGGER_SUSPENDED, PID), now=TICK + timedelta(hours=1)
+            subscription_webhook(trigger, PID), now=at
         )
+
+
+def test_a_suspension_on_a_held_platform_cancel_keeps_the_source_and_a_revert_leaves_it(
+    sm: sessionmaker[Session],
+) -> None:
+    """R3-M2 and R4-I1: Paymob suspends while the platform's cancel is held. The cancel stays the
+    platform's (only the suspension is stamped); a revert must not report a suspended plan live
+    or tell the payer it will renew."""
+    owner, sid, tier = _fixed_cancelled(sm)
+    _paymob_event(sm, TRIGGER_SUSPENDED, "suspended", TICK + timedelta(hours=1))
     sub = _sub(sm, sid)
-    assert (sub.cancel_source, sub.suspended_at) == ("suspension", TICK + timedelta(hours=1))
+    assert (sub.cancel_source, sub.suspended_at) == ("platform_terms", TICK + timedelta(hours=1))
     edit_tier_terms(sm, tier, price_minor=10_000)
     assert _notify(sm, now=TICK + timedelta(hours=2), updatable=False) == 0
     sub = _sub(sm, sid)
-    assert (sub.cancel_at_period_end, sub.cancel_source) == (True, "suspension")
+    assert (sub.cancel_at_period_end, sub.cancel_source) == (True, "platform_terms")
     assert [m.template for m in _mail(sm, owner)] == ["plan_terms_ends"]  # no "will renew" mail
+
+
+def test_a_resume_clears_only_the_suspension_and_keeps_the_platforms_cancel(
+    sm: sessionmaker[Session],
+) -> None:
+    """R4-I1 and R4-M2: nothing is dropped and re-scheduled, so a charge between the resume and
+    the next tick is still caught."""
+    owner, sid, _ = _fixed_cancelled(sm)
+    _paymob_event(sm, TRIGGER_SUSPENDED, "suspended", TICK + timedelta(hours=1))
+    resumed = END - timedelta(hours=20)
+    _paymob_event(sm, TRIGGER_RESUMED, "active", resumed)
+    sub = _sub(sm, sid)
+    assert (sub.cancel_at_period_end, sub.cancel_source, sub.suspended_at) == (
+        True,
+        "platform_terms",
+        None,
+    )
+    # Paymob bills on resume, before any fixed-path tick: no period past the mailed end.
+    with capture_logs() as logs:
+        _renew(sm, 10_000, txn=951, at=resumed + timedelta(hours=2, minutes=1), updatable=False)
+    assert [e["event"] for e in logs if e.get("alert")] == [
+        "subscription_charge_after_terms_cancel"
+    ]
+    assert _sub(sm, sid).current_period_end == END
+    assert [m.template for m in _mail(sm, owner)].count("plan_terms_ends") == 1
+
+
+def test_a_lost_resume_after_a_suspended_platform_cancel_still_ends_the_plan(
+    sm: sessionmaker[Session],
+) -> None:
+    """R4-I1 (the reviewer's probe): the resume webhook is lost and drift repairs nothing. The
+    cancel is still pushed before Paymob's early charge, so the plan does not renew monthly."""
+    owner, sid, _ = _fixed_cancelled(sm)
+    _paymob_event(sm, TRIGGER_SUSPENDED, "suspended", TICK + timedelta(hours=1))
+    client = FakePaymobClient()
+    client.subscriptions[PID] = remote_subscription(PID, state="active")
+    client.last_transactions[PID] = charge(777, 10_000, created_at=TICK)
+    with sm() as session:
+        _service(session, client, updatable=False).check_drift(now=TICK + timedelta(days=2))
+    assert _sub(sm, sid).suspended_at is not None  # drift does not repair an "active" state
+    assert _push_cancels(sm, PUSH_FROM - timedelta(minutes=1)).calls_to("cancel_subscription") == []
+    assert _push_cancels(sm, PUSH_FROM).calls_to("cancel_subscription")  # pushed in the window
+    with capture_logs() as logs:
+        _renew(sm, 10_000, txn=970, at=END - timedelta(hours=2), updatable=False)
+    assert [e["event"] for e in logs if e.get("alert")] == [
+        "subscription_charge_after_terms_cancel"
+    ]
+    _push_cancels(sm, END + timedelta(minutes=1))
+    row = _sub(sm, sid)
+    assert (row.status, row.current_period_end) == (SubscriptionStatus.cancelled, END)
+
+
+def test_a_revert_after_a_kept_charge_keeps_the_cancel_and_alerts_for_manual_handling(
+    sm: sessionmaker[Session],
+) -> None:
+    """R4-M1: money was taken and no period granted. The cancel is not withdrawn and nobody is
+    told the plan continues; the move is cleared and an operator is paged once."""
+    owner, sid, tier = _fixed_cancelled(sm)
+    charged = PUSH_FROM - timedelta(hours=1)
+    _renew(sm, 10_000, txn=961, at=charged, updatable=False)
+    assert _push_cancels(sm, charged + timedelta(minutes=10)).calls_to("cancel_subscription") == []
+    edit_tier_terms(sm, tier, price_minor=10_000)  # the admin reverts the move
+    with capture_logs() as logs:
+        assert _notify(sm, now=charged + timedelta(minutes=20), updatable=False) == 1
+        assert _notify(sm, now=charged + timedelta(minutes=30), updatable=False) == 0  # once
+    assert [e["event"] for e in logs if e.get("alert")] == [
+        "subscription_terms_revert_after_kept_charge"
+    ]
+    row = _sub(sm, sid)
+    assert (row.cancel_at_period_end, row.cancel_source) == (True, "platform_terms")
+    assert row.pending_terms_version is None
+    templates = [m.template for m in _mail(sm, owner)]
+    assert "plan_terms_cancelled" not in templates  # nobody is told it continues
+    _push_cancels(sm, PUSH_FROM)
+    _push_cancels(sm, END + timedelta(minutes=1))
+    assert _sub(sm, sid).status is SubscriptionStatus.cancelled
 
 
 def test_a_plan_that_ends_or_expires_clears_its_cancel_source(sm: sessionmaker[Session]) -> None:
