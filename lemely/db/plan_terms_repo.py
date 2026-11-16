@@ -555,6 +555,94 @@ def _platform_cancelled_filters(S: type[Subscription]) -> list[sa.ColumnElement[
     ]
 
 
+def is_platform_cancel(sub: Subscription) -> bool:
+    """The platform's own fixed-path cancel for a terms move (not the payer's).
+
+    A cancelling row with a pending move and no notice stamp: the fixed-path job clears the stamp
+    when it schedules the cancel, and a payer's own cancel keeps the stamp it was noticed with.
+    """
+    return (
+        sub.cancel_at_period_end
+        and sub.pending_terms_version is not None
+        and sub.terms_notice_sent_at is None
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PendingTermsChange:
+    """A noticed move to the tier's newer terms, as the payer's billing screen shows it."""
+
+    effective_at: datetime
+    first_renewal_at: datetime | None
+    new_terms: TierTerms
+    price_changes: bool
+    allowance_changes: bool
+    included_seats_changes: bool
+    seat_allowance_changes: bool
+    ends_instead_of_moving: bool
+
+
+def pending_terms_change(
+    session: Session, sub: Subscription, *, interval: str | None, amount_updatable: bool
+) -> PendingTermsChange | None:
+    """The move pending for ``sub``, or ``None`` when none is (or a plan change decides instead).
+
+    ``ends_instead_of_moving`` is the fixed-amount path: Paymob cannot charge the new amount, so a
+    move that changes the renewal amount ends the plan at the period end.
+    """
+    effective_at = sub.pending_terms_effective_at
+    if sub.pending_terms_version is None or effective_at is None or sub.pending_plan_tier_id:
+        return None
+    new_terms = pending_terms_for(session, sub)
+    if new_terms is None:
+        return None
+    cur_terms = terms_for(session, sub)
+    seats = sub.pending_extra_seats if sub.pending_extra_seats is not None else sub.extra_seats or 0
+    end = sub.current_period_end
+    return PendingTermsChange(
+        effective_at=effective_at,
+        first_renewal_at=(
+            first_applies_at(end, interval, effective_at)
+            if end is not None and interval is not None
+            else None
+        ),
+        new_terms=new_terms,
+        price_changes=price_terms_differ(cur_terms, new_terms),
+        allowance_changes=new_terms.allowance_units != cur_terms.allowance_units,
+        included_seats_changes=new_terms.included_seats != cur_terms.included_seats,
+        seat_allowance_changes=new_terms.seat_allowance_units != cur_terms.seat_allowance_units,
+        ends_instead_of_moving=(
+            not amount_updatable
+            and renewal_amount(new_terms, seats) != renewal_amount(cur_terms, seats)
+        ),
+    )
+
+
+def subscribers_to_move(session: Session, tier_id: uuid.UUID) -> int:
+    """Renewing subscribers of the tier not yet on its current terms: those a terms edit moves.
+
+    Complimentary and manual rows do not renew, and a cancelling subscriber is leaving: neither is
+    noticed or moved (the same pool as the notice job, before its pending-version filter).
+    """
+    S = Subscription
+    return int(
+        session.scalar(
+            sa.select(sa.func.count())
+            .select_from(S)
+            .join(PlanTier, PlanTier.id == S.plan_tier_id)
+            .where(
+                S.plan_tier_id == tier_id,
+                S.status.in_(PLAN_LIVE_STATUSES),
+                S.payer_user_id.is_not(None),
+                S.is_manually_activated.is_(False),
+                S.cancel_at_period_end.is_(False),
+                S.terms_version < PlanTier.terms_version,
+            )
+        )
+        or 0
+    )
+
+
 class FixedPathEnd(enum.Enum):
     """What the fixed-path job does after looking at a move's "your plan ends" notice."""
 
@@ -662,19 +750,23 @@ def fixed_path_move_ids(
 __all__ = [
     "TERMS_NOTICE_BATCH",
     "FixedPathEnd",
+    "PendingTermsChange",
     "TierTerms",
     "allowed_terms_for_amount",
     "announce_fixed_path_end",
     "current_terms_for",
     "first_applies_at",
     "fixed_path_move_ids",
+    "is_platform_cancel",
     "move_is_worse",
     "other_version_priced_at",
+    "pending_terms_change",
     "pending_terms_for",
     "price_terms_differ",
     "queue_terms_change_notices",
     "renewal_amount",
     "same_terms",
+    "subscribers_to_move",
     "terms_for",
     "terms_in_force_for_next_period",
     "tier_for_terms",

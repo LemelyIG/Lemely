@@ -43,6 +43,7 @@ from lemely.db.models.billing_ops import (
     RefundStatus,
 )
 from lemely.db.models.usage import EstimatorInputKind, UsageEstimator, UsageRate
+from lemely.db.plan_terms_repo import subscribers_to_move
 from lemely.db.subscription_repo import PlanNotPurchasable, PlanSyncFailed
 from lemely.db.subscription_repo import sync_paymob_plan as link_paymob_plan
 from lemely.db.usage_catalogue_repo import (
@@ -766,7 +767,11 @@ class AdminCatalogueService:
                 tier.id,
                 reason,
                 before,
-                snapshot(tier, _PLAN_TIER_AUDIT),
+                {
+                    **snapshot(tier, _PLAN_TIER_AUDIT),
+                    "termsVersion": tier.terms_version,
+                    "subscribersToMove": subscribers_to_move(s, tier.id),
+                },
             )
             return tier
 

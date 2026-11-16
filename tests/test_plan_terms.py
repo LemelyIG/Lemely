@@ -382,9 +382,6 @@ _ALLOWED: Final = frozenset(
         "db/billing_repo.py::active_catalogue",
         "web/routers/billing.py::_render_public_catalogue",
         "web/routers/billing.py::get_catalogue",
-        # KNOWN LEAK (review I-4): ``_plan_tier_dto`` also serves the subscriber's own summary,
-        # which must show ``terms_for(sub)``. Remove this line when I-4 splits it.
-        "web/routers/billing.py::_plan_tier_dto",
     }
 )
 

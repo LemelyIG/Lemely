@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import uuid  # noqa: TC003 - pydantic reads the type at runtime
 from datetime import datetime  # noqa: TC003 - pydantic reads the type at runtime
+from typing import Literal
 
 from pydantic import Field
 
@@ -26,6 +27,27 @@ class SummaryBeneficiaryDTO(ApiModel):
     audience: str
 
 
+class PendingTermsChangeDTO(ApiModel):
+    """A noticed move to the plan's newer terms (UD13-A), as the payer's own screen shows it.
+
+    Shown to the signed-in payer only; the email about the same move states no amount (UD13-E).
+    Allowance sizes are never shown (spec §2.1): ``allowanceChange`` says whether the usage
+    allowance gets larger or smaller. ``effectiveAt`` is when the notice period ends and
+    ``firstRenewalAt`` the first renewal the new terms apply to.
+    """
+
+    effectiveAt: datetime
+    firstRenewalAt: datetime | None
+    priceMinor: int
+    extraSeatPriceMinor: int
+    includedSeats: int
+    priceChanges: bool
+    allowanceChange: Literal["more", "less"] | None
+    includedSeatsChanges: bool
+    seatAllowanceChanges: bool
+    endsInsteadOfMoving: bool
+
+
 class SubscriptionViewDTO(ApiModel):
     subscriptionId: str
     status: str
@@ -37,6 +59,10 @@ class SubscriptionViewDTO(ApiModel):
     graceUntil: datetime | None
     extraSeats: int
     pendingExtraSeats: int | None
+    pendingTermsChange: PendingTermsChangeDTO | None = None
+    cancelReason: Literal["plan_terms_changed"] | None = None
+    """Why the plan is cancelling when the payer did not ask: the platform scheduled it because a
+    price change cannot be charged to this subscription. The payer subscribes again when it ends."""
 
 
 class SavedCardViewDTO(ApiModel):

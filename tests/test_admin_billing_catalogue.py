@@ -1437,3 +1437,35 @@ def test_a_tier_edit_waits_for_a_concurrent_writer_and_audits_what_it_replaced(
     assert row.before is not None and row.after is not None
     assert row.before["name"] == "First writer"
     assert row.after["name"] == "Second writer"
+
+
+def test_a_terms_edit_audits_the_terms_version_and_how_many_subscribers_it_moves(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    tier = add_plan_tier(sm, price_minor=10000)
+    add_subscription(sm, add_user(sm), tier)  # renewing, paid: the one that moves
+    cancelling = add_subscription(sm, add_user(sm), tier)
+    add_subscription(sm, add_user(sm), tier, manual=True)  # a manual activation does not renew
+    with sm.begin() as session:
+        row = session.get(Subscription, cancelling)
+        assert row is not None
+        row.cancel_at_period_end = True  # a cancelling subscriber is leaving: not moved
+    resp = admin_client(sm, admin).put(f"{P}/tiers/{tier}", json=_tier_update(priceMinor=15000))
+    assert resp.status_code == 200, resp.text
+    [row] = audit_rows(sm, "catalogue.plan_tier.update")
+    assert row.after is not None
+    assert (row.after["termsVersion"], row.after["subscribersToMove"]) == (2, 1)
+
+
+def test_a_name_only_edit_audits_no_subscribers_to_move(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    tier = add_plan_tier(sm, price_minor=10000)
+    add_subscription(sm, add_user(sm), tier)
+    resp = admin_client(sm, admin).put(
+        f"{P}/tiers/{tier}", json=_tier_update(priceMinor=10000, name="Renamed")
+    )
+    assert resp.status_code == 200, resp.text
+    [row] = audit_rows(sm, "catalogue.plan_tier.update")
+    assert row.after is not None
+    assert (row.after["termsVersion"], row.after["subscribersToMove"]) == (1, 0)

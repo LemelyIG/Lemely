@@ -26,6 +26,13 @@ from lemely.db.models.billing import (
 )
 from lemely.db.models.enums import Role, SubscriptionStatus
 from lemely.db.models.users import User
+from lemely.db.plan_terms_repo import (
+    PendingTermsChange,
+    TierTerms,
+    is_platform_cancel,
+    pending_terms_change,
+    terms_for,
+)
 from lemely.db.teacher_team_repo import TeacherTeamService
 from lemely.db.usage_views_repo import meter_view
 
@@ -64,6 +71,11 @@ class BillingSummary:
     debt_units: int
     seat_capacity: int | None
     seats_used: int | None
+    terms: TierTerms | None = None
+    """The terms the subscriber is billed on (never the tier's live ones, UD13-A)."""
+    pending_terms_change: PendingTermsChange | None = None
+    cancel_reason: str | None = None
+    """``plan_terms_changed`` when the platform scheduled the cancel for a terms move."""
 
 
 def is_linked_student(session: Session, parent_id: uuid.UUID, child_id: uuid.UUID) -> bool:
@@ -131,9 +143,20 @@ def _credit_lots(lots: list[tuple[int, datetime | None]]) -> list[CreditLot]:
 
 
 def build_billing_summary(
-    session: Session, *, caller_user_id: uuid.UUID, beneficiary_user_id: uuid.UUID, now: datetime
+    session: Session,
+    *,
+    caller_user_id: uuid.UUID,
+    beneficiary_user_id: uuid.UUID,
+    now: datetime,
+    amount_updatable: bool = True,
 ) -> BillingSummary:
-    """Plan, period, allowance meter, credits by expiry, debt and (teachers) seats."""
+    """Plan, period, allowance meter, credits by expiry, debt and (teachers) seats.
+
+    The plan's price and seats are the terms the subscriber is billed on (``terms_for``); a
+    noticed move to newer terms is ``pending_terms_change``. ``amount_updatable`` is
+    ``PaymobSettings.subscription_amount_updatable``: it decides whether a move that changes the
+    amount ends the plan instead.
+    """
     beneficiary = session.get(User, beneficiary_user_id)
     if beneficiary is None:
         raise LookupError(f"unknown user {beneficiary_user_id}")
@@ -146,6 +169,23 @@ def build_billing_summary(
     pending_tier = (
         session.get(PlanTier, subscription.pending_plan_tier_id)
         if subscription is not None and subscription.pending_plan_tier_id is not None
+        else None
+    )
+
+    terms = terms_for(session, subscription) if subscription is not None else None
+    pending_change = (
+        pending_terms_change(
+            session,
+            subscription,
+            interval=tier.interval.value if tier is not None and tier.interval else None,
+            amount_updatable=amount_updatable,
+        )
+        if subscription is not None
+        else None
+    )
+    cancel_reason = (
+        "plan_terms_changed"
+        if subscription is not None and is_platform_cancel(subscription)
         else None
     )
 
@@ -190,6 +230,9 @@ def build_billing_summary(
         debt_units=meter.debt_units,
         seat_capacity=team.seat_capacity(beneficiary_user_id) if team is not None else None,
         seats_used=team.seats_used(beneficiary_user_id) if team is not None else None,
+        terms=terms,
+        pending_terms_change=pending_change,
+        cancel_reason=cancel_reason,
     )
 
 

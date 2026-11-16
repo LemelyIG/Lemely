@@ -62,10 +62,12 @@ from lemely.db.billing_repo import (
 from lemely.db.billing_summary import build_billing_summary, is_linked_student
 from lemely.db.merchant_charge_repo import (
     ChargeQuote,
+    ChargesUnavailable,
     MerchantChargeError,
     MerchantChargeService,
     SeatsExceedNewTier,
     SeatsNotSold,
+    charges_configured,
 )
 from lemely.db.models.billing import (
     Payment,
@@ -76,6 +78,7 @@ from lemely.db.models.billing import (
     Subscription,
 )
 from lemely.db.models.enums import Role
+from lemely.db.plan_terms_repo import PendingTermsChange, TierTerms, current_terms_for
 from lemely.db.subscription_repo import SeatsInsufficient, SubscriptionError
 from lemely.io.paymob.client import PaymobClient  # noqa: TC001 - FastAPI reads the type at runtime
 from lemely.runtime.config import Settings  # noqa: TC001 - FastAPI reads the type at runtime
@@ -128,6 +131,7 @@ from lemely.web.schemas_subscriptions import (
     CreditLotDTO,
     CreditsViewDTO,
     DowngradeRequestDTO,
+    PendingTermsChangeDTO,
     SavedCardViewDTO,
     SeatsViewDTO,
     SubscriptionCheckoutDTO,
@@ -168,19 +172,43 @@ def _requested_beneficiary(
     return payer
 
 
-def _plan_tier_dto(t: PlanTier) -> PlanTierDTO:
-    """One tier as the catalogue and the billing summary show it."""
+def _plan_tier_dto(t: PlanTier, terms: TierTerms) -> PlanTierDTO:
+    """One tier as the catalogue and the billing summary show it.
+
+    The price and seats come from ``terms``, never the tier's own columns: the catalogue passes
+    the tier's current terms (a new purchase), the summary the terms the subscriber is billed on.
+    """
     return PlanTierDTO(
         planTierId=str(t.id),
         code=t.code,
         name=t.name,
-        priceMinor=t.price_minor,
+        priceMinor=terms.price_minor,
         currency=t.currency,
         interval=t.interval.value if t.interval is not None else None,
         audience=t.audience.value,
-        includedSeats=t.included_seats,
-        extraSeatPriceMinor=t.extra_seat_price_minor,
+        includedSeats=terms.included_seats,
+        extraSeatPriceMinor=terms.extra_seat_price_minor,
         features=dict(t.features),
+    )
+
+
+def _pending_terms_dto(change: PendingTermsChange, billed: TierTerms) -> PendingTermsChangeDTO:
+    allowance: Literal["more", "less"] | None = None
+    if change.new_terms.allowance_units > billed.allowance_units:
+        allowance = "more"
+    elif change.new_terms.allowance_units < billed.allowance_units:
+        allowance = "less"
+    return PendingTermsChangeDTO(
+        effectiveAt=change.effective_at,
+        firstRenewalAt=change.first_renewal_at,
+        priceMinor=change.new_terms.price_minor,
+        extraSeatPriceMinor=change.new_terms.extra_seat_price_minor,
+        includedSeats=change.new_terms.included_seats,
+        priceChanges=change.price_changes,
+        allowanceChange=allowance,
+        includedSeatsChanges=change.included_seats_changes,
+        seatAllowanceChanges=change.seat_allowance_changes,
+        endsInsteadOfMoving=change.ends_instead_of_moving,
     )
 
 
@@ -194,7 +222,7 @@ def get_catalogue(
     with sm() as session:
         tiers, packs = active_catalogue(session, audience=audience)
         return CatalogueDTO(
-            planTiers=[_plan_tier_dto(t) for t in tiers],
+            planTiers=[_plan_tier_dto(t, current_terms_for(session, t)) for t in tiers],
             creditPacks=[
                 CreditPackDTO(
                     creditPackId=str(p.id),
@@ -433,6 +461,7 @@ def get_billing_summary(
     auth: Annotated[AuthContext, Depends(require_billing_party)],
     sm: Annotated[sessionmaker[Session], Depends(get_billing_sessionmaker)],
     clock: Annotated[Callable[[], datetime], Depends(get_billing_clock)],
+    settings: Annotated[Settings, Depends(get_settings)],
     beneficiaryId: uuid.UUID | None = None,
 ) -> BillingSummaryDTO:
     """Plan, period, usage meter, credits with expiry, debt and seats (index R3).
@@ -451,7 +480,11 @@ def get_billing_summary(
             )
         try:
             s = build_billing_summary(
-                session, caller_user_id=caller, beneficiary_user_id=target, now=clock()
+                session,
+                caller_user_id=caller,
+                beneficiary_user_id=target,
+                now=clock(),
+                amount_updatable=settings.paymob.subscription_amount_updatable,
             )
         except LookupError as exc:
             # A valid token whose user row is gone: refuse, and do not echo the id.
@@ -467,16 +500,26 @@ def get_billing_summary(
                 SubscriptionViewDTO(
                     subscriptionId=str(sub.id),
                     status=sub.status.value,
-                    tier=_plan_tier_dto(s.tier),
+                    tier=_plan_tier_dto(s.tier, s.terms),
                     currentPeriodStart=sub.current_period_start,
                     currentPeriodEnd=sub.current_period_end,
                     cancelAtPeriodEnd=sub.cancel_at_period_end,
-                    pendingTier=_plan_tier_dto(s.pending_tier) if s.pending_tier else None,
+                    pendingTier=(
+                        _plan_tier_dto(s.pending_tier, current_terms_for(session, s.pending_tier))
+                        if s.pending_tier
+                        else None
+                    ),
                     graceUntil=sub.grace_until,
                     extraSeats=sub.extra_seats,
                     pendingExtraSeats=sub.pending_extra_seats,
+                    pendingTermsChange=(
+                        _pending_terms_dto(s.pending_terms_change, s.terms)
+                        if s.pending_terms_change is not None
+                        else None
+                    ),
+                    cancelReason="plan_terms_changed" if s.cancel_reason else None,
                 )
-                if sub is not None and s.tier is not None
+                if sub is not None and s.tier is not None and s.terms is not None
                 else None
             ),
             canManage=s.can_manage,
@@ -947,6 +990,10 @@ def _is_unique_violation(exc: IntegrityError) -> bool:
 def _save_auto_topup(
     deps: MerchantChargeDeps, auth: AuthContext, body: AutoTopupRequest, now: datetime
 ) -> AutoTopupDTO:
+    if body.enabled and not charges_configured(deps.settings):
+        # Nothing could charge a saved card (no MOTO id or no token key): refuse to arm a top-up
+        # that would never run. Switching one off stays possible.
+        raise ChargesUnavailable
     with deps.sessionmaker.begin() as session:
         target = _auto_topup_beneficiary(session, auth, body.beneficiaryId)
         view = put_auto_topup(

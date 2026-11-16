@@ -21,11 +21,13 @@ from lemely.db.models.billing import (
 )
 from lemely.db.models.enums import PlanInterval, Role, SubscriptionStatus
 from lemely.db.models.usage import GrantKind, UsageDebt
+from lemely.runtime.config import PaymobSettings, Settings
 from lemely.web import create_app
-from lemely.web.deps import ACTING_TEACHER_HEADER, AuthContext, get_auth_context
+from lemely.web.deps import ACTING_TEACHER_HEADER, AuthContext, get_auth_context, get_settings
 from lemely.web.deps_billing import get_billing_sessionmaker
 from lemely.web.routers.billing import get_billing_clock
 from lemely.web.usage import get_usage_meter
+from tests.subscription_fixtures import edit_tier_terms
 from tests.team_db import add_assistant, add_seat, add_user, emptied_after, team_database
 from tests.usage_helpers import NOW, enforcing_meter, give
 
@@ -617,3 +619,148 @@ def test_a_paid_plan_wins_over_a_manual_one(sm: sessionmaker[Session]) -> None:
     assert body["subscription"]["tier"]["planTierId"] == str(paid_tier)
     assert body["canManage"] is True
     assert body["seats"]["capacity"] == 8
+
+
+# -- billed terms, a pending move and a platform cancel (UD13-A, P07-T16 review I-4 and M-5) ---
+
+
+def _fixed_amount_client(sm: sessionmaker[Session], user: uuid.UUID, role: Role) -> TestClient:
+    """The fixed-amount path: Paymob cannot change a subscription's amount (S14 failed)."""
+    client = _client(sm, user, role)
+    settings = Settings().model_copy(
+        update={"paymob": PaymobSettings(subscription_amount_updatable=False)}
+    )
+    client.app.dependency_overrides[get_settings] = lambda: settings  # type: ignore[attr-defined]
+    return client
+
+
+def _set_pending_terms(
+    sm: sessionmaker[Session],
+    sub: uuid.UUID,
+    *,
+    version: int,
+    effective_at: datetime,
+    notice_sent: bool = True,
+    cancel: bool = False,
+) -> None:
+    with sm.begin() as session:
+        row = session.get(Subscription, sub)
+        assert row is not None
+        row.pending_terms_version = version
+        row.pending_terms_effective_at = effective_at
+        row.terms_notice_sent_at = NOW - timedelta(days=1) if notice_sent else None
+        row.cancel_at_period_end = cancel
+
+
+def _view(client: TestClient) -> dict[str, object]:
+    body = client.get(URL).json()
+    view = body["subscription"]
+    assert isinstance(view, dict)
+    return view
+
+
+def test_the_summary_shows_the_billed_terms_not_the_live_tiers(sm: sessionmaker[Session]) -> None:
+    """I-4: after an admin edit, before any notice or move, the payer still sees what they pay."""
+    student = add_user(sm, Role.student)
+    tier = _tier(sm, price_minor=9_900, included_seats=2, extra_seat_price_minor=300)
+    _sub(sm, user=student, tier=tier, payer=student)
+    edit_tier_terms(sm, tier, price_minor=14_000, included_seats=5, extra_seat_price_minor=700)
+    shown = _view(_client(sm, student, Role.student))["tier"]
+    assert isinstance(shown, dict)
+    assert (shown["priceMinor"], shown["includedSeats"], shown["extraSeatPriceMinor"]) == (
+        9_900,
+        2,
+        300,
+    )
+    assert "allowanceUnits" not in shown  # unit counts are never shown (spec 2.1)
+    assert _view(_client(sm, student, Role.student))["pendingTermsChange"] is None
+
+
+def test_the_catalogue_still_shows_the_tiers_current_terms(sm: sessionmaker[Session]) -> None:
+    student = add_user(sm, Role.student)
+    tier = _tier(sm, price_minor=9_900)
+    edit_tier_terms(sm, tier, price_minor=14_000)
+    body = _client(sm, student, Role.student).get("/api/billing/catalogue").json()
+    prices = {t["planTierId"]: t["priceMinor"] for t in body["planTiers"]}
+    assert prices[str(tier)] == 14_000
+
+
+def test_a_pending_move_is_shown_with_its_dates_and_what_changes(
+    sm: sessionmaker[Session],
+) -> None:
+    teacher = add_user(sm, Role.teacher)
+    tier = _tier(
+        sm,
+        audience=PlanAudience.teacher,
+        price_minor=9_900,
+        included_seats=5,
+        extra_seat_price_minor=300,
+    )
+    sub = _sub(sm, user=teacher, tier=tier, payer=teacher)
+    edit_tier_terms(sm, tier, price_minor=12_000, included_seats=3, allowance_units=400)
+    effective = NOW + timedelta(days=13)
+    _set_pending_terms(sm, sub, version=2, effective_at=effective)
+    change = _view(_client(sm, teacher, Role.teacher))["pendingTermsChange"]
+    assert isinstance(change, dict)
+    assert datetime.fromisoformat(str(change["effectiveAt"])) == effective
+    assert datetime.fromisoformat(str(change["firstRenewalAt"])) == NOW + timedelta(days=25)
+    assert (change["priceMinor"], change["includedSeats"]) == (12_000, 3)
+    assert change["priceChanges"] is True
+    assert change["allowanceChange"] == "less"  # a direction, never the unit count
+    assert (change["includedSeatsChanges"], change["seatAllowanceChanges"]) == (True, False)
+    assert change["endsInsteadOfMoving"] is False
+    assert "allowanceUnits" not in change
+
+
+def test_a_move_that_changes_the_amount_ends_the_plan_on_the_fixed_path(
+    sm: sessionmaker[Session],
+) -> None:
+    student = add_user(sm, Role.student)
+    tier = _tier(sm, price_minor=9_900)
+    sub = _sub(sm, user=student, tier=tier, payer=student)
+    edit_tier_terms(sm, tier, price_minor=12_000)
+    _set_pending_terms(sm, sub, version=2, effective_at=NOW + timedelta(days=13))
+    change = _view(_fixed_amount_client(sm, student, Role.student))["pendingTermsChange"]
+    assert isinstance(change, dict)
+    assert change["endsInsteadOfMoving"] is True
+    other = _view(_client(sm, student, Role.student))["pendingTermsChange"]
+    assert isinstance(other, dict)
+    assert other["endsInsteadOfMoving"] is False  # the updatable path moves the amount
+
+
+def test_an_allowance_only_move_does_not_end_the_plan_on_the_fixed_path(
+    sm: sessionmaker[Session],
+) -> None:
+    student = add_user(sm, Role.student)
+    tier = _tier(sm, price_minor=9_900)
+    sub = _sub(sm, user=student, tier=tier, payer=student)
+    edit_tier_terms(sm, tier, allowance_units=2_000)
+    _set_pending_terms(sm, sub, version=2, effective_at=NOW)
+    change = _view(_fixed_amount_client(sm, student, Role.student))["pendingTermsChange"]
+    assert isinstance(change, dict)
+    assert (change["endsInsteadOfMoving"], change["allowanceChange"]) == (False, "more")
+
+
+def test_a_platform_cancel_for_a_terms_move_carries_its_reason(sm: sessionmaker[Session]) -> None:
+    """M-5: the payer sees why the plan is ending, not a bare "cancelling"."""
+    student = add_user(sm, Role.student)
+    tier = _tier(sm, price_minor=9_900)
+    sub = _sub(sm, user=student, tier=tier, payer=student)
+    edit_tier_terms(sm, tier, price_minor=12_000)
+    _set_pending_terms(
+        sm, sub, version=2, effective_at=NOW, notice_sent=False, cancel=True
+    )  # the platform's marker: cancelling, a pending move, no notice stamp
+    view = _view(_fixed_amount_client(sm, student, Role.student))
+    assert (view["cancelAtPeriodEnd"], view["cancelReason"]) == (True, "plan_terms_changed")
+
+
+def test_a_payers_own_cancel_has_no_reason(sm: sessionmaker[Session]) -> None:
+    student = add_user(sm, Role.student)
+    tier = _tier(sm, price_minor=9_900)
+    sub = _sub(sm, user=student, tier=tier, payer=student, cancel_at_period_end=True)
+    view = _view(_client(sm, student, Role.student))
+    assert (view["cancelAtPeriodEnd"], view["cancelReason"]) == (True, None)
+    edit_tier_terms(sm, tier, price_minor=12_000)
+    _set_pending_terms(sm, sub, version=2, effective_at=NOW, notice_sent=True, cancel=True)
+    again = _view(_client(sm, student, Role.student))
+    assert again["cancelReason"] is None  # the payer's cancel keeps the stamp it was noticed with
