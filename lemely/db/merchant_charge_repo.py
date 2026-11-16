@@ -90,6 +90,7 @@ from lemely.db.billing_repo import (
 )
 from lemely.db.models import User
 from lemely.db.models.billing import (
+    PAYMENT_VOID_REASONS,
     PLAN_LIVE_STATUSES,
     Payment,
     PaymentPurpose,
@@ -1250,12 +1251,11 @@ def _upgrade_applied_this_period(session: Session, sub: Subscription) -> bool:
     An upgrade prices the seats the subscription will bill (``usable_extra_seats``): the seats a
     pending reduction drops are charged nothing at the new seat price. Lifting that reduction
     afterwards would bring them back at a price nobody paid, so :meth:`schedule_seat_reduction`
-    refuses to lift one while such an upgrade exists. A payment converted to credits changed
-    nothing (``grant_units`` set) and does not count; one that voided with no credit rate stays
-    ``paid`` with ``grant_units`` NULL, so it counts (a conservative false positive). The rule
-    is also conservative in that it cannot tell a reduction scheduled before the upgrade from one
-    scheduled after it, because the reduction
-    carries no timestamp; deeper reductions stay allowed and the lock ends at the renewal.
+    refuses to lift one while such an upgrade exists. Only a payment the paid handler applied
+    (``applied_at`` set) counts: one voided to credits, or left unconverted for want of a credit
+    rate, changed nothing. The rule is conservative in that it cannot tell a reduction scheduled
+    before the upgrade from one scheduled after it, because the reduction carries no timestamp;
+    deeper reductions stay allowed and the lock ends at the renewal.
     """
     start = sub.current_period_start
     if start is None:
@@ -1267,7 +1267,7 @@ def _upgrade_applied_this_period(session: Session, sub: Subscription) -> bool:
                 Payment.subscription_id == sub.id,
                 Payment.purpose == PaymentPurpose.upgrade_proration,
                 Payment.status == PaymentStatus.paid,
-                Payment.grant_units.is_(None),
+                Payment.applied_at.is_not(None),
                 Payment.paid_at >= start,
             )
             .limit(1)
@@ -1590,7 +1590,13 @@ def credit_void_payment(
     ``paid`` and ``merchant_charge_unconvertible`` asks an operator for a manual refund. It never
     raises, because the handler runs in the callback transaction and a raise would reject a
     callback that already moved money.
+
+    The reason is stamped on the payment either way (``void_reason``), so the return page can say
+    what happened; an unknown reason is a programming error and the CHECK would refuse it later.
     """
+    if reason not in PAYMENT_VOID_REASONS:
+        raise ValueError(f"unknown void reason {reason!r}")
+    payment.void_reason = reason
     try:
         convert_payment_to_credits(session, payment, subscription=sub, now=paid_at)
     except NoCreditRate as exc:
@@ -1654,6 +1660,7 @@ def on_upgrade_paid(session: Session, payment: Payment) -> None:
     sub.pending_terms_version = None
     sub.pending_terms_effective_at = None
     sub.terms_notice_sent_at = None
+    payment.applied_at = paid_at  # the one marker that this payment bought what it priced
     bump_version(sub)
     session.flush()
     units = _allowance_gain(old_terms, new_terms, start, end, paid_at)
@@ -1871,6 +1878,7 @@ def _settle_renewal_seat_payment(
         # This period's grace is paid up, whether or not the period has rolled since: the seats
         # were held for it, so the money stands and the grace ends.
         sub.extra_seat_grace_until = None
+        payment.applied_at = paid_at
         bump_version(sub)
         session.flush()
         return
@@ -1930,6 +1938,7 @@ def on_extra_seats_paid(session: Session, payment: Payment) -> None:
         credit_void_payment(session, payment, sub, reason=reason, paid_at=paid_at)
         return
     sub.extra_seats = (sub.extra_seats or 0) + quantity
+    payment.applied_at = paid_at  # the one marker that this payment bought what it priced
     bump_version(sub)
     session.flush()
     queue_amount_push(session, sub.id)
@@ -2104,7 +2113,7 @@ def renewal_seat_shortfall(session: Session, sub: Subscription, period: Subscrip
             Payment.purpose == PaymentPurpose.extra_seats,
             Payment.dedupe_key.is_(None),
             Payment.status == PaymentStatus.paid,
-            Payment.grant_units.is_(None),  # one turned into credits added no seats
+            Payment.applied_at.is_not(None),  # a voided or credited purchase added no seats
             Payment.created_at >= period.period_start,
         )
     )
@@ -2445,7 +2454,7 @@ def _seat_candidate_ids(
             Payment.purpose == PaymentPurpose.extra_seats,
             Payment.dedupe_key.is_(None),
             Payment.status == PaymentStatus.paid,
-            Payment.grant_units.is_(None),
+            Payment.applied_at.is_not(None),
             Payment.created_at >= SubscriptionPeriod.period_start,
         )
         .scalar_subquery()

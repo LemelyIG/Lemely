@@ -186,6 +186,10 @@ def test_orm_declares_the_named_objects_of_the_new_tables() -> None:
         # Migration 0057 (admin payments and margin queries).
         "ix_admin_payments_paid_at",
         "ix_admin_payments_status_created_at",
+        # Migration 0059 (the applied marker and the void reason).
+        "ck_payments_applied_not_credited",
+        "ck_payments_applied_not_voided",
+        "ck_payments_void_reason_known",
     } == _orm_names("payments")
     assert _orm_names("plan_tiers") >= PLAN_TIER_OBJECTS
     assert _orm_names("subscriptions") >= SUBSCRIPTION_OBJECTS

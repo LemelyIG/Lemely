@@ -330,15 +330,16 @@ _CHARGE_PURPOSES: Final = (PaymentPurpose.upgrade_proration, PaymentPurpose.extr
 
 
 def _charge_outcome(
-    session: Session, payment: Payment
+    payment: Payment,
 ) -> Literal["applied", "credited", "needs_attention"] | None:
     """What a paid upgrade or seat payment came to, for the return page's third state.
 
-    ``credited``: it was turned into credits (``grant_units`` is stamped). ``applied``: the
-    subscription now carries what was bought (the target tier, or at least the bought seats).
-    ``needs_attention``: paid, yet neither (no credit rate fails the conversion closed, so the
-    money was received and an operator handles it): the page must not read "done". ``None`` for
-    any other purpose, a payment not yet paid, and a queued renewal seat payment.
+    Read from the payment alone, never from the subscription as it is now. ``credited``: it was
+    turned into credits (``grant_units`` is stamped). ``applied``: the paid handler applied it
+    (``applied_at``). ``needs_attention``: paid, yet neither (no credit rate fails the
+    conversion closed, so the money was received and an operator handles it): the page must not
+    read "done". ``None`` for any other purpose, a payment not yet paid, and a queued renewal
+    seat payment (it pays for seats that already exist).
     """
     if (
         payment.purpose not in _CHARGE_PURPOSES
@@ -348,18 +349,7 @@ def _charge_outcome(
         return None
     if payment.grant_units is not None:
         return "credited"
-    sub = (
-        None
-        if payment.subscription_id is None
-        else session.get(Subscription, payment.subscription_id)
-    )
-    if sub is None:
-        return "needs_attention"
-    if payment.purpose is PaymentPurpose.upgrade_proration:
-        applied = sub.plan_tier_id == payment.plan_tier_id
-    else:
-        applied = (sub.extra_seats or 0) >= (payment.seat_quantity or 0)
-    return "applied" if applied else "needs_attention"
+    return "applied" if payment.applied_at is not None else "needs_attention"
 
 
 @router.get("/payments/{payment_id}", response_model=PaymentStatusDTO)
@@ -385,7 +375,8 @@ def get_payment(
             description=describe_payment(session, payment),
             paidAt=payment.paid_at,
             creditedUnits=payment.grant_units if is_charge else None,
-            outcome=_charge_outcome(session, payment),
+            outcome=_charge_outcome(payment),
+            voidReason=payment.void_reason if is_charge else None,
         )
 
 
@@ -749,7 +740,6 @@ def _checkout_budget(limiter: SlidingWindowLimiter, user_id: str) -> None:
 
 def _start_charge_checkout(
     deps: MerchantChargeDeps,
-    actor: uuid.UUID,
     start: Callable[[MerchantChargeService], CheckoutResult],
 ) -> CheckoutDTO:
     """Run a payer-present checkout start and map its refusals; the 201 body is the checkout.
@@ -761,7 +751,6 @@ def _start_charge_checkout(
     try:
         with deps.sessionmaker() as session:
             result = start(deps.service(session))
-            session.commit()
     except MerchantChargeError as exc:
         raise charge_error(exc) from exc
     except PhoneRequired as exc:
@@ -814,7 +803,6 @@ def start_upgrade(
     actor = uuid.UUID(auth.user_id)
     return _start_charge_checkout(
         deps,
-        actor,
         lambda service: service.start_upgrade_checkout(
             subscription_id=subscription_id,
             actor_user_id=actor,
@@ -864,7 +852,6 @@ def start_extra_seats(
     actor = uuid.UUID(auth.user_id)
     return _start_charge_checkout(
         deps,
-        actor,
         lambda service: service.start_extra_seats_checkout(
             subscription_id=subscription_id,
             actor_user_id=actor,

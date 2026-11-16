@@ -182,6 +182,23 @@ _DEDUPE_KEY_PURPOSE_CHECK = (
     "OR (purpose = 'extra_seats' AND starts_with(dedupe_key, 'extra_seat_renewal:'))"
 )
 
+#: Why a paid upgrade or seat payment bought nothing and was voided to credits (set with
+#: ``payments.void_reason``). One list for the CHECK and for the handlers that name a reason.
+PAYMENT_VOID_REASONS: Final = (
+    "plan_ended",
+    "period_rolled",
+    "not_an_upgrade_now",
+    "seats_not_sold",
+    "superseded",
+    "seats_changing",
+    "seats_over_limit",
+    "period_ended",
+    "seats_dropped",
+)
+_VOID_REASON_CHECK = "void_reason IS NULL OR void_reason IN ({})".format(
+    ", ".join(f"'{reason}'" for reason in PAYMENT_VOID_REASONS)
+)
+
 
 class Subscription(TimestampMixin, Base):
     """A user's subscription to a :class:`PlanTier`.
@@ -603,6 +620,11 @@ class Payment(TimestampMixin, Base):
         sa.CheckConstraint("grant_units IS NULL OR grant_units > 0", name="grant_units_positive"),
         sa.CheckConstraint(_DEDUPE_KEY_PURPOSE_CHECK, name="dedupe_key_purpose"),
         sa.CheckConstraint(
+            "applied_at IS NULL OR grant_units IS NULL", name="applied_not_credited"
+        ),
+        sa.CheckConstraint("applied_at IS NULL OR void_reason IS NULL", name="applied_not_voided"),
+        sa.CheckConstraint(_VOID_REASON_CHECK, name="void_reason_known"),
+        sa.CheckConstraint(
             "purpose <> 'credit_pack' OR credit_pack_id IS NOT NULL", name="credit_pack_link"
         ),
         sa.Index("ix_payments_status_next_reconcile_at", "status", "next_reconcile_at"),
@@ -693,6 +715,14 @@ class Payment(TimestampMixin, Base):
     """The terms version an upgrade (the target's) or a seat purchase (the billed one) was priced
     on. The paid handler voids to credits when it no longer matches, even at an equal price.
     NULL on every other payment and on rows written before the column."""
+    applied_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    """When the paid handler applied an upgrade or a seat purchase (the tier switched, the seats
+    added), in the callback transaction that settled it. NULL while unsettled, for every other
+    purpose, and for a payment that was voided to credits or left unconverted: it is the one
+    marker of "this payment bought what it was priced for", never both with ``grant_units``."""
+    void_reason: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    """Why the paid handler voided the payment (one of :data:`PAYMENT_VOID_REASONS`), whether it
+    was then credited (``grant_units``) or left for a manual refund (no credit rate)."""
 
 
 class PaymobEvent(TimestampMixin, Base):
@@ -795,6 +825,7 @@ class AutoTopupSettings(TimestampMixin, Base):
 
 __all__ = [
     "LIVE_SUBSCRIPTION_STATUSES",
+    "PAYMENT_VOID_REASONS",
     "PLAN_LIVE_STATUSES",
     "AutoTopupSettings",
     "CreditPack",

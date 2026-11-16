@@ -867,8 +867,14 @@ def test_upgrade_downgrade_upgrade_round_trip(
 
     with sm() as session:
         assert current_revision(session) == head_revision()  # later revisions sit above 0057
-        # Later revisions add their own objects on top (0058's CHECK on subscriptions).
-        later = {"ck_subscriptions_previous_amount_paired"}
+        # Later revisions add their own objects on top (0058's CHECK on subscriptions, 0059's
+        # three CHECKs on payments).
+        later = {
+            "ck_subscriptions_previous_amount_paired",
+            "ck_payments_applied_not_credited",
+            "ck_payments_applied_not_voided",
+            "ck_payments_void_reason_known",
+        }
         assert object_names(session, PARITY_TABLES_WITH_EVENTS) - later == after_upgrade
         assert _function_count(session) == 1
         assert session.execute(sa.text("SELECT count(*) FROM job_runs")).scalar_one() == 0

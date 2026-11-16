@@ -107,6 +107,10 @@ class PaymentStatusDTO(ApiModel):
     #: applied nor converted, e.g. no credit rate: the payment was received and is being handled).
     #: ``None`` for any other purpose and for a payment not yet paid.
     outcome: Literal["applied", "credited", "needs_attention"] | None = None
+    #: Why an upgrade or seat payment was voided (``plan_ended``, ``period_rolled``,
+    #: ``superseded``, ``seats_over_limit``...), whether it was then credited or left for a
+    #: manual refund; ``None`` when it was not voided and for any other purpose.
+    voidReason: str | None = None
 
 
 class ReceiptDTO(ApiModel):

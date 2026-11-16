@@ -1037,6 +1037,146 @@ def test_a_paid_but_unconvertible_seat_purchase_is_the_third_state(
     assert body["outcome"] == "needs_attention"
 
 
+def _no_rate(sm: sessionmaker[Session]) -> None:
+    with sm.begin() as session:
+        session.execute(sa.delete(CreditConversionRate))
+
+
+def test_a_duplicate_upgrade_voided_without_a_rate_needs_attention_not_applied(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Two checkouts to one tier, both paid: the second is void and unconvertible (I1, failure 1).
+
+    The plan reads the target tier either way, so only the payment's own marker can tell the one
+    that applied from the one that did not.
+    """
+    sm = pg_sessionmaker
+    h = Harness(sm)
+    scene = _student(sm)
+    target = _tier(sm)
+    first = _upgrade_payment(h, scene, target)
+    second = _upgrade_payment(h, scene, target)
+    _no_rate(sm)
+
+    _deliver(sm, second)
+    _deliver(sm, first)
+
+    applied = _status(h, scene["payer_id"], Role.student, second)
+    voided = _status(h, scene["payer_id"], Role.student, first)
+    assert applied["outcome"] == "applied"
+    assert applied["voidReason"] is None
+    assert voided["status"] == "paid"
+    assert voided["creditedUnits"] is None
+    assert voided["outcome"] == "needs_attention"
+    assert voided["voidReason"] == "not_an_upgrade_now"
+    row = _payment(sm, first)
+    assert row.applied_at is None
+    assert _payment(sm, second).applied_at is not None
+
+
+def test_a_seat_purchase_voided_without_a_rate_needs_attention_when_the_teacher_holds_more(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Holds 5 extras, buys 2, the period rolls first, no rate: nothing was added (failure 2)."""
+    sm = pg_sessionmaker
+    h = Harness(sm)
+    scene = teacher_with_plan(sm)
+    _update_sub(sm, scene, extra_seats=5)
+    res = h.as_user(scene["teacher_id"], Role.teacher).post(_seats_url(scene), json={"seats": 2})
+    assert res.status_code == 201, res.text
+    payment_id = str(res.json()["paymentId"])
+    with sm() as session:
+        sub = session.get(Subscription, scene["subscription_id"])
+        assert sub is not None
+        end = sub.current_period_end
+    assert end is not None
+    _update_sub(
+        sm,
+        scene,
+        current_period_start=NOW + timedelta(days=1),
+        current_period_end=end + timedelta(days=30),
+    )
+    _no_rate(sm)
+
+    _deliver(sm, payment_id, at=NOW + timedelta(days=2))
+
+    with sm() as session:
+        sub = session.get(Subscription, scene["subscription_id"])
+        assert sub is not None
+        assert sub.extra_seats == 5  # nothing was added
+    body = _status(h, scene["teacher_id"], Role.teacher, payment_id)
+    assert body["outcome"] == "needs_attention"
+    assert body["voidReason"] == "period_rolled"
+    assert body["creditedUnits"] is None
+
+
+def test_an_applied_upgrade_stays_applied_after_a_later_upgrade(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The first upgrade worked; a second one moves the plan on. It must not read as an alarm."""
+    sm = pg_sessionmaker
+    h = Harness(sm)
+    scene = _student(sm)
+    mid = _tier(sm)
+    top = _tier(sm, price_minor=40_000, allowance_units=6_000)
+    first = _upgrade_payment(h, scene, mid)
+    _deliver(sm, first)
+    assert _status(h, scene["payer_id"], Role.student, first)["outcome"] == "applied"
+    second = _upgrade_payment(h, scene, top)
+    _deliver(sm, second)
+
+    body = _status(h, scene["payer_id"], Role.student, first)
+
+    assert body["outcome"] == "applied"
+    assert body["voidReason"] is None
+
+
+def test_a_converted_payment_reports_its_void_reason(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    h = Harness(sm)
+    scene = _student(sm)
+    payment_id = _upgrade_payment(h, scene, _tier(sm))
+    _update_sub(sm, scene, status=SubscriptionStatus.expired)
+
+    _deliver(sm, payment_id, at=NOW + timedelta(days=20))
+
+    body = _status(h, scene["payer_id"], Role.student, payment_id)
+    assert body["outcome"] == "credited"
+    assert body["voidReason"] == "plan_ended"
+    assert _payment(sm, payment_id).applied_at is None
+
+
+def test_a_queued_renewal_seat_payment_has_no_outcome(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A paid ``extra_seat_renewal:`` row pays for seats that already exist: ``outcome`` is null.
+
+    It has neither a marker nor credits, so without the ``dedupe_key`` gate it would read as
+    "needs attention" for a charge that did exactly what it was for.
+    """
+    sm = pg_sessionmaker
+    h = Harness(sm)
+    scene = teacher_with_plan(sm, extra=2)
+    queued = seed_payment_row(
+        sm,
+        payer_id=scene["teacher_id"],
+        purpose=PaymentPurpose.extra_seats,
+        amount_minor=4_000,
+        status=PaymentStatus.paid,
+        subscription_id=scene["subscription_id"],
+        seat_quantity=2,
+        dedupe_key=f"extra_seat_renewal:{scene['period_id']}:1",
+        paid_at=NOW,
+    )
+
+    body = _status(h, scene["teacher_id"], Role.teacher, str(queued))
+
+    assert body["status"] == "paid"
+    assert body["outcome"] is None
+
+
 def test_unsettled_and_other_purpose_payments_have_no_outcome_or_credited_units(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:

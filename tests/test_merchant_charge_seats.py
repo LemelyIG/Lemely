@@ -1258,7 +1258,9 @@ def _seeded_upgrade(
     *,
     paid_at: datetime,
     grant_units: int | None = None,
+    applied: bool = False,
 ) -> None:
+    """A paid upgrade. ``applied`` stamps ``applied_at`` (the handler switched the tier)."""
     payment_id = seed_payment_row(
         sm,
         payer_id=scene["payer_id"],
@@ -1270,11 +1272,36 @@ def _seeded_upgrade(
         plan_tier_id=scene["tier_id"],
         paid_at=paid_at,
     )
+    values: dict[str, Any] = {}
     if grant_units is not None:
+        values["grant_units"] = grant_units
+    if applied:
+        values["applied_at"] = paid_at
+    if values:
         with sm.begin() as session:
-            session.execute(
-                sa.update(Payment).where(Payment.id == payment_id).values(grant_units=grant_units)
-            )
+            session.execute(sa.update(Payment).where(Payment.id == payment_id).values(**values))
+
+
+def test_an_applied_upgrade_locks_a_pending_reduction(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scene = _teacher(sm, extra=3, pending=1)
+    _seeded_upgrade(sm, scene, paid_at=NOW, applied=True)
+    with pytest.raises(MerchantChargeError) as caught:
+        _reduce(sm, scene, 3)
+    assert caught.value.code == "seat_reduction_locked"
+
+
+def test_an_upgrade_voided_without_a_credit_rate_does_not_lock_a_pending_reduction(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Paid, never applied, never converted: it changed nothing, so it locks nothing (I1)."""
+    sm = pg_sessionmaker
+    scene = _teacher(sm, extra=3, pending=1)
+    _seeded_upgrade(sm, scene, paid_at=NOW)
+    _reduce(sm, scene, 3)
+    assert _sub(sm, scene).pending_extra_seats is None
 
 
 def test_a_credited_upgrade_does_not_lock_a_pending_reduction(

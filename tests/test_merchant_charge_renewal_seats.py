@@ -251,9 +251,14 @@ def _seed_purchase(
     *,
     seats: int = 1,
     created_at: datetime,
+    applied: bool = True,
 ) -> uuid.UUID:
-    """A seat purchase checkout (no ``dedupe_key``): prorated, so cheaper than the full price."""
-    return seed_payment_row(
+    """A seat purchase checkout (no ``dedupe_key``): prorated, so cheaper than the full price.
+
+    A paid one is stamped ``applied_at`` (its handler added the seats) unless ``applied`` is false:
+    a purchase voided to credits, or left unconverted, added none.
+    """
+    payment_id = seed_payment_row(
         sm,
         payer_id=scene["payer_id"],
         beneficiary_id=scene["user_id"],
@@ -265,6 +270,14 @@ def _seed_purchase(
         paid_at=created_at + timedelta(minutes=5) if status is PaymentStatus.paid else None,
         created_at=created_at,
     )
+    if applied and status is PaymentStatus.paid:
+        with sm.begin() as session:
+            session.execute(
+                sa.update(Payment)
+                .where(Payment.id == payment_id)
+                .values(applied_at=created_at + timedelta(minutes=5))
+            )
+    return payment_id
 
 
 def _notices(sm: sessionmaker[Session], recipient: uuid.UUID) -> list[EmailOutbox]:
@@ -1427,10 +1440,28 @@ def test_a_purchase_converted_to_credits_does_not_reduce_the_seat_charge(
     sm = pg_sessionmaker
     scene = _scene(sm)
     purchase = _seed_purchase(
-        sm, scene, PaymentStatus.paid, seats=1, created_at=T0 + timedelta(hours=1)
+        sm, scene, PaymentStatus.paid, seats=1, created_at=T0 + timedelta(hours=1), applied=False
     )
     with sm.begin() as session:  # it added no seats: its money became credits
         session.execute(sa.update(Payment).where(Payment.id == purchase).values(grant_units=1_000))
+
+    _run(sm, FakeMotoClient())
+
+    (attempt,) = _attempts(sm, scene)
+    assert attempt.amount_minor == 4_000
+
+
+def test_a_purchase_voided_without_a_credit_rate_does_not_reduce_the_seat_charge(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Paid, never applied, never converted (no rate): it added no seats, so the renewal still
+    charges for them, and the sweep still visits the row. Counting it as bought under-collects by
+    its quantity times the seat price: here the whole 4 000 (review I1, point 5)."""
+    sm = pg_sessionmaker
+    scene = _scene(sm)
+    _seed_purchase(
+        sm, scene, PaymentStatus.paid, seats=2, created_at=T0 + timedelta(hours=1), applied=False
+    )
 
     _run(sm, FakeMotoClient())
 
