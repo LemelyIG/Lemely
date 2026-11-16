@@ -9,18 +9,29 @@ const ITEM = "flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-[9px] te
 export function FilterMenu({ filters, options, onToggle, onClose }: { filters: ReviewQueueFilters; options: FilterOptions; onToggle: (c: FilterCategory, v: string) => void; onClose: () => void }) {
   const [step, setStep] = useState<FilterCategory | null>(null)
   const root = useRef<HTMLDivElement>(null)
+  const items = () => Array.from(root.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? [])
   useEffect(() => {
-    root.current?.querySelector<HTMLElement>("button")?.focus()
+    const all = items()
+    // Step 2 opens on the first value, not on the "back" item.
+    ;(step === null ? all[0] : (all[1] ?? all[0]))?.focus()
   }, [step])
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") return onClose()
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return
+    e.preventDefault()
+    const all = items()
+    const i = all.indexOf(document.activeElement as HTMLElement)
+    all[e.key === "ArrowDown" ? (i + 1) % all.length : (i - 1 + all.length) % all.length]?.focus()
+  }
   return (
-    <div ref={root} role="menu" aria-label="Add a filter" onKeyDown={(e) => e.key === "Escape" && onClose()} className="absolute inset-x-0 top-[calc(100%+6px)] z-20 rounded-[18px] bg-surface-container-lowest p-2 shadow-[var(--lm-rq-menu-shadow)]">
+    <div ref={root} role="menu" aria-label="Add a filter" onKeyDown={onKey} className="absolute inset-x-0 top-[calc(100%+6px)] z-20 rounded-[18px] bg-surface-container-lowest p-2 shadow-[var(--lm-rq-menu-shadow)]">
       {step === null ? (
         <>
-          <div className="px-2.5 pb-0.5 pt-1.5 font-mono text-[10.5px] font-semibold uppercase tracking-[0.08em] text-on-surface-variant">Filter by</div>
+          <div className="px-2.5 pb-0.5 pt-1.5 font-mono text-[12px] font-semibold uppercase tracking-[0.08em] text-on-surface-variant">Filter by</div>
           {filterCategories(filters).map((c) => (
             <button key={c.key} type="button" role="menuitem" onClick={() => setStep(c.key)} className={ITEM}>
               {c.label}
-              {c.count > 0 ? <span className="rounded-pill bg-primary px-[7px] py-px font-mono text-[11px] text-on-primary">{c.count}</span> : null}
+              {c.count > 0 ? <span className="rounded-pill bg-primary px-[7px] py-px font-mono text-[12px] text-on-primary">{c.count}</span> : null}
               <span className="ms-auto text-on-surface-variant" aria-hidden="true">›</span>
             </button>
           ))}

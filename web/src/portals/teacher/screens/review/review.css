@@ -14,19 +14,29 @@
 .lm-rq-bump { animation: lm-rq-bump 0.35s var(--ease-expo); }
 .lm-rq-bump-lg { animation: lm-rq-bump 0.6s var(--ease-expo); }
 .lm-rq-skel { animation: lm-rq-skel 1.6s ease-in-out infinite; }
+.lm-rq-li {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.35s var(--ease-out);
+}
+.lm-rq-li:has(> [data-gone]) { grid-template-rows: 0fr; }
 .lm-rq-row {
   transition: opacity 0.3s var(--ease-out), transform 0.3s var(--ease-out),
-    max-height 0.35s var(--ease-out), background-color 0.15s;
-  max-height: 100px;
-  overflow: hidden;
+    background-color 0.15s;
 }
 .lm-rq-row[data-gone] {
   opacity: 0;
   transform: translateX(24px);
-  max-height: 0;
+  overflow: hidden;
+  min-block-size: 0;
   padding-block: 0 !important;
   border: 0 !important;
   pointer-events: none;
+}
+/* The global coarse-pointer floor (index.css) would stretch every chip to 44px and stack them
+   one per row. Chips keep their visual height; the 44px hit area is the ::after on each button. */
+@media (pointer: coarse) {
+  .lm-rq-chips button { min-block-size: 0; min-inline-size: 0; }
 }
 .lm-rq-ruled {
   background-image: repeating-linear-gradient(
@@ -39,6 +49,6 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .lm-rq-bump, .lm-rq-bump-lg, .lm-rq-skel { animation: none; }
-  .lm-rq-row, .lm-rq-toast { transition: none; }
+  .lm-rq-li, .lm-rq-row, .lm-rq-toast { transition: none; }
   .lm-rq-toast { transform: translateX(-50%) !important; }
 }

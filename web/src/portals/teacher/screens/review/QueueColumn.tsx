@@ -58,7 +58,7 @@ export function QueueColumn(p: QueueColumnProps) {
               {p.selecting ? "Cancel" : "Select"}
             </button>
             <span className="flex-1" />
-            <button type="button" onClick={p.onBulk} disabled={p.bulk.disabled} className="rounded-[14px] bg-primary px-3.5 py-[9px] text-[13px] font-bold text-on-primary active:scale-[.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:bg-outline pointer-coarse:min-h-11">
+            <button type="button" onClick={p.onBulk} disabled={p.bulk.disabled} className="rounded-[14px] bg-primary px-3.5 py-[9px] text-[13px] font-bold text-on-primary active:scale-[.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:bg-surface-container-high disabled:text-on-surface-variant disabled:shadow-[inset_0_0_0_1.5px_var(--color-outline)] pointer-coarse:min-h-11">
               {p.bulk.label}
             </button>
           </div>
