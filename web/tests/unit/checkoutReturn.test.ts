@@ -7,6 +7,7 @@ import {
   isSafeCheckoutUrl,
   packCheckoutRequest,
   backLabel,
+  defaultReturnPath,
   paidResult,
   rememberReturnTo,
   retryPath,
@@ -121,12 +122,9 @@ describe("paid results", () => {
   it("reads the credited copy when creditedUnits is a number, and keeps the reason", () => {
     const c = copy({ outcome: "credited", creditedUnits: 120, voidReason: "plan_ended" })
     expect(c.heading).toBe("Added to your credits")
-    expect(c.body).toMatch(/plan ended before this payment cleared/)
-    expect(c.body).toMatch(/Nothing else changed/)
+    expect(c.body).toBe("Your plan ended first, so we added this to your credits.")
     expect(copy({ outcome: "credited", creditedUnits: 120, voidReason: "seats_over_limit" }).body).toMatch(/seat limit/)
-    expect(copy({ outcome: "credited", creditedUnits: 120, voidReason: null }).body).toBe(
-      "Your plan changed before this payment cleared, so we added it to your credits instead. Nothing else changed.",
-    )
+    expect(copy({ outcome: "credited", creditedUnits: 120, voidReason: null }).body).toBe("Your plan changed first, so we added this to your credits.")
     // A renewal seat row has no outcome but does carry credits.
     expect(copy({ creditedUnits: 5, voidReason: "period_ended" }).heading).toBe("Added to your credits")
     expect(copy({ creditedUnits: null }).heading).toBe("Plan upgraded")
@@ -139,6 +137,12 @@ describe("paid results", () => {
     expect(paidResult({ outcome: "needs_attention", creditedUnits: 5, voidReason: null })).toBe("needs_attention")
   })
 
+  it("keeps every paid line short and free of numbers", () => {
+    const lines = [copy({ outcome: "needs_attention" }), copy({ outcome: "credited", creditedUnits: 1 })]
+    for (const l of lines) expect(l.body.length, l.body).toBeLessThan(80)
+    expect(copy({ outcome: "needs_attention" }).body).toBe("We couldn't apply it. We'll fix it or refund you.")
+  })
+
   it("never writes an amount of money", () => {
     for (const reason of ["plan_ended", "period_rolled", "superseded", "seats_changing", "seats_over_limit", "seats_not_sold", "period_ended", "seats_dropped", "not_an_upgrade_now"]) {
       expect(copy({ outcome: "credited", creditedUnits: 9, voidReason: reason as PaymentVoidReason }).body).not.toMatch(/\d|EGP/)
@@ -147,6 +151,12 @@ describe("paid results", () => {
 })
 
 describe("where the way back and Try again go", () => {
+  it("falls back by purpose when no path was remembered (a new tab from a bank app)", () => {
+    expect(defaultReturnPath("extra_seats", "teacher")).toBe("/teacher/team")
+    expect(defaultReturnPath("upgrade_proration", "teacher")).toBe("/teacher/billing")
+    expect(defaultReturnPath(undefined, "student")).toBe("/student/billing")
+  })
+
   it("sends plans and packs to the plans page and extra seats to the team page itself", () => {
     expect(retryPath("subscription_first", "/teacher/billing")).toBe("/teacher/billing/plans")
     expect(retryPath("credit_pack", "/student/billing")).toBe("/student/billing/plans")

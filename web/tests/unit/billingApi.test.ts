@@ -20,7 +20,7 @@ import {
   PAYMENT_POLL_MS,
 } from "@/lib/hooks/useBillingApi"
 import { usageApi } from "@/lib/hooks/useUsageApi"
-import { billingErrorCode, billingFailureMessage } from "@/lib/billingOutcome"
+import { billingErrorCode, billingFailureMessage, isTerminalRefusal } from "@/lib/billingOutcome"
 import { billingPaths } from "@/lib/billingPaths"
 
 const req = vi.mocked(request)
@@ -206,26 +206,44 @@ describe("billing failure copy", () => {
     expect(billingFailureMessage(errorShape("weird"), "upgrade")).toBe("Couldn't upgrade. Nothing was charged. Try again.")
   })
 
-  it("words the new refusals plainly, with the facts the backend sends", () => {
+  it("words the refusals in few words, with the facts the backend sends", () => {
     const err = (error: string, extra: object = {}, status = 409) => new ApiError(status, String(status), { error, message: "x", ...extra })
     const say = (e: ApiError) => billingFailureMessage(e, "change your plan")
     expect(say(err("upgrade_unavailable", { next: "cancel_and_resubscribe" }))).toBe(
-      "This plan can't be upgraded mid-period. Cancel at the end of the period and subscribe to the new plan.",
+      "Can't upgrade mid-period. Cancel at period end, then subscribe to the new plan.",
     )
-    expect(say(err("upgrade_unavailable"))).toMatch(/can't be upgraded/)
-    expect(say(err("subscription_not_active"))).toBe("Your plan's last payment didn't go through, so it can't be changed until it's paid.")
-    expect(say(err("seat_reduction_locked"))).toBe("You can change this reduction at your next renewal.")
-    expect(say(err("seats_not_sold", { extraSeats: 3 }))).toMatch(/3 extra seats/)
-    expect(say(err("seats_not_sold", { extraSeats: 1 }))).toMatch(/1 extra seat\b/)
-    expect(say(err("seats_exceed_new_tier", { inUse: 5, capacity: 3 }))).toMatch(/3 seats and 5 are in use/)
-    expect(say(err("seats_exceed_new_tier"))).toMatch(/fewer seats than students/)
-    for (const code of ["not_an_upgrade", "not_a_teacher_plan", "seat_reduction_unavailable", "seats_changing", "seats_over_limit", "settings_changing", "period_ending", "cap_below_pack_price", "charge_in_flight"]) {
+    expect(say(err("upgrade_unavailable"))).toBe("This plan can't be upgraded now. Nothing was charged.")
+    expect(say(err("subscription_not_active"))).toBe("Your last payment failed. Pay it before changing your plan.")
+    expect(say(err("seat_reduction_locked"))).toBe("Reduction locked. You can change it at your next renewal.")
+    expect(say(err("seats_not_sold", { extraSeats: 3 }))).toMatch(/you hold 3\b/)
+    expect(say(err("seats_exceed_new_tier", { inUse: 5, capacity: 3 }))).toBe("That plan has 3 seats; 5 in use. Remove students first.")
+    expect(say(err("seats_exceed_new_tier"))).toMatch(/fewer seats than your students/)
+    for (const code of ["not_an_upgrade", "not_a_teacher_plan", "seat_reduction_unavailable", "settings_changing", "period_ending", "cap_below_pack_price", "charge_in_flight"]) {
       const text = say(err(code))
       expect(text, code).not.toMatch(/^Couldn't/)
       expect(text, code).not.toMatch(/[!—]/)
     }
-    expect(say(err("charge_in_flight"))).toMatch(/already being confirmed/)
-    expect(say(err("no_saved_card"))).toMatch(/saved card/)
+    expect(say(err("charge_in_flight"))).toBe("A payment is already being confirmed. Wait a minute, then try again.")
+  })
+
+  it("maps the real seat-limit refusal: 422 invalid_seats, never a 409 code", () => {
+    // `_plan_seats` raises MerchantChargeError("invalid_seats"), which `_CHARGE_STATUS` answers with 422.
+    const real = new ApiError(422, "422", { error: "invalid_seats", message: "That would pass the most extra seats allowed" })
+    expect(billingFailureMessage(real, "add seats")).toBe("That's more seats than a plan can hold. Try fewer.")
+    // The two void reasons are never error codes, so they get no special copy.
+    for (const code of ["seats_over_limit", "seats_changing"]) {
+      expect(billingFailureMessage(new ApiError(409, "409", { error: code, message: "x" }), "add seats")).toBe("Couldn't add seats. Nothing was charged. Try again.")
+    }
+  })
+
+  it("marks refusals that fail the same way again as terminal, and transient ones as not", () => {
+    const e = (error: string, status = 409) => new ApiError(status, String(status), { error, message: "x" })
+    for (const c of ["upgrade_unavailable", "seats_not_sold", "seats_exceed_new_tier", "not_an_upgrade", "subscription_not_active", "period_ending"]) {
+      expect(isTerminalRefusal(e(c)), c).toBe(true)
+    }
+    expect(isTerminalRefusal(e("invalid_seats", 422))).toBe(true)
+    for (const c of ["charge_in_flight", "payments_unavailable"]) expect(isTerminalRefusal(e(c, c === "payments_unavailable" ? 503 : 409)), c).toBe(false)
+    expect(isTerminalRefusal(new ApiError(0, "x"))).toBe(false)
   })
 
   it("says nothing was charged when offline or when payments are down", () => {

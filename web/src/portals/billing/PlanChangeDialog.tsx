@@ -4,8 +4,8 @@ import { useEffect, useRef, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Modal } from "@/components/ui/modal"
 import { formatBillingDate, formatMoney } from "@/lib/billingFormat"
-import { billingErrorCode, billingFailureMessage } from "@/lib/billingOutcome"
-import type { PlanTier, SavedCardView, SubscriptionView } from "@/lib/billingTypes"
+import { billingErrorCode, billingFailureMessage, isTerminalRefusal } from "@/lib/billingOutcome"
+import type { PlanTier, SubscriptionView } from "@/lib/billingTypes"
 import { useDowngrade, useUpgrade, useUpgradeQuote } from "@/lib/hooks/useBillingApi"
 import { isCheckoutPhoneRequired } from "@/lib/phone"
 import { CheckoutPhonePrompt } from "./CheckoutPhonePrompt"
@@ -37,7 +37,6 @@ export function PlanChangeDialog({
   onClose,
   subscription,
   tier,
-  savedCard,
   returnTo,
   go,
 }: {
@@ -45,8 +44,6 @@ export function PlanChangeDialog({
   onClose: () => void
   subscription: SubscriptionView
   tier: PlanTier | null
-  /** Offered on Paymob's page when the payer has one; never required. */
-  savedCard: SavedCardView | null
   /** The page this dialog was opened from; the payer lands back on it from "Back to billing". */
   returnTo: string
   /** Leaves for checkout; the browser's `location.assign` unless a test injects one. */
@@ -59,8 +56,10 @@ export function PlanChangeDialog({
   const { mutate: requestQuote } = quote
   const statusRef = useRef<HTMLParagraphElement>(null)
   const higherPrice = tier !== null && tier.priceMinor > subscription.tier.priceMinor
-  // F1: an upgrade is only offered inside the interval being paid; across intervals it is not one.
-  const crossInterval = higherPrice && tier.interval !== subscription.tier.interval
+  // F1/F5: the server judges an upgrade on terms, not catalogue price, and both the upgrade and the
+  // downgrade route need the interval being paid. Any other interval is a change at the period end.
+  const held = subscription.tier.interval
+  const crossInterval = tier !== null && held !== null && tier.interval !== held
   const isUpgrade = higherPrice && !crossInterval
   const tierId = tier?.id ?? null
   const subscriptionId = subscription.subscriptionId
@@ -85,7 +84,9 @@ export function PlanChangeDialog({
   const needsPhone = upgradeFailed && isCheckoutPhoneRequired(upgrade.error)
   // `downgrade_unavailable` says this plan cannot be scheduled right now, so offering the same button again would contradict it.
   const unavailable = downgradeFailed && billingErrorCode(downgrade.error) === "downgrade_unavailable"
-  const canConfirm = !downgraded && !unavailable && !crossInterval && !needsPhone && (isUpgrade ? q !== undefined : true)
+  // A refusal that fails the same way again leaves nothing to press: each try spends a checkout attempt.
+  const refused = (upgradeFailed && isTerminalRefusal(upgrade.error)) || (downgradeFailed && isTerminalRefusal(downgrade.error))
+  const canConfirm = !downgraded && !unavailable && !refused && !crossInterval && !needsPhone && (isUpgrade ? q !== undefined : true)
   const busy = upgrade.isPending || launch.redirecting || downgrade.isPending
   const end = subscription.currentPeriodEnd ? formatBillingDate(subscription.currentPeriodEnd) : "the end of this period"
 
@@ -94,7 +95,7 @@ export function PlanChangeDialog({
   let statusClass = STATUS_SHOWN
   let body: ReactNode = null
   if (launch.redirecting) {
-    status = "Taking you to the payment page…"
+    status = "Taking you to payment…"
     statusClass = "m-0 text-body-sm text-on-surface-variant"
   } else if (downgraded && downgrade.data) {
     status = `Scheduled. ${tier.name} starts on ${
@@ -103,25 +104,23 @@ export function PlanChangeDialog({
   } else if (crossInterval) {
     body = (
       <p className="m-0 text-body-md text-on-surface">
-        {tier.name} bills every {tier.interval}, so it can't be switched to mid-period. Cancel at the end of the period and subscribe to
-        it then.
+        {tier.name} bills every {tier.interval}. Cancel at period end, then subscribe to it.
       </p>
     )
   } else if (!isUpgrade) {
     body = (
       <p className="m-0 text-body-md text-on-surface">
-        {tier.name} starts on {end}. You keep {subscription.tier.name} until then, and nothing is charged now.
+        {tier.name} starts on {end}. You keep {subscription.tier.name} until then. Nothing is charged now.
       </p>
     )
   } else if (quote.isPending) {
-    status = "Working out the price…"
+    status = "Getting the price…"
     statusClass = "m-0 text-body-sm text-on-surface-variant"
   } else if (q) {
     status = (
       <>
-        You pay <span className="text-data-md">{formatMoney(q.amountMinor, q.currency)}</span> now for the rest of this period. You'll
-        confirm it with your bank on the next page.
-        {savedCard ? ` Your saved card (${savedCard.brand} ${savedCard.maskedPan}) will be offered there.` : ""}
+        Pay <span className="text-data-md">{formatMoney(q.amountMinor, q.currency)}</span> now for the rest of this period. You'll
+        confirm with your bank next.
       </>
     )
   }
@@ -138,13 +137,13 @@ export function PlanChangeDialog({
       dismissible={!busy}
       title={`Change to ${tier.name}`}
       footer={
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button variant="ghost" onClick={onClose} disabled={busy}>
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button variant="ghost" className="w-full sm:w-auto" onClick={onClose} disabled={busy}>
             {downgraded ? "Close" : "Not now"}
           </Button>
           {canConfirm ? (
-            <Button variant="primary" loading={busy} onClick={confirm}>
-              {isUpgrade && q ? `Continue to payment (${formatMoney(q.amountMinor, q.currency)})` : "Schedule the change"}
+            <Button variant="primary" className="w-full sm:w-auto" loading={busy} onClick={confirm}>
+              {isUpgrade && q ? "Continue to payment" : "Schedule the change"}
             </Button>
           ) : null}
         </div>
@@ -152,7 +151,13 @@ export function PlanChangeDialog({
     >
       <div className="flex flex-col gap-3">
         {body}
-        {needsPhone ? <CheckoutPhonePrompt onSaved={() => upgrade.variables && launch.launch(upgrade.variables)} /> : null}
+        {needsPhone ? <CheckoutPhonePrompt
+            onSaved={() => {
+              // The prompt unmounts once the retry starts; keep focus in the dialog.
+              statusRef.current?.focus()
+              if (upgrade.variables) launch.launch(upgrade.variables)
+            }}
+          /> : null}
         <p ref={statusRef} role="status" tabIndex={-1} className={status ? statusClass : "sr-only"}>
           {status}
         </p>

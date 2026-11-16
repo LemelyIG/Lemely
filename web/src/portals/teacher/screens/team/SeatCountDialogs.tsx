@@ -1,12 +1,11 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
 /* The count is never coerced: an out-of-range value shows a field error and the quote and pay buttons stay disabled, so the seats priced are the seats charged. */
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Modal } from "@/components/ui/modal"
 import { formatMoney } from "@/lib/billingFormat"
-import { billingFailureMessage } from "@/lib/billingOutcome"
-import type { SavedCardView } from "@/lib/billingTypes"
+import { billingFailureMessage, isTerminalRefusal } from "@/lib/billingOutcome"
 import { useAddSeats, useReduceSeats, useSeatQuote } from "@/lib/hooks/useBillingApi"
 import { isCheckoutPhoneRequired } from "@/lib/phone"
 import { seatCountValidation, seatsWord } from "@/lib/teamModel"
@@ -32,7 +31,6 @@ export function AddSeatsDialog({
   onClose,
   subscriptionId,
   perSeatMinor,
-  savedCard,
   returnTo,
   go,
 }: {
@@ -40,14 +38,13 @@ export function AddSeatsDialog({
   onClose: () => void
   subscriptionId: string
   perSeatMinor: number | null
-  /** Offered on Paymob's page when the teacher has one; never required. */
-  savedCard: SavedCardView | null
   /** The team page; "Back to your team" on the return page lands here. */
   returnTo: string
   /** Leaves for checkout; the browser's `location.assign` unless a test injects one. */
   go?: (url: string) => void
 }) {
   const [qty, setQty] = useState("1")
+  const statusRef = useRef<HTMLParagraphElement>(null)
   const quote = useSeatQuote()
   const add = useAddSeats()
   const launch = useCheckoutLaunch(add, returnTo, go)
@@ -56,8 +53,26 @@ export function AddSeatsDialog({
   const seats = count.ok ? count.seats : null
   const needsPhone = add.isError && isCheckoutPhoneRequired(add.error)
   const failure = add.isError ? add.error : quote.isError ? quote.error : null
+  // A refusal that fails the same way again leaves nothing to press until the count changes.
+  const refused = failure !== null && isTerminalRefusal(failure)
   const busy = add.isPending || launch.redirecting
   const message = launch.unsafe ? UNSAFE_CHECKOUT_URL : failure && !needsPhone ? billingFailureMessage(failure, "add seats") : null
+  const quoteLine =
+    q && seats !== null && !needsPhone ? (
+      launch.redirecting ? (
+        "Taking you to payment…"
+      ) : (
+        <>
+          Pay <span className="text-data-md">{formatMoney(q.amountMinor, q.currency)}</span> now for {seatsWord(seats)}
+          {perSeatMinor !== null ? (
+            <>
+              , then <span className="text-data-md">{formatMoney(perSeatMinor, q.currency)}</span> per seat each period
+            </>
+          ) : null}
+          . You&apos;ll confirm with your bank next.
+        </>
+      )
+    ) : null
   return (
     <Modal
       open={open}
@@ -66,17 +81,18 @@ export function AddSeatsDialog({
       size="sm"
       title="Add seats"
       footer={
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button variant="ghost" onClick={onClose} disabled={busy}>Not now</Button>
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button variant="ghost" className="w-full sm:w-auto" onClick={onClose} disabled={busy}>Not now</Button>
           {q && seats !== null && !needsPhone ? (
-            <Button variant="primary" loading={busy} onClick={() => launch.launch({ subscriptionId, seats })}>
-              Continue to payment ({formatMoney(q.amountMinor, q.currency)})
+            <Button variant="primary" className="w-full sm:w-auto" loading={busy} disabled={refused} onClick={() => launch.launch({ subscriptionId, seats })}>
+              Continue to payment
             </Button>
           ) : q ? null : (
             <Button
               variant="primary"
+              className="w-full sm:w-auto"
               loading={quote.isPending}
-              disabled={seats === null}
+              disabled={seats === null || refused}
               onClick={() => seats !== null && quote.mutate({ subscriptionId, seats })}
             >
               Get the price
@@ -100,29 +116,21 @@ export function AddSeatsDialog({
             setQty(e.target.value)
             quote.reset()
             add.reset()
+            launch.clearUnsafe()
           }}
         />
-        {needsPhone ? <CheckoutPhonePrompt onSaved={() => add.variables && launch.launch(add.variables)} /> : null}
-        {q && seats !== null && !needsPhone ? (
-          <p role="status" className="m-0 text-body-md text-on-surface">
-            {launch.redirecting ? (
-              "Taking you to the payment page…"
-            ) : (
-              <>
-                For {seatsWord(seats)} you pay <span className="text-data-md">{formatMoney(q.amountMinor, q.currency)}</span> now for
-                the rest of this period
-                {perSeatMinor !== null ? (
-                  <>
-                    , then <span className="text-data-md">{formatMoney(perSeatMinor, q.currency)}</span> per seat each period with your
-                    plan
-                  </>
-                ) : null}
-                . You&apos;ll confirm it with your bank on the next page.
-                {savedCard ? ` Your saved card (${savedCard.brand} ${savedCard.maskedPan}) will be offered there.` : ""}
-              </>
-            )}
-          </p>
+        {needsPhone ? (
+          <CheckoutPhonePrompt
+            onSaved={() => {
+              // The prompt unmounts once the retry starts; keep focus in the dialog.
+              statusRef.current?.focus()
+              if (add.variables) launch.launch(add.variables)
+            }}
+          />
         ) : null}
+        <p ref={statusRef} role="status" tabIndex={-1} className={quoteLine ? "m-0 text-body-md text-on-surface focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary" : "sr-only"}>
+          {quoteLine}
+        </p>
         {message ? <p role="alert" className="m-0 text-body-sm text-error">{message}</p> : null}
       </div>
     </Modal>

@@ -40,5 +40,5 @@ export function useCheckoutLaunch<V>(
       },
     })
   }
-  return { launch, unsafe, redirecting: mutation.isSuccess && !unsafe }
+  return { launch, unsafe, clearUnsafe: () => setUnsafe(false), redirecting: mutation.isSuccess && !unsafe }
 }

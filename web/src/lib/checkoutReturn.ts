@@ -66,6 +66,14 @@ export function returnToFor(paymentId: string, fallback: string, storage: Storag
   return stored !== null && isSamePath(stored) ? stored : fallback
 }
 
+/**
+ * Where to send the payer when no path was remembered (a new tab from a bank app has no
+ * sessionStorage): extra seats belong to the team page, everything else to billing.
+ */
+export function defaultReturnPath(purpose: PaymentPurpose | null | undefined, role: string | undefined): string {
+  return purpose === "extra_seats" ? "/teacher/team" : defaultBillingPath(role)
+}
+
 export function defaultBillingPath(role: string | undefined): string {
   if (role === "student") return "/student/billing"
   if (role === "teacher" || role === "school_admin") return "/teacher/billing"
@@ -171,26 +179,24 @@ export function paidResult(p: PaymentResult | undefined): PaidResult {
   return "applied"
 }
 
-const CREDITED_TAIL = "so we added it to your credits instead. Nothing else changed."
-
-/** Why the payment became credits, in words that match what actually happened (generic when unknown). */
+/** Why the payment became credits, in as few words as will do (generic when unknown). */
 const CREDITED_BODY: Record<string, string> = {
-  plan_ended: `Your plan ended before this payment cleared, ${CREDITED_TAIL}`,
-  period_rolled: `Your plan renewed before this payment cleared, ${CREDITED_TAIL}`,
-  period_ended: `Your plan renewed before this payment cleared, ${CREDITED_TAIL}`,
-  superseded: `Another change to your plan went through first, ${CREDITED_TAIL}`,
-  not_an_upgrade_now: `Another change to your plan went through first, ${CREDITED_TAIL}`,
-  seats_changing: `Your seats were changed while this payment was clearing, ${CREDITED_TAIL}`,
-  seats_dropped: `Your seats were changed while this payment was clearing, ${CREDITED_TAIL}`,
-  seats_over_limit: `Your team was already at its seat limit, ${CREDITED_TAIL}`,
-  seats_not_sold: `Your plan doesn't include extra seats, ${CREDITED_TAIL}`,
+  plan_ended: "Your plan ended first, so we added this to your credits.",
+  period_rolled: "Your plan renewed first, so we added this to your credits.",
+  period_ended: "Your plan renewed first, so we added this to your credits.",
+  superseded: "Another change went through first, so we added this to your credits.",
+  not_an_upgrade_now: "Another change went through first, so we added this to your credits.",
+  seats_changing: "Your seats changed first, so we added this to your credits.",
+  seats_dropped: "Your seats changed first, so we added this to your credits.",
+  seats_over_limit: "You're at the seat limit, so we added this to your credits.",
+  seats_not_sold: "Your plan has no extra seats, so we added this to your credits.",
 }
 
-export const CREDITED_FALLBACK = `Your plan changed before this payment cleared, ${CREDITED_TAIL}`
+export const CREDITED_FALLBACK = "Your plan changed first, so we added this to your credits."
 
 const NEEDS_ATTENTION: ReturnCopy = {
   heading: "Payment received, we're handling it",
-  body: "Your payment came through, but we couldn't apply the change automatically. We'll sort it out or refund it. You don't need to pay again.",
+  body: "We couldn't apply it. We'll fix it or refund you.",
 }
 
 /** The paid copy for a payment, by what it came to. */

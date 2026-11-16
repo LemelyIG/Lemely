@@ -49,8 +49,8 @@ beforeEach(() => {
 const text = (html: string) => html.replace(/<[^>]+>/g, "").replace(/&#x27;/g, "'")
 
 const quoted = { amountMinor: 4500, currency: "EGP", allowanceUnits: null, periodEnd: "2026-12-01T00:00:00Z" }
-const addDialog = (savedCard = fx.team.savedCard) =>
-  renderStatic(h(AddSeatsDialog, { open: true, onClose: () => undefined, subscriptionId: "sub-t", perSeatMinor: 3000, savedCard, returnTo: "/teacher/team" }))
+const addDialog = () =>
+  renderStatic(h(AddSeatsDialog, { open: true, onClose: () => undefined, subscriptionId: "sub-t", perSeatMinor: 3000, returnTo: "/teacher/team" }))
 
 describe("SeatsPanel", () => {
   it("shows capacity, the seat list and actions", () => {
@@ -254,17 +254,9 @@ describe("seat count dialogs", () => {
   it("quotes extra seats, then continues to Paymob's checkout", () => {
     s.m.quote = fakeMutation({ isSuccess: true, data: quoted })
     const html = addDialog()
-    expect(html).toMatch(/Continue to payment \(EGP\s45\.00\)</)
-    expect(text(html)).toMatch(/For 1 seat you pay EGP\s45\.00 now/)
-    expect(text(html)).toMatch(/EGP\s30\.00 per seat/)
-    expect(html).toContain("Mastercard")
-  })
-
-  it("still offers payment with no saved card", () => {
-    s.m.quote = fakeMutation({ isSuccess: true, data: quoted })
-    const html = addDialog(null)
     expect(html).toContain("Continue to payment")
-    expect(html).not.toContain("saved card")
+    expect(text(html)).toMatch(/Pay EGP\s45\.00 now for 1 seat, then EGP\s30\.00 per seat each period/)
+    expect(text(html)).not.toMatch(/saved card/)
   })
 
   it("locks the seat count while the charge is being made", () => {
@@ -278,7 +270,7 @@ describe("seat count dialogs", () => {
     s.m.quote = fakeMutation({ isSuccess: true, data: quoted })
     s.m.add = fakeMutation({ isSuccess: true, data: { paymentId: "pay1", checkoutUrl: "https://eg.checkout.paymob.com/?x=1" } })
     const html = addDialog()
-    expect(html).toContain("Taking you to the payment page")
+    expect(html).toContain("Taking you to payment")
     expect(html).not.toMatch(/Seats added|were added/)
   })
 
@@ -291,7 +283,7 @@ describe("seat count dialogs", () => {
     s.m.reduce = fakeMutation({ isError: true, error: new ApiError(409, "x", { error: "seats_in_use", message: "x" }) })
     const reduce = () =>
       renderStatic(h(ReduceSeatsDialog, { open: true, onClose: () => undefined, subscriptionId: "sub-t", extraSeats: 2, removable: 2 }))
-    expect(reduce()).toContain("More students hold seats than this would leave.")
+    expect(reduce()).toContain("Too many students hold seats.")
     s.m.reduce = fakeMutation({ isSuccess: true, data: { extraSeats: 2, pendingExtraSeats: 1 } })
     expect(reduce()).toContain("1 extra seat from the end of this period.")
   })

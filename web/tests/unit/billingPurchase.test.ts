@@ -173,7 +173,7 @@ describe("PlansView", () => {
     s.packCheckout = fakeMutation({ isError: true, error: new ApiError(503, "x") })
     const html = view()
     expect(html).toContain('role="alert"')
-    expect(html).toContain("Payments are unavailable right now. Nothing was charged.")
+    expect(html).toContain("Payments are unavailable. Nothing was charged.")
   })
 })
 

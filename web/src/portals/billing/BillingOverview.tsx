@@ -13,7 +13,7 @@ import { ErrorState } from "@/components/ui/state-views"
 import { ApiError } from "@/lib/api"
 import { formatBillingDate, formatMoney, intervalLabel, isLiveSubscription } from "@/lib/billingFormat"
 import { billingPaths, type BillingScope } from "@/lib/billingPaths"
-import type { Audience, BillingSummary, PlanTier, SavedCardView, SubscriptionView, UsageMeterView } from "@/lib/billingTypes"
+import type { Audience, BillingSummary, PlanTier, SubscriptionView, UsageMeterView } from "@/lib/billingTypes"
 import { useBillingSummary, useCatalogue } from "@/lib/hooks/useBillingApi"
 import { useUsageMeter } from "@/lib/hooks/useUsageApi"
 import { describeQueryFailure } from "@/lib/queryFailure"
@@ -136,13 +136,11 @@ function PlanChangeHost({
   subscription,
   tiers,
   changeTierId,
-  savedCard,
   onClose,
 }: {
   subscription: SubscriptionView
   tiers: PlanTier[]
   changeTierId: string | null
-  savedCard: SavedCardView | null
   onClose: () => void
 }) {
   const [pinned, setPinned] = useState<PinnedChange | null>(null)
@@ -158,7 +156,6 @@ function PlanChangeHost({
       onClose={onClose}
       subscription={active?.subscription ?? subscription}
       tier={tier}
-      savedCard={savedCard}
       returnTo={pathname}
     />
   )
@@ -260,7 +257,6 @@ export function BillingOverview({
                       subscription={sub}
                       tiers={catalogue.data?.tiers ?? []}
                       changeTierId={changeTo}
-                      savedCard={s.savedCard}
                       onClose={closeChange}
                     />
                     <CancelPlanDialog open={cancelOpen} onClose={() => setCancelOpen(false)} subscription={sub} audience={audience} />

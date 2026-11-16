@@ -186,7 +186,7 @@ describe("checkout 422 phone_required", () => {
     expect(PHONE_CHECKOUT_BODY).toMatch(/mobile number/)
     // Other 422s keep the generic sentence.
     expect(billingFailureMessage(new ApiError(422, "422", { code: "other" }), "start checkout")).toBe(
-      "Couldn't start checkout. Check the details and try again.",
+      "Couldn't start checkout. Check the details.",
     )
   })
 })

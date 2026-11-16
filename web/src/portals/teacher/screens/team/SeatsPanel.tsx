@@ -175,7 +175,6 @@ export function SeatsPanel({ team }: { team: TeamView }) {
           onClose={() => setAdding(false)}
           subscriptionId={team.subscriptionId}
           perSeatMinor={team.extraSeatPriceMinor}
-          savedCard={team.savedCard}
           returnTo={pathname}
         />
       ) : null}

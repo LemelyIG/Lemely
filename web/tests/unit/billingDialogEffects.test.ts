@@ -36,8 +36,8 @@ import { PlanChangeDialog } from "@/portals/billing/PlanChangeDialog"
 
 const up = { ...fx.studentMonthly, id: "t-up", name: "Student Max", priceMinor: 40000 }
 const down = { ...fx.studentMonthly, id: "t-down", name: "Student Lite", priceMinor: 10000 }
-const dialog = (tier = up, savedCard = fx.summary.savedCard) =>
-  renderStatic(h(PlanChangeDialog, { open: true, onClose: () => undefined, subscription: fx.activeSub, tier, savedCard, returnTo: "/teacher/billing" }))
+const dialog = (tier = up) =>
+  renderStatic(h(PlanChangeDialog, { open: true, onClose: () => undefined, subscription: fx.activeSub, tier, returnTo: "/teacher/billing" }))
 
 beforeEach(() => {
   s.quote = fakeMutation()
@@ -49,13 +49,8 @@ beforeEach(() => {
 describe("PlanChangeDialog quote request", () => {
   const mutate = () => (s.quote as { mutate: ReturnType<typeof vi.fn> }).mutate
 
-  it("quotes an upgrade when there is a saved card", () => {
+  it("quotes an upgrade", () => {
     dialog()
-    expect(mutate()).toHaveBeenCalledWith({ subscriptionId: "sub1", planTierId: "t-up" })
-  })
-
-  it("quotes an upgrade with no saved card: the card is typed on Paymob's page", () => {
-    dialog(up, null)
     expect(mutate()).toHaveBeenCalledWith({ subscriptionId: "sub1", planTierId: "t-up" })
   })
 

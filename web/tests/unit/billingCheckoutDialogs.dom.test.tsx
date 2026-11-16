@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "./support/dom-setup"
 import { createElement as h } from "react"
-import { render, renderHook, screen, waitFor } from "@testing-library/react"
+import { act, render, renderHook, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -58,23 +58,37 @@ const quoted = { amountMinor: 7500, currency: "EGP", allowanceUnits: 900, period
 const up = { ...fx.studentMonthly, id: "t-up", name: "Student Max", priceMinor: 40000 }
 const good = { paymentId: "pay1", checkoutUrl: "https://eg.checkout.paymob.com/?publicKey=pk&clientSecret=cs" }
 
-/** A mutation whose `mutate` settles synchronously with `settle`, like a finished request. */
-function settling(settle: Settle) {
-  const m = fakeMutation()
+/**
+ * A mutation with react-query's state machine in miniature: `mutate` records its variables and
+ * settles by `plan(callNumber)`, `reset` clears the result, and every change re-renders.
+ */
+function stateful(plan: (call: number) => Settle | "pending") {
+  const m = fakeMutation() as ReturnType<typeof fakeMutation> & { variables?: unknown; calls: number }
+  m.calls = 0
+  const clear = () => Object.assign(m, { isPending: false, isSuccess: false, isError: false, data: undefined, error: null })
+  m.reset = vi.fn(() => {
+    clear()
+    s.bumps.forEach((b) => b())
+  })
   m.mutate = vi.fn((vars: unknown, opts?: { onSuccess?: (d: unknown) => void }) => {
-    ;(m as { variables?: unknown }).variables = vars
-    if ("ok" in settle) {
+    m.calls += 1
+    m.variables = vars
+    clear()
+    const out = plan(m.calls)
+    if (out === "pending") m.isPending = true
+    else if ("ok" in out) {
       m.isSuccess = true
-      m.data = settle.ok
-      opts?.onSuccess?.(settle.ok)
+      m.data = out.ok
+      opts?.onSuccess?.(out.ok)
     } else {
       m.isError = true
-      m.error = settle.err
+      m.error = out.err
     }
     s.bumps.forEach((b) => b())
   })
   return m
 }
+const settling = (settle: Settle) => stateful(() => settle)
 
 const sessionStore = () => {
   const m = new Map<string, string>()
@@ -82,14 +96,16 @@ const sessionStore = () => {
   return m
 }
 
-const openPlan = (savedCard = fx.summary.savedCard, go = vi.fn()) => {
+const openPlan = (go = vi.fn(), tier = up) => {
   render(
     h(MemoryRouter, null, h(PlanChangeDialog, {
-      open: true, onClose: () => undefined, subscription: fx.activeSub, tier: up, savedCard, returnTo: "/teacher/billing", go,
+      open: true, onClose: () => undefined, subscription: fx.activeSub, tier, returnTo: "/teacher/billing", go,
     })),
   )
   return go
 }
+const cont = () => screen.getByRole("button", { name: /Continue to payment/ }) as HTMLButtonElement
+const mut = (m: unknown) => (m as { mutate: ReturnType<typeof vi.fn> }).mutate
 
 beforeEach(() => {
   s.quote = Object.assign(fakeMutation({ isSuccess: true, data: quoted }), { variables: { subscriptionId: "sub1", planTierId: "t-up" } })
@@ -103,82 +119,165 @@ beforeEach(() => {
 })
 
 describe("PlanChangeDialog to Paymob", () => {
-  it("with no saved card, requests the quote and shows the continue button", () => {
-    openPlan(null)
-    expect((s.quote as { mutate: ReturnType<typeof vi.fn> }).mutate).toHaveBeenCalledWith({ subscriptionId: "sub1", planTierId: "t-up" })
-    expect(screen.getByRole("button", { name: /Continue to payment \(EGP\s75\.00\)/ })).toBeTruthy()
+  it("requests the quote and shows the continue button", () => {
+    openPlan()
+    expect(mut(s.quote)).toHaveBeenCalledWith({ subscriptionId: "sub1", planTierId: "t-up" })
+    expect(cont()).toBeTruthy()
+    expect(screen.getByRole("status").textContent).toMatch(/Pay EGP\s75\.00 now/)
   })
 
   it("redirects to the checkout URL and remembers the page it was opened from", async () => {
     const store = sessionStore()
     const go = openPlan()
-    await userEvent.setup().click(screen.getByRole("button", { name: /Continue to payment/ }))
-    expect((s.upgrade as { mutate: ReturnType<typeof vi.fn> }).mutate.mock.calls[0][0]).toEqual({ subscriptionId: "sub1", planTierId: "t-up" })
+    await userEvent.setup().click(cont())
+    expect(mut(s.upgrade).mock.calls[0][0]).toEqual({ subscriptionId: "sub1", planTierId: "t-up" })
     expect(go).toHaveBeenCalledWith(good.checkoutUrl)
     expect(store.get("lemely.billing.returnTo.pay1")).toBe("/teacher/billing")
     expect(screen.queryByText(/upgraded|Plan upgraded/i)).toBeNull()
   })
 
+  it("blocks a second click after the 201 and says where it is going", async () => {
+    sessionStore()
+    const go = openPlan()
+    const user = userEvent.setup()
+    await user.click(cont())
+    expect(screen.getByRole("status").textContent).toBe("Taking you to payment…")
+    expect(cont().disabled).toBe(true)
+    await user.click(cont())
+    expect(mut(s.upgrade)).toHaveBeenCalledTimes(1)
+    expect(go).toHaveBeenCalledTimes(1)
+  })
+
+  it("starts over when the browser restores the page from its back-forward cache", async () => {
+    sessionStore()
+    openPlan()
+    await userEvent.setup().click(cont())
+    expect(cont().disabled).toBe(true)
+    act(() => {
+      window.dispatchEvent(Object.assign(new Event("pageshow"), { persisted: true }))
+    })
+    expect(cont().disabled).toBe(false)
+    // A pageshow that is not a restore changes nothing.
+    await userEvent.setup().click(cont())
+    act(() => {
+      window.dispatchEvent(Object.assign(new Event("pageshow"), { persisted: false }))
+    })
+    expect(cont().disabled).toBe(true)
+  })
+
   it("never navigates on an unsafe URL and says nothing was charged", async () => {
+    sessionStore()
     s.upgrade = settling({ ok: { paymentId: "pay1", checkoutUrl: "http://evil.example/pay" } })
     const go = openPlan()
-    await userEvent.setup().click(screen.getByRole("button", { name: /Continue to payment/ }))
+    await userEvent.setup().click(cont())
     expect(go).not.toHaveBeenCalled()
     expect((await screen.findByRole("alert")).textContent).toContain("Nothing was charged")
+    expect(cont().disabled).toBe(false)
   })
 
-  it("says nothing was charged on a 503", async () => {
+  it("says nothing was charged on a 503 and lets the payer try again", async () => {
     s.upgrade = settling({ err: new ApiError(503, "x", { error: "payments_unavailable", message: "x" }) })
     const go = openPlan()
-    await userEvent.setup().click(screen.getByRole("button", { name: /Continue to payment/ }))
+    await userEvent.setup().click(cont())
     expect(go).not.toHaveBeenCalled()
     expect((await screen.findByRole("alert")).textContent).toContain("Nothing was charged")
+    expect(cont().disabled).toBe(false)
   })
 
-  it("asks for a phone number in place on 422 phone_required", async () => {
-    s.upgrade = settling({ err: new ApiError(422, "x", { code: "phone_required", message: "x" }) })
+  it.each([
+    ["upgrade_unavailable", {}],
+    ["seats_not_sold", { extraSeats: 3 }],
+    ["subscription_not_active", {}],
+  ])("takes away Continue after a %s refusal, which would fail the same way again", async (code, extra) => {
+    s.upgrade = settling({ err: new ApiError(409, "x", { error: code, message: "x", ...extra }) })
     openPlan()
-    await userEvent.setup().click(screen.getByRole("button", { name: /Continue to payment/ }))
-    expect(await screen.findByText("Add your mobile number to continue")).toBeTruthy()
+    await userEvent.setup().click(cont())
+    await screen.findByRole("alert")
     expect(screen.queryByRole("button", { name: /Continue to payment/ })).toBeNull()
   })
 
-  it("a seats_not_sold refusal names the extra seats held", async () => {
+  it("names the extra seats held on seats_not_sold", async () => {
     s.upgrade = settling({ err: new ApiError(409, "x", { error: "seats_not_sold", message: "x", extraSeats: 3 }) })
     openPlan()
-    await userEvent.setup().click(screen.getByRole("button", { name: /Continue to payment/ }))
-    expect((await screen.findByRole("alert")).textContent).toContain("3 extra seats")
+    await userEvent.setup().click(cont())
+    expect((await screen.findByRole("alert")).textContent).toContain("you hold 3")
+  })
+
+  it("asks for a phone number in place, then retries the same upgrade and keeps focus in the dialog", async () => {
+    sessionStore()
+    s.upgrade = stateful((n) => (n === 1 ? { err: new ApiError(422, "x", { code: "phone_required", message: "x" }) } : { ok: good }))
+    s.put = stateful(() => ({ ok: { phone: "+201012345678" } }))
+    const go = openPlan()
+    const user = userEvent.setup()
+    await user.click(cont())
+    expect(await screen.findByText("Add your mobile number to continue")).toBeTruthy()
+    expect(screen.queryByRole("button", { name: /Continue to payment/ })).toBeNull()
+    await user.type(screen.getByLabelText("Mobile number"), "01012345678")
+    await user.click(screen.getByRole("button", { name: "Save and continue" }))
+    await waitFor(() => expect(mut(s.upgrade)).toHaveBeenCalledTimes(2))
+    expect(mut(s.upgrade).mock.calls[1][0]).toEqual(mut(s.upgrade).mock.calls[0][0])
+    expect(go).toHaveBeenCalledWith(good.checkoutUrl)
+    expect(document.activeElement?.getAttribute("role")).toBe("status")
   })
 
   it("explains cancel-and-resubscribe when the plan cannot be upgraded mid-period", async () => {
     s.upgrade = settling({ err: new ApiError(409, "x", { error: "upgrade_unavailable", message: "x", next: "cancel_and_resubscribe" }) })
     openPlan()
-    await userEvent.setup().click(screen.getByRole("button", { name: /Continue to payment/ }))
-    expect((await screen.findByRole("alert")).textContent).toContain("Cancel at the end of the period and subscribe to the new plan")
+    await userEvent.setup().click(cont())
+    expect((await screen.findByRole("alert")).textContent).toBe("Can't upgrade mid-period. Cancel at period end, then subscribe to the new plan.")
+  })
+
+  it.each([
+    ["a higher-priced tier on another interval", { ...up, interval: "year" as const }],
+    ["a cheaper tier on another interval", { ...fx.studentMonthly, id: "t-low-y", name: "Student Lite Yearly", priceMinor: 10000, interval: "year" as const }],
+  ])("offers no change for %s", (_n, tier) => {
+    openPlan(vi.fn(), tier)
+    expect(screen.getByText(/bills every year/)).toBeTruthy()
+    expect(screen.queryByRole("button", { name: /Continue to payment|Schedule the change/ })).toBeNull()
+    expect(mut(s.quote)).not.toHaveBeenCalled()
   })
 })
 
 describe("AddSeatsDialog to Paymob", () => {
-  const open = (savedCard = fx.team.savedCard, go = vi.fn()) => {
-    render(h(AddSeatsDialog, { open: true, onClose: () => undefined, subscriptionId: "sub-t", perSeatMinor: 3000, savedCard, returnTo: "/teacher/team", go }))
+  const open = (go = vi.fn()) => {
+    render(h(AddSeatsDialog, { open: true, onClose: () => undefined, subscriptionId: "sub-t", perSeatMinor: 3000, returnTo: "/teacher/team", go }))
     return go
   }
 
-  it("redirects with the team page as the return path", async () => {
+  it("redirects with the team page as the return path and blocks a second click", async () => {
     const store = sessionStore()
-    const go = open(null)
-    await userEvent.setup().click(screen.getByRole("button", { name: /Continue to payment \(EGP\s45\.00\)/ }))
-    expect((s.addSeats as { mutate: ReturnType<typeof vi.fn> }).mutate.mock.calls[0][0]).toEqual({ subscriptionId: "sub-t", seats: 1 })
+    const go = open()
+    const user = userEvent.setup()
+    await user.click(cont())
+    expect(mut(s.addSeats).mock.calls[0][0]).toEqual({ subscriptionId: "sub-t", seats: 1 })
     expect(go).toHaveBeenCalledWith(good.checkoutUrl)
     expect(store.get("lemely.billing.returnTo.pay1")).toBe("/teacher/team")
+    expect(screen.getByRole("status").textContent).toBe("Taking you to payment…")
+    await user.click(cont())
+    expect(mut(s.addSeats)).toHaveBeenCalledTimes(1)
   })
 
-  it("never navigates on an unsafe URL", async () => {
+  it("starts over on a restored page", async () => {
+    sessionStore()
+    open()
+    await userEvent.setup().click(cont())
+    expect(cont().disabled).toBe(true)
+    act(() => {
+      window.dispatchEvent(Object.assign(new Event("pageshow"), { persisted: true }))
+    })
+    expect(cont().disabled).toBe(false)
+  })
+
+  it("never navigates on an unsafe URL, and the stale alert goes when the count changes", async () => {
+    sessionStore()
     s.addSeats = settling({ ok: { paymentId: "pay1", checkoutUrl: "javascript:alert(1)" } })
     const go = open()
-    await userEvent.setup().click(screen.getByRole("button", { name: /Continue to payment/ }))
+    const user = userEvent.setup()
+    await user.click(cont())
     expect(go).not.toHaveBeenCalled()
     expect((await screen.findByRole("alert")).textContent).toContain("Nothing was charged")
+    await user.type(screen.getByLabelText("How many seats"), "2")
+    expect(screen.queryByRole("alert")).toBeNull()
   })
 
   it("an out-of-range count disables the quote and keeps the payment button away", async () => {
@@ -193,11 +292,30 @@ describe("AddSeatsDialog to Paymob", () => {
     expect(screen.queryByRole("button", { name: /Continue to payment/ })).toBeNull()
   })
 
-  it("a seats_over_limit refusal says so and nothing was added", async () => {
-    s.addSeats = settling({ err: new ApiError(409, "x", { error: "seats_over_limit", message: "x" }) })
+  it("the real seat-limit refusal (422 invalid_seats on the quote) says so and keeps the price button off until the count changes", async () => {
+    s.seatQuote = stateful(() => ({ err: new ApiError(422, "x", { error: "invalid_seats", message: "That would pass the most extra seats allowed" }) }))
     open()
-    await userEvent.setup().click(screen.getByRole("button", { name: /Continue to payment/ }))
-    expect((await screen.findByRole("alert")).textContent).toContain("past the most seats")
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Get the price" }))
+    expect((await screen.findByRole("alert")).textContent).toBe("That's more seats than a plan can hold. Try fewer.")
+    expect((screen.getByRole("button", { name: "Get the price" }) as HTMLButtonElement).disabled).toBe(true)
+    await user.type(screen.getByLabelText("How many seats"), "0")
+    expect((screen.getByRole("button", { name: "Get the price" }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it("asks for a phone number in place, then retries the same purchase", async () => {
+    sessionStore()
+    s.addSeats = stateful((n) => (n === 1 ? { err: new ApiError(422, "x", { code: "phone_required", message: "x" }) } : { ok: good }))
+    s.put = stateful(() => ({ ok: { phone: "+201012345678" } }))
+    const go = open()
+    const user = userEvent.setup()
+    await user.click(cont())
+    await user.type(await screen.findByLabelText("Mobile number"), "01012345678")
+    await user.click(screen.getByRole("button", { name: "Save and continue" }))
+    await waitFor(() => expect(mut(s.addSeats)).toHaveBeenCalledTimes(2))
+    expect(mut(s.addSeats).mock.calls[1][0]).toEqual({ subscriptionId: "sub-t", seats: 1 })
+    expect(go).toHaveBeenCalled()
+    expect(document.activeElement?.getAttribute("role")).toBe("status")
   })
 })
 
