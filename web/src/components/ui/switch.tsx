@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V4 */
 import { forwardRef, useId, useState, type ButtonHTMLAttributes } from "react"
 import { CircleNotch } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
@@ -93,10 +94,10 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
           disabled={isDisabled}
           onClick={handleClick}
           className={cn(
-            "relative inline-flex h-6 w-10 flex-none cursor-pointer items-center rounded-full border",
-            "transition-colors duration-[var(--dur-instant)] ease-out-soft active:scale-[0.98]",
+            "relative inline-flex h-7 w-12 flex-none cursor-pointer items-center rounded-full border",
+            "transition-colors duration-200 ease-out motion-reduce:transition-none active:scale-[0.98]",
             "disabled:cursor-not-allowed disabled:opacity-50",
-            isChecked ? "border-primary bg-primary" : "border-outline-variant bg-surface-container-low",
+            isChecked ? "border-primary bg-primary" : "border-on-surface-variant bg-outline",
             resolvedState === "error" && "border-error",
             resolvedState === "success" && "border-success",
             className,
@@ -106,13 +107,15 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
           <span
             aria-hidden
             className={cn(
-              "inline-flex h-4 w-4 flex-none items-center justify-center rounded-full bg-surface-container-lowest",
-              "transition-transform duration-[var(--dur-instant)] ease-out-soft",
-              isChecked ? "translate-x-[18px] rtl:-translate-x-[18px]" : "translate-x-1 rtl:-translate-x-1",
+              "inline-flex h-[22px] w-[22px] flex-none items-center justify-center rounded-full",
+              "transition-transform duration-200 ease-out motion-reduce:transition-none",
+              isChecked
+                ? "translate-x-[22px] bg-surface-container-lowest rtl:-translate-x-[22px]"
+                : "translate-x-[2px] bg-on-surface-variant rtl:-translate-x-[2px]",
             )}
           >
             {isLoading ? (
-              <CircleNotch aria-hidden className="h-3 w-3 animate-spin text-on-surface-variant" />
+              <CircleNotch aria-hidden className={cn("h-3 w-3 animate-spin", isChecked ? "text-on-surface-variant" : "text-surface-container-lowest")} />
             ) : null}
           </span>
         </button>

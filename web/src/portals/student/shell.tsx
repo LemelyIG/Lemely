@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R3 V3 */
 import { Link, matchPath, useLocation } from "react-router-dom"
-import { ChalkboardTeacher, House, NotePencil, UserCircle, type Icon } from "@phosphor-icons/react"
+import { Camera, CalendarDots, House, Notepad, UserCircle, type Icon } from "@phosphor-icons/react"
 import type { AccountLink } from "@/components/shell/AccountPanel"
 import { ShellIcon, type ShellIconName } from "@/components/shell/icons"
 import type { NotificationsPanelProps } from "@/components/shell/NotificationsPanel"
@@ -8,8 +8,9 @@ import { PortalShell } from "@/components/shell/PortalShell"
 import { isTabRoot, titleLevelFor } from "@/components/shell/largeTitle"
 import { profileName } from "@/components/shell/ShellAvatar"
 import { ShellUserBlock } from "@/components/shell/ShellSidebar"
+import { ShellNavList } from "@/components/shell/ShellNavList"
 import { ShellTree, type ShellTreeRow } from "@/components/shell/ShellTree"
-import { SHELL_BUTTON_PRIMARY } from "@/components/shell/shellStyles"
+import { SHELL_BUTTON_OUTLINE } from "@/components/shell/shellStyles"
 import { BackControl } from "@/components/ui/back-control"
 import type { NavShellItem } from "@/components/ui/nav-shells"
 import type { ScreenOverlay } from "@/components/ui/screen-outlet"
@@ -35,16 +36,20 @@ import {
   studentShellTrail,
   type NavItem,
 } from "./data"
+import { STUDENT_PLAN_TO, STUDENT_PRACTICE_TO, isPlanSection, isPracticeSection, isStudentSubjectRoot, studentOverflowItems, underDialogActive } from "./shellNav"
 
 export const STUDENT_SETTINGS_BASE = "/student/settings"
 
-/** The four route-backed phone tabs, unchanged from `develop` (approved
- * drift). Declared in tab order; the shell appends "More". */
+/** The phone tabs, as the approved mock draws them (student-r2/h6.js TAB6) with one
+ * user-ruled change: Plan takes the mock's Subjects slot. Home, Practice, the raised
+ * Scan button, Plan, Me. No appended More: overflow (the subject tree and the More
+ * group) lives in the navigation sheet the top bar's menu button opens. */
 export const STUDENT_BOTTOM_TABS: readonly { id: string; label: string; to: string; end?: boolean; icon: Icon }[] = [
-  { id: "overview", label: "Overview", to: "/student", end: true, icon: House },
-  { id: "correct", label: "Correct", to: "/student/correct", icon: NotePencil },
-  { id: "classes", label: "Classes", to: "/student/classes", icon: ChalkboardTeacher },
-  { id: "profile", label: "Profile", to: "/student/profile", icon: UserCircle },
+  { id: "home", label: "Home", to: "/student", end: true, icon: House },
+  { id: "practice", label: "Practice", to: STUDENT_PRACTICE_TO, icon: Notepad },
+  { id: "scan", label: "Scan a paper", to: "/student/correct", icon: Camera },
+  { id: "plan", label: "Plan", to: STUDENT_PLAN_TO, icon: CalendarDots },
+  { id: "me", label: "Me", to: "/student/profile", icon: UserCircle },
 ]
 
 function NavGlyph({ icon }: { icon: NavItem["icon"] }) {
@@ -131,15 +136,29 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
       : shellItem
   })
   const trail = studentShellTrail(pagePath)
-  const titleLevel = titleLevelFor(trail, isTabRoot(pagePath, STUDENT_BOTTOM_TABS.map((tab) => tab.to)))
+  const titleLevel = titleLevelFor(trail, isTabRoot(pagePath, STUDENT_BOTTOM_TABS.map((tab) => tab.to), isStudentSubjectRoot))
+  // Practice also owns flashcards, and Plan its subject weeks: sections the tab's own URL match would miss.
+  const practiceActive = isPracticeSection(pagePath)
+  const planActive = isPlanSection(pagePath)
+  const sectionActive = (id: string) => (id === "practice" && practiceActive) || (id === "plan" && planActive) || undefined
+  // Under the Settings dialog the URL is the dialog's, so each row also asks `underDialogActive` (Home on a fresh load).
+  const under = (to: string, end?: boolean) => underDialogActive({ to, end }, pagePath, location.pathname)
+  const primaryItems: NavShellItem[] = [
+    { id: "/student", to: "/student", end: true, label: "Home", icon: <ShellIcon name="home" />, active: under("/student", true) },
+    { id: STUDENT_PRACTICE_TO, to: STUDENT_PRACTICE_TO, label: "Practice", ariaCurrent: "true", icon: <ShellIcon name="practice" />, active: sectionActive("practice") ?? under(STUDENT_PRACTICE_TO) },
+    { id: STUDENT_PLAN_TO, to: STUDENT_PLAN_TO, label: "Plan", ariaCurrent: "true", icon: <ShellIcon name="plan" />, active: sectionActive("plan") ?? under(STUDENT_PLAN_TO) },
+    { id: "/student/profile", to: "/student/profile", label: "Me", icon: <ShellIcon name="user" />, active: under("/student/profile") },
+  ]
+  // Every other old row (Your classes, Standings, Friends, Tutors, Sessions) is the sidebar's More group.
+  const moreItems = studentOverflowItems(navItems)
   const detail = studentDetailLine(
     qualificationLevelLabel(reference?.qualificationLevels, studentProfile.data?.profile.qualificationLevel),
     subjects.length,
   )
-  const upload = (className?: string) => (
-    <Link to="/student/correct" viewTransition className={cn(SHELL_BUTTON_PRIMARY, className)} {...prefetchCorrectPaper}>
-      <ShellIcon name="up" />
-      <span>Upload a paper</span>
+  const scan = (className?: string) => (
+    <Link to="/student/correct" viewTransition className={cn(SHELL_BUTTON_OUTLINE, className)} {...prefetchCorrectPaper}>
+      <ShellIcon name="cam" />
+      <span>Scan a paper</span>
     </Link>
   )
 
@@ -153,7 +172,7 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
         navLabel: "Main",
         homeTo: "/student",
         homeLabel: "Lemely, overview",
-        items: navItems,
+        items: primaryItems,
         groups: [
           {
             id: "subjects",
@@ -167,8 +186,9 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
               />
             ),
           },
+          { id: "more", label: "More", render: () => <ShellNavList items={moreItems} /> },
         ],
-        footerAction: upload(),
+        footerAction: scan(),
         user: profile.data ? (
           <ShellUserBlock name={profileName(profile.data)} avatarUrl={profile.data.avatarUrl} detail={detail} />
         ) : (
@@ -187,8 +207,8 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
                 ("Practice / 0580"), so below the sidebar column this is the
                 way back. Never on a section page, which design A shows bare. */}
             {titleLevel === "detail" ? <BackControl fallback="/student" className="shell-lg:hidden native:hidden" /> : null}
-            {/* Not on the upload screen itself, where it would do nothing. */}
-            {location.pathname === "/student/correct" ? null : upload("me-2.5 max-shell-sm:hidden")}
+            {/* Not on the scan screen itself, where it would do nothing; the rail (from shell-lg) carries it there. */}
+            {location.pathname === "/student/correct" ? null : scan("me-2.5 max-shell-sm:hidden shell-lg:hidden")}
           </>
         ),
         notifications: STUDENT_NOTIFICATIONS_PANEL,
@@ -203,10 +223,15 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
           label: tab.label,
           icon: <tab.icon size={22} aria-hidden="true" />,
           activeIcon: <tab.icon size={22} weight="fill" aria-hidden="true" />,
-          prefetch: tab.id === "correct" ? prefetchCorrectPaper.onPointerEnter : undefined,
+          active: sectionActive(tab.id) ?? under(tab.to, tab.end),
+          // Practice and Plan only redirect to a subject page: that page is the tab's root.
+          isRoot: tab.id === "practice" || tab.id === "plan" ? isStudentSubjectRoot : undefined,
+          prefetch: tab.id === "scan" ? prefetchCorrectPaper.onPointerEnter : undefined,
         }),
       )}
-      bottomEmphasisId="correct"
+      bottomEmphasisId="scan"
+      moreTab={false}
+      phoneMenu
     />
   )
 }

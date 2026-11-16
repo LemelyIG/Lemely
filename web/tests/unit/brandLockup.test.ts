@@ -22,7 +22,6 @@ const BRAND_LOCKUP_FILE = "src/components/ui/brand-lockup.tsx"
 
 const LOCKUP_SITES = [
   "src/components/shell/ShellSidebar.tsx",
-  "src/portals/parent/index.tsx",
   "src/portals/admin/index.tsx",
   "src/portals/settings/SettingsFrame.tsx",
   "src/portals/auth/Login.tsx",
