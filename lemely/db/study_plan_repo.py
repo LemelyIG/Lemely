@@ -78,8 +78,8 @@ from lemely.core.study_plan import (
     build_study_plan,
 )
 from lemely.db.models.attempts import Attempt, WeaknessRecord
-from lemely.db.models.enums import QuestionSource, QuizKind, QuizSubmissionStatus
-from lemely.db.models.flashcards import FlashcardDeck
+from lemely.db.models.enums import AttemptOrigin, QuestionSource, QuizKind, QuizSubmissionStatus
+from lemely.db.models.flashcards import Flashcard, FlashcardDeck
 from lemely.db.models.profiles import (
     StudentConfidenceRating,
     StudentProfile,
@@ -189,6 +189,54 @@ class PlanView:
     reason: str | None
     generated_at: datetime
     sessions: list[SessionView]
+
+
+@dataclass(frozen=True, slots=True)
+class SessionReason:
+    """Why a session is in the plan, stated only from rows that prove it.
+
+    ``kind`` is one of:
+
+    * ``"marks_lost"``: ``count`` is the topic's summed net lost marks.
+    * ``"cards_due"``: ``count`` is the topic's cards due by the end of today.
+    * ``"last_paper"``: ``count`` is the days since the subject's last marked paper.
+
+    A session with no provable reason has no entry at all. The planner's
+    placement and confidence signals are not recorded per session, so nothing
+    here guesses at them.
+    """
+
+    kind: str
+    count: int
+
+
+@dataclass(frozen=True, slots=True)
+class WeakTopicView:
+    """One recorded weak topic for a subject, as a whole-number accuracy percent."""
+
+    topic: str
+    accuracy_pct: int
+
+
+@dataclass(frozen=True, slots=True)
+class SubjectWeekView:
+    """One enrolled subject's current plan plus what the study-plan screen shows beside it."""
+
+    subject_code: str
+    plan: PlanView | None
+    reasons: dict[uuid.UUID, SessionReason]
+    paper_count: int
+    weak_topics: list[WeakTopicView]
+
+
+@dataclass(frozen=True, slots=True)
+class WeekOverview:
+    """Every requested subject's week, on one clock: ``today`` is ``now.date()`` (UTC)."""
+
+    today: date
+    week_start: date
+    week_end: date
+    subjects: list[SubjectWeekView]
 
 
 class StudyPlanService:
@@ -338,6 +386,52 @@ class StudyPlanService:
                 .order_by(DbStudyPlanSession.date, DbStudyPlanSession.created_at)
             ).all()
             return self._to_view(row, sessions)
+
+    def get_week(
+        self,
+        student_id: uuid.UUID | str,
+        subject_codes: Iterable[str],
+        *,
+        now: datetime | None = None,
+    ) -> WeekOverview:
+        """This ISO week across ``subject_codes``, in the order given.
+
+        Each subject carries its active plan (or ``None``), the honest
+        per-session reasons (:class:`SessionReason`), its marked-paper count
+        and its three weakest recorded topics. Everything is read on the one
+        injected clock, so ``today`` here and the plans' week agree.
+        """
+        student_uuid = _as_uuid(student_id)
+        moment = now if now is not None else self._now()
+        today = moment.date()
+        week_start = _week_start(moment)
+        subjects: list[SubjectWeekView] = []
+        for code in subject_codes:
+            plan = self.get_current(student_uuid, code, now=moment)
+            with self._sessionmaker() as session:
+                weaknesses = self._weaknesses(session, student_uuid, code)
+                paper_count, last_paper_on = self._paper_stats(session, student_uuid, code)
+                due = self._cards_due(session, student_uuid, code, today) if plan else {}
+            reasons = _session_reasons(plan, weaknesses, due, last_paper_on, today) if plan else {}
+            weakest = sorted(weaknesses, key=lambda w: (w.accuracy, w.topic))[:3]
+            subjects.append(
+                SubjectWeekView(
+                    subject_code=code,
+                    plan=plan,
+                    reasons=reasons,
+                    paper_count=paper_count,
+                    weak_topics=[
+                        WeakTopicView(topic=w.topic, accuracy_pct=round(w.accuracy * 100))
+                        for w in weakest
+                    ],
+                )
+            )
+        return WeekOverview(
+            today=today,
+            week_start=week_start,
+            week_end=week_start + timedelta(days=6),
+            subjects=subjects,
+        )
 
     # -- Completion ---------------------------------------------------------------
 
@@ -533,6 +627,36 @@ class StudyPlanService:
         )
         return float(hours) if hours else _DEFAULT_WEEKLY_HOURS
 
+    def _paper_stats(
+        self, session: Session, student_uuid: uuid.UUID, subject_code: str
+    ) -> tuple[int, date | None]:
+        """Marked papers (past or custom, never quizzes) for this subject: count and latest day."""
+        count, latest = session.execute(
+            select(func.count(Attempt.id), func.max(Attempt.recorded_at)).where(
+                Attempt.user_id == student_uuid,
+                Attempt.subject_code == subject_code,
+                Attempt.origin.in_((AttemptOrigin.past_paper, AttemptOrigin.custom_paper)),
+            )
+        ).one()
+        return int(count), (latest.astimezone(UTC).date() if latest is not None else None)
+
+    def _cards_due(
+        self, session: Session, student_uuid: uuid.UUID, subject_code: str, today: date
+    ) -> dict[str, int]:
+        """Cards due by the end of ``today`` (UTC), per deck topic, in the caller's own decks."""
+        cutoff = datetime.combine(today + timedelta(days=1), time.min, tzinfo=UTC)
+        rows = session.execute(
+            select(FlashcardDeck.topic, func.count(Flashcard.id))
+            .join(Flashcard, Flashcard.deck_id == FlashcardDeck.id)
+            .where(
+                FlashcardDeck.user_id == student_uuid,
+                FlashcardDeck.subject_code == subject_code,
+                Flashcard.due_at < cutoff,
+            )
+            .group_by(FlashcardDeck.topic)
+        ).all()
+        return {topic: int(n) for topic, n in rows if topic is not None}
+
     def _availability(
         self,
         session: Session,
@@ -629,6 +753,31 @@ class StudyPlanService:
         )
 
 
+def _session_reasons(
+    plan: PlanView,
+    weaknesses: list[WeakArea],
+    cards_due: dict[str, int],
+    last_paper_on: date | None,
+    today: date,
+) -> dict[uuid.UUID, SessionReason]:
+    """The provable reason per session. See :class:`SessionReason`.
+
+    Flashcards prefer "cards due" and past papers prefer "days since your last
+    paper". Every activity falls back to the topic's lost marks, and a topic
+    with none gets no reason.
+    """
+    lost = {w.topic: w.lost_marks for w in weaknesses}
+    out: dict[uuid.UUID, SessionReason] = {}
+    for s in plan.sessions:
+        if s.activity_type is DbActivityType.flashcards and cards_due.get(s.topic, 0) > 0:
+            out[s.id] = SessionReason("cards_due", cards_due[s.topic])
+        elif s.activity_type is DbActivityType.past_paper and last_paper_on is not None:
+            out[s.id] = SessionReason("last_paper", max(0, (today - last_paper_on).days))
+        elif lost.get(s.topic, 0) > 0:
+            out[s.id] = SessionReason("marks_lost", lost[s.topic])
+    return out
+
+
 def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:
     """Coerce a str/UUID to :class:`uuid.UUID`, raising ``ValueError`` if invalid."""
     if isinstance(value, uuid.UUID):
@@ -640,11 +789,16 @@ def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:
 
 
 __all__ = [
+    "MoveErrorCode",
     "PlanView",
+    "SessionReason",
     "SessionView",
     "StudyPlanError",
     "StudyPlanMoveError",
     "StudyPlanNotFoundError",
     "StudyPlanOwnershipError",
     "StudyPlanService",
+    "SubjectWeekView",
+    "WeakTopicView",
+    "WeekOverview",
 ]

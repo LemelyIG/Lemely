@@ -44,7 +44,7 @@ from lemely.db.models.enums import (
     QuizSubmissionStatus,
     Role,
 )
-from lemely.db.models.flashcards import DeckOrigin, FlashcardDeck
+from lemely.db.models.flashcards import CardSource, DeckOrigin, Flashcard, FlashcardDeck
 from lemely.db.models.profiles import (
     StudentConfidenceRating,
     StudentProfile,
@@ -55,10 +55,12 @@ from lemely.db.models.study_plan import StudyPlanActivityType
 from lemely.db.models.users import User
 from lemely.db.study_plan_repo import (
     PlanView,
+    SessionReason,
     StudyPlanMoveError,
     StudyPlanNotFoundError,
     StudyPlanOwnershipError,
     StudyPlanService,
+    WeakTopicView,
 )
 from lemely.runtime.config import DatabaseSettings
 
@@ -843,3 +845,215 @@ def test_a_next_week_session_cannot_move_before_its_own_week(
     # Inverse: a day inside next week is allowed.
     inside = upcoming.week_start + timedelta(days=2)
     assert study_plan_service.move_session(student, session_id, inside).date == inside
+
+
+# ---------------------------------------------------------------------------
+# L9 · the week across subjects.
+# ---------------------------------------------------------------------------
+
+
+def _seed_card(
+    sm: sessionmaker[Session], student_id: uuid.UUID, *, topic: str, due_at: datetime
+) -> None:
+    with sm.begin() as session:
+        deck = session.scalars(
+            sa.select(FlashcardDeck).where(
+                FlashcardDeck.user_id == student_id, FlashcardDeck.topic == topic
+            )
+        ).first()
+        assert deck is not None, "seed the deck first"
+        position = session.scalar(
+            sa.select(sa.func.count()).select_from(Flashcard).where(Flashcard.deck_id == deck.id)
+        )
+        session.add(
+            Flashcard(
+                deck_id=deck.id,
+                front="Q",
+                back="A",
+                position=position or 0,
+                source=CardSource.manual,
+                due_at=due_at,
+            )
+        )
+
+
+def _seed_paper(
+    sm: sessionmaker[Session],
+    student_id: uuid.UUID,
+    *,
+    subject_code: str = "0625",
+    recorded_at: datetime,
+    origin: AttemptOrigin = AttemptOrigin.past_paper,
+) -> None:
+    _seed_subject(sm, subject_code)
+    with sm.begin() as session:
+        session.add(
+            Attempt(
+                user_id=student_id,
+                subject_code=subject_code,
+                awarded_marks=40,
+                maximum_marks=80,
+                percentage=50.0,
+                recorded_at=recorded_at,
+                origin=origin,
+            )
+        )
+
+
+def test_get_week_reports_the_clock_week_and_subjects_in_the_given_order(
+    pg_sessionmaker: sessionmaker[Session], study_plan_service: StudyPlanService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _seed_weakness(pg_sessionmaker, student, topic="1 Motion", lost_marks=5)
+    plan = study_plan_service.generate(student, "0625")
+
+    week = study_plan_service.get_week(student, ["0625", "0580"])
+
+    assert week.today == _WED
+    assert week.week_start == _MON
+    assert week.week_end == _SUN
+    assert [s.subject_code for s in week.subjects] == ["0625", "0580"]
+    assert week.subjects[0].plan is not None
+    assert week.subjects[0].plan.id == plan.id
+    # Inverse: a subject with no plan this week is listed with plan None, not dropped.
+    assert week.subjects[1].plan is None
+    assert week.subjects[1].reasons == {}
+
+
+def test_get_week_returns_the_active_plan_not_a_superseded_one(
+    pg_sessionmaker: sessionmaker[Session], study_plan_service: StudyPlanService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _seed_weakness(pg_sessionmaker, student, topic="1 Motion", lost_marks=5)
+    old = study_plan_service.generate(student, "0625")
+    fresh = study_plan_service.generate(student, "0625")
+
+    plan = study_plan_service.get_week(student, ["0625"]).subjects[0].plan
+
+    assert plan is not None
+    assert plan.id == fresh.id
+    assert plan.id != old.id
+
+
+def test_marks_lost_reason_sums_the_topics_lost_marks(
+    pg_sessionmaker: sessionmaker[Session], study_plan_service: StudyPlanService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _seed_profile(pg_sessionmaker, student, weekly_study_hours=1)
+    _seed_weakness(pg_sessionmaker, student, topic="1 Motion", lost_marks=3)
+    _seed_weakness(pg_sessionmaker, student, topic="1 Motion", lost_marks=4)
+    plan = study_plan_service.generate(student, "0625")  # review (no bank, no deck)
+
+    subject = study_plan_service.get_week(student, ["0625"]).subjects[0]
+
+    assert plan.sessions
+    for s in plan.sessions:
+        assert subject.reasons[s.id] == SessionReason("marks_lost", 7)
+
+
+def test_a_session_with_no_recorded_weakness_has_no_reason(
+    pg_sessionmaker: sessionmaker[Session], study_plan_service: StudyPlanService
+) -> None:
+    """Confidence-only: the planner scheduled it, and nothing provable says why."""
+    student = _seed_user(pg_sessionmaker)
+    _seed_confidence(pg_sessionmaker, student, topic="2 Waves", rating=1)
+    plan = study_plan_service.generate(student, "0625")
+
+    subject = study_plan_service.get_week(student, ["0625"]).subjects[0]
+
+    assert plan.sessions
+    assert subject.reasons == {}
+
+
+def test_cards_due_counts_cards_due_by_the_end_of_today(
+    pg_sessionmaker: sessionmaker[Session], study_plan_service: StudyPlanService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _seed_weakness(pg_sessionmaker, student, topic="1 Motion", lost_marks=5)
+    _seed_flashcard_deck(pg_sessionmaker, student, topic="1 Motion")
+    _seed_card(pg_sessionmaker, student, topic="1 Motion", due_at=_THIS_WEEK - timedelta(days=1))
+    _seed_card(pg_sessionmaker, student, topic="1 Motion", due_at=_THIS_WEEK + timedelta(hours=2))
+    _seed_card(pg_sessionmaker, student, topic="1 Motion", due_at=_THIS_WEEK + timedelta(days=1))
+    plan = study_plan_service.generate(student, "0625")
+    assert all(s.activity_type == StudyPlanActivityType.flashcards for s in plan.sessions)
+
+    subject = study_plan_service.get_week(student, ["0625"]).subjects[0]
+
+    assert {subject.reasons[s.id] for s in plan.sessions} == {SessionReason("cards_due", 2)}
+
+
+def test_flashcards_with_nothing_due_fall_back_to_marks_lost(
+    pg_sessionmaker: sessionmaker[Session], study_plan_service: StudyPlanService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _seed_weakness(pg_sessionmaker, student, topic="1 Motion", lost_marks=5)
+    _seed_flashcard_deck(pg_sessionmaker, student, topic="1 Motion")
+    _seed_card(pg_sessionmaker, student, topic="1 Motion", due_at=_THIS_WEEK + timedelta(days=3))
+    plan = study_plan_service.generate(student, "0625")
+
+    subject = study_plan_service.get_week(student, ["0625"]).subjects[0]
+
+    assert {subject.reasons[s.id] for s in plan.sessions} == {SessionReason("marks_lost", 5)}
+
+
+def test_past_paper_reason_counts_days_since_the_last_paper(
+    pg_sessionmaker: sessionmaker[Session], study_plan_service: StudyPlanService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _seed_weakness(pg_sessionmaker, student, topic="1 Motion", lost_marks=5)
+    _seed_bank_question(pg_sessionmaker, topic="1 Motion", source=QuestionSource.past_paper)
+    _seed_paper(pg_sessionmaker, student, recorded_at=_THIS_WEEK - timedelta(days=9))
+    plan = study_plan_service.generate(student, "0625")
+    assert all(s.activity_type == StudyPlanActivityType.past_paper for s in plan.sessions)
+
+    subject = study_plan_service.get_week(student, ["0625"]).subjects[0]
+
+    assert {subject.reasons[s.id] for s in plan.sessions} == {SessionReason("last_paper", 9)}
+    # The weakness attempt is a quiz and does not count as a paper.
+    assert subject.paper_count == 1
+
+
+def test_past_paper_with_no_paper_yet_falls_back_to_marks_lost(
+    pg_sessionmaker: sessionmaker[Session], study_plan_service: StudyPlanService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _seed_weakness(pg_sessionmaker, student, topic="1 Motion", lost_marks=5)
+    _seed_bank_question(pg_sessionmaker, topic="1 Motion", source=QuestionSource.past_paper)
+    plan = study_plan_service.generate(student, "0625")
+
+    subject = study_plan_service.get_week(student, ["0625"]).subjects[0]
+
+    assert {subject.reasons[s.id] for s in plan.sessions} == {SessionReason("marks_lost", 5)}
+    assert subject.paper_count == 0
+
+
+def test_paper_count_is_per_subject_and_excludes_quizzes(
+    pg_sessionmaker: sessionmaker[Session], study_plan_service: StudyPlanService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _seed_paper(pg_sessionmaker, student, recorded_at=_THIS_WEEK)
+    _seed_paper(pg_sessionmaker, student, recorded_at=_THIS_WEEK, origin=AttemptOrigin.custom_paper)
+    _seed_paper(pg_sessionmaker, student, recorded_at=_THIS_WEEK, origin=AttemptOrigin.quiz)
+    _seed_paper(pg_sessionmaker, student, subject_code="0580", recorded_at=_THIS_WEEK)
+
+    week = study_plan_service.get_week(student, ["0625", "0580"])
+
+    assert [s.paper_count for s in week.subjects] == [2, 1]
+
+
+def test_weak_topics_are_the_three_weakest_first_as_whole_percent(
+    pg_sessionmaker: sessionmaker[Session], study_plan_service: StudyPlanService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _seed_weakness(pg_sessionmaker, student, topic="A", lost_marks=6)  # 40%
+    _seed_weakness(pg_sessionmaker, student, topic="B", lost_marks=4)  # 60%
+    _seed_weakness(pg_sessionmaker, student, topic="C", lost_marks=1)  # 90%
+    _seed_weakness(pg_sessionmaker, student, topic="D", lost_marks=5)  # 50%
+
+    subject = study_plan_service.get_week(student, ["0625"]).subjects[0]
+
+    assert subject.weak_topics == [
+        WeakTopicView("A", 40),
+        WeakTopicView("D", 50),
+        WeakTopicView("B", 60),
+    ]
