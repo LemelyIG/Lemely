@@ -23,7 +23,8 @@ describe("parent portal uses the shared shell", () => {
     expect(pill).not.toMatch(/(max-[a-z]+|phone):hidden/)
     expect(pill.match(/max-phone:max-w-36/g)).toHaveLength(2) // the control and the one-child label
     expect(pill).toContain('className="min-w-0 truncate"')
-    expect(pill).toContain('aria-label="Choose which child to view"')
+    expect(pill).toContain('label="Choose which child to view"')
+    expect(pill).toContain('labelClassName="sr-only"')
   })
   it("the old bespoke header is gone", () => {
     const index = read("portals/parent/index.tsx")

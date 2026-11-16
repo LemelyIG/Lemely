@@ -1,5 +1,5 @@
 import type { HTMLAttributes, MouseEvent, ReactNode } from "react"
-import { Link, NavLink, useMatch } from "react-router-dom"
+import { Link, useMatch } from "react-router-dom"
 import { useDialogExitClick } from "@/lib/nav/dialogExit"
 import type { NavDirectionState } from "@/lib/nav/navDirectionState"
 import { cn } from "@/lib/utils"
@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils"
  *
  * Packet B3 (Task 4) is the retrofit `nav-drawer.tsx`'s own comment used to
  * name as future work: `NavShellItem` now wires through react-router's
- * `NavLink` when it carries a `to` (route-wired, `viewTransition`, active
+ * `Link` when it carries a `to` (route-wired, `viewTransition`, active
  * state from the router itself), and every portal actually mounts these
  * rather than a bespoke copy of the same markup — `BottomNav` as the
  * student/teacher tab bar below the `sidebar` breakpoint, `SidebarNav` as
@@ -38,10 +38,10 @@ export interface NavShellItem {
   icon: ReactNode
   /** Native frame: the selected tab's icon (Phosphor `fill`); design A keeps `icon`. */
   activeIcon?: ReactNode
-  /** A route destination — renders as a router-wired `NavLink`, active state
+  /** A route destination — renders as a router-wired `Link`, active state
    * from the router itself. Wins over `href`/`onClick` when present. */
   to?: string
-  /** Passed straight to `NavLink`'s own `end` prop; only meaningful with `to`. */
+  /** Passed to the route match (`useMatch`); only meaningful with `to`. */
   end?: boolean
   href?: string
   onClick?: () => void
@@ -52,6 +52,8 @@ export interface NavShellItem {
    * active for an out-of-cap class page but not for one of its own visible
    * rows — see `classesItemActive` in `portals/teacher/data.ts`). */
   active?: boolean
+  /** What a lit row announces (default "page"). A section row sets "true" so the exact sub-row stays the only "page" in its nav. */
+  ariaCurrent?: "page" | "true"
   /** A tab whose `to` only redirects (student Practice, Plan) names the page that stands in as its root: a re-tap
    * there scrolls to top rather than navigating, and the page gets the root title level. Optional, off by default. */
   isRoot?: (pathname: string) => boolean
@@ -83,37 +85,29 @@ export function NavShellLink({ item, className, children, onActiveClick, navStat
   const isActiveNow = !!item.to && !!routeMatch
   const dialogExitClick = useDialogExitClick(item.to ?? "/", { viewTransition: true })
   if (item.to) {
-    const linkProps = {
-      to: item.to,
-      viewTransition: true,
-      state: navState,
-      onPointerEnter: item.prefetch,
-      onTouchStart: item.prefetch,
-      onFocus: item.prefetch,
-    }
-    const onClick = (event: MouseEvent<HTMLAnchorElement>) => {
-      if (isActiveNow || item.active) onActiveClick?.(event)
-      dialogExitClick(event)
-    }
-    // A row lit through `item.active` that the router does not match (Practice on flashcards, parent Topics on
-    // /weaknesses, the Settings dialog) is current too. NavLink sets aria-current only on its own match and
-    // cannot be told otherwise, so that row is a plain Link that states it explicitly.
-    if (item.active && !isActiveNow) {
-      return (
-        <Link {...linkProps} onClick={onClick} aria-current="page" className={className(true)}>
-          {children(true)}
-        </Link>
-      )
-    }
+    // One stable element type: swapping Link and NavLink as a row moved between matched and lit-only remounted
+    // the anchor and dropped keyboard focus. aria-current is computed here (NavLink cannot state it off its own
+    // match). A row lit through `item.active` without a route match (Practice on flashcards, parent Topics on
+    // /weaknesses, the Settings dialog) is current too; `item.ariaCurrent` lets a section row say "true" so a
+    // sub-row that matches exactly is the only "page" in the same nav.
+    const lit = isActiveNow || !!item.active
     return (
-      <NavLink
-        {...linkProps}
-        end={item.end}
-        onClick={onClick}
-        className={({ isActive }) => className(isActive || !!item.active)}
+      <Link
+        to={item.to}
+        viewTransition
+        state={navState}
+        onPointerEnter={item.prefetch}
+        onTouchStart={item.prefetch}
+        onFocus={item.prefetch}
+        onClick={(event) => {
+          if (lit) onActiveClick?.(event)
+          dialogExitClick(event)
+        }}
+        aria-current={lit ? (item.ariaCurrent ?? "page") : undefined}
+        className={className(lit)}
       >
-        {({ isActive }) => children(isActive || !!item.active)}
-      </NavLink>
+        {children(lit)}
+      </Link>
     )
   }
 

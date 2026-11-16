@@ -178,7 +178,7 @@ const ALLOWLIST: { path: string; reason: string }[] = [
   {
     path: "src/portals/student/screens/SubjectEntry.tsx",
     reason:
-      "loads data, but it is a redirect-only interim tab root: RouteSkeleton while pending, then a Navigate (to the first subject, or Home when there is none), so there is no content an error panel could stand in for",
+      "loads data, but it is a redirect-only interim tab root: RouteSkeleton while pending, then a Navigate (to the first subject, or Home when there is none), so there is no content an error panel could stand in for. A failed overview fetch is not pending and has no subjects, so it also sends the student Home silently; accepted for an interim root that L4 and L9 replace",
   },
   {
     path: "src/portals/teacher/screens/ClassRoster.tsx",

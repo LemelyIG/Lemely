@@ -63,7 +63,6 @@ export function ChildSwitcher({ className }: { className?: string }) {
         label="Choose which child to view"
         labelClassName="sr-only"
         wrapperClassName="absolute inset-0 block [&>div]:h-full [&_svg]:hidden"
-        aria-label="Choose which child to view"
         title={current.displayName}
         value={childId}
         onChange={(event) => navigate(switchChildPath(location.pathname, event.target.value))}

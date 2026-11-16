@@ -35,7 +35,9 @@ describe("ChildSwitcher states (P2, P4, single child, loading, error)", () => {
   })
   it("P4: two children render a select with the accessible name and every child", () => {
     const out = html("/parent/children/c1/topics")
-    expect(out).toContain('aria-label="Choose which child to view"')
+    // The kit Select's own sr-only <label for> names the control (no duplicate aria-label).
+    expect(out).toMatch(/<label for="([^"]+)" class="[^"]*\bsr-only\b[^"]*">Choose which child to view<\/label>/)
+    expect(out).not.toContain("aria-label=\"Choose which child to view\"")
     expect(out).toContain("<select")
     expect(out).toContain("Amira")
     expect(out).toContain("Omar")

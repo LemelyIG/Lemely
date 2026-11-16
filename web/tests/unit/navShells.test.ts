@@ -10,7 +10,7 @@ import { stripComments } from "./support/jsxSource"
  * Packet B3 (Task 4) · the shell primitives' retrofit. `nav-shells.tsx`'s own
  * header used to say the route wiring was future work ("stays in the kit
  * unused for now") — this pins that it no longer is: `NavShellItem` wires
- * through react-router's `NavLink`, and every portal's chrome actually mounts
+ * through react-router's `Link`, and every portal's chrome actually mounts
  * `BottomNav`/`SidebarNav` rather than a bespoke copy.
  */
 
@@ -37,8 +37,8 @@ describe("sidebar/bottom-nav constants agree with index.css", () => {
 describe("nav-shells.tsx wires NavShellItem through react-router", () => {
   const source = stripComments(read("components/ui/nav-shells.tsx"))
 
-  it("imports NavLink", () => {
-    expect(source).toMatch(/import\s*\{[^}]*\bNavLink\b[^}]*\}\s*from\s*"react-router-dom"/)
+  it("imports the router Link (one stable element so focus survives an active-state change)", () => {
+    expect(source).toMatch(/import\s*\{[^}]*\bLink\b[^}]*\}\s*from\s*"react-router-dom"/)
   })
 
   it("passes viewTransition on the router-wired link", () => {

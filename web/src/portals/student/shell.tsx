@@ -145,8 +145,8 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
   const under = (to: string, end?: boolean) => underDialogActive({ to, end }, pagePath, location.pathname)
   const primaryItems: NavShellItem[] = [
     { id: "/student", to: "/student", end: true, label: "Home", icon: <ShellIcon name="home" />, active: under("/student", true) },
-    { id: STUDENT_PRACTICE_TO, to: STUDENT_PRACTICE_TO, label: "Practice", icon: <ShellIcon name="practice" />, active: sectionActive("practice") ?? under(STUDENT_PRACTICE_TO) },
-    { id: STUDENT_PLAN_TO, to: STUDENT_PLAN_TO, label: "Plan", icon: <ShellIcon name="plan" />, active: sectionActive("plan") ?? under(STUDENT_PLAN_TO) },
+    { id: STUDENT_PRACTICE_TO, to: STUDENT_PRACTICE_TO, label: "Practice", ariaCurrent: "true", icon: <ShellIcon name="practice" />, active: sectionActive("practice") ?? under(STUDENT_PRACTICE_TO) },
+    { id: STUDENT_PLAN_TO, to: STUDENT_PLAN_TO, label: "Plan", ariaCurrent: "true", icon: <ShellIcon name="plan" />, active: sectionActive("plan") ?? under(STUDENT_PLAN_TO) },
     { id: "/student/profile", to: "/student/profile", label: "Me", icon: <ShellIcon name="user" />, active: under("/student/profile") },
   ]
   // Every other old row (Your classes, Standings, Friends, Tutors, Sessions) is the sidebar's More group.

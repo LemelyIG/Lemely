@@ -24,6 +24,20 @@ vi.mock("@/components/shell/MoreSheet", () => ({ MoreSheet: () => null }))
 vi.mock("@/components/shell/ShellPullToRefresh", () => ({ ShellPullToRefresh: () => null }))
 vi.mock("@/components/ui/nav-drawer", () => ({ NavDrawer: () => null }))
 
+// The real BottomNav, with its props captured so the shell's onActiveTap can be driven without a DOM.
+const nav: { onActiveTap?: (item: any, event: any) => void } = {}
+vi.mock("@/components/ui/nav-shells", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/components/ui/nav-shells")>()
+  const { createElement: h } = await import("react")
+  return {
+    ...actual,
+    BottomNav: (props: any) => {
+      nav.onActiveTap = props.onActiveTap
+      return h(actual.BottomNav, props)
+    },
+  }
+})
+
 type Mods = {
   PortalShell: typeof import("@/components/shell/PortalShell").PortalShell
   ShellTopBar: typeof import("@/components/shell/ShellTopBar").ShellTopBar
@@ -34,7 +48,7 @@ beforeAll(async () => {
     PortalShell: (await import("@/components/shell/PortalShell")).PortalShell,
     ShellTopBar: (await import("@/components/shell/ShellTopBar")).ShellTopBar,
   }
-})
+}, 60_000)
 
 async function renderWithRouter(element: ReactNode, path = "/student") {
   const routes = [{ path: "*", element }]
@@ -90,5 +104,34 @@ describe("PortalShell passes phoneMenu and moreTab through", () => {
     const without = await renderWithRouter(createElement(mods.PortalShell, { ...shellProps, moreTab: false }))
     expect(withMore).toMatch(/<button[^>]*>.*?More<\/span>/s)
     expect(without).not.toMatch(/>More</)
+  })
+})
+
+describe("PortalShell forwards a tab's isRoot to the re-tap decision", () => {
+  const isSubjectPage = (p: string) => /^\/student\/practice\/[^/]+$/.test(p)
+  const tab = { id: "practice", to: "/student/practice", label: "Practice", icon: createElement("svg"), isRoot: isSubjectPage }
+  const shell = {
+    portal: "student" as const,
+    sidebar: { navLabel: "Main", homeTo: "/student", homeLabel: "Lemely", items: [], user: null } as never,
+    topBar: { ...barProps, onOpenNav: undefined } as never,
+    bottomTabs: [tab],
+    drawerTitle: "Lemely",
+    pending: false,
+  }
+  it("a re-tap on the root a tab names scrolls to top and does not navigate", async () => {
+    await renderWithRouter(createElement(mods.PortalShell, shell), "/student/practice/0580")
+    const scrollTo = vi.fn()
+    vi.stubGlobal("window", {
+      scrollY: 300,
+      scrollTo,
+      matchMedia: () => ({ matches: false }),
+      history: { state: { idx: 3 } },
+    })
+    try {
+      nav.onActiveTap!(tab, { button: 0, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, preventDefault: () => {} })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" })
   })
 })
