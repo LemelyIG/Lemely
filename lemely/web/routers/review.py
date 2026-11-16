@@ -295,7 +295,8 @@ def list_review_queue(
     reset to page one).
 
     ``total`` (C3d) is the count of every item matching every filter
-    (``class_id``/``reason``/``subject``/``q``/``min_age_hours``), ignoring ``limit``/``cursor`` — computed by
+    (``class_id``/``reason``/``subject``/``q``/``min_age_hours``), ignoring
+    ``limit``/``cursor`` — computed by
     ``service.list_queue`` from the same single query that produces the page,
     so `total` can never drift from (or leak beyond) what the page itself is
     allowed to see. Cursor filtering and limit padding/slicing live entirely
