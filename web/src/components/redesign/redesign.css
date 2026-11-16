@@ -269,3 +269,36 @@ button.rd-chip:active { transform: scale(0.97); }
 @media (prefers-reduced-motion: no-preference) {
   button.rd-chip:hover { translate: 0 -2px; }
 }
+
+/* ── Tile (ph.css .pgrid.tint .ptile, .ptile.big) ─────────────────────── */
+.rd-tile {
+  position: relative; overflow: hidden; display: grid; align-content: start; gap: 4px;
+  min-height: 124px; padding: 14px; border: 0; border-radius: 20px; text-align: start; text-decoration: none;
+  font: inherit; color: var(--md-on-surface); background: var(--rd-tile-bg);
+  transition: transform var(--dur-fast) var(--ease-out), filter var(--dur-fast) var(--ease-out);
+}
+.rd-tile[data-tone="tide"] { --rd-tile-bg: var(--md-primary-container); --rd-tile-ink: var(--md-primary); }
+.rd-tile[data-tone="sea"] { --rd-tile-bg: var(--md-secondary-container); --rd-tile-ink: var(--md-on-secondary-container); }
+.rd-tile[data-tone="mint"] { --rd-tile-bg: var(--md-success-container); --rd-tile-ink: var(--md-success-text); }
+.rd-tile[data-tone="coral"] { --rd-tile-bg: var(--md-error-container); --rd-tile-ink: var(--md-on-error-container); }
+.rd-tile[data-tone="gold"] { --rd-tile-bg: color-mix(in oklch, var(--md-tertiary-container) 45%, var(--md-surface-container-lowest)); --rd-tile-ink: var(--md-on-tertiary-container); }
+:root[data-theme="dark"] .rd-tile[data-tone="gold"] { --rd-tile-bg: color-mix(in oklch, var(--md-tertiary) 22%, var(--md-surface-container-high)); --rd-tile-ink: var(--md-on-surface); }
+/* Plan decision 6: Flashcards' violet (hue 300) has no Abyss token and tokens are frozen, so this is the one
+   literal colour in the kit, scoped to this tone, one light and one dark value. */
+.rd-tile[data-tone="violet"] { --rd-tile-bg: oklch(0.95 0.03 300); --rd-tile-ink: oklch(0.42 0.1 300); }
+:root[data-theme="dark"] .rd-tile[data-tone="violet"] { --rd-tile-bg: oklch(0.32 0.05 300); --rd-tile-ink: oklch(0.88 0.06 300); }
+.rd-tile-title { position: relative; z-index: 1; font: 700 17px/1.2 var(--font-sans); }
+.rd-tile-status { position: relative; z-index: 1; font: 500 13px/1.3 var(--font-sans); color: var(--md-on-surface-variant); }
+.rd-tile-status b { font: 800 15px var(--font-mono); color: var(--md-primary); }
+.rd-tile-art { position: absolute; inset-inline-end: -8px; bottom: -10px; width: 72px; height: 72px; display: grid; place-items: center; opacity: 0.35; color: var(--rd-tile-ink); }
+.rd-tile-big { grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 0; padding: 12px 14px 12px 8px; }
+.rd-tile-ic { width: 40px; height: 40px; border-radius: 13px; display: grid; place-items: center; background: var(--md-surface-container-lowest); color: var(--rd-tile-ink); }
+.rd-tile-big .rd-at > b { font-size: 18px; }
+.rd-tile-big .rd-at > span { font-size: 13.5px; font-weight: 500; }
+/* States come last so they beat the base and the big variant at equal specificity. Hover and press are scoped
+   to a and button, so the disabled div can never pick them up. */
+a.rd-tile, button.rd-tile { cursor: pointer; }
+a.rd-tile:hover, button.rd-tile:hover { filter: brightness(0.98); }
+a.rd-tile:active, button.rd-tile:active { transform: scale(0.97); }
+.rd-tile:focus-visible { outline: 2.5px solid var(--md-primary); outline-offset: 2px; }
+.rd-tile[aria-disabled="true"] { opacity: 0.5; filter: saturate(0.6); cursor: not-allowed; }
