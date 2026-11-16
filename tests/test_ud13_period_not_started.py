@@ -116,12 +116,14 @@ def test_the_upgrade_quote_service_call_is_refused(
     assert caught.value.code == "period_not_started"
 
 
-def test_changes_open_again_when_the_period_starts(
+def test_changes_open_again_at_exactly_the_period_start(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     sm = pg_sessionmaker
     scene = _renewed_early(sm)
-    assert _buy(sm, _CheckoutClient(), scene, 1, now=OPENS_AT + timedelta(days=1))  # type: ignore[arg-type]
+    just_before = OPENS_AT - timedelta(microseconds=1)
+    _refused(sm, _CheckoutClient(), scene, 1, "period_not_started", now=just_before)
+    assert _buy(sm, _CheckoutClient(), scene, 1, now=OPENS_AT)  # type: ignore[arg-type]
 
 
 def test_an_ordinary_mid_period_purchase_is_not_affected(

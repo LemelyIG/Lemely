@@ -27,6 +27,7 @@ from lemely.db.models.billing_ops import PaymobWebhookFailure
 from lemely.db.models.enums import Role, SubscriptionStatus
 from lemely.db.subscription_repo import (
     SUBSCRIPTION_WEBHOOK_PATH,
+    GraceSettingMissing,
     SubscriptionError,
     SubscriptionService,
 )
@@ -263,15 +264,8 @@ def test_every_subscription_error_code_has_a_status() -> None:
         cls = pending.pop()
         pending.extend(cls.__subclasses__())
         codes.add(cls.code)
-    # Never reach these routes: the webhook parser, the credit-conversion helper, the plan sync and
-    # the grace read (webhook and admin only; an app-level handler answers it with a 503).
-    unreachable = {
-        "subscription_error",
-        "malformed_webhook",
-        "no_credit_rate",
-        "plan_sync_failed",
-        "grace_setting_missing",
-    }
+    # Never reach these routes: the webhook parser, the credit-conversion helper and the plan sync.
+    unreachable = {"subscription_error", "malformed_webhook", "no_credit_rate", "plan_sync_failed"}
     assert codes - unreachable <= set(billing_router._STATUS_FOR_CODE)
 
 
@@ -287,6 +281,28 @@ def test_checkout_answers_503_when_paymob_is_down(pg_sessionmaker: sessionmaker[
     h.fake.intention_response = good
     r = http.post(f"{BILLING}/subscriptions/checkout", json={"planTierId": str(tier)})
     assert r.status_code == 201  # the failed checkout does not block the retry
+
+
+def test_a_missing_grace_setting_is_never_a_400_on_a_customer_route(
+    pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The routes turn every ``SubscriptionError`` into 4xx; a missing settings row must reach the
+    app-level handler (503 with its code) even if a route ever reads the grace setting."""
+    assert not issubclass(GraceSettingMissing, SubscriptionError)
+
+    def missing(*_args: object, **_kwargs: object) -> None:
+        raise GraceSettingMissing("Payments are temporarily unavailable")
+
+    monkeypatch.setattr(SubscriptionService, "create_subscription_checkout", missing)
+    student = seed_user(pg_sessionmaker, Role.student)
+    tier = seed_tier(pg_sessionmaker)
+    r = (
+        Harness(pg_sessionmaker)
+        .as_user(student, Role.student)
+        .post(f"{BILLING}/subscriptions/checkout", json={"planTierId": str(tier)})
+    )
+    assert r.status_code == 503
+    assert r.json()["detail"]["code"] == "grace_setting_missing"
 
 
 def test_checkout_answers_503_when_paymob_is_unconfigured(

@@ -292,8 +292,11 @@ class NoCreditRate(SubscriptionError):
         self.reason = reason
 
 
-class GraceSettingMissing(SubscriptionError):
+class GraceSettingMissing(RuntimeError):
     """``billing_settings`` has no row: the grace length is unknown, so nothing is guessed.
+
+    Deliberately not a ``SubscriptionError``: the customer routes turn those into a 400, and a
+    damaged database must reach the app-level settings handler (503 with its code) instead.
 
     Raised before a grace deadline is set or a Paymob plan is created (the plan's ``retrial_days``
     is the same setting). The migration and ``create_all`` both insert the row, so its absence is a
