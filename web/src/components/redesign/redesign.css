@@ -243,3 +243,27 @@ a.rd-hairrow.rd-selected:hover, button.rd-hairrow.rd-selected:hover, button.rd-r
   margin-inline-start: 6px; padding: 3px 6px; border-radius: 6px; vertical-align: 2px; white-space: nowrap;
   font: 700 12px/1 var(--font-sans); font-style: normal; color: var(--md-primary); background: var(--md-primary-container);
 }
+
+/* ── Topic chips (t.css .tmap/.tm/.tleg) ─────────────────────────────── */
+/* State is carried by glyph + label (text >= 4.5:1); fills are tonal. The edge is >= 3:1 so a chip reads as a control. */
+.rd-chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.rd-chip {
+  --rd-chip-edge: color-mix(in oklch, var(--md-on-surface-variant) 85%, var(--md-surface));
+  position: relative; display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px;
+  border: 0; border-radius: 12px; font: 600 13.5px var(--font-sans); transition: translate 0.2s var(--ease-out);
+}
+.rd-chip b { font: 700 12px var(--font-mono); }
+.rd-chip svg { flex: none; }
+.rd-chip[data-state="secure"] { background: var(--md-primary-container); color: var(--md-primary); }
+.rd-chip[data-state="getting"] { background: var(--md-surface-container-low); color: var(--md-on-surface); box-shadow: inset 0 0 0 1px var(--md-outline-variant); }
+.rd-chip[data-state="work"] { background: var(--md-error-container); color: var(--md-on-error-container); }
+/* Follows the state rules: the fold chip is outlined, not filled, and keeps the secure ink. */
+.rd-chip.rd-chip-more { background: transparent; box-shadow: inset 0 0 0 1.5px var(--rd-chip-edge); }
+button.rd-chip { cursor: pointer; }
+button.rd-chip:active { transform: scale(0.97); }
+.rd-chip:focus-visible { outline: 2.5px solid var(--md-primary); outline-offset: 2px; }
+.rd-chip-legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 8px 0 0; font: 500 12px var(--font-sans); color: var(--md-on-surface-variant); }
+.rd-chip-legend span { display: inline-flex; align-items: center; gap: 6px; }
+@media (prefers-reduced-motion: no-preference) {
+  button.rd-chip:hover { translate: 0 -2px; }
+}
