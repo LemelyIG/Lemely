@@ -23,6 +23,7 @@ from lemely.db.billing_settings_repo import (
 from lemely.db.llm_price_repo import LlmPriceService, LlmPriceView
 from lemely.db.models.enums import Role
 from lemely.db.session import get_sessionmaker
+from lemely.io.fx_reference import FxReference, get_usd_egp_reference
 from lemely.io.gemini import code_price_models, code_price_row
 from lemely.io.llm.pricing import CLAUDE_PRICE_SOURCES, PriceRow
 from lemely.io.providers import is_anthropic_model
@@ -43,6 +44,7 @@ from lemely.web.schemas_admin_billing_settings import (
     LlmPriceClear,
     LlmPriceDTO,
     LlmPriceSet,
+    MarketReferenceDTO,
 )
 
 if TYPE_CHECKING:
@@ -96,7 +98,27 @@ def get_llm_price_service() -> Iterator[LlmPriceService]:
 PriceService = Annotated[LlmPriceService, Depends(get_llm_price_service)]
 
 
-def settings_dto(view: BillingSettingsView) -> BillingSettingsDTO:
+def get_market_reference() -> FxReference | None:
+    """The market USD to EGP hint (display only, P08-T21). Never raises; tests override this."""
+    return get_usd_egp_reference()
+
+
+MarketReference = Annotated[FxReference | None, Depends(get_market_reference)]
+
+
+def market_reference_dto(reference: FxReference | None) -> MarketReferenceDTO | None:
+    if reference is None:
+        return None
+    return MarketReferenceDTO(
+        rate=format(reference.rate.normalize(), "f"),
+        source=reference.source,
+        asOf=reference.as_of,
+    )
+
+
+def settings_dto(
+    view: BillingSettingsView, reference: FxReference | None = None
+) -> BillingSettingsDTO:
     margin = view.margin_egp_per_usd
     code = view.code_execution_usd_per_hour
     return BillingSettingsDTO(
@@ -109,6 +131,7 @@ def settings_dto(view: BillingSettingsView) -> BillingSettingsDTO:
         version=view.version,
         updatedAt=view.updated_at,
         updatedBy=optional_id(view.updated_by),
+        marketReference=market_reference_dto(reference),
     )
 
 
@@ -123,13 +146,16 @@ def credit_rate_dto(view: CreditRateView) -> CreditRateDTO:
 
 
 @router.get("/settings", response_model=BillingSettingsDTO)
-def read_settings(service: SettingsService) -> BillingSettingsDTO:
-    return settings_dto(service.get())
+def read_settings(service: SettingsService, reference: MarketReference) -> BillingSettingsDTO:
+    return settings_dto(service.get(), reference)
 
 
 @router.put("/settings", response_model=BillingSettingsDTO)
 def update_settings(
-    body: BillingSettingsUpdate, auth: AdminAuth, service: SettingsService
+    body: BillingSettingsUpdate,
+    auth: AdminAuth,
+    service: SettingsService,
+    reference: MarketReference,
 ) -> BillingSettingsDTO:
     """A partial update; a field left out is untouched, one equal to its value is still a write."""
     given = body.model_fields_set
@@ -142,7 +168,8 @@ def update_settings(
                 expected_version=body.expectedVersion,
                 reason=body.reason,
                 confirm_unusual_price=body.confirmUnusualPrice,
-            )
+            ),
+            reference,
         )
 
 

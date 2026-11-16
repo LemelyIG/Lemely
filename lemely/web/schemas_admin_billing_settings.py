@@ -21,6 +21,14 @@ from lemely.web.schemas_admin_billing import Reason  # noqa: TC001 - pydantic re
 StrictInt = Annotated[int, Field(strict=True)]
 
 
+class MarketReferenceDTO(ApiModel):
+    """A market USD to EGP reading shown beside the admin's own rate. Display only (P08-T21)."""
+
+    rate: str
+    source: str
+    asOf: date
+
+
 class BillingSettingsDTO(ApiModel):
     creditValidityMonths: int
     graceDays: int
@@ -31,6 +39,8 @@ class BillingSettingsDTO(ApiModel):
     version: int
     updatedAt: datetime
     updatedBy: str | None
+    #: Read-only market hint; ``null`` when the feed has no usable reading. Never accepted on PUT.
+    marketReference: MarketReferenceDTO | None = None
 
 
 class BillingSettingsUpdate(ApiModel):

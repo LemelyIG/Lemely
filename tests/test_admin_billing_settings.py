@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import threading
 import uuid
+from datetime import date
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
@@ -30,9 +31,11 @@ from lemely.db.billing_settings_repo import (
 )
 from lemely.db.models.billing_ops import BillingSettings, CreditConversionRate
 from lemely.db.models.enums import Role
+from lemely.io.fx_reference import FxReference
 from lemely.web.deps import AuthContext, get_auth_context
 from lemely.web.routers.admin_billing_settings import (
     get_billing_settings_service,
+    get_market_reference,
 )
 from lemely.web.routers.admin_billing_settings import router as settings_router
 from tests.admin_billing_db import (
@@ -81,8 +84,13 @@ def _service_dependency(
     return dependency
 
 
-def _client(sm: sessionmaker[Session], admin_id: uuid.UUID) -> TestClient:
+def _client(
+    sm: sessionmaker[Session],
+    admin_id: uuid.UUID,
+    reference: FxReference | None = None,
+) -> TestClient:
     app = app_with_routers(settings_router)  # a no-op once app.py mounts it
+    app.dependency_overrides[get_market_reference] = lambda: reference  # never the network
     app.dependency_overrides[get_billing_settings_service] = _service_dependency(sm)
     app.dependency_overrides[get_auth_context] = lambda: AuthContext(
         user_id=str(admin_id), role=Role.platform_admin.value
@@ -137,7 +145,9 @@ def test_get_returns_the_seed_defaults_and_the_documented_shape(client: TestClie
         "version",
         "updatedAt",
         "updatedBy",
+        "marketReference",
     }
+    assert body["marketReference"] is None
     assert (
         body["creditValidityMonths"],
         body["graceDays"],
@@ -818,3 +828,42 @@ def test_the_five_routes_are_mounted_in_the_application() -> None:
         ("PUT", f"{BASE}/credit-rates/{{currency}}"),
         ("POST", f"{BASE}/credit-rates/{{currency}}/clear"),
     } <= mounted
+
+
+# --- the market reference hint (P08-T21) ------------------------------------------------------
+
+MARKET = FxReference(rate=Decimal("53.741239"), source="open.er-api.com", as_of=date(2026, 11, 16))
+
+
+def test_get_carries_the_market_reference_as_strings(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    body = _client(sm, admin, MARKET).get(f"{BASE}/settings").json()
+    assert body["marketReference"] == {
+        "rate": "53.741239",
+        "source": "open.er-api.com",
+        "asOf": "2026-11-16",
+    }
+
+
+def test_the_reference_changes_no_setting_and_writes_nothing(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    before = _settings(sm)
+    audits = audit_count(sm)
+    body = _client(sm, admin, MARKET).get(f"{BASE}/settings").json()
+    assert body["marginEgpPerUsd"] is None
+    assert _settings(sm) == before
+    assert audit_count(sm) == audits
+
+
+def test_a_put_response_keeps_the_reference_and_the_put_refuses_to_take_one(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    client = _client(sm, admin, MARKET)
+    resp = _put(client, graceDays=5)
+    assert resp.status_code == 200
+    assert resp.json()["marketReference"]["rate"] == "53.741239"
+    rejected = _put(client, marketReference={"rate": "60", "source": "x", "asOf": "2026-11-16"})
+    assert rejected.status_code == 422
+    assert _settings(sm)["grace_days"] == 5
