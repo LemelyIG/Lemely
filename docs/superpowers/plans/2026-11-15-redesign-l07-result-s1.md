@@ -6357,4 +6357,3 @@ git commit -S -m "fix(web): S1 fidelity drift and polish" -- <changed files>
   - `winRows`, `nextStep` and `visibleRows` against the components
   - `RevealOverlay({ result, onDocked })` against `PaperResultBody`
   - `useAnswerCrop` and `answerCropUrlFor`
-

@@ -5427,7 +5427,7 @@ Expected: pass. (`screenshots.spec.ts` is long; run its S-06 part only if the co
 - [ ] **Step 6: Commit**
 
 ```bash
-pre-commit run --files web/src/portals/student/index.tsx web/tests/unit/rtlSafety.test.ts web/tests/unit/utilityExistence.test.ts web/e2e/student-home.spec.ts web/e2e/student-journey.spec.ts web/e2e/screenshots.spec.ts 
+pre-commit run --files web/src/portals/student/index.tsx web/tests/unit/rtlSafety.test.ts web/tests/unit/utilityExistence.test.ts web/e2e/student-home.spec.ts web/e2e/student-journey.spec.ts web/e2e/screenshots.spec.ts
 git commit -S -m "test(web): Home and Me e2e, lint lists and route titles" -- web/src/portals/student/index.tsx web/tests/unit/rtlSafety.test.ts web/tests/unit/utilityExistence.test.ts web/e2e/student-home.spec.ts web/e2e/student-journey.spec.ts web/e2e/screenshots.spec.ts
 ```
 

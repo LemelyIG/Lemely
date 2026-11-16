@@ -6384,4 +6384,3 @@ Each item has a recommendation. None of them blocks the start of the work.
 9. **Two offline banners.** The shell's global `OfflineBanner` and the run's own banner would both show. **Recommend: F1 hides the global banner on `immersive` routes.**
 10. **Result buttons.** "Next: Algebra · +7 marks" replaces the live "See your study plan" and "Back to dashboard". The study plan becomes the primary button only when there is no next topic, and close goes to Home. **Recommend: approve.**
 11. **The shortfall note** ("fewer than you asked for") stays on L4's builder. The start screen shows only the real question count. **Recommend: approve.**
-

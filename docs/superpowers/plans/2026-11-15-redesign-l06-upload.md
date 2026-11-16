@@ -7162,4 +7162,3 @@ git commit -S -m "test(e2e): student and teacher upload happy paths" -- web/e2e/
 - Spec coverage: phone camera / desktop upload (Tasks 11, 15, 19, 20), scanner capture with outline, auto + manual, stack, bad-page block (11, 12, 15), Your pages + fix-crop + Download PDF (16, 6), marking board with Blank / Page missing / Marking behind data (10, 18), every listed state (frame table → Tasks 15–20), SSE + polling + paper found + ETA + server PDF + saved crops (2–7, 9), Cloud Run timeouts and buffering (3, 4, notes), existing pipeline stages reused (19).
 - Type names checked across tasks: `TileQuestion`/`TileQuestionDTO` (`id`, `state`, `blank`), `MarkingProgress(DTO)` fields, `groupTiles`, `tileStateFor`, `RecentRow`, `recentRowFromUpload`, `markingKeys`, `followProgress`, `captureReducer` actions, `flowReducer` events.
 - Placeholders: none; the two places that depend on an existing hook name (`useReference`, the media-query hook) say how to find it.
-
