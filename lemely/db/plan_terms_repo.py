@@ -14,16 +14,36 @@ modules (which import nothing from the billing charge code) can use it.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from datetime import timedelta
+from typing import TYPE_CHECKING, Final
 
 import sqlalchemy as sa
+import structlog
+from sqlalchemy.orm import aliased
 
-from lemely.db.models.billing import PlanTier, PlanTierTerms, Subscription
+from lemely.core.billing_defaults import PRICE_CHANGE_NOTICE_DAYS
+from lemely.core.subscription_rules import period_end, subscription_amount_minor
+from lemely.db.billing_notices import enqueue_plan_terms_change, enqueue_plan_terms_ends
+from lemely.db.models.billing import (
+    PLAN_LIVE_STATUSES,
+    PlanAudience,
+    PlanTier,
+    PlanTierTerms,
+    Subscription,
+)
+from lemely.db.models.billing_ops import BillingSettings
+from lemely.db.models.team import TeacherMember, TeacherMemberKind, TeacherMemberStatus
 
 if TYPE_CHECKING:
     import uuid
+    from datetime import datetime
 
-    from sqlalchemy.orm import Session
+    from sqlalchemy.orm import Session, sessionmaker
+
+log = structlog.get_logger("lemely.db.plan_terms_repo")
+
+#: Rows one sweep tick handles, oldest first; the rest wait for the next tick.
+TERMS_NOTICE_BATCH: Final = 200
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,10 +147,264 @@ def tier_for_terms(session: Session, tier_id: uuid.UUID) -> PlanTier:
     return tier
 
 
+# -- the notice (UD13-A, Part B) ----------------------------------------------------------
+
+
+def renewal_amount(terms: TierTerms, extra_seats: int) -> int:
+    """What one renewal costs on ``terms`` for a subscriber holding ``extra_seats``.
+
+    Seats are counted only when the terms sell them (a tier with no seat price holds none).
+    """
+    return subscription_amount_minor(
+        price_minor=terms.price_minor,
+        extra_seats=extra_seats if terms.extra_seat_price_minor > 0 else 0,
+        extra_seat_price_minor=terms.extra_seat_price_minor,
+    )
+
+
+def move_is_worse(current: TierTerms, new: TierTerms, *, extra_seats: int) -> bool:
+    """A move is worse for the subscriber when it costs more or gives less (full notice period)."""
+    return (
+        renewal_amount(new, extra_seats) > renewal_amount(current, extra_seats)
+        or new.allowance_units < current.allowance_units
+        or new.included_seats < current.included_seats
+        or new.seat_allowance_units < current.seat_allowance_units
+    )
+
+
+def first_applies_at(period_end_at: datetime, interval: str, effective_at: datetime) -> datetime:
+    """The first period end on or after ``effective_at``: the renewal the new terms first apply to.
+
+    ``period_end_at`` itself when it qualifies, otherwise the following ones.
+    """
+    end = period_end_at
+    for _ in range(400):  # a bound: 90 days of notice over the shortest interval is far below it
+        if end >= effective_at:
+            return end
+        end = period_end(end, interval)
+    return end
+
+
+def _live_paid_filters(S: type[Subscription], T: type[PlanTier]) -> list[sa.ColumnElement[bool]]:
+    """Subscriptions that renew by themselves and have not asked to stop (the notice's pool).
+
+    Complimentary rows (no payer) and manual activations do not renew, a cancelling subscriber is
+    leaving anyway, and a pending plan change decides the next terms (the target's current ones).
+    A move is owed when the tier has terms the subscription is not on, and not yet announced.
+    """
+    return [
+        S.status.in_(PLAN_LIVE_STATUSES),
+        S.payer_user_id.is_not(None),
+        S.is_manually_activated.is_(False),
+        S.cancel_at_period_end.is_(False),
+        S.pending_plan_tier_id.is_(None),
+        S.terms_version < T.terms_version,
+        sa.or_(S.pending_terms_version.is_(None), S.pending_terms_version < T.terms_version),
+    ]
+
+
+def _notice_days(session: Session) -> int:
+    days = session.scalar(sa.select(BillingSettings.price_change_notice_days))
+    return PRICE_CHANGE_NOTICE_DAYS if days is None else int(days)
+
+
+def _seats_held(session: Session, teacher_id: uuid.UUID) -> int:
+    return int(
+        session.scalar(
+            sa.select(sa.func.count())
+            .select_from(TeacherMember)
+            .where(
+                TeacherMember.teacher_user_id == teacher_id,
+                TeacherMember.kind == TeacherMemberKind.student_seat,
+                TeacherMember.status == TeacherMemberStatus.active,
+            )
+        )
+        or 0
+    )
+
+
+def queue_terms_change_notices(
+    sm: sessionmaker[Session],
+    *,
+    now: datetime,
+    amount_updatable: bool,
+    limit: int = TERMS_NOTICE_BATCH,
+) -> int:
+    """Announce each subscriber's move to the tier's newer terms; the count of rows handled.
+
+    Job ``billing.terms_change_notices``. At most ``limit`` rows, oldest first, one transaction per
+    row with ``FOR UPDATE SKIP LOCKED`` (a row another worker holds waits for the next tick). A
+    row's failure is alerted and skipped.
+
+    Per row: ``pending_terms_version`` is the tier's current version and ``terms_notice_sent_at``
+    is ``now``. ``pending_terms_effective_at`` is ``now`` plus ``billing_settings.
+    price_change_notice_days`` when the move is worse for this subscriber, else ``now``. The payer
+    gets one notice (UD13-E: no amount) in the same transaction, unless nothing the subscriber can
+    see changes. On the fixed-amount path (``amount_updatable`` false) a move that changes the
+    renewal amount cannot be charged, so the notice says the plan ends and to subscribe again.
+
+    Raises:
+        ValueError: ``limit`` is below 1.
+    """
+    if limit < 1:
+        raise ValueError("limit must be at least 1")
+    S = Subscription
+    with sm() as session:
+        ids = list(
+            session.scalars(
+                sa.select(S.id)
+                .join(PlanTier, PlanTier.id == S.plan_tier_id)
+                .where(*_live_paid_filters(S, PlanTier))
+                .order_by(S.created_at, S.id)
+                .limit(limit)
+            )
+        )
+    handled = 0
+    for sub_id in ids:
+        try:
+            with sm.begin() as session:
+                handled += _announce_one(
+                    session, sub_id, now=now, amount_updatable=amount_updatable
+                )
+        except Exception:
+            log.error(
+                "terms_change_notice_failed",
+                subscription_id=str(sub_id),
+                alert=True,
+                exc_info=True,
+            )
+    return handled
+
+
+def _announce_one(
+    session: Session, sub_id: uuid.UUID, *, now: datetime, amount_updatable: bool
+) -> int:
+    S = Subscription
+    row = session.execute(
+        sa.select(S, PlanTier)
+        .join(PlanTier, PlanTier.id == S.plan_tier_id)
+        .where(S.id == sub_id, *_live_paid_filters(S, PlanTier))
+        .with_for_update(of=S, skip_locked=True)
+    ).first()
+    if row is None:
+        return 0  # changed or locked since the read: the next tick decides
+    sub, tier = row
+    current = terms_for(session, sub)
+    new = current_terms_for(session, tier)
+    seats = sub.pending_extra_seats if sub.pending_extra_seats is not None else sub.extra_seats or 0
+    worse = move_is_worse(current, new, extra_seats=seats)
+    effective_at = now + timedelta(days=_notice_days(session)) if worse else now
+    sub.pending_terms_version = new.terms_version
+    sub.pending_terms_effective_at = effective_at
+    sub.version = (sub.version or 0) + 1
+    price_changes = renewal_amount(new, seats) != renewal_amount(current, seats)
+    entitlements_change = (
+        new.allowance_units != current.allowance_units
+        or new.included_seats != current.included_seats
+        or new.seat_allowance_units != current.seat_allowance_units
+    )
+    seats_over = 0
+    if tier.audience is PlanAudience.teacher:
+        capacity = new.included_seats + (seats if new.extra_seat_price_minor > 0 else 0)
+        seats_over = max(0, _seats_held(session, sub.user_id) - capacity)
+    if not (price_changes or entitlements_change or seats_over):
+        return 1  # a change the subscriber cannot see (an unused seat price): moves without a mail
+    assert tier.interval is not None  # noqa: S101 - a plan that renews has an interval
+    applies_at = first_applies_at(sub.current_period_end or now, tier.interval.value, effective_at)
+    sub.terms_notice_sent_at = now
+    if price_changes and not amount_updatable:
+        enqueue_plan_terms_ends(
+            session, subscription=sub, terms_version=new.terms_version, ends_at=applies_at
+        )
+    else:
+        enqueue_plan_terms_change(
+            session,
+            subscription=sub,
+            terms_version=new.terms_version,
+            applies_at=applies_at,
+            price_changes=price_changes,
+            entitlements_change=entitlements_change,
+            seats_over=seats_over,
+        )
+    log.info(
+        "subscription_terms_change_noticed",
+        subscription_id=str(sub.id),
+        terms_version=new.terms_version,
+        worse=worse,
+        effective_at=effective_at.isoformat(),
+    )
+    return 1
+
+
+def fixed_path_move_ids(
+    session: Session,
+    *,
+    now: datetime,
+    limit: int = TERMS_NOTICE_BATCH,
+    only: uuid.UUID | None = None,
+) -> list[uuid.UUID]:
+    """Subscriptions whose pending move changes the renewal amount and is due, oldest first.
+
+    For the fixed-amount path (Paymob cannot change the amount): such a move is never applied by a
+    renewal, so the plan is cancelled at its period end instead. Due means
+    ``current_period_end >= pending_terms_effective_at``; a cancelling or plan-changing
+    subscription is not a candidate. A move that leaves the amount unchanged is not one: it applies
+    at the renewal. ``only`` narrows the answer to one row (the caller's re-check under its lock).
+    """
+    S = Subscription
+    current = aliased(PlanTierTerms)
+    pending = aliased(PlanTierTerms)
+    seats = sa.func.coalesce(S.pending_extra_seats, S.extra_seats, 0)
+
+    def amount(t: type[PlanTierTerms]) -> sa.ColumnElement[int]:
+        return t.price_minor + sa.case(
+            (t.extra_seat_price_minor > 0, seats * t.extra_seat_price_minor), else_=0
+        )
+
+    stmt = (
+        sa.select(S.id)
+        .join(
+            current,
+            sa.and_(
+                current.plan_tier_id == S.plan_tier_id, current.terms_version == S.terms_version
+            ),
+        )
+        .join(
+            pending,
+            sa.and_(
+                pending.plan_tier_id == S.plan_tier_id,
+                pending.terms_version == S.pending_terms_version,
+            ),
+        )
+        .where(
+            S.status.in_(PLAN_LIVE_STATUSES),
+            S.payer_user_id.is_not(None),
+            S.is_manually_activated.is_(False),
+            S.cancel_at_period_end.is_(False),
+            S.pending_plan_tier_id.is_(None),
+            S.pending_terms_version.is_not(None),
+            S.current_period_end >= S.pending_terms_effective_at,
+            S.current_period_end > now,
+            amount(current) != amount(pending),
+        )
+        .order_by(S.current_period_end, S.id)
+        .limit(limit)
+    )
+    if only is not None:
+        stmt = stmt.where(S.id == only)
+    return list(session.scalars(stmt))
+
+
 __all__ = [
+    "TERMS_NOTICE_BATCH",
     "TierTerms",
     "current_terms_for",
+    "first_applies_at",
+    "fixed_path_move_ids",
+    "move_is_worse",
     "pending_terms_for",
+    "queue_terms_change_notices",
+    "renewal_amount",
     "terms_for",
     "terms_in_force_for_next_period",
     "tier_for_terms",

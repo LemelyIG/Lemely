@@ -128,6 +128,31 @@ def test_subscription_jobs_do_not_need_the_seat_flag(
     assert not set(SEAT_JOBS) & set(results)
 
 
+TERMS_JOBS = ["billing.terms_change_notices", "billing.terms_move_fixed_path"]
+
+
+def test_the_terms_jobs_run_before_the_expiry_and_period_end_sweeps(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """UD13-A: announce, then schedule the fixed-path cancels, before the sweep pushes cancels."""
+    results = _sweeper(pg_sessionmaker, FakePaymobClient(), DEC_1).sweep_once()
+    order = list(results)
+    assert all(results[name] == 0 for name in TERMS_JOBS)
+    assert order.index(TERMS_JOBS[0]) + 1 == order.index(TERMS_JOBS[1])
+    assert order.index(TERMS_JOBS[1]) < order.index("subscriptions.expire_overdue")
+    assert order.index(TERMS_JOBS[1]) < order.index("subscriptions.period_end")
+
+
+def test_the_terms_jobs_need_the_subscription_collaborator_and_are_listed_for_health(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    results = _sweeper(
+        pg_sessionmaker, FakePaymobClient(), DEC_1, with_subscriptions=False
+    ).sweep_once()
+    assert not set(TERMS_JOBS) & set(results)
+    assert set(TERMS_JOBS) <= set(BILLING_JOB_NAMES)
+
+
 def test_every_job_name_is_listed_for_admin_health() -> None:
     assert set(JOBS) | {"admin.expire_manual_subscriptions"} <= set(BILLING_JOB_NAMES)
 

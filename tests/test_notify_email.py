@@ -479,6 +479,8 @@ def test_billing_templates_are_disjoint_from_the_tutoring_spec() -> None:
         "auto_topup_card_missing",
         "auto_topup_phone_required",
         "extra_seats_charge_failed",
+        "plan_terms_change",
+        "plan_terms_ends",
     } == BILLING_EMAIL_TEMPLATES
     assert set(EMAIL_TEMPLATES) >= BILLING_EMAIL_TEMPLATES
     assert BILLING_EMAIL_TEMPLATES.isdisjoint(set(VALID))
@@ -568,3 +570,67 @@ def test_subscription_notice_copy_makes_no_promise_about_retries_refunds_or_the_
         lowered = rendered.lower()
         for word in ("retry", "paymob", "refund"):
             assert word not in lowered
+
+
+# -- plan terms notices (UD13-A, UD13-E: no amount) ----------------------------------------
+
+
+def _terms_change(**overrides: object) -> dict[str, object]:
+    return {
+        "subscription_id": str(SUBSCRIPTION_ID),
+        "applies_at": "2026-12-10T09:00:00+00:00",
+        "price_changes": True,
+        "entitlements_change": False,
+        **overrides,
+    }
+
+
+def test_terms_templates_are_cap_exempt_billing_templates() -> None:
+    for name in ("plan_terms_change", "plan_terms_ends"):
+        template = EMAIL_TEMPLATES[name]
+        assert name in BILLING_EMAIL_TEMPLATES
+        assert template.notification_type.value == "billing"  # type: ignore[attr-defined]
+
+
+def test_terms_change_names_the_date_and_how_to_cancel_and_no_amount() -> None:
+    _, html_body, text = render_email("plan_terms_change", _terms_change(), app_base_url=BASE_URL)
+    assert "10 Dec 2026" in text
+    assert "price" in text
+    assert "cancel" in text.lower()
+    assert not re.search(r"\d[\d,.]*\s*(EGP|SAR|AED|OMR|USD)|EGP|\$", html_body + text)
+    assert f"{BASE_URL}/billing" in text
+
+
+def test_terms_change_says_how_many_students_to_remove_or_seats_to_add() -> None:
+    _, _, text = render_email(
+        "plan_terms_change",
+        _terms_change(seats_over=2, entitlements_change=True),
+        app_base_url=BASE_URL,
+    )
+    assert "remove 2 students or add 2 seats before 10 Dec 2026" in text
+
+
+def test_terms_change_without_excess_seats_says_nothing_about_removing() -> None:
+    _, _, text = render_email("plan_terms_change", _terms_change(), app_base_url=BASE_URL)
+    assert "remove" not in text.lower()
+
+
+def test_terms_ends_says_the_plan_ends_and_to_subscribe_again() -> None:
+    _, _, text = render_email(
+        "plan_terms_ends",
+        {"subscription_id": str(SUBSCRIPTION_ID), "ends_at": "2026-12-10T09:00:00+00:00"},
+        app_base_url=BASE_URL,
+    )
+    assert "ends on 10 Dec 2026" in text
+    assert "subscribe again" in text.lower()
+    assert "EGP" not in text
+
+
+def test_terms_contexts_refuse_extra_keys_and_naive_instants() -> None:
+    assert validate_context("plan_terms_change", _terms_change())
+    with pytest.raises(InvalidEmailContext):
+        validate_context("plan_terms_change", {**_terms_change(), "amount_minor": 100})
+    with pytest.raises(InvalidEmailContext):
+        validate_context("plan_terms_change", _terms_change(applies_at="2026-12-10T09:00:00"))
+    with pytest.raises(InvalidEmailContext):
+        validate_context("plan_terms_ends", {"subscription_id": str(SUBSCRIPTION_ID)})

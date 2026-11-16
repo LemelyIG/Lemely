@@ -59,6 +59,8 @@ from lemely.web.subscription_jobs import (
     monthly_seat_allowance_job,
     period_end_job,
     release_due_seats_job,
+    terms_change_notices_job,
+    terms_move_fixed_path_job,
 )
 from lemely.web.tutoring_email import deliver_tutoring_email
 from lemely.web.usage_sweeps import ReconcileMemo, RepairCursor, usage_jobs
@@ -649,6 +651,21 @@ class Sweeper:
         # is released before the new month's grant, so the order below is load-bearing.
         subscriptions = self.subscriptions
         expiry = subscriptions or self.expiry
+        if subscriptions is not None:
+            # Plan terms moves (UD13-A): announce them, then cancel the plans a move would reprice
+            # where Paymob cannot change the amount, before the sweep that pushes cancels.
+            jobs.extend(
+                [
+                    (
+                        "billing.terms_change_notices",
+                        lambda: terms_change_notices_job(subscriptions, now=moment),
+                    ),
+                    (
+                        "billing.terms_move_fixed_path",
+                        lambda: terms_move_fixed_path_job(subscriptions, now=moment),
+                    ),
+                ]
+            )
         if expiry is not None:
             jobs.append(
                 (

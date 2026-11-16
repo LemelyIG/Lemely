@@ -936,25 +936,28 @@ def test_catalogue_counts_live_subscribers_and_those_behind_the_current_terms(
     assert (row["liveSubscriptionCount"], row["pendingMoves"], row["termsVersion"]) == (1, 1, 2)
 
 
-# -- terms edits stay closed while the tier has live subscribers (T16 Part A gate) ---------
+# -- terms edits with live subscribers (UD13-A: they move at their renewal, after a notice) ---
 
 
 @pytest.mark.parametrize("status", ["active", "past_due", "pending_first_payment"])
-def test_a_terms_edit_is_refused_while_the_tier_has_a_live_subscriber(
+def test_a_terms_edit_with_a_live_subscriber_succeeds_and_leaves_them_on_their_terms(
     sm: sessionmaker[Session], admin: uuid.UUID, status: str
 ) -> None:
-    """The reviewer's probe: a live subscriber must not be re-priced by an admin edit."""
+    """The edit appends terms v2; the subscriber stays on v1 until the notice job and a renewal."""
     tier = add_plan_tier(sm, price_minor=10000)
-    add_subscription(sm, add_user(sm), tier, status=SubscriptionStatus(status))
+    sub = add_subscription(sm, add_user(sm), tier, status=SubscriptionStatus(status))
     resp = admin_client(sm, admin).put(f"{P}/tiers/{tier}", json=_tier_update(priceMinor=15000))
-    assert resp.status_code == 409, resp.text
-    assert resp.json()["detail"]["code"] == "terms_change_needs_notice_flow"
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["termsVersion"] == 2
     with sm() as session:
         row = session.get(PlanTier, tier)
         assert row is not None
-        assert (row.price_minor, row.terms_version, row.version) == (10000, 1, 1)
-    assert [t.terms_version for t in _terms(sm, tier)] == [1]
-    assert audit_rows(sm, "catalogue.plan_tier.update") == []
+        assert (row.price_minor, row.terms_version) == (15000, 2)
+        held = session.get(Subscription, sub)
+        assert held is not None
+        assert (held.terms_version, held.pending_terms_version) == (1, None)
+    assert [t.terms_version for t in _terms(sm, tier)] == [1, 2]
+    assert len(audit_rows(sm, "catalogue.plan_tier.update")) == 1
 
 
 def test_a_name_edit_is_allowed_with_a_live_subscriber_and_a_terms_edit_without_one(
@@ -975,11 +978,11 @@ def test_a_name_edit_is_allowed_with_a_live_subscriber_and_a_terms_edit_without_
     assert edited.json()["termsVersion"] == 2
 
 
-def test_a_seat_checkout_in_flight_cannot_meet_a_seat_price_edit(
+def test_a_seat_price_edit_leaves_a_seat_checkout_in_flight_untouched(
     sm: sessionmaker[Session], admin: uuid.UUID
 ) -> None:
-    """M1: a seat checkout needs a live subscriber on the tier, so the seat-price edit that
-    would strand it is refused; the settle reprice only has to handle terms moves T16 makes."""
+    """M1: the in-flight seat payment is billed on the terms it was priced at; the edit is a new
+    terms version and the settle path (``_terms_moved``) credits it if the terms moved."""
     tier = add_plan_tier(
         sm, code="seat_tier", audience="teacher", included_seats=2, extra_seat_price_minor=2000
     )
@@ -1005,8 +1008,12 @@ def test_a_seat_checkout_in_flight_cannot_meet_a_seat_price_edit(
         f"{P}/tiers/{tier}",
         json=_tier_update(includedSeats=2, extraSeatPriceMinor=0, seatAllowanceUnits=0),
     )
-    assert resp.status_code == 409, resp.text
-    assert resp.json()["detail"]["code"] == "terms_change_needs_notice_flow"
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["termsVersion"] == 2
+    with sm() as session:
+        payment = session.get(Payment, payment_id)
+        assert payment is not None
+        assert (payment.status, payment.amount_minor) == (PaymentStatus.created, 2000)
 
 
 def test_a_pack_update_returns_the_real_auto_topup_count(
@@ -1069,11 +1076,11 @@ def test_a_seat_price_of_zero_is_refused_while_subscribers_hold_extra_seats(
         sub = session.get(Subscription, sid)
         assert sub is not None
         sub.extra_seats = 0
-    # With the seats gone the edit is still a terms edit on a tier with a live subscriber.
+    # With the seats gone the edit is a terms edit on a tier with a live subscriber: allowed.
     again = client.put(
         f"{P}/tiers/{created['id']}", json=_tier_body(created, extraSeatPriceMinor=0)
     )
-    assert again.json()["detail"]["code"] == "terms_change_needs_notice_flow"
+    assert again.status_code == 200, again.text
 
 
 # -- optimistic concurrency (UD13-DV-1) --------------------------------------------------

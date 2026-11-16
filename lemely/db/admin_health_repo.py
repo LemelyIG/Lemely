@@ -43,6 +43,8 @@ BILLING_JOB_NAMES: Final = (
     "admin.expire_manual_subscriptions",
     "billing.prune_webhook_failures",
     "billing.reconcile_pending",
+    "billing.terms_change_notices",
+    "billing.terms_move_fixed_path",
     "seats.monthly_allowance",
     "seats.release_due",
     "subscriptions.drift_check",

@@ -529,6 +529,81 @@ class ExtraSeatsChargeFailed(EmailContext):
         return "/billing"
 
 
+def _terms_date(instant: AwareDatetime) -> str:
+    return instant.astimezone(UTC).strftime("%d %b %Y")
+
+
+class PlanTermsChange(EmailContext):
+    """The plan's price or terms change at the renewal on ``applies_at`` (UD13-A).
+
+    UD13-E: no amount, plan name or card detail travels in the mail. It says that the price or
+    what the plan includes changes, and when; the billing screen behind the link shows the figures
+    to a signed-in payer. A teacher holding more student seats than the new plan covers is told
+    how many to remove or add, which is a count of seats, not money.
+    """
+
+    template: ClassVar[str] = "plan_terms_change"
+    notification_type: ClassVar[NotificationType] = NotificationType.billing
+    subject: ClassVar[str] = "The terms of your Lemely plan are changing"
+    button: ClassVar[str] = "Open billing"
+
+    subscription_id: uuid.UUID
+    applies_at: AwareDatetime
+    price_changes: bool
+    entitlements_change: bool
+    seats_over: int = Field(default=0, ge=0, le=100_000)
+
+    def lead(self) -> str:
+        return f"The terms of your Lemely plan change from {_terms_date(self.applies_at)}."
+
+    def detail(self) -> str | None:
+        date = _terms_date(self.applies_at)
+        parts: list[str] = []
+        if self.price_changes:
+            parts.append("The price of your plan changes.")
+        if self.entitlements_change:
+            parts.append("What your plan includes changes too.")
+        if self.seats_over > 0:
+            n = self.seats_over
+            parts.append(
+                f"You hold {n} more student seat{'s' if n != 1 else ''} than the new plan covers: "
+                f"remove {n} student{'s' if n != 1 else ''} or add {n} seat{'s' if n != 1 else ''} "
+                f"before {date}."
+            )
+        parts.append(f"You can cancel your plan in billing before {date}.")
+        return " ".join(parts)
+
+    def path(self) -> str:
+        return "/billing"
+
+
+class PlanTermsEnds(EmailContext):
+    """The plan ends at ``ends_at`` instead of renewing at a new price (UD-P4 fixed-amount path).
+
+    Paymob cannot change the amount of this subscription, so the new price cannot be charged to it.
+    The mail says the plan ends and to subscribe again; it carries no amount.
+    """
+
+    template: ClassVar[str] = "plan_terms_ends"
+    notification_type: ClassVar[NotificationType] = NotificationType.billing
+    subject: ClassVar[str] = "Your Lemely plan ends because its price is changing"
+    button: ClassVar[str] = "Open billing"
+
+    subscription_id: uuid.UUID
+    ends_at: AwareDatetime
+
+    def lead(self) -> str:
+        return (
+            f"Your Lemely plan ends on {_terms_date(self.ends_at)} because its price is changing."
+        )
+
+    def detail(self) -> str | None:
+        return "To continue, subscribe again at the new price once your plan has ended."
+
+    def path(self) -> str:
+        return "/billing"
+
+
 _TEMPLATE_CLASSES: Final[tuple[type[EmailContext], ...]] = (
     BookingRequested,
     BookingRequestedFamily,
@@ -545,6 +620,8 @@ _TEMPLATE_CLASSES: Final[tuple[type[EmailContext], ...]] = (
     AutoTopupCardMissing,
     AutoTopupPhoneRequired,
     ExtraSeatsChargeFailed,
+    PlanTermsChange,
+    PlanTermsEnds,
 )
 
 #: Every template, keyed by the name stored in ``email_outbox.template``.
@@ -560,6 +637,8 @@ BILLING_EMAIL_TEMPLATES: Final[frozenset[str]] = frozenset(
         AutoTopupCardMissing.template,
         AutoTopupPhoneRequired.template,
         ExtraSeatsChargeFailed.template,
+        PlanTermsChange.template,
+        PlanTermsEnds.template,
     }
 )
 
@@ -787,6 +866,8 @@ __all__ = [
     "ExtraSeatsChargeFailed",
     "InvalidEmailContext",
     "MockTransactionalEmailProvider",
+    "PlanTermsChange",
+    "PlanTermsEnds",
     "ResendTransactionalEmailProvider",
     "SubscriptionNotice",
     "TransactionalEmailProvider",

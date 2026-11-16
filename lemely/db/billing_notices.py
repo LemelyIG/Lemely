@@ -142,11 +142,75 @@ def enqueue_extra_seats_charge_failed(
     )
 
 
+def enqueue_plan_terms_change(
+    session: Session,
+    *,
+    subscription: Subscription,
+    terms_version: int,
+    applies_at: datetime,
+    price_changes: bool,
+    entitlements_change: bool,
+    seats_over: int,
+) -> bool:
+    """Queue the "your plan's terms change on DATE" notice to the payer (UD13-A, UD13-E).
+
+    ``applies_at`` is the first renewal the new terms apply to. No amount is stated. One notice per
+    subscription and terms version: a newer edit is a new version and a new notice. ``False`` when
+    the subscription has no payer, the payer switched billing notices off, or it is already queued.
+
+    Raises:
+        ValueError: ``applies_at`` is naive.
+    """
+    if applies_at.tzinfo is None or applies_at.utcoffset() is None:
+        raise ValueError("applies_at must be timezone-aware")
+    if subscription.payer_user_id is None:
+        return False
+    return enqueue_in_session(
+        session,
+        recipient_user_id=subscription.payer_user_id,
+        template="plan_terms_change",
+        context={
+            "subscription_id": subscription.id,
+            "applies_at": applies_at.astimezone(UTC),
+            "price_changes": price_changes,
+            "entitlements_change": entitlements_change,
+            "seats_over": seats_over,
+        },
+        dedupe_key=f"terms_change:{subscription.id}:{terms_version}",
+    )
+
+
+def enqueue_plan_terms_ends(
+    session: Session, *, subscription: Subscription, terms_version: int, ends_at: datetime
+) -> bool:
+    """Queue the "your plan ends on DATE, subscribe again" notice (the fixed-amount path).
+
+    Shares the dedupe key of :func:`enqueue_plan_terms_change`: a terms version is announced one
+    way only. ``False`` as for that function.
+
+    Raises:
+        ValueError: ``ends_at`` is naive.
+    """
+    if ends_at.tzinfo is None or ends_at.utcoffset() is None:
+        raise ValueError("ends_at must be timezone-aware")
+    if subscription.payer_user_id is None:
+        return False
+    return enqueue_in_session(
+        session,
+        recipient_user_id=subscription.payer_user_id,
+        template="plan_terms_ends",
+        context={"subscription_id": subscription.id, "ends_at": ends_at.astimezone(UTC)},
+        dedupe_key=f"terms_change:{subscription.id}:{terms_version}",
+    )
+
+
 __all__ = [
     "SubscriptionNoticeKind",
     "enqueue_auto_topup_card_missing",
     "enqueue_auto_topup_failed",
     "enqueue_auto_topup_phone_required",
     "enqueue_extra_seats_charge_failed",
+    "enqueue_plan_terms_change",
+    "enqueue_plan_terms_ends",
     "enqueue_subscription_notice",
 ]
