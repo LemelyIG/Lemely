@@ -655,3 +655,27 @@ def test_terms_cancelled_context_refuses_extra_keys() -> None:
         validate_context(
             "plan_terms_cancelled", {"subscription_id": str(SUBSCRIPTION_ID), "amount_minor": 1}
         )
+
+
+def test_terms_cancelled_names_the_announced_amount_risk_not_the_earlier_one() -> None:
+    """R2-M5: the amount at risk is the one we ANNOUNCED, never "the earlier amount"."""
+    _, _, text = render_email(
+        "plan_terms_cancelled", {"subscription_id": str(SUBSCRIPTION_ID)}, app_base_url=BASE_URL
+    )
+    assert "announced" in text
+    assert "earlier amount" not in text
+    assert "refund the difference" in text
+
+
+def test_terms_cancelled_for_a_withdrawn_cancel_says_the_plan_renews_and_charges_the_card() -> None:
+    subject, _, text = render_email(
+        "plan_terms_cancelled",
+        {"subscription_id": str(SUBSCRIPTION_ID), "plan_continues": True},
+        app_base_url=BASE_URL,
+    )
+    assert "will not end" in text
+    assert "renew" in text
+    assert "card will be charged" in text
+    assert "cancel your plan in billing" in text
+    assert "cancelled" in subject
+    assert not re.search(r"\d[\d,.]*\s*(EGP|SAR|AED|OMR|USD)|EGP|\$", text)

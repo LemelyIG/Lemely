@@ -1353,6 +1353,8 @@ def _grant_renewal_period(
                 # cancellation (UD-4 (b) semantics), so it does not look auto-renewing and never
                 # slides into "payment failed" notices the user cannot act on.
                 subscription.cancel_at_period_end = True
+                if subscription.cancel_source is None:
+                    subscription.cancel_source = "payer"
             subscription.status = SubscriptionStatus.active
             subscription.grace_until = None
             subscription.current_period_start = start
@@ -1459,15 +1461,27 @@ def _settle_renewal(
         current_amount = renewal_amount(
             terms_for(session, subscription), subscription.extra_seats or 0
         )
+        # Accepted (it is the amount Paymob holds) but not the amount of the terms this subscriber
+        # is on, and no version they may be moved to prices to it: a push an edit or a revert has
+        # overtaken. Never silent. Above their terms they were charged too much (refund); below,
+        # nothing is owed on the terms they stay on, and the page says only that it is unexplained
+        # (never "collect the rest": that is for an upgrade or seats not yet at Paymob).
+        other = other_version_priced_at(session, subscription, payment.amount_minor)
+        event: str | None = None
         if payment.amount_minor > current_amount:
-            # Accepted (it is the amount Paymob holds) but above the terms this subscriber is on,
-            # and no version they may be moved to prices to it: a push an edit or a revert has
-            # overtaken. They paid more than their terms say and stay on them: never silent.
-            other = other_version_priced_at(session, subscription, payment.amount_minor)
-            alerts.error(
+            event = (
                 "subscription_renewal_paid_reverted_amount"
                 if other is not None
-                else "subscription_renewal_paid_above_expected",
+                else "subscription_renewal_paid_above_expected"
+            )
+        elif other is not None:
+            # Below their terms, at the amount of a version of the tier that was pushed and then
+            # overtaken by a later notice: nothing is owed on the terms they stay on. (A shortfall
+            # no version explains, an upgrade or seats not yet at Paymob, is ``underpaid``.)
+            event = "subscription_renewal_unexplained_amount"
+        if event is not None:
+            alerts.error(
+                event,
                 subscription_id=str(subscription.id),
                 payment_id=str(payment.id),
                 charged_minor=payment.amount_minor,
@@ -2265,7 +2279,15 @@ class SubscriptionService:
             now=now,
             amount_updatable=self._settings.subscription_amount_updatable,
         )
-        if granted and amount < expected and amount < billed and not via_previous:
+        if (
+            granted
+            and amount < expected
+            and amount < billed
+            and not via_previous
+            and (
+                applies.explained or other_version_priced_at(session, subscription, amount) is None
+            )
+        ):
             # Accepted at the stamp, which lags what is now owed (an upgrade or seats not yet at
             # Paymob, or a PUT whose outcome is unknown): never silent, someone collects the rest.
             # A deferred terms rise is not that: the period was granted on the old terms, which the
@@ -2434,7 +2456,9 @@ class SubscriptionService:
         """
         if actor_user_id is None:
             raise TypeError("actor_user_id is required; the system uses schedule_cancel_as_system")
-        return self._schedule_cancel(self._payer_lock(subscription_id, actor_user_id), now=now)
+        return self._schedule_cancel(
+            self._payer_lock(subscription_id, actor_user_id), now=now, source="payer"
+        )
 
     def schedule_cancel_as_system(
         self, subscription_id: uuid.UUID, *, now: datetime
@@ -2447,21 +2471,53 @@ class SubscriptionService:
             SubscriptionNotFound: unknown subscription.
             InvalidPlanChange: nothing live to cancel, or a manual activation.
         """
-        return self._schedule_cancel(self._lock(subscription_id), now=now)
+        return self._schedule_cancel(self._lock(subscription_id), now=now, source="platform_terms")
 
-    def _schedule_cancel(self, subscription: Subscription, *, now: datetime) -> Subscription:
+    def schedule_cancel_as_admin(
+        self, subscription_id: uuid.UUID, *, now: datetime
+    ) -> Subscription:
+        """Cancel at period end on a platform admin's behalf (the admin console).
+
+        Same effect as the payer's cancel with no payer check, and recorded as the admin's (an
+        admin revert of a terms move never withdraws it).
+
+        Raises:
+            SubscriptionNotFound: unknown subscription.
+            InvalidPlanChange: nothing live to cancel, or a manual activation.
+        """
+        return self._schedule_cancel(self._lock(subscription_id), now=now, source="admin")
+
+    def _schedule_cancel(
+        self, subscription: Subscription, *, now: datetime, source: str
+    ) -> Subscription:
+        """Schedule the cancel and record who asked for it (``cancel_source``).
+
+        A payer's or an admin's request always becomes the source, overwriting the platform's own
+        (``platform_terms``) or a suspension's: an admin revert of a terms move then never
+        withdraws a cancel a person asked for, whatever order the two arrived in. The platform's
+        request never replaces a source that is already there.
+        """
         del now
         if subscription.status not in PLAN_LIVE_STATUSES or subscription.is_manually_activated:
             raise InvalidPlanChange("there is no live card subscription to cancel")
+        changed = False
         if (
             not subscription.cancel_at_period_end
             or subscription.pending_plan_tier_id is not None
             or subscription.suspended_at is not None
         ):
+            was_cancelling = subscription.cancel_at_period_end
             subscription.cancel_at_period_end = True
             subscription.pending_plan_tier_id = None
             # The payer now asks for this cancel too, so a resume no longer undoes it.
             subscription.suspended_at = None
+            if not was_cancelling or source != "platform_terms":
+                subscription.cancel_source = source
+            changed = True
+        elif source != "platform_terms" and subscription.cancel_source != source:
+            subscription.cancel_source = source
+            changed = True
+        if changed:
             _bump(subscription)
         return subscription
 
@@ -2635,7 +2691,18 @@ class SubscriptionService:
                 S.cancel_at_period_end.is_(True),
                 linked,
                 S.paymob_cancelled_at.is_(None),
-                sa.or_(S.suspended_at.is_(None), S.current_period_end <= now),
+                # A suspension's cancel and the platform's own terms-move cancel wait for the period
+                # end: a resume, or an admin revert of the move, can still undo them until then.
+                sa.or_(
+                    sa.and_(
+                        S.suspended_at.is_(None),
+                        sa.or_(
+                            S.cancel_source.is_(None),
+                            S.cancel_source != "platform_terms",
+                        ),
+                    ),
+                    S.current_period_end <= now,
+                ),
             ),
             now,
             limit,
@@ -3678,6 +3745,7 @@ class SubscriptionService:
             changed = True
         if subscription.status in PLAN_LIVE_STATUSES and not subscription.cancel_at_period_end:
             subscription.cancel_at_period_end = True
+            subscription.cancel_source = "admin"  # asked for outside the app, in Paymob itself
             subscription.pending_plan_tier_id = None
             changed = True
             log.info("subscription_cancelled_in_paymob", subscription_id=str(subscription.id))
@@ -3704,6 +3772,7 @@ class SubscriptionService:
         if subscription.cancel_at_period_end:
             return
         subscription.cancel_at_period_end = True
+        subscription.cancel_source = "suspension"
         subscription.suspended_at = now
         _bump(subscription)
         log.info("subscription_suspended_in_paymob", subscription_id=str(subscription.id))
@@ -3738,6 +3807,7 @@ class SubscriptionService:
             )
             return
         subscription.cancel_at_period_end = False
+        subscription.cancel_source = None
         subscription.suspended_at = None
         _bump(subscription)
         log.info("subscription_resumed_in_paymob", subscription_id=str(subscription.id))

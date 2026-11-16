@@ -91,10 +91,9 @@ def terms_move_fixed_path_job(deps: SubscriptionDeps, *, now: datetime) -> int:
                 assert sub is not None  # noqa: S101 - just locked
                 if announce_fixed_path_end(session, sub, now=now) is not FixedPathEnd.ANNOUNCED:
                     continue  # the "plan ends" mail goes first and runs its notice period out
+                # Recorded as the platform's own (``cancel_source``): the sweep holds its push until
+                # the period end, and an admin revert may withdraw it until then.
                 deps.service(session).schedule_cancel_as_system(sub_id, now=now)
-                # The marker of the platform's own cancel (a payer's keeps its notice stamp): an
-                # admin revert may withdraw it while Paymob has not been told.
-                sub.terms_notice_sent_at = None
             scheduled += 1
             log.info("subscription_terms_move_cancel_scheduled", subscription_id=str(sub_id))
         except Exception:

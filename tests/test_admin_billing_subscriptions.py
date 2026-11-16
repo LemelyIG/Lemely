@@ -724,13 +724,13 @@ def _post_cancel(client: TestClient, sub: uuid.UUID, when: str) -> Any:
     )
 
 
-def test_cancel_at_period_end_of_a_paymob_plan_goes_through_phase_05_as_the_system(
+def test_cancel_at_period_end_of_a_paymob_plan_goes_through_phase_05_as_the_admin(
     sm: sessionmaker[Session], admin: uuid.UUID, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The admin is recorded in the audit row; Phase 05 is not told the payer cancelled."""
+    """The admin is recorded in the audit row and as the cancel's source; the payer is not."""
     sub, _ = _billed(sm)
     seen: list[uuid.UUID] = []
-    real = SubscriptionService.schedule_cancel_as_system
+    real = SubscriptionService.schedule_cancel_as_admin
 
     def spy(
         self: SubscriptionService, subscription_id: uuid.UUID, *, now: datetime
@@ -741,7 +741,7 @@ def test_cancel_at_period_end_of_a_paymob_plan_goes_through_phase_05_as_the_syst
     def forbidden(*args: object, **kwargs: object) -> None:
         raise AssertionError("the admin must not impersonate the payer")
 
-    monkeypatch.setattr(SubscriptionService, "schedule_cancel_as_system", spy)
+    monkeypatch.setattr(SubscriptionService, "schedule_cancel_as_admin", spy)
     monkeypatch.setattr(SubscriptionService, "schedule_cancel", forbidden)
     paymob = FakePaymobClient()
     resp = _post_cancel(admin_client(sm, admin, paymob=paymob), sub, "period_end")
@@ -750,6 +750,7 @@ def test_cancel_at_period_end_of_a_paymob_plan_goes_through_phase_05_as_the_syst
     assert paymob.calls == []  # nothing goes to Paymob: the sweep pushes it
     row = _subscription(sm, sub)
     assert (row.cancel_at_period_end, row.status) == (True, SubscriptionStatus.active)
+    assert row.cancel_source == "admin"  # never the platform's own terms-move cancel
     [audit] = audit_rows(sm, AuditAction.SUBSCRIPTION_CANCEL)
     assert audit.admin_user_id == admin
     assert audit.after is not None

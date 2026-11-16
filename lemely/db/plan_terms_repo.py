@@ -24,7 +24,6 @@ from sqlalchemy.orm import aliased
 
 from lemely.core.billing_defaults import PRICE_CHANGE_NOTICE_DAYS
 from lemely.core.subscription_rules import (
-    AMOUNT_SYNC_WINDOW,
     period_end,
     subscription_amount_minor,
 )
@@ -359,14 +358,7 @@ def queue_terms_change_notices(
                 .limit(limit)
             )
         )
-        reverts = list(
-            session.scalars(
-                sa.select(S.id)
-                .where(*_platform_cancelled_filters(S))
-                .order_by(S.created_at, S.id)
-                .limit(limit)
-            )
-        )
+        reverts = list(session.scalars(_reverted_platform_cancels(limit)))
     handled = 0
     for sub_id in ids:
         try:
@@ -414,7 +406,7 @@ def _announce_one(
     new_terms = current_terms_for(session, tier)
     seats = sub.pending_extra_seats if sub.pending_extra_seats is not None else sub.extra_seats or 0
     if same_terms(cur_terms, new_terms):
-        _take_back(session, sub, new_terms, now=now, amount_updatable=amount_updatable)
+        _take_back(session, sub, new_terms)
         return 1
     worse = move_is_worse(cur_terms, new_terms)
     price_changes = price_terms_differ(cur_terms, new_terms)
@@ -465,8 +457,6 @@ def _take_back(
     sub: Subscription,
     new_terms: TierTerms,
     *,
-    now: datetime,
-    amount_updatable: bool,
     cancelled_by_platform: bool = False,
 ) -> None:
     """An admin revert: the tier's terms equal the ones the subscriber is on. Cancel the move.
@@ -474,24 +464,19 @@ def _take_back(
     The subscriber moves to the tier's version at once (identical terms: nothing changes for
     them), the pending move is cleared, and a move that had been announced is taken back by mail.
     When the platform's own fixed-path cancel for that move was scheduled and Paymob has not been
-    told, it is withdrawn too. When Paymob's pushed amount is still the reverted one inside the
-    amount-sync window, the amount is marked uncertain so the sweep puts the right one back.
+    told, it is withdrawn too, and the mail says the plan now continues.
+
+    The pushed amount is not touched here: a pushed amount that is not the reverted one is already
+    a sweep candidate (it differs from the expected amount), and a renewal charged at it before the
+    sweep puts the right one back is accepted on the current terms with an alert
+    (``subscription_renewal_paid_reverted_amount``).
     """
     announced = sub.pending_terms_version is not None and (
         sub.terms_notice_sent_at is not None or cancelled_by_platform
     )
-    seats = sub.pending_extra_seats if sub.pending_extra_seats is not None else sub.extra_seats or 0
-    end = sub.current_period_end
-    if (
-        amount_updatable
-        and sub.paymob_amount_minor is not None
-        and end is not None
-        and end - now <= AMOUNT_SYNC_WINDOW
-        and sub.paymob_amount_minor != renewal_amount(new_terms, seats)
-    ):
-        sub.amount_sync_uncertain_at = now
     if cancelled_by_platform:
         sub.cancel_at_period_end = False
+        sub.cancel_source = None
     sub.terms_version = new_terms.terms_version
     sub.pending_terms_version = None
     sub.pending_terms_effective_at = None
@@ -499,7 +484,10 @@ def _take_back(
     sub.version = (sub.version or 0) + 1
     if announced:
         enqueue_plan_terms_cancelled(
-            session, subscription=sub, terms_version=new_terms.terms_version
+            session,
+            subscription=sub,
+            terms_version=new_terms.terms_version,
+            plan_continues=cancelled_by_platform,
         )
     log.info(
         "subscription_terms_move_cancelled",
@@ -515,9 +503,9 @@ def _revert_platform_cancelled_one(
 ) -> int:
     """Withdraw the platform's fixed-path cancel when the admin has since reverted the move.
 
-    The marker of a platform cancel is a cancelling row with a pending move and no notice stamp
-    (the job clears the stamp when it schedules the cancel; a payer's own cancel keeps it), not yet
-    pushed to Paymob. Nothing is withdrawn once Paymob holds the cancel.
+    Only a cancel whose ``cancel_source`` is ``platform_terms`` is withdrawn (a payer's or an
+    admin's request overwrites that source), and only while Paymob has not been told: the sweep
+    holds the push of such a cancel until the period end, so a revert up to then withdraws it.
     """
     S = Subscription
     row = session.execute(
@@ -532,14 +520,7 @@ def _revert_platform_cancelled_one(
     new_terms = current_terms_for(session, tier)
     if not same_terms(terms_for(session, sub), new_terms):
         return 0
-    _take_back(
-        session,
-        sub,
-        new_terms,
-        now=now,
-        amount_updatable=amount_updatable,
-        cancelled_by_platform=True,
-    )
+    _take_back(session, sub, new_terms, cancelled_by_platform=True)
     return 1
 
 
@@ -549,23 +530,50 @@ def _platform_cancelled_filters(S: type[Subscription]) -> list[sa.ColumnElement[
         S.payer_user_id.is_not(None),
         S.is_manually_activated.is_(False),
         S.cancel_at_period_end.is_(True),
+        S.cancel_source == "platform_terms",
         S.paymob_cancelled_at.is_(None),
         S.pending_terms_version.is_not(None),
-        S.terms_notice_sent_at.is_(None),
     ]
 
 
-def is_platform_cancel(sub: Subscription) -> bool:
-    """The platform's own fixed-path cancel for a terms move (not the payer's).
+def _reverted_platform_cancels(limit: int) -> sa.Select[tuple[uuid.UUID]]:
+    """Platform-cancelled rows whose tier's current terms equal the ones they are on.
 
-    A cancelling row with a pending move and no notice stamp: the fixed-path job clears the stamp
-    when it schedules the cancel, and a payer's own cancel keeps the stamp it was noticed with.
+    The comparison is in SQL, before the limit: rows whose tier was not reverted never fill a
+    bounded batch ahead of the ones that were.
     """
+    S = Subscription
+    cur = aliased(PlanTierTerms)
+    new = aliased(PlanTierTerms)
     return (
-        sub.cancel_at_period_end
-        and sub.pending_terms_version is not None
-        and sub.terms_notice_sent_at is None
+        sa.select(S.id)
+        .join(PlanTier, PlanTier.id == S.plan_tier_id)
+        .join(
+            cur,
+            sa.and_(cur.plan_tier_id == S.plan_tier_id, cur.terms_version == S.terms_version),
+        )
+        .join(
+            new,
+            sa.and_(
+                new.plan_tier_id == S.plan_tier_id, new.terms_version == PlanTier.terms_version
+            ),
+        )
+        .where(
+            *_platform_cancelled_filters(S),
+            cur.price_minor == new.price_minor,
+            cur.extra_seat_price_minor == new.extra_seat_price_minor,
+            cur.allowance_units == new.allowance_units,
+            cur.included_seats == new.included_seats,
+            cur.seat_allowance_units == new.seat_allowance_units,
+        )
+        .order_by(S.created_at, S.id)
+        .limit(limit)
     )
+
+
+def is_platform_cancel(sub: Subscription) -> bool:
+    """The platform's own fixed-path cancel for a terms move (not the payer's or an admin's)."""
+    return sub.cancel_at_period_end and sub.cancel_source == "platform_terms"
 
 
 @dataclass(frozen=True, slots=True)
@@ -647,7 +655,6 @@ class FixedPathEnd(enum.Enum):
     """What the fixed-path job does after looking at a move's "your plan ends" notice."""
 
     SENT = "sent"  # the mail was written now: wait out the notice period before cancelling
-    TOO_LATE = "too_late"  # the period ends sooner than the notice period: no mail, no cancel
     ANNOUNCED = "announced"  # the subscriber was already told (or has notices off): cancel
 
 
@@ -656,9 +663,12 @@ def announce_fixed_path_end(session: Session, sub: Subscription, *, now: datetim
 
     The notice sent when the edit was seen may have said "your plan changes" only (a seat price
     edit at no seats held: the amount changed later). The mail naming the end date is written here
-    and the notice clock restarts, so the cancel waits until the period end is at least the notice
-    period after it. A period that ends sooner is neither mailed nor cancelled: it renews and the
-    move waits for the next one.
+    and the notice clock restarts. The date is the FIRST period end that is at least the notice
+    period after this mail, which can be several periods away when the notice period is longer
+    than a billing period: the plan keeps renewing on its current terms until then (a renewal
+    never applies an amount-changing move on this path), and the cancel is scheduled when that
+    period is the current one. The job selects a row only once its period end is that far past the
+    notice clock, so the sequence always terminates.
     """
     version = sub.pending_terms_version
     end = sub.current_period_end
@@ -668,9 +678,14 @@ def announce_fixed_path_end(session: Session, sub: Subscription, *, now: datetim
     )
     if seen is not None:
         return FixedPathEnd.ANNOUNCED
-    if end < now + timedelta(days=_notice_days(session)):
-        return FixedPathEnd.TOO_LATE
-    written = enqueue_plan_terms_ends(session, subscription=sub, terms_version=version, ends_at=end)
+    tier = tier_for_terms(session, sub.plan_tier_id)
+    assert tier.interval is not None  # noqa: S101 - a plan that renews has an interval
+    ends_at = first_applies_at(
+        end, tier.interval.value, now + timedelta(days=_notice_days(session))
+    )
+    written = enqueue_plan_terms_ends(
+        session, subscription=sub, terms_version=version, ends_at=ends_at
+    )
     if not written:
         return FixedPathEnd.ANNOUNCED  # notices are off for this payer: nothing to wait for
     sub.terms_notice_sent_at = now

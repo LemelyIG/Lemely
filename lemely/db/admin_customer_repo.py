@@ -1050,7 +1050,7 @@ class AdminCustomerService:
         A complimentary plan is ours alone: ``period_end`` sets ``cancel_at_period_end`` for
         :func:`expire_manual_subscriptions`, ``now`` ends it and cuts the current period's
         allowance (UD-2). A Paymob-billed plan cancels at period end through Phase 05's
-        ``schedule_cancel_as_system`` (the sweep tells Paymob; the admin is in the audit row),
+        ``schedule_cancel_as_admin`` (the sweep tells Paymob; the admin is in the audit row),
         and ``now`` cancels at Paymob first with no transaction open
         (:meth:`_cancel_at_paymob_now`). A ``period_end`` that changes nothing (already
         scheduled) writes no audit row. With a ``request_id`` a replay changes nothing.
@@ -1127,11 +1127,13 @@ class AdminCustomerService:
         elif when == "now":
             sub.status = SubscriptionStatus.cancelled
             sub.cancel_at_period_end = False
+            sub.cancel_source = None
             sub.current_period_end = now
             self._end_plan(s, sub, now)
             extra.update(self._end_period_allowance(s, sub.id, now))
         else:
             sub.cancel_at_period_end = True
+            sub.cancel_source = "admin"
         s.flush()
         if when == "period_end" and marks == (
             sub.cancel_at_period_end,
@@ -1170,7 +1172,7 @@ class AdminCustomerService:
     def _schedule_paymob_cancel(self, s: Session, sub: Subscription, now: datetime) -> None:
         """Phase 05's period-end cancel on the platform's behalf; the audit row names the admin."""
         try:
-            SubscriptionService(s, self._client, self._settings).schedule_cancel_as_system(
+            SubscriptionService(s, self._client, self._settings).schedule_cancel_as_admin(
                 sub.id, now=now
             )
         except (InvalidPlanChange, SubscriptionNotFound) as exc:
@@ -1217,6 +1219,7 @@ class AdminCustomerService:
             else:
                 sub.status = SubscriptionStatus.cancelled
                 sub.cancel_at_period_end = False
+                sub.cancel_source = None
                 sub.current_period_end = now
                 sub.paymob_cancelled_at = now
                 self._end_plan(s, sub, now)

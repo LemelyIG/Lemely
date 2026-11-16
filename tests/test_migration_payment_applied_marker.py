@@ -24,9 +24,15 @@ from sqlalchemy.exc import IntegrityError
 
 from lemely.db.base import Base
 from lemely.db.models import import_all_models
-from lemely.db.models.billing import PAYMENT_VOID_REASONS, PaymentPurpose, PaymentStatus
+from lemely.db.models.billing import (
+    CANCEL_SOURCES,
+    PAYMENT_VOID_REASONS,
+    PaymentPurpose,
+    PaymentStatus,
+)
 from lemely.db.models.enums import Role
 from tests.merchant_charge_fixtures import seed_payment_row, seed_user
+from tests.subscription_fixtures import seed_subscription, seed_tier
 from tests.team_db import team_database
 from tests.test_migration_tutoring_enums import column_names, current_revision, upgrade_head
 from tests.test_migration_usage_ledger import schema_dump
@@ -200,6 +206,84 @@ def test_upgrade_downgrade_upgrade_round_trip(
             ).scalar_one()
             == 1
         )
+
+
+def _subscription_with_source(sm: sessionmaker[Session], source: str | None) -> uuid.UUID:
+    owner = seed_user(sm, Role.student)
+    sid = seed_subscription(sm, user_id=owner, tier_id=seed_tier(sm), payer_id=owner)
+    if source is not None:
+        with sm.begin() as session:
+            session.execute(
+                sa.text("UPDATE subscriptions SET cancel_source = :s WHERE id = :i"),
+                {"s": source, "i": sid},
+            )
+    return sid
+
+
+def test_the_model_declares_cancel_source_and_its_check() -> None:
+    table = Base.metadata.tables["subscriptions"]
+    assert table.columns["cancel_source"].nullable is True
+    assert {str(c.name) for c in table.constraints} >= {"ck_subscriptions_cancel_source_known"}
+
+
+def test_the_migration_lists_the_same_cancel_sources_as_the_model() -> None:
+    module = _load_migration()
+    assert tuple(module.CANCEL_SOURCES) == CANCEL_SOURCES  # type: ignore[attr-defined]
+
+
+def test_cancel_source_starts_null_and_is_text(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sid = _subscription_with_source(migrated_sessionmaker, None)
+    with migrated_sessionmaker() as session:
+        kind = session.execute(
+            sa.text(
+                "SELECT data_type FROM information_schema.columns "
+                "WHERE table_name = 'subscriptions' AND column_name = 'cancel_source' "
+                "AND is_nullable = 'YES'"
+            )
+        ).scalar_one()
+        value = session.execute(
+            sa.text("SELECT cancel_source FROM subscriptions WHERE id = :i"), {"i": sid}
+        ).scalar_one()
+    assert (kind, value) == ("text", None)
+
+
+@pytest.mark.parametrize("source", CANCEL_SOURCES)
+def test_every_known_cancel_source_is_accepted(
+    migrated_sessionmaker: sessionmaker[Session], source: str
+) -> None:
+    _subscription_with_source(migrated_sessionmaker, source)
+
+
+def test_an_unknown_cancel_source_is_refused(migrated_sessionmaker: sessionmaker[Session]) -> None:
+    with pytest.raises(IntegrityError, match="ck_subscriptions_cancel_source_known"):
+        _subscription_with_source(migrated_sessionmaker, "somebody")
+
+
+def test_downgrade_refuses_while_a_cancel_source_is_recorded(
+    migrated_sessionmaker_with_downgrade: tuple[sessionmaker[Session], Callable[[str], None]],
+) -> None:
+    sm, downgrade_to = migrated_sessionmaker_with_downgrade
+    _subscription_with_source(sm, "platform_terms")
+    with pytest.raises(Exception, match="cancel_source"):
+        downgrade_to(DOWN_REVISION)
+    with sm() as session:
+        assert "cancel_source" in column_names(session, "subscriptions")
+        assert current_revision(session) != DOWN_REVISION
+
+
+def test_downgrade_drops_cancel_source_when_none_is_recorded_and_upgrade_restores_it(
+    migrated_sessionmaker_with_downgrade: tuple[sessionmaker[Session], Callable[[str], None]],
+) -> None:
+    sm, downgrade_to = migrated_sessionmaker_with_downgrade
+    _subscription_with_source(sm, None)
+    downgrade_to(DOWN_REVISION)
+    with sm() as session:
+        assert "cancel_source" not in column_names(session, "subscriptions")
+    upgrade_head()
+    with sm() as session:
+        assert "cancel_source" in column_names(session, "subscriptions")
 
 
 def _load_migration() -> object:

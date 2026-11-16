@@ -610,8 +610,10 @@ class PlanTermsEnds(EmailContext):
 class PlanTermsCancelled(EmailContext):
     """A plan change announced earlier has been cancelled (the admin reverted the edit).
 
-    The copy does not promise a price: the payment processor may still hold the amount of the
-    announced change until it is corrected, so a renewal taken before then is put right afterwards.
+    The copy promises no price. The risk it names is the ANNOUNCED amount: the payment processor
+    may still hold it until it is corrected, so a renewal taken at it before then is refunded
+    afterwards. ``plan_continues`` is the variant for a plan the payer had been told would end
+    (the fixed-amount path): the cancel is withdrawn, so the plan now renews and charges the card.
     No amount, plan name or card detail travels in the mail (UD13-E).
     """
 
@@ -621,15 +623,27 @@ class PlanTermsCancelled(EmailContext):
     button: ClassVar[str] = "Open billing"
 
     subscription_id: uuid.UUID
+    plan_continues: bool = False
 
     def lead(self) -> str:
+        if self.plan_continues:
+            return (
+                "The change to your Lemely plan has been cancelled, so your plan will not end. "
+                "It will renew at the end of the period and your card will be charged."
+            )
         return "The change to your Lemely plan that we told you about has been cancelled."
 
     def detail(self) -> str | None:
-        return (
-            "Your plan stays on its current terms. If a payment is taken at the earlier amount "
-            "before our systems catch up, we will put it right."
+        rest = (
+            "If a payment is taken at the amount we announced before our systems catch up, we "
+            "will refund the difference."
         )
+        if self.plan_continues:
+            return (
+                "To stop it, cancel your plan in billing before the period ends. "
+                f"Your plan stays on its current terms. {rest}"
+            )
+        return f"Your plan stays on its current terms. {rest}"
 
     def path(self) -> str:
         return "/billing"

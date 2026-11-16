@@ -195,6 +195,13 @@ PAYMENT_VOID_REASONS: Final = (
     "period_ended",
     "seats_dropped",
 )
+#: Who scheduled a subscription's cancel at period end (``subscriptions.cancel_source``): the
+#: payer, a platform admin, the platform itself for a terms move it cannot charge (the fixed-amount
+#: path), or Paymob's suspension. One list for the CHECK and the code that sets it.
+CANCEL_SOURCES: Final = ("payer", "admin", "platform_terms", "suspension")
+_CANCEL_SOURCE_CHECK = "cancel_source IS NULL OR cancel_source IN ({})".format(
+    ", ".join(f"'{source}'" for source in CANCEL_SOURCES)
+)
 _VOID_REASON_CHECK = "void_reason IS NULL OR void_reason IN ({})".format(
     ", ".join(f"'{reason}'" for reason in PAYMENT_VOID_REASONS)
 )
@@ -263,6 +270,7 @@ class Subscription(TimestampMixin, Base):
             name="pending_extra_seats_nonneg",
         ),
         sa.CheckConstraint("terms_version >= 1", name="terms_version_min"),
+        sa.CheckConstraint(_CANCEL_SOURCE_CHECK, name="cancel_source_known"),
         sa.CheckConstraint(
             "(pending_terms_version IS NULL) = (pending_terms_effective_at IS NULL)",
             name="pending_terms_paired",
@@ -390,6 +398,12 @@ class Subscription(TimestampMixin, Base):
     )
     """First failed renewal seat charge of the grace episode; kept after the drop so the
     same failure never starts a second grace."""
+    cancel_source: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    """Who scheduled the cancel at period end (one of :data:`CANCEL_SOURCES`; migration 0059).
+
+    ``NULL`` when no cancel is scheduled, and for a cancel written before the column existed. A
+    later cancel by the payer or an admin overwrites ``platform_terms``: only the platform's own
+    terms-move cancel may be withdrawn when an admin reverts the move."""
     terms_version: Mapped[int] = mapped_column(
         sa.Integer, nullable=False, server_default=sa.text("1")
     )

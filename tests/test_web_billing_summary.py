@@ -642,6 +642,7 @@ def _set_pending_terms(
     effective_at: datetime,
     notice_sent: bool = True,
     cancel: bool = False,
+    cancel_source: str | None = None,
 ) -> None:
     with sm.begin() as session:
         row = session.get(Subscription, sub)
@@ -650,6 +651,7 @@ def _set_pending_terms(
         row.pending_terms_effective_at = effective_at
         row.terms_notice_sent_at = NOW - timedelta(days=1) if notice_sent else None
         row.cancel_at_period_end = cancel
+        row.cancel_source = cancel_source
 
 
 def _view(client: TestClient) -> dict[str, object]:
@@ -748,8 +750,8 @@ def test_a_platform_cancel_for_a_terms_move_carries_its_reason(sm: sessionmaker[
     sub = _sub(sm, user=student, tier=tier, payer=student)
     edit_tier_terms(sm, tier, price_minor=12_000)
     _set_pending_terms(
-        sm, sub, version=2, effective_at=NOW, notice_sent=False, cancel=True
-    )  # the platform's marker: cancelling, a pending move, no notice stamp
+        sm, sub, version=2, effective_at=NOW, cancel=True, cancel_source="platform_terms"
+    )
     view = _view(_fixed_amount_client(sm, student, Role.student))
     assert (view["cancelAtPeriodEnd"], view["cancelReason"]) == (True, "plan_terms_changed")
 
@@ -761,6 +763,6 @@ def test_a_payers_own_cancel_has_no_reason(sm: sessionmaker[Session]) -> None:
     view = _view(_client(sm, student, Role.student))
     assert (view["cancelAtPeriodEnd"], view["cancelReason"]) == (True, None)
     edit_tier_terms(sm, tier, price_minor=12_000)
-    _set_pending_terms(sm, sub, version=2, effective_at=NOW, notice_sent=True, cancel=True)
+    _set_pending_terms(sm, sub, version=2, effective_at=NOW, cancel=True, cancel_source="payer")
     again = _view(_client(sm, student, Role.student))
-    assert again["cancelReason"] is None  # the payer's cancel keeps the stamp it was noticed with
+    assert again["cancelReason"] is None  # only the platform's own cancel carries the reason

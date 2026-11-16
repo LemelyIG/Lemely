@@ -20,6 +20,14 @@ Two more CHECKs keep the markers honest: a payment is never both applied and cre
 (``ck_payments_applied_not_credited``: ``applied_at`` and ``grant_units`` are never both set) and
 never both applied and voided (``ck_payments_applied_not_voided``).
 
+It also adds ``subscriptions.cancel_source`` (``text``, nullable, CHECK
+``ck_subscriptions_cancel_source_known``: ``payer``, ``admin``, ``platform_terms``,
+``suspension``): who scheduled a cancel at period end. The fixed-amount path's terms move cancels a
+plan the platform cannot reprice, and an admin revert of that move must withdraw only that cancel,
+never one the payer or an admin asked for. ``NULL`` for every existing row, which no revert ever
+withdraws (the safe side); no backfill. The downgrade refuses while any row records a source:
+dropping it would forget whose cancel a scheduled cancel is.
+
 No backfill: the upgrade and seat payments these columns describe are written by Phase 06 code
 that has not shipped, so no production row exists for them. A row written before the column
 reads as "not applied", which is the safe side for every reader.
@@ -71,9 +79,22 @@ CHECKS = {
 }
 
 
+CANCEL_SOURCES = ("payer", "admin", "platform_terms", "suspension")
+CANCEL_SOURCE_CHECK = "cancel_source IS NULL OR cancel_source IN ({})".format(
+    ", ".join(f"'{source}'" for source in CANCEL_SOURCES)
+)
+CANCEL_SOURCE_CONSTRAINT = "ck_subscriptions_cancel_source_known"
+
+
 def upgrade() -> None:
     """Upgrade schema."""
     op.execute("SET lock_timeout = '5s'")
+    op.add_column("subscriptions", sa.Column("cancel_source", sa.Text(), nullable=True))
+    op.execute(
+        f"ALTER TABLE subscriptions ADD CONSTRAINT {CANCEL_SOURCE_CONSTRAINT} "
+        f"CHECK ({CANCEL_SOURCE_CHECK}) NOT VALID"
+    )
+    op.execute(f"ALTER TABLE subscriptions VALIDATE CONSTRAINT {CANCEL_SOURCE_CONSTRAINT}")
     op.add_column("payments", sa.Column("applied_at", sa.DateTime(timezone=True), nullable=True))
     op.add_column("payments", sa.Column("void_reason", sa.Text(), nullable=True))
     for name, expression in CHECKS.items():
@@ -89,6 +110,17 @@ def downgrade() -> None:
     """
     op.execute("SET lock_timeout = '5s'")
     bind = op.get_bind()
+    if (
+        bind.execute(
+            sa.text("SELECT 1 FROM subscriptions WHERE cancel_source IS NOT NULL LIMIT 1")
+        ).first()
+        is not None
+    ):
+        raise RuntimeError(
+            "Cannot downgrade 0059_payment_applied_marker: subscriptions still has a "
+            "cancel_source set. Dropping the column would forget whose cancel a scheduled cancel "
+            "is, and a payer's cancel could then be withdrawn by an admin revert."
+        )
     for column, consequence in (
         (
             "applied_at",
@@ -114,4 +146,6 @@ def downgrade() -> None:
         op.drop_constraint(op.f(name), "payments", type_="check")
     op.drop_column("payments", "void_reason")
     op.drop_column("payments", "applied_at")
+    op.drop_constraint(op.f(CANCEL_SOURCE_CONSTRAINT), "subscriptions", type_="check")
+    op.drop_column("subscriptions", "cancel_source")
     op.execute("RESET lock_timeout")

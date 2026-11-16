@@ -868,9 +868,10 @@ def test_upgrade_downgrade_upgrade_round_trip(
     with sm() as session:
         assert current_revision(session) == head_revision()  # later revisions sit above 0057
         # Later revisions add their own objects on top (0058's CHECK on subscriptions, 0059's
-        # three CHECKs on payments).
+        # three CHECKs on payments and its ``cancel_source`` CHECK on subscriptions).
         later = {
             "ck_subscriptions_previous_amount_paired",
+            "ck_subscriptions_cancel_source_known",
             "ck_payments_applied_not_credited",
             "ck_payments_applied_not_voided",
             "ck_payments_void_reason_known",
