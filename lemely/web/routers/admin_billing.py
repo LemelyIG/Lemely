@@ -6,8 +6,9 @@ construction. Handlers that write also take ``AdminAuth`` to read the caller's i
 row; both guards are the same role set, so the effective guard is unchanged.
 
 Every write requires ``reason`` and is audited by the service in the same transaction as the
-change. Shared helpers live in ``lemely.web.admin_billing_common`` (DV-2); each later lane adds one
-``include_router`` line below.
+change. Shared helpers live in ``lemely.web.admin_billing_common`` (DV-2). A lane router is never
+nested here (DV-T5a): it carries its full ``/api/admin/billing/<lane>`` prefix and its own
+``platform_admin`` guard, and ``lemely/web/app.py`` mounts it beside this router.
 """
 
 # FastAPI ``Depends``/``response_model`` and pydantic construction need these type imports at
@@ -17,7 +18,7 @@ from __future__ import annotations
 import uuid  # noqa: TC003 - FastAPI resolves the path-parameter type at runtime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from lemely.db.admin_billing_repo import (
     UNSET,
@@ -41,6 +42,7 @@ from lemely.web.schemas_admin_billing import (
     CreditPackUpdateDTO,
     FreeAllowanceDTO,
     FreeAllowanceUpdateDTO,
+    PackPriceImpactDTO,
     PlanTierCreateDTO,
     PlanTierDTO,
     PlanTierUpdateDTO,
@@ -252,17 +254,27 @@ def update_pack(
         "is_active": body.isActive,
     }
     with mapped_errors():
-        pack = service.update_credit_pack(
+        pack, impact = service.update_credit_pack_with_impact(
             credit_pack_id,
             changes,
             admin_user_id=admin_id(auth),
             reason=body.reason,
             expected_version=body.expectedVersion,
         )
-    return credit_pack_dto(
-        pack,
-        service.auto_topup_counts().get(pack.id, 0),
-        service.auto_topup_cap_below_price_counts().get(pack.id, 0),
+    return credit_pack_dto(pack, impact.enabled, impact.cap_below_price)
+
+
+@router.get("/packs/{credit_pack_id}/price-impact", response_model=PackPriceImpactDTO)
+def pack_price_impact(
+    credit_pack_id: uuid.UUID,
+    service: CatalogueService,
+    price_minor: Annotated[int, Query(alias="priceMinor", gt=0, le=10**10)],
+) -> PackPriceImpactDTO:
+    """Read-only preview for the pack editor: auto top-ups at the proposed price, before saving."""
+    with mapped_errors():
+        impact = service.pack_price_impact(credit_pack_id, price_minor)
+    return PackPriceImpactDTO(
+        autoTopupCount=impact.affected, capBelowPriceCount=impact.cap_below_price
     )
 
 

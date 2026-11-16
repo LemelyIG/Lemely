@@ -538,8 +538,26 @@ def _auto_topup_counts(session: Session) -> dict[uuid.UUID, int]:
     return {pack_id: count for pack_id, count in rows}
 
 
+def _impact_audit(impact: AutoTopupImpact) -> dict[str, object]:
+    """The audit's ``impact`` block, kept apart from the pack fields so a rename shows no diff."""
+    return {
+        "autoTopupsAffected": impact.affected,
+        "autoTopupsCapBelowPrice": impact.cap_below_price,
+    }
+
+
+def _can_fire() -> tuple[sa.ColumnElement[bool], ...]:
+    """What lets a setting charge at all: enabled, consented, a card, an active pack."""
+    return (
+        AutoTopupSettings.enabled.is_(True),
+        AutoTopupSettings.consented_at.is_not(None),
+        AutoTopupSettings.saved_card_id.is_not(None),
+        CreditPack.is_active.is_(True),
+    )
+
+
 def _auto_topup_cap_below_price_counts(session: Session) -> dict[uuid.UUID, int]:
-    """Enabled auto top-up settings per pack whose monthly cap is below the pack's price now.
+    """Settings that can fire per pack whose monthly cap is below the pack's stored price.
 
     Phase 06 never queues such a top-up (the cap check), so the setting stays armed and idle until
     the customer raises the cap. One grouped query.
@@ -547,13 +565,46 @@ def _auto_topup_cap_below_price_counts(session: Session) -> dict[uuid.UUID, int]
     rows = session.execute(
         select(AutoTopupSettings.credit_pack_id, sa.func.count())
         .join(CreditPack, CreditPack.id == AutoTopupSettings.credit_pack_id)
-        .where(
-            AutoTopupSettings.enabled.is_(True),
-            AutoTopupSettings.monthly_cap_minor < CreditPack.price_minor,
-        )
+        .where(*_can_fire(), AutoTopupSettings.monthly_cap_minor < CreditPack.price_minor)
         .group_by(AutoTopupSettings.credit_pack_id)
     )
     return {pack_id: count for pack_id, count in rows}
+
+
+@dataclass(frozen=True, slots=True)
+class AutoTopupImpact:
+    """Auto top-up settings on one pack at a price.
+
+    ``enabled`` is every enabled setting, ``affected`` those that can fire, and ``cap_below_price``
+    the affected ones whose monthly cap is below the price (they stay armed and never charge).
+    """
+
+    enabled: int
+    affected: int
+    cap_below_price: int
+
+
+def _pack_auto_topup_impact(
+    session: Session, credit_pack_id: uuid.UUID, price_minor: int
+) -> AutoTopupImpact:
+    """The pack's auto top-up counts at ``price_minor``: one aggregate query."""
+    fires = sa.and_(*_can_fire())
+    row = session.execute(
+        select(
+            sa.func.count(),
+            sa.func.count().filter(fires),
+            sa.func.count().filter(
+                sa.and_(fires, AutoTopupSettings.monthly_cap_minor < price_minor)
+            ),
+        )
+        .select_from(AutoTopupSettings)
+        .join(CreditPack, CreditPack.id == AutoTopupSettings.credit_pack_id)
+        .where(
+            AutoTopupSettings.credit_pack_id == credit_pack_id,
+            AutoTopupSettings.enabled.is_(True),
+        )
+    ).one()
+    return AutoTopupImpact(enabled=row[0], affected=row[1], cap_below_price=row[2])
 
 
 class AdminCatalogueService:
@@ -596,10 +647,12 @@ class AdminCatalogueService:
         with self._sm() as s:
             return _auto_topup_counts(s)
 
-    def auto_topup_cap_below_price_counts(self) -> Mapping[uuid.UUID, int]:
-        """Enabled auto top-ups per pack with a monthly cap below the pack price (one query)."""
+    def pack_price_impact(self, credit_pack_id: uuid.UUID, price_minor: int) -> AutoTopupImpact:
+        """Read-only: the pack's auto top-ups if it cost ``price_minor`` (pre-save)."""
         with self._sm() as s:
-            return _auto_topup_cap_below_price_counts(s)
+            if s.get(CreditPack, credit_pack_id) is None:
+                raise AdminNotFoundError("credit_pack_not_found")
+            return _pack_auto_topup_impact(s, credit_pack_id, price_minor)
 
     def tier_counts(self) -> Mapping[uuid.UUID, TierCounts]:
         """Live and not-yet-moved subscriber counts per tier (one grouped query)."""
@@ -849,6 +902,27 @@ class AdminCatalogueService:
         reason: str,
         expected_version: int | None = None,
     ) -> CreditPack:
+        return self.update_credit_pack_with_impact(
+            credit_pack_id,
+            changes,
+            admin_user_id=admin_user_id,
+            reason=reason,
+            expected_version=expected_version,
+        )[0]
+
+    def update_credit_pack_with_impact(
+        self,
+        credit_pack_id: uuid.UUID,
+        changes: Mapping[str, object],
+        *,
+        admin_user_id: uuid.UUID,
+        reason: str,
+        expected_version: int | None = None,
+    ) -> tuple[CreditPack, AutoTopupImpact]:
+        """:meth:`update_credit_pack`, plus the pack's auto top-up counts at its new price.
+
+        The counts are the ones the audit row records, read in the same locked transaction.
+        """
         require_reason(reason)
         if set(changes) - set(CREDIT_PACK_MUTABLE):
             raise AdminInvalidError("immutable_field", "code and currency are fixed.")
@@ -861,12 +935,14 @@ class AdminCatalogueService:
                     "signup_pack_use_free_allowances", "Edit signup packs through free allowances."
                 )
             _require_version(pack.version, expected_version)
+            old_impact = _pack_auto_topup_impact(s, pack.id, pack.price_minor)
             before = snapshot(pack, _CREDIT_PACK_AUDIT)
             for name, value in changes.items():
                 setattr(pack, name, value)
             pack.version += 1
             s.flush()
             # UD13-B (a): auto top-ups keep charging the new price, held to each customer's cap.
+            impact = _pack_auto_topup_impact(s, pack.id, pack.price_minor)
             audited(
                 s,
                 admin_user_id,
@@ -874,16 +950,10 @@ class AdminCatalogueService:
                 AuditTarget.CREDIT_PACK,
                 pack.id,
                 reason,
-                before,
-                {
-                    **snapshot(pack, _CREDIT_PACK_AUDIT),
-                    "autoTopupsAffected": _auto_topup_counts(s).get(pack.id, 0),
-                    "autoTopupsCapBelowPrice": _auto_topup_cap_below_price_counts(s).get(
-                        pack.id, 0
-                    ),
-                },
+                {**before, "impact": _impact_audit(old_impact)},
+                {**snapshot(pack, _CREDIT_PACK_AUDIT), "impact": _impact_audit(impact)},
             )
-            return pack
+            return pack, impact
 
     def set_free_allowance(
         self,

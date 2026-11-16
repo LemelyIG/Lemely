@@ -84,7 +84,17 @@ class CreditPackDTO(ApiModel):
     isActive: bool
     version: int
     autoTopupCount: int
-    autoTopupCapBelowPriceCount: int = 0
+    autoTopupCapBelowPriceCount: int
+
+
+class PackPriceImpactDTO(ApiModel):
+    """Auto top-ups on a pack at a proposed price (a preview; nothing is saved).
+
+    Counts only settings that can charge: enabled, consented, with a saved card, on an active pack.
+    """
+
+    autoTopupCount: Annotated[int, Field(ge=0, le=10**9)]
+    capBelowPriceCount: Annotated[int, Field(ge=0, le=10**9)]
 
 
 class FreeAllowanceDTO(ApiModel):
