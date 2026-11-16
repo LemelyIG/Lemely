@@ -60,7 +60,7 @@ from lemely.db.models import User
 from lemely.db.models.attempts import QuestionResult, Upload
 from lemely.db.models.enums import ReviewReason, Role
 from lemely.db.models.ops import ReviewQueueItem
-from lemely.db.review_repo import ReviewService
+from lemely.db.review_repo import CROP_ABSENT_DETAIL, ReviewService
 from lemely.db.self_review_repo import PointVerdict, SelfReviewService
 from lemely.db.teacher_paper_repo import TeacherPaperRepository
 from lemely.runtime import sandbox
@@ -4480,7 +4480,11 @@ def test_l5_page_route_404s_when_the_stored_object_has_gone(
     _use_review_service(client, review_service)
     _use_storage(client, storage_backend)
     _auth_as(client, teacher, Role.teacher)
-    assert client.get(f"/api/teacher/review/{item_id}/page").status_code == 404
+    crop = client.get(f"/api/teacher/review/{item_id}/crop")
+    page = client.get(f"/api/teacher/review/{item_id}/page")
+    assert page.status_code == crop.status_code == 404
+    assert page.json() == crop.json()
+    assert page.json() == {"detail": CROP_ABSENT_DETAIL.format(item_id=item_id)}
 
 
 def test_l5_page_route_serves_an_upright_image_scan(
