@@ -26,7 +26,7 @@ export interface ShellSidebarProps {
   groups?: readonly ShellSidebarGroup[]
   /** The foot's primary action (Upload). Hidden in the phone sheet, where the bottom bar has it. */
   footerAction?: ReactNode
-  /** Under the wordmark, above the nav list: the parent child switcher (mock pa.js rail2 .kid). */
+  /** Rail only, under the wordmark and above the nav list: the parent child switcher (mock pa.js rail2 .kid). Below shell-lg the top bar carries it, so the drawer would show a second one. */
   lead?: ReactNode
   user: ReactNode
   /** Drawer only: renders the close button in the head. */
@@ -76,7 +76,7 @@ export function ShellSidebar({ variant, navLabel, homeTo, homeLabel, items, grou
           </button>
         ) : null}
       </div>
-      {lead ? <div className="flex px-0.5">{lead}</div> : null}
+      {rail && lead ? <div className="flex px-0.5">{lead}</div> : null}
       <ShellNavList items={items} />
       {groups?.map((group) => <Group key={group.id} group={group} />)}
       <div className="mt-auto flex flex-col gap-3 border-t border-outline-variant pt-4">

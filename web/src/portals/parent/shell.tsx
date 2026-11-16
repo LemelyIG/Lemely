@@ -51,14 +51,14 @@ const PARENT_ACCOUNT_LINKS: readonly AccountLink[] = [
 export function ParentShell() {
   const location = useLocation()
   const { childId: paramChild, code } = useParams<{ childId?: string; code?: string }>()
-  const { data, isPending: childrenPending } = useChildren()
+  const { data } = useChildren()
   const profile = useProfile()
   const unread = unreadBadgeLabel(useNotificationCounts().data)
   const children = data?.children ?? []
   const childIds = children.map((c) => c.childId)
   // An unknown childId (not one of this parent's children) never reaches the tabs or links: they follow the
   // last or first linked child, the switcher renders nothing, and the page shows its own not-found state.
-  const knownChild = validChildParam(paramChild ?? null, childIds, childrenPending)
+  const knownChild = validChildParam(paramChild ?? null, childIds)
   const [lastChild, setLastChild] = useState<string | null>(null)
   useEffect(() => {
     if (knownChild) setLastChild(knownChild)
@@ -85,7 +85,11 @@ export function ParentShell() {
     }
   })
   const sidebarItems: NavShellItem[] = [
-    ...tabItems.map((item) => ({ ...item, icon: item.icon, activeIcon: undefined })),
+    ...tabItems.map((item) => {
+      const Glyph = TAB_ICON[item.id as ParentTabId]
+      // Rail rows are 18px like the student and teacher rails; the phone bar keeps 22px.
+      return { ...item, icon: <Glyph size={18} aria-hidden="true" />, activeIcon: undefined }
+    }),
     { id: "tutors", to: "/parent/tutors", label: "Tutors", icon: <GraduationCap size={18} aria-hidden="true" /> },
     ...(children.length > 1
       ? [{ id: "children", to: "/parent", end: true, label: "Your children", icon: <Users size={18} aria-hidden="true" /> }]

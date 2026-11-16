@@ -85,6 +85,8 @@ export function PortalShell({
   const navigate = useNavigate()
   const matches = useMatches()
   const immersive = matches.some((m) => (m.handle as { immersive?: boolean } | undefined)?.immersive)
+  // Only a route that renders its own offline strip (handle.ownOfflineBanner) suppresses the shell's banner.
+  const ownOfflineBanner = matches.some((m) => (m.handle as { ownOfflineBanner?: boolean } | undefined)?.ownOfflineBanner)
   const level = topBar.titleLevel ?? titleLevelFor(topBar.trail)
   const closeNav = () => setNavOpen(false)
   const onActiveTap = (item: NavShellItem, event: MouseEvent) => {
@@ -126,8 +128,8 @@ export function PortalShell({
           data-fab={fab && !immersive ? "" : undefined}
           className="lm-native-main @container/home w-full min-w-0 flex-1 overflow-x-hidden px-[72px] pt-1 pb-10 focus:outline-none max-shell-lg:px-3.5 max-shell-lg:pb-9 max-sidebar:pb-bottom-nav"
         >
-          {/* Immersive routes (the practice run) show their own offline strip, so two never stack. */}
-          {immersive ? null : (
+          {/* A route with its own offline strip (handle.ownOfflineBanner) hides this one, so two never stack. */}
+          {ownOfflineBanner ? null : (
             <OfflineBanner
               onRetry={() =>
                 void queryClient.refetchQueries({ type: "active", predicate: (query) => query.state.status === "error" })

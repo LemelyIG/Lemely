@@ -36,16 +36,14 @@ export function resolveChildId(param: string | null, childIds: readonly string[]
 }
 
 /**
- * The URL's childId, only when it can be trusted: while the children list is still
- * loading it is kept (the links are replaced on the next render), and once loaded it
- * must be one of the parent's children. An unknown id (a mistyped or another family's
- * link) resolves to null so the tabs and trail fall back to the last or first linked
- * child, never to a URL for a child this parent does not have. The page itself still
- * shows its own not-found or error state.
+ * The URL's childId, only when it is one of the parent's children. While the list is
+ * loading (or failed) `childIds` is empty, so the param is not trusted either: the tabs
+ * and trail follow the last or first linked child, or the children list, and are
+ * rebuilt when the list arrives. An unknown id (a mistyped or another family's link)
+ * is never fed to tab links; the page itself still shows its own not-found or error state.
  */
-export function validChildParam(param: string | null, childIds: readonly string[], listPending: boolean): string | null {
-  if (!param) return null
-  return listPending || childIds.includes(param) ? param : null
+export function validChildParam(param: string | null, childIds: readonly string[]): string | null {
+  return param && childIds.includes(param) ? param : null
 }
 
 const clean = (path: string) => path.replace(/\/+$/, "") || "/"

@@ -67,7 +67,7 @@ describe("PaperResult.tsx — Web Share", () => {
 describe("BadgeSync mounted in the three authenticated portal layouts, not main.tsx", () => {
   it.each([
     // The student and teacher layouts are components/shell/PortalShell.tsx.
-  // The parent layout is components/shell/PortalShell.tsx too (F1).
+    // The parent layout is components/shell/PortalShell.tsx too (F1).
     "src/components/shell/PortalShell.tsx",
   ])("%s mounts <BadgeSync", (path) => {
     expect(readSource(path)).toContain("<BadgeSync")
