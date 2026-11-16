@@ -41,6 +41,7 @@ from lemely.core.billing_defaults import (
     MAX_EXTRA_SEATS,
     PRICE_CHANGE_NOTICE_DAYS,
 )
+from lemely.core.subscription_rules import MAX_GRACE_DAYS
 from lemely.db.admin_billing_repo import (
     AdminConflictError,
     AdminInvalidError,
@@ -73,7 +74,7 @@ SETTINGS_TARGET_KIND: Final = AuditTarget.BILLING_SETTINGS
 
 INT_FIELDS: Final[Mapping[str, tuple[int, int]]] = {
     "credit_validity_months": (1, 120),
-    "grace_days": (1, 7),
+    "grace_days": (1, MAX_GRACE_DAYS),
     "max_extra_seats": (1, 10_000),
     "price_change_notice_days": (7, 90),
 }

@@ -795,6 +795,20 @@ def test_get_catalogue_lists_everything(sm: sessionmaker[Session], admin: uuid.U
     assert body["creditPacks"] == [] and body["freeAllowances"] == [] and body["usageRates"] == []
 
 
+def test_a_missing_settings_row_is_503_on_the_catalogue_and_on_a_tier_sync(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    """Grace days are read to compare tiers; without the row nothing is guessed (503, not 500)."""
+    tier = add_plan_tier(sm)
+    with sm.begin() as session:
+        session.execute(sa.text("DELETE FROM billing_settings"))
+    client = admin_client(sm, admin)
+    listed = client.get(f"{P}/catalogue")
+    assert (listed.status_code, listed.json()["detail"]["code"]) == (503, "grace_setting_missing")
+    synced = client.post(f"{P}/tiers/{tier}/sync", json={"reason": "no settings row"})
+    assert (synced.status_code, synced.json()["detail"]["code"]) == (503, "grace_setting_missing")
+
+
 # -- one audit row per write, refused writes leave none ------------------------------
 
 

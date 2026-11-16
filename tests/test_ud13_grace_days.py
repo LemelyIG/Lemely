@@ -148,10 +148,13 @@ def test_a_row_already_in_grace_keeps_its_old_deadline_when_the_setting_changes(
     assert _subscription(sm, sid).grace_until == first + timedelta(days=5)
 
 
-def test_mark_past_due_reads_the_setting_in_its_own_transaction(sm: sessionmaker[Session]) -> None:
+def test_mark_past_due_reads_the_setting_in_the_calling_transaction(
+    sm: sessionmaker[Session],
+) -> None:
+    """The value is read in the caller's own transaction: an uncommitted change is seen."""
     sid = _linked(sm)
-    _set_grace_days(sm, 2)
     with sm.begin() as session:
+        session.execute(sa.update(BillingSettings).values(grace_days=2))  # not committed yet
         SubscriptionService(session, _client(), paymob_settings()).mark_past_due(sid, now=END)
     assert _subscription(sm, sid).grace_until == END + timedelta(days=2)
 

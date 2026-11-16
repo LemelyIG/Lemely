@@ -30,7 +30,20 @@ PERIOD_DAYS: Final[Mapping[str, int]] = MappingProxyType({"monthly": 30, "yearly
 #: sandbox run (checklist S13).
 PAYMOB_ACCOUNT_TZ: Final = ZoneInfo("Africa/Cairo")
 
+#: The most days an admin may set ``billing_settings.grace_days`` to, and so the most Paymob
+#: ``retrial_days`` a synced plan can carry (UD13-C). It is the upper bound of the table's
+#: ``grace_days_range`` CHECK (a test ties the two); raise both together once sandbox S11 shows
+#: Paymob accepts more. Windows that must outlast Paymob's retries are sized from it.
+MAX_GRACE_DAYS: Final = 7
+
 #: A renewal is checked against its Paymob amount when it is due within this window (DV-16).
+#: Deliberately NOT sized from the early-charge window (T18 review m5). A paid seat or tier change
+#: pushes its new amount to Paymob right after the commit; the window only gates the sweep's
+#: re-check and refuses paid changes whose push could not be repaired in time. Paymob's charge is
+#: normally about a day early; only a plan renewed on a late retry day has its anchor up to
+#: ``MAX_GRACE_DAYS`` early, and a change inside that rare gap meets an already-taken charge at the
+#: old amount, which the amount-mismatch alert surfaces. Refusing seat and plan changes for the
+#: last week of every period for everyone would cost far more than that bounded exposure.
 AMOUNT_SYNC_WINDOW: Final = timedelta(days=2)
 
 _FAILURE_FLAGS: Final = ("pending", "is_voided", "is_refunded", "error_occured", "is_auth")
@@ -177,6 +190,7 @@ def renewal_period_start(*, current_period_end: datetime | None, charged_at: dat
 
 __all__ = [
     "AMOUNT_SYNC_WINDOW",
+    "MAX_GRACE_DAYS",
     "PAYMOB_ACCOUNT_TZ",
     "PERIOD_DAYS",
     "STALE_CHECKOUT_AFTER",

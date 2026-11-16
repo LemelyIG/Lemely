@@ -15,12 +15,14 @@ from fastapi.responses import JSONResponse
 
 from lemely.db.billing_repo import CreditValiditySettingMissing
 from lemely.db.plan_terms_repo import NoticeSettingMissing
+from lemely.db.subscription_repo import GraceSettingMissing
 
 if TYPE_CHECKING:
     from fastapi import Request
 
 #: The exceptions this module answers, with the code each one carries.
 SETTINGS_ERROR_CODES: Final = {
+    GraceSettingMissing: "grace_setting_missing",
     NoticeSettingMissing: "notice_setting_missing",
     CreditValiditySettingMissing: "credit_validity_setting_missing",
 }

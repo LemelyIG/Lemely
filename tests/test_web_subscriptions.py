@@ -282,6 +282,12 @@ def test_checkout_answers_503_when_paymob_is_down(pg_sessionmaker: sessionmaker[
     assert r.status_code == 201  # the failed checkout does not block the retry
 
 
+def test_a_missing_grace_setting_maps_to_exactly_503() -> None:
+    """No customer route reads the setting today (checkout refuses an unlinked tier); the mapping
+    is the answer if one ever does, so a damaged database is never a 400."""
+    assert billing_router._STATUS_FOR_CODE["grace_setting_missing"] == 503
+
+
 def test_checkout_answers_503_when_paymob_is_unconfigured(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:

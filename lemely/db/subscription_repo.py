@@ -36,6 +36,7 @@ from sqlalchemy.exc import IntegrityError
 
 from lemely.core.subscription_rules import (
     AMOUNT_SYNC_WINDOW,
+    MAX_GRACE_DAYS,
     STALE_CHECKOUT_AFTER,
     expected_renewal_amount_minor,
     is_successful_charge,
@@ -121,15 +122,17 @@ TRIGGER_RESUMED: Final = "resumed"
 #: first, so a backlog cannot hold one transaction's worth of Paymob calls open.
 SUBSCRIPTION_SWEEP_BATCH: Final = 200
 
-#: How far ahead of ``current_period_end`` a genuine failure can arrive. Paymob bills on a Cairo
-#: calendar date while ``current_period_end`` is a UTC instant (about a day of difference), and
-#: a renewal paid late on a retry day restarts our period at the charge while Paymob may keep
-#: its own schedule (up to the plan's ``retrial_days``): so a failure for an unpaid renewal can land
-#: up to roughly 3 days 6 hours before the period end (S13 sandbox checklist to confirm). The
-#: window errs wide on purpose: a failure is ignored on the period alone only when the period
+#: How far ahead of ``current_period_end`` a genuine failure or charge can arrive. Paymob bills on
+#: a Cairo calendar date while ``current_period_end`` is a UTC instant (about a day of
+#: difference), and a renewal paid late on a retry day restarts our period at the charge while
+#: Paymob keeps its own schedule. A plan retries for up to ``MAX_GRACE_DAYS`` (the admin setting's
+#: ceiling; a subscription keeps the ``retrial_days`` of the plan it was created under, and the
+#: setting may have been lower or higher since), so Paymob's next charge or failure can land up to
+#: ``MAX_GRACE_DAYS`` days and 6 hours before the period end (S13 sandbox checklist to confirm).
+#: The window errs wide on purpose: a failure is ignored on the period alone only when the period
 #: runs further ahead than this (the renewal is certainly paid); closer than this, it is
 #: ignored only when Paymob's last charge confirms the payment (``_confirms_payment``).
-EARLY_CHARGE_WINDOW: Final = timedelta(days=3, hours=6)
+EARLY_CHARGE_WINDOW: Final = timedelta(days=MAX_GRACE_DAYS, hours=6)
 
 #: How far Paymob's ``next_billing`` may sit after our ``current_period_end`` before the drift
 #: check calls it a disagreement. ``next_billing`` is a Cairo calendar date and our end is a UTC
@@ -137,7 +140,7 @@ EARLY_CHARGE_WINDOW: Final = timedelta(days=3, hours=6)
 NEXT_BILLING_LATER_TOLERANCE: Final = timedelta(days=2)
 
 #: How far it may sit before our end. A late retry restarts our period at the charge while Paymob
-#: keeps its own schedule (up to the plan's ``retrial_days``), so the early-charge window is normal.
+#: keeps its own schedule (up to ``MAX_GRACE_DAYS``), so the early-charge window is normal.
 NEXT_BILLING_EARLIER_TOLERANCE: Final = EARLY_CHARGE_WINDOW
 
 #: Subscription to the period end its ``next_billing`` disagreement was alerted for (per process).

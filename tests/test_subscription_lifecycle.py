@@ -19,6 +19,7 @@ import pytest
 import sqlalchemy as sa
 from structlog.testing import capture_logs
 
+from lemely.core.subscription_rules import MAX_GRACE_DAYS
 from lemely.core.usage_types import GrantScope, Payer
 from lemely.db import subscription_repo
 from lemely.db.models.billing import Subscription, SubscriptionPeriod
@@ -525,14 +526,15 @@ def test_a_recorded_charge_never_confirms_payment_whatever_its_stamp(
     assert _sub(pg_sessionmaker, sid).status is SubscriptionStatus.past_due
 
 
-def test_a_failure_three_days_before_the_period_end_is_still_honoured(
+def test_a_failure_a_retry_cycle_before_the_period_end_is_still_honoured(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    """A renewal paid late can leave Paymob's schedule ~3 days ahead of our period end."""
+    """A late-paid renewal can leave Paymob ``MAX_GRACE_DAYS`` ahead of our period end."""
     _, honoured = _linked(pg_sessionmaker, 1)
     _, ignored = _linked(pg_sessionmaker, 2)
-    _deliver(pg_sessionmaker, _client(pid=1), TRIGGER_FAILED, END - timedelta(days=3), 1)
-    _deliver(pg_sessionmaker, _client(pid=2), TRIGGER_FAILED, END - timedelta(days=4), 2)
+    ahead = timedelta(days=MAX_GRACE_DAYS)
+    _deliver(pg_sessionmaker, _client(pid=1), TRIGGER_FAILED, END - ahead, 1)
+    _deliver(pg_sessionmaker, _client(pid=2), TRIGGER_FAILED, END - ahead - timedelta(days=1), 2)
     assert _sub(pg_sessionmaker, honoured).status is SubscriptionStatus.past_due
     assert _sub(pg_sessionmaker, ignored).status is SubscriptionStatus.active
 

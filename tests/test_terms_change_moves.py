@@ -17,6 +17,7 @@ import pytest
 import sqlalchemy as sa
 from structlog.testing import capture_logs
 
+from lemely.core.subscription_rules import MAX_GRACE_DAYS
 from lemely.db.models.billing import (
     Payment,
     PaymentPurpose,
@@ -1027,7 +1028,7 @@ def test_a_plan_the_payer_was_told_will_end_is_cancelled_at_paymob_before_it_can
             break
     assert pushed_at is not None
     assert END - pushed_at <= EARLY_CHARGE_WINDOW  # Paymob never gets to charge first
-    assert END - pushed_at > timedelta(days=3)  # and a revert had until then
+    assert END - pushed_at > timedelta(days=MAX_GRACE_DAYS)  # and a revert had until then
     _push_cancels(sm, END + timedelta(minutes=1))
     sub = _sub(sm, sid)
     assert (sub.status, sub.current_period_end) == (SubscriptionStatus.cancelled, END)

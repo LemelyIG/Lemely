@@ -563,7 +563,7 @@ _STATUS_FOR_CODE: Final = {
     "seats_insufficient": status.HTTP_409_CONFLICT,
     "downgrade_unavailable": status.HTTP_409_CONFLICT,
     "plan_mode_mismatch": status.HTTP_409_CONFLICT,
-    # The checkout's plan link read no grace setting (a damaged database, alerted): nothing charged.
+    # A missing ``billing_settings`` row (a damaged database, alerted): nothing is guessed.
     "grace_setting_missing": status.HTTP_503_SERVICE_UNAVAILABLE,
     "not_linked_parent": status.HTTP_403_FORBIDDEN,
     "subscription_not_found": status.HTTP_404_NOT_FOUND,

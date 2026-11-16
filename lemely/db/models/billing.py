@@ -31,7 +31,7 @@ LIVE_SUBSCRIPTION_STATUSES: Final = (
 )
 
 #: The statuses in which a plan is in force: access, allowances, teacher seat allowances.
-#: ``past_due`` is the 3-day grace after a failed renewal (spec §2.6). A subset of
+#: ``past_due`` is the grace after a failed renewal (spec §2.6), ``grace_days`` long. A subset of
 #: ``LIVE_SUBSCRIPTION_STATUSES`` (a pending checkout is not a plan in force), and equal to
 #: ``teacher_team_repo.LIVE_PLAN_STATUSES``, which ``tests/test_migration_subscription_periods.py``
 #: pins.

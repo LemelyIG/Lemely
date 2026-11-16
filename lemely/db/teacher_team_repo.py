@@ -99,7 +99,7 @@ if TYPE_CHECKING:
 alerts = structlog.get_logger("lemely.db.teacher_team_repo")
 
 LIVE_PLAN_STATUSES: Final = (SubscriptionStatus.active, SubscriptionStatus.past_due)
-"""Subscription states whose seats count (``past_due`` is the 3-day grace, spec §5.2)."""
+"""Subscription states whose seats count (``past_due`` is the grace, spec §5.2)."""
 
 TEACHER_AUDIENCE: Final = PlanAudience.teacher
 """``plan_tiers.audience`` of a teacher tier (Phase 02)."""

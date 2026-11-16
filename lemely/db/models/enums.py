@@ -177,7 +177,7 @@ class SubscriptionStatus(enum.Enum):
     #: Paid path (billing spec §4.3, migration 0053): checkout created, first
     #: payment not yet verified.
     pending_first_payment = "pending_first_payment"
-    #: Paid path: a renewal failed and the 3-day grace is running.
+    #: Paid path: a renewal failed and the grace (``billing_settings.grace_days``) is running.
     past_due = "past_due"
 
 
