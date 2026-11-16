@@ -253,6 +253,21 @@ class _DeckCounts:
         return cls(total=0, due=0, mastery=MasteryCounts(new=0, learning=0, known=0))
 
 
+#: A ``writing`` deck older than this is reported (and saved) as failed: its worker died.
+GENERATION_STALE_AFTER = timedelta(minutes=5)
+
+
+@dataclass(frozen=True, slots=True)
+class GenerationState:
+    """Where one deck's card writing stands. ``generated_count`` is the real row count."""
+
+    deck_id: uuid.UUID
+    status: DeckGenerationStatus
+    requested_count: int | None
+    generated_count: int
+    error: str | None
+
+
 @dataclass(frozen=True, slots=True)
 class GeneratedDeckResult:
     """Outcome of :meth:`FlashcardService.generate_deck`."""
@@ -382,7 +397,12 @@ class FlashcardService:
 
     # -- AI generation ----------------------------------------------------------
 
-    def generate_deck(
+    @staticmethod
+    def _default_title(topic: str) -> str:
+        name = _TOPIC_CODE.sub("", topic).strip()
+        return name or topic
+
+    def start_generation(
         self,
         student_id: uuid.UUID | str,
         *,
@@ -391,25 +411,16 @@ class FlashcardService:
         count: int,
         topic: str | None = None,
         title: str | None = None,
-    ) -> GeneratedDeckResult:
-        """Resolve a topic, call Gemini, and persist an AI deck in one transaction.
+    ) -> DeckSummary:
+        """Resolve the topic and save an empty ``writing`` deck. No model call happens here.
 
-        ``origin`` must be :attr:`~lemely.db.models.flashcards.DeckOrigin.topic`
-        or :attr:`~lemely.db.models.flashcards.DeckOrigin.weakness` — a manual
-        deck has no AI content to generate for
-        (:class:`FlashcardValidationError`). Topic resolution follows the same
-        rule as :meth:`create_deck`.
-
-        Every card this method inserts is ``source=CardSource.ai`` (P4.6
-        honesty rule 1) with its ``source_question_id`` taken verbatim from
-        the generator's response.
+        The caller schedules :meth:`run_generation` (the route does it after the response), so
+        the student can leave the screen while the cards are written.
 
         Raises:
-            FlashcardGenerationUnavailableError: no generator was wired in.
-            FlashcardValidationError: ``origin=manual``, or a topic/weakness
-                mismatch (see :meth:`create_deck`).
-            FlashcardUnavailableError: ``origin='weakness'`` and the caller
-                has no weakness data for ``subject_code``.
+            FlashcardGenerationUnavailableError: no generator was wired in (checked first).
+            FlashcardValidationError: ``origin=manual`` or a topic mismatch.
+            FlashcardUnavailableError: weakness origin with no recorded weaknesses.
         """
         if self._generator is None:
             raise FlashcardGenerationUnavailableError(
@@ -417,34 +428,58 @@ class FlashcardService:
             )
         if origin == DeckOrigin.manual:
             raise FlashcardValidationError("origin='manual' has no AI content to generate")
-
         student_uuid = _as_uuid(student_id)
         resolved_topic = self._resolve_deck_topic(student_uuid, subject_code, origin, topic)
         if resolved_topic is None:
-            # Unreachable in practice: origin is topic or weakness here (manual
-            # was excluded above), and _resolve_deck_topic never returns None
-            # for either. A real runtime check rather than an assert (S101) so
-            # a future bug here is a clean 422, not a stripped-in-prod assert.
             raise FlashcardValidationError("could not resolve a topic to generate for")
-
-        generated = self._generator.generate(
-            subject_code=subject_code, topic=resolved_topic, count=count
-        )
-
-        deck_title = title or f"{resolved_topic} (AI generated)"
-        moment = self._now()
         with self._sessionmaker() as session, session.begin():
             deck = FlashcardDeck(
                 user_id=student_uuid,
                 subject_code=subject_code,
                 topic=resolved_topic,
-                title=deck_title,
+                title=(title or "").strip() or self._default_title(resolved_topic),
                 description=None,
                 origin=origin,
+                generation_status=DeckGenerationStatus.writing.value,
+                requested_count=count,
+                generation_started_at=self._now(),
+                generation_error=None,
             )
             session.add(deck)
             session.flush()
+            return self._to_summary(deck, _DeckCounts.empty(), marks_lost=None)
 
+    def run_generation(self, deck_id: uuid.UUID | str) -> None:
+        """Write the cards for a ``writing`` deck, then mark it ``ready`` or ``failed``.
+
+        Never raises: it runs after the HTTP response, where an exception would only reach a
+        log. A deck that is no longer ``writing`` (deleted, or already finished) is left alone.
+        """
+        deck_uuid = _as_uuid(deck_id)
+        with self._sessionmaker() as session:
+            deck = session.get(FlashcardDeck, deck_uuid)
+            if deck is None or deck.generation_status != DeckGenerationStatus.writing.value:
+                return
+            subject_code, topic, count = deck.subject_code, deck.topic, deck.requested_count or 0
+        if self._generator is None or topic is None or count < 1:
+            self._mark_failed(deck_uuid, "unavailable")
+            return
+        try:
+            generated = self._generator.generate(
+                subject_code=subject_code, topic=topic, count=count
+            )
+        except Exception:  # any model or parse failure is a failed deck, never a crash
+            log.exception("flashcard_generation_failed", deck_id=str(deck_uuid))
+            self._mark_failed(deck_uuid, "model_error")
+            return
+        if not generated.cards:
+            self._mark_failed(deck_uuid, "no_cards")
+            return
+        moment = self._now()
+        with self._sessionmaker() as session, session.begin():
+            deck = session.get(FlashcardDeck, deck_uuid)
+            if deck is None or deck.generation_status != DeckGenerationStatus.writing.value:
+                return
             for position, card in enumerate(generated.cards, start=1):
                 sched = initial_schedule(moment)
                 session.add(
@@ -463,21 +498,104 @@ class FlashcardService:
                         last_reviewed_at=sched.last_reviewed_at,
                     )
                 )
-            session.flush()
+            deck.generation_status = DeckGenerationStatus.ready.value
+            deck.generation_error = None
+        log.info(
+            "flashcard_generation_ready",
+            deck_id=str(deck_uuid),
+            requested=count,
+            generated=len(generated.cards),
+        )
 
-            return GeneratedDeckResult(
-                deck=self._to_summary(
-                    deck,
-                    _DeckCounts(
-                        total=len(generated.cards),
-                        due=len(generated.cards),
-                        mastery=MasteryCounts(new=len(generated.cards), learning=0, known=0),
-                    ),
-                    marks_lost=None,
-                ),
-                requested_count=count,
-                generated_count=len(generated.cards),
+    def _mark_failed(self, deck_uuid: uuid.UUID, error: str) -> None:
+        with self._sessionmaker() as session, session.begin():
+            deck = session.get(FlashcardDeck, deck_uuid)
+            if deck is not None and deck.generation_status == DeckGenerationStatus.writing.value:
+                deck.generation_status = DeckGenerationStatus.failed.value
+                deck.generation_error = error
+
+    def generation_status(
+        self, student_id: uuid.UUID | str, deck_id: uuid.UUID | str
+    ) -> GenerationState:
+        """The deck's writing status.
+
+        A ``writing`` deck past :data:`GENERATION_STALE_AFTER` is saved as ``failed``
+        (``timeout``) first, so the list and this endpoint agree.
+        """
+        student_uuid = _as_uuid(student_id)
+        deck_uuid = _as_uuid(deck_id)
+        moment = self._now()
+        with self._sessionmaker() as session, session.begin():
+            deck = self._owned_deck(session, student_uuid, deck_uuid)
+            if (
+                deck.generation_status == DeckGenerationStatus.writing.value
+                and deck.generation_started_at is not None
+                and moment - deck.generation_started_at > GENERATION_STALE_AFTER
+            ):
+                deck.generation_status = DeckGenerationStatus.failed.value
+                deck.generation_error = "timeout"
+            generated = session.scalar(
+                select(func.count()).select_from(Flashcard).where(Flashcard.deck_id == deck.id)
             )
+            return GenerationState(
+                deck_id=deck.id,
+                status=DeckGenerationStatus(deck.generation_status),
+                requested_count=deck.requested_count,
+                generated_count=int(generated or 0),
+                error=deck.generation_error,
+            )
+
+    def retry_generation(
+        self, student_id: uuid.UUID | str, deck_id: uuid.UUID | str
+    ) -> GenerationState:
+        """Put a ``failed`` deck back to ``writing``. The caller schedules :meth:`run_generation`.
+
+        Raises:
+            FlashcardValidationError: the deck is not failed (ready, or still writing).
+        """
+        state = self.generation_status(student_id, deck_id)
+        if state.status != DeckGenerationStatus.failed:
+            raise FlashcardValidationError("only a deck whose writing failed can be retried")
+        with self._sessionmaker() as session, session.begin():
+            deck = self._owned_deck(session, _as_uuid(student_id), _as_uuid(deck_id))
+            deck.generation_status = DeckGenerationStatus.writing.value
+            deck.generation_started_at = self._now()
+            deck.generation_error = None
+        return GenerationState(
+            deck_id=state.deck_id,
+            status=DeckGenerationStatus.writing,
+            requested_count=state.requested_count,
+            generated_count=state.generated_count,
+            error=None,
+        )
+
+    def generate_deck(
+        self,
+        student_id: uuid.UUID | str,
+        *,
+        subject_code: str,
+        origin: DeckOrigin,
+        count: int,
+        topic: str | None = None,
+        title: str | None = None,
+    ) -> GeneratedDeckResult:
+        """Synchronous generation: :meth:`start_generation`, then :meth:`run_generation`.
+
+        Kept for scripts and tests. ``generated_count`` is the real persisted count, never padded.
+        """
+        deck = self.start_generation(
+            student_id,
+            subject_code=subject_code,
+            origin=origin,
+            count=count,
+            topic=topic,
+            title=title,
+        )
+        self.run_generation(deck.id)
+        [summary] = [d for d in self.list_decks(student_id) if d.id == deck.id]
+        return GeneratedDeckResult(
+            deck=summary, requested_count=count, generated_count=summary.card_count
+        )
 
     # -- Listing / reading --------------------------------------------------------
 
@@ -1047,6 +1165,7 @@ def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:
 
 
 __all__ = [
+    "GENERATION_STALE_AFTER",
     "KNOWN_INTERVAL_DAYS",
     "CardView",
     "DeckDetail",
@@ -1061,6 +1180,7 @@ __all__ = [
     "FlashcardUnavailableReason",
     "FlashcardValidationError",
     "GeneratedDeckResult",
+    "GenerationState",
     "MasteryCounts",
     "ReviewOutcome",
     "WeakTopic",
