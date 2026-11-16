@@ -1,6 +1,8 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S3 R5 V3 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 */
 import type { ReactNode } from "react"
 import { formatUtc } from "@/lib/adminBillingModel"
+import { MARKET_ATTRIBUTION, marketComparison, marketLine } from "@/lib/adminRatesModel"
+import type { MarketReference } from "@/lib/billingTypes"
 
 /* Pieces the catalogue's panels share: the titled section and the empty line. */
 
@@ -37,5 +39,26 @@ export function ChangedBy({ at, by }: { at: string; by: string | null }) {
         </>
       ) : null}
     </span>
+  )
+}
+
+/**
+ * A muted market-rate hint under a value. Shows nothing without a reading. It only reads: no
+ * button, no value it could change. The attribution link is the feed's term of use; each panel
+ * renders one hint, so one link.
+ */
+export function MarketNote({ reference, yours }: { reference: MarketReference | null | undefined; yours?: string | null }) {
+  if (!reference) return null
+  const note = yours === undefined ? null : marketComparison(yours, reference)
+  return (
+    <div className="mt-1 flex flex-col gap-0.5 text-body-sm text-on-surface-variant">
+      <span>
+        {marketLine(reference)}
+        {note ? `. ${note}` : ""}
+      </span>
+      <a href={MARKET_ATTRIBUTION.href} target="_blank" rel="noopener noreferrer" className="w-fit text-body-sm underline underline-offset-2">
+        {MARKET_ATTRIBUTION.text}
+      </a>
+    </div>
   )
 }

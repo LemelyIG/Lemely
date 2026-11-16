@@ -169,6 +169,67 @@ describe("a 409 after a real submit", () => {
   })
 })
 
+describe("market reference hint", () => {
+  const link = () => screen.queryAllByRole("link", { name: "Rates By Exchange Rate API" })
+
+  it("billing rules: shows the market line and one attribution link, with no note within 10%", () => {
+    render(wrap(h(BillingRules, { saved })))
+    expect(screen.getByText(/^Market rate: 1 USD = 53\.74 EGP · /)).toBeTruthy()
+    expect(screen.queryByText(/Yours is/)).toBeNull()
+    expect(link()).toHaveLength(1)
+    expect(link()[0].getAttribute("href")).toBe("https://www.exchangerate-api.com")
+    expect(link()[0].getAttribute("rel")).toContain("noopener")
+  })
+
+  it("billing rules: adds a neutral note when the margin rate is more than 10% off", () => {
+    s.settings = okQuery({ ...fx.billingSettings, marginEgpPerUsd: "60" })
+    render(wrap(h(BillingRules, { saved })))
+    expect(screen.getByText(/Yours is 12% higher\./)).toBeTruthy()
+  })
+
+  it("shows nothing at all when the reading is null", () => {
+    s.settings = okQuery({ ...fx.billingSettings, marketReference: null })
+    render(wrap(h(BillingRules, { saved })))
+    expect(screen.queryByText(/Market rate/)).toBeNull()
+    expect(link()).toHaveLength(0)
+  })
+
+  it("is only a hint: no button to use it, and a save sends exactly the edited field", async () => {
+    const user = userEvent.setup()
+    render(wrap(h(BillingRules, { saved })))
+    expect(screen.queryByRole("button", { name: /market/i })).toBeNull()
+    await user.click(screen.getByRole("button", { name: "Edit billing rules" }))
+    const margin = screen.getByLabelText("Margin rate (EGP per USD)") as HTMLInputElement
+    expect(margin.value).toBe("50")
+    const grace = screen.getByLabelText("Grace days")
+    await user.clear(grace)
+    await user.type(grace, "5")
+    reason()
+    await user.click(screen.getByRole("button", { name: "Save rules" }))
+    await waitFor(() => expect((s.update as Fake).mutate).toHaveBeenCalledTimes(1))
+    expect((s.update as Fake).mutate.mock.calls[0][0]).toEqual({ graceDays: 5, expectedVersion: 4, reason: "because the market moved" })
+  })
+
+  it("credit conversion: the market line and one link on the EGP row, never a comparison", () => {
+    s.settings = okQuery({ ...fx.billingSettings, marketReference: { ...fx.billingSettings.marketReference!, rate: "20" } })
+    render(wrap(h(CreditConversion, { saved })))
+    expect(screen.getByText(/^Market rate: 1 USD = 20\.00 EGP · /)).toBeTruthy()
+    expect(screen.queryByText(/Yours is/)).toBeNull()
+    expect(link()).toHaveLength(1)
+  })
+
+  it("credit conversion: nothing when the reading is null or the settings could not be read", () => {
+    s.settings = okQuery({ ...fx.billingSettings, marketReference: null })
+    const a = render(wrap(h(CreditConversion, { saved })))
+    expect(screen.queryByText(/Market rate/)).toBeNull()
+    a.unmount()
+    s.settings = errorQuery(new ApiError(500, "x"))
+    render(wrap(h(CreditConversion, { saved })))
+    expect(screen.queryByText(/Market rate/)).toBeNull()
+    expect(screen.getByText("1 EGP = 1,250 units")).toBeTruthy()
+  })
+})
+
 describe("Credit conversion", () => {
   it("shows the rate both ways, with who changed it", () => {
     render(wrap(h(CreditConversion, { saved })))

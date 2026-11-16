@@ -4,6 +4,8 @@ import { PartialSaveError, adminBillingFailureMessage, fieldErrors, visibleField
 import {
   CREDIT_RATE_FIELDS,
   advanceFree,
+  marketComparison,
+  marketLine,
   SETTINGS_FIELDS,
   creditRateClearBody,
   creditRateSetBody,
@@ -218,6 +220,34 @@ describe("AI token prices", () => {
     expect(usdPerMtok("0.075000")).toBe("$0.075")
     expect(usdPerMtok("1250.5")).toBe("$1,250.50")
     expect(usdPerMtok(null)).toBe("None")
+  })
+})
+
+describe("market reference hint", () => {
+  const ref = fx.billingSettings.marketReference!
+  it("reads the rate to two decimals and the date in the reader's locale", () => {
+    expect(marketLine(ref, "en-GB")).toBe("Market rate: 1 USD = 53.74 EGP · 17 Nov")
+    expect(marketLine(ref, "en-US")).toBe("Market rate: 1 USD = 53.74 EGP · Nov 17")
+  })
+
+  it("notes a difference only beyond 10%, in plain words", () => {
+    expect(marketComparison("60", ref)).toBe("Yours is 12% higher.")
+    expect(marketComparison("45", ref)).toBe("Yours is 16% lower.")
+    expect(marketComparison("50", ref)).toBeNull()
+    expect(marketComparison("59.11", ref)).toBeNull() // 9.99% over
+    expect(marketComparison(null, ref)).toBeNull()
+    expect(marketComparison("", ref)).toBeNull()
+  })
+
+  it("never reaches a form value or a save body", () => {
+    const withRef = settingsValues(fx.billingSettings)
+    expect(Object.keys(withRef)).not.toContain("marketReference")
+    expect(SETTINGS_FIELDS.map((f) => f.name)).not.toContain("marketReference")
+    const body = settingsBody({ ...withRef, graceDays: "5" }, "r", fx.billingSettings)
+    expect(body).toEqual({ graceDays: 5, expectedVersion: 4, reason: "r" })
+    expect(settingsNothingChanged(withRef, fx.billingSettings)).toHaveLength(1)
+    const noRef = { ...fx.billingSettings, marketReference: null }
+    expect(settingsValues(noRef)).toEqual(withRef)
   })
 })
 

@@ -13,9 +13,9 @@ import {
   unitsPerMajor,
   unitsPerMinorText,
 } from "@/lib/adminRatesModel"
-import { useClearCreditRate, useCreditRates, useSetCreditRate } from "@/lib/hooks/useAdminBillingApi"
+import { useBillingSettings, useClearCreditRate, useCreditRates, useSetCreditRate } from "@/lib/hooks/useAdminBillingApi"
 import type { CreditRate } from "@/lib/billingTypes"
-import { ChangedBy, Empty, Section } from "./CataloguePanels"
+import { ChangedBy, Empty, MarketNote, Section } from "./CataloguePanels"
 import { ReasonedFormDialog } from "./ReasonedFormDialog"
 
 /* Credit conversion (UD-12): how many units a payment that cannot buy its plan turns into. With
@@ -28,6 +28,8 @@ type Dialog = { kind: "set"; currency: string; rate: CreditRate | null } | { kin
 
 export function CreditConversion({ saved }: { saved: (what: string) => () => void }) {
   const query = useCreditRates()
+  // The market hint rides on the settings read; a failed read just shows no hint.
+  const market = useBillingSettings().data?.marketReference
   const setRate = useSetCreditRate()
   const clearRate = useClearCreditRate()
   const [dialog, setDialog] = useState<Dialog>(null)
@@ -65,6 +67,8 @@ export function CreditConversion({ saved }: { saved: (what: string) => () => voi
                     <span className="text-data-sm">{unitsPerMinorText(r.unitsPerMinor)}</span> units per piaster
                   </span>
                   <ChangedBy at={r.updatedAt} by={r.updatedBy} />
+                  {/* Units per piaster is not an FX rate, so there is nothing honest to compare it with: the reading only. */}
+                  {r.currency === DEFAULT_CURRENCY ? <MarketNote reference={market} /> : null}
                 </div>
                 <div className="flex gap-2">
                   <Button size="sm" variant="secondary" onClick={() => setDialog({ kind: "set", currency: r.currency, rate: r })} aria-label={`Set ${r.currency} rate`}>

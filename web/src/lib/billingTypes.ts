@@ -1291,6 +1291,14 @@ export interface PublicCatalogue {
 
 // ── Billing rules, credit conversion and AI token prices (07 T14, T19; UD-13) ──────────────
 
+/** Read-only market reading from the feed (EGP per 1 USD); `null` when there is no usable one. Never sent back. */
+export interface MarketReference {
+  rate: string
+  source: string
+  /** UTC date of the feed's last update, `YYYY-MM-DD`. */
+  asOf: string
+}
+
 /** 07 `BillingSettingsDTO`. The two decimals are exact strings or `null` (not set). */
 export interface BillingSettings {
   creditValidityMonths: number
@@ -1302,6 +1310,8 @@ export interface BillingSettings {
   version: number
   updatedAt: string
   updatedBy: string | null
+  /** A hint beside the margin rate. Not a setting: no form value or write carries it. */
+  marketReference?: MarketReference | null
 }
 
 /** 07 `BillingSettingsUpdate`: only the fields that changed, plus the version read. */

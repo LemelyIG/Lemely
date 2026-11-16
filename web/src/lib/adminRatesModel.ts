@@ -7,6 +7,7 @@ import type {
   CreditRateClear,
   CreditRateSet,
   FreeAllowances,
+  MarketReference,
   LlmModelPrice,
   LlmPriceClear,
   LlmPriceSet,
@@ -79,6 +80,30 @@ export function isStaleWrite(error: unknown): boolean {
 /** A refused write whose form was built on old data must not offer the same submit again. */
 export function staleBlock(error: unknown): string | null {
   return isStaleWrite(error) ? "Close this to see the current values." : null
+}
+
+// ── Market reference ────────────────────────────────────────────────────────
+
+/** The feed's attribution terms: link text and target, shown once per panel. */
+export const MARKET_ATTRIBUTION = { text: "Rates By Exchange Rate API", href: "https://www.exchangerate-api.com" } as const
+
+/** "Market rate: 1 USD = 53.74 EGP · 17 Nov": two decimals, the date in the reader's locale. */
+export function marketLine(ref: MarketReference, locale?: string): string {
+  const rate = Number(ref.rate)
+  const day = new Date(`${ref.asOf}T00:00:00Z`)
+  const date = new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", timeZone: "UTC" }).format(day)
+  return `Market rate: 1 USD = ${rate.toFixed(2)} EGP · ${date}`
+}
+
+/** A neutral note when the admin's rate is more than 10% off the market, else null. */
+export function marketComparison(yours: string | null, ref: MarketReference): string | null {
+  const market = Number(ref.rate)
+  const own = yours === null || yours.trim() === "" ? NaN : Number(yours)
+  if (!(market > 0) || !(own > 0)) return null
+  const diff = (own - market) / market
+  if (Math.abs(diff) <= 0.1) return null
+  const pct = Math.round(Math.abs(diff) * 100)
+  return `Yours is ${pct}% ${diff > 0 ? "higher" : "lower"}.`
 }
 
 // ── Free allowances ─────────────────────────────────────────────────────────

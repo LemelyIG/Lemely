@@ -296,6 +296,7 @@ const billingSettings: BillingSettings = {
   version: 4,
   updatedAt: "2026-11-12T09:30:00Z",
   updatedBy: "3f2a91c4-0000-4000-8000-000000000001",
+  marketReference: { rate: "53.741239", source: "open.er-api.com", asOf: "2026-11-17" },
 }
 
 const creditRate: CreditRate = {
