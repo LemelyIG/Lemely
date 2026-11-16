@@ -35,6 +35,7 @@ function item(itemId: string): ReviewQueueItem {
     aiAwardedMarks: 2,
     maximumMarks: 4,
     confidenceScore: 0.5,
+    reviewReason: null,
   }
 }
 
