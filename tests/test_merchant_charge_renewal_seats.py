@@ -955,6 +955,7 @@ def test_a_paid_retry_clears_the_grace_and_keeps_the_seats(
     assert after.extra_seats == 2
     assert after.version == before.version + 1
     assert _attempts(sm, scene)[1].status is PaymentStatus.paid
+    assert _attempts(sm, scene)[1].applied_at is not None  # R-M1: the grace branch stamps it
 
     _run(sm, accepting, now=NOW + timedelta(days=5))
 
@@ -971,6 +972,50 @@ def test_a_paid_retry_clears_the_grace_and_keeps_the_seats(
             )
         )
     assert active == 4
+
+
+def test_a_paid_attempt_with_no_grace_running_still_marks_the_seats_applied(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """R-M2: the fall-through (no grace, current period, seats held) is paid-and-applied.
+
+    The money stands for seats the plan holds, so it is neither voided nor credited, and the
+    ``applied_at`` marker says so (a reader that drops the ``dedupe_key`` filter sees it applied).
+    """
+    sm = pg_sessionmaker
+    scene = _scene(sm, seats=4)
+    attempt_id = _seed_attempt(sm, scene, 1, PaymentStatus.pending, with_order=True)
+    attempt = _attempts(sm, scene)[0]
+    assert attempt.id == attempt_id
+    assert _sub(sm, scene).extra_seat_grace_until is None
+
+    _deliver(sm, attempt, at=NOW + timedelta(minutes=2))
+
+    paid = _attempts(sm, scene)[0]
+    assert paid.status is PaymentStatus.paid
+    assert paid.applied_at is not None
+    assert paid.void_reason is None
+    assert paid.grant_units is None
+    assert _sub(sm, scene).extra_seats == 2
+
+
+def test_an_unknown_void_reason_alerts_and_never_raises_inside_the_callback(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """R-N1: a raise would roll back a callback that already moved money, so it alerts instead."""
+    sm = pg_sessionmaker
+    scene = _scene(sm, seats=4)
+    attempt_id = _seed_attempt(sm, scene, 1, PaymentStatus.paid)
+    with sm.begin() as session:
+        payment = session.get(Payment, attempt_id)
+        sub = session.get(Subscription, scene["subscription_id"])
+        assert payment is not None
+        assert sub is not None
+        with capture_logs() as logs:
+            repo.credit_void_payment(session, payment, sub, reason="not_a_reason", paid_at=NOW)
+        assert "merchant_charge_void_reason_unknown" in _alerts(logs)
+        assert payment.void_reason is None
+        assert payment.grant_units is None
 
 
 # ---------------------------------------------------------------------------

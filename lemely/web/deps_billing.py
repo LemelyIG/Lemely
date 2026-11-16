@@ -12,6 +12,13 @@ import time
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
+from lemely.db.auto_topup_repo import run_auto_topup_job
+from lemely.db.merchant_charge_repo import (
+    charges_configured,
+    push_renewal_amount,
+    register_amount_pusher,
+    run_extra_seat_renewal_job,
+)
 from lemely.db.session import get_sessionmaker
 from lemely.io.paymob.client import PaymobClient
 from lemely.web.billing_jobs import reconcile_pending_payments
@@ -21,6 +28,7 @@ from lemely.web.ratelimit import SlidingWindowLimiter
 from lemely.web.subscription_deps import SubscriptionDeps
 
 if TYPE_CHECKING:
+    import uuid
     from collections.abc import Callable
     from datetime import datetime
 
@@ -177,8 +185,66 @@ def get_public_catalogue_cache() -> PublicCatalogueCache:
     return PublicCatalogueCache(ttl_seconds=_PUBLIC_CATALOGUE_TTL_SECONDS, clock=time.monotonic)
 
 
+def push_subscription_amount(subscription_id: uuid.UUID) -> None:
+    """Push one subscription's renewal amount with the process collaborators (Phase 06, UD-P6).
+
+    The collaborators are resolved when it runs, not when it is registered, so registering it
+    builds no Paymob client and works in a process whose Paymob settings are still unset.
+    """
+    push_renewal_amount(
+        get_billing_sessionmaker(), get_paymob_client(), get_settings().paymob, subscription_id
+    )
+
+
+def register_billing_amount_pusher() -> None:
+    """Register :func:`push_subscription_amount` as the paid handlers' amount pusher.
+
+    Every process that settles payments calls this: ``create_app`` (the callback route) and the
+    jobs that reconcile (``get_billing_reconcile_job``, so a sweeper-only process too). A process
+    that settles without it logs ``subscription_amount_push_not_configured`` and leaves the
+    amount to the window refusal and the period-end sweep. Idempotent.
+    """
+    register_amount_pusher(push_subscription_amount)
+
+
+def get_auto_topup_job() -> Callable[[datetime], int] | None:
+    """The ``billing.auto_topup`` job, or ``None`` unless saved-card charges are configured.
+
+    Checkout alone is not enough: a MOTO charge also needs the MOTO integration id and the key
+    that opens the stored card token (DV-13).
+    """
+    settings = get_settings().paymob
+    if not charges_configured(settings):
+        return None
+
+    def job(now: datetime) -> int:
+        return run_auto_topup_job(
+            get_billing_sessionmaker(), get_paymob_client(), settings, now=now
+        )
+
+    return job
+
+
+def get_extra_seat_renewal_job() -> Callable[[datetime], int] | None:
+    """The ``billing.extra_seat_renewal_charge`` job, or ``None`` unless charges are configured."""
+    settings = get_settings().paymob
+    if not charges_configured(settings):
+        return None
+
+    def job(now: datetime) -> int:
+        return run_extra_seat_renewal_job(
+            get_billing_sessionmaker(), get_paymob_client(), settings, now=now
+        )
+
+    return job
+
+
 def get_billing_reconcile_job() -> Callable[[datetime], int] | None:
-    """The ``billing.reconcile_pending`` job, or ``None`` when Paymob is unconfigured."""
+    """The ``billing.reconcile_pending`` job, or ``None`` when Paymob is unconfigured.
+
+    Reconcile settles payments, so building the job also registers the amount pusher.
+    """
+    register_billing_amount_pusher()
     settings = get_settings().paymob
     if not settings.checkout_configured:
         return None
@@ -216,9 +282,11 @@ def reset_billing_singletons() -> None:
 
 __all__ = [
     "PublicCatalogueCache",
+    "get_auto_topup_job",
     "get_billing_reconcile_job",
     "get_billing_sessionmaker",
     "get_checkout_limiter",
+    "get_extra_seat_renewal_job",
     "get_merchant_charge_deps",
     "get_paymob_client",
     "get_public_catalogue_cache",
@@ -227,5 +295,7 @@ __all__ = [
     "get_subscription_deps",
     "get_subscription_jobs",
     "get_subscription_webhook_limiter",
+    "push_subscription_amount",
+    "register_billing_amount_pusher",
     "reset_billing_singletons",
 ]

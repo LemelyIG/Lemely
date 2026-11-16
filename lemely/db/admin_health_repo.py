@@ -44,6 +44,8 @@ if TYPE_CHECKING:
 
 BILLING_JOB_NAMES: Final = (
     "admin.expire_manual_subscriptions",
+    "billing.auto_topup",
+    "billing.extra_seat_renewal_charge",
     "billing.llm_price_refresh",
     "billing.prune_webhook_failures",
     "billing.reconcile_pending",

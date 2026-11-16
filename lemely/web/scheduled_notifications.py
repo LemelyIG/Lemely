@@ -558,6 +558,11 @@ class Sweeper:
     #: configured: the row still expires and stops granting seat allowance, and the Paymob cancel
     #: is left to the failed-cancel retry once Paymob is configured (DV-32).
     expiry: SubscriptionDeps | None = None
+    #: Paymob billing Phase 06, given only where saved-card charges are configured: the fallback
+    #: renewal seat charge, then the auto top-up. Both run after every Phase 05 job, so an
+    #: expired plan's seats are handled first.
+    billing_extra_seat_renewal: Callable[[datetime], int] | None = None
+    billing_auto_topup: Callable[[datetime], int] | None = None
 
     def sweep_once(self) -> dict[str, int | None]:
         """Run every job given (notifications, purge, email, billing, usage, subscription, seat)."""
@@ -702,6 +707,12 @@ class Sweeper:
                     ),
                 ]
             )
+        extra_seat_renewal = self.billing_extra_seat_renewal
+        if extra_seat_renewal is not None:
+            jobs.append(("billing.extra_seat_renewal_charge", lambda: extra_seat_renewal(moment)))
+        auto_topup = self.billing_auto_topup
+        if auto_topup is not None:
+            jobs.append(("billing.auto_topup", lambda: auto_topup(moment)))
         return run_jobs(jobs, recorder=self.job_recorder, now=self.now)
 
 

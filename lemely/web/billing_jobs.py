@@ -11,7 +11,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import lemely.db.subscription_repo  # noqa: F401  (registers the subscription paid handlers)
+# Paid-handler registration side effects: the reconcile sweeper must find the Phase 05 and Phase 06
+# handlers even if no router imported them (P05 DV-10).
+import lemely.db.auto_topup_repo
+import lemely.db.merchant_charge_repo
+import lemely.db.subscription_repo  # noqa: F401
 from lemely.db.billing_repo import BillingService
 
 if TYPE_CHECKING:

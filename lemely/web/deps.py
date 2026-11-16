@@ -856,7 +856,9 @@ def get_sweeper() -> Sweeper:
     backend it carries for the purge job.
     """
     from lemely.web.deps_billing import (
+        get_auto_topup_job,
         get_billing_reconcile_job,
+        get_extra_seat_renewal_job,
         get_subscription_deps,
         get_subscription_jobs,
     )
@@ -873,6 +875,8 @@ def get_sweeper() -> Sweeper:
         email_provider=build_transactional_provider(settings),
         email_daily_cap=settings.tutoring.email_daily_cap,
         billing_reconcile=get_billing_reconcile_job(),
+        billing_extra_seat_renewal=get_extra_seat_renewal_job(),
+        billing_auto_topup=get_auto_topup_job(),
         subscriptions=get_subscription_jobs(),
         expiry=get_subscription_deps(),
         seat_allowances=True,

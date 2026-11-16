@@ -470,6 +470,16 @@ class MerchantChargeService:
         self._settings = settings
         self._billing = BillingService(session, client, settings)
 
+    def maybe_enqueue_auto_topup(self, owner_user_id: uuid.UUID, now: datetime) -> Payment | None:
+        """Queue at most one auto top-up for ``owner_user_id`` in this session's transaction.
+
+        The index contract's name for ``auto_topup_repo.enqueue_auto_topup``, whose result it
+        returns. The import is function-local: ``auto_topup_repo`` imports this module (DV-12).
+        """
+        from lemely.db.auto_topup_repo import enqueue_auto_topup
+
+        return enqueue_auto_topup(self._session, owner_user_id, now=now)
+
     def active_card(self, payer_user_id: uuid.UUID) -> SavedCard | None:
         """The card the billing summary shows first: the one a "charged to {card}" line names."""
         return next(iter(saved_cards_for(self._session, payer_user_id)), None)
@@ -1592,10 +1602,20 @@ def credit_void_payment(
     callback that already moved money.
 
     The reason is stamped on the payment either way (``void_reason``), so the return page can say
-    what happened; an unknown reason is a programming error and the CHECK would refuse it later.
+    what happened. An unknown reason is a programming error the CHECK would refuse at flush, so it
+    is not stamped and not converted: ``merchant_charge_void_reason_unknown`` alerts an operator
+    and the payment stays ``paid`` (not applied, not credited) for a manual refund.
     """
     if reason not in PAYMENT_VOID_REASONS:
-        raise ValueError(f"unknown void reason {reason!r}")
+        alerts.error(
+            "merchant_charge_void_reason_unknown",
+            alert=True,
+            payment_id=str(payment.id),
+            subscription_id=str(sub.id),
+            purpose=payment.purpose.value,
+            void_reason=reason,
+        )
+        return
     payment.void_reason = reason
     try:
         convert_payment_to_credits(session, payment, subscription=sub, now=paid_at)
@@ -1888,15 +1908,21 @@ def _settle_renewal_seat_payment(
         # The marker says this period's grace already ended (a drop, or an earlier paid attempt):
         # whatever seats are held now were not bought by this payment.
         reason = "seats_dropped"
-    if reason is not None:
-        alerts.error(
-            "renewal_seat_payment_credited",
-            alert=True,
-            payment_id=str(payment.id),
-            subscription_id=str(sub.id),
-            reason=reason,
-        )
-        credit_void_payment(session, payment, sub, reason=reason, paid_at=paid_at)
+    if reason is None:
+        # No grace is running, this period's marker is not the grace's, and seats are held: the
+        # money stands for seats the plan already has, so nothing is voided or credited. Mark it
+        # applied, like the grace branch above, so a reader that ignores the key prefix agrees.
+        payment.applied_at = paid_at
+        session.flush()
+        return
+    alerts.error(
+        "renewal_seat_payment_credited",
+        alert=True,
+        payment_id=str(payment.id),
+        subscription_id=str(sub.id),
+        reason=reason,
+    )
+    credit_void_payment(session, payment, sub, reason=reason, paid_at=paid_at)
 
 
 def on_extra_seats_paid(session: Session, payment: Payment) -> None:
