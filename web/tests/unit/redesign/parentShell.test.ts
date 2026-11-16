@@ -18,10 +18,11 @@ describe("parent portal uses the shared shell", () => {
     expect(shell).toContain('lead: <ChildSwitcher className="w-full" />')
     expect(shell).toContain('<ChildSwitcher className="shell-lg:hidden" />')
   })
-  it("the switcher pill gives its name up below 414px so the page title keeps its room", () => {
+  it("the switcher pill never hides the child's name; below 414px it caps the pill and truncates the name", () => {
     const pill = read("portals/parent/ChildSwitcher.tsx")
-    expect(pill).toContain("truncate max-phone:hidden")
-    // The select still names the control and carries the current child for assistive tech.
+    expect(pill).not.toMatch(/(max-[a-z]+|phone):hidden/)
+    expect(pill.match(/max-phone:max-w-36/g)).toHaveLength(2) // the control and the one-child label
+    expect(pill).toContain('className="min-w-0 truncate"')
     expect(pill).toContain('aria-label="Choose which child to view"')
   })
   it("the old bespoke header is gone", () => {

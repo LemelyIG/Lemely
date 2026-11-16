@@ -284,8 +284,9 @@ button.rd-chip:active { transform: scale(0.97); }
 .rd-tile[data-tone="mint"] { --rd-tile-bg: var(--md-success-container); --rd-tile-ink: var(--md-success-text); }
 .rd-tile[data-tone="coral"] { --rd-tile-bg: var(--md-error-container); --rd-tile-ink: var(--md-on-error-container); }
 .rd-tile[data-tone="gold"] { --rd-tile-bg: color-mix(in oklch, var(--md-tertiary-container) 45%, var(--md-surface-container-lowest)); --rd-tile-ink: var(--md-on-tertiary-container); }
-:root[data-theme="dark"] .rd-tile[data-tone="sea"] { --rd-tile-bg: color-mix(in oklch, var(--md-secondary) 22%, var(--md-surface-container-high)); --rd-tile-ink: var(--md-on-surface); }
-:root[data-theme="dark"] .rd-tile[data-tone="gold"] { --rd-tile-bg: color-mix(in oklch, var(--md-tertiary) 22%, var(--md-surface-container-high)); --rd-tile-ink: var(--md-on-surface); }
+:root[data-theme="dark"] .rd-tile[data-tone="sea"] { --rd-tile-bg: color-mix(in oklab, var(--md-secondary) 10%, var(--md-primary-container)); --rd-tile-ink: var(--md-on-surface); }
+:root[data-theme="dark"] .rd-tile[data-tone="gold"] { --rd-tile-bg: color-mix(in oklab, var(--md-tertiary) 14%, var(--md-tertiary-container)); --rd-tile-ink: var(--md-on-surface); }
+/* The gold mixes into the gold container, not the blue surface: an oklch mix of hue 80 and hue 245 swings through green (teal tile), and an oklab mix with the surface goes grey. Status text on dark sea is 4.68:1, on dark gold 5.06:1; ink is 8.4:1 and 9.1:1. */
 /* Plan decision 6: Flashcards' violet (hue 300) has no Abyss token and tokens are frozen, so this is the one
    literal colour in the kit, scoped to this tone, one light and one dark value. */
 .rd-tile[data-tone="violet"] { --rd-tile-bg: oklch(0.95 0.03 300); --rd-tile-ink: oklch(0.42 0.1 300); }

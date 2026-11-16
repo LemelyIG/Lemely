@@ -96,10 +96,10 @@ describe("student tab bar (mock h6.js TAB6, Plan in the Subjects slot by user ru
 })
 
 describe("student phone menu on native detail routes", () => {
-  it("steps aside for the back control on a native detail route, and stays on tab roots", () => {
+  it("steps aside for the back arrow on an Android detail route only, and stays on iOS and on tab roots", () => {
     const bar = read("components/shell/ShellTopBar.tsx")
-    expect(bar).toMatch(/phoneMenu && level === "detail" && "native:hidden"/)
+    expect(bar).toMatch(/phoneMenu && level === "detail" && "android:hidden"/)
     // The rule is scoped to a detail level: no unconditional native:hidden on the button.
-    expect(bar).not.toMatch(/"shell-lg:hidden",\s*"native:hidden"/)
+    expect(bar).not.toMatch(/"shell-lg:hidden",\s*"android:hidden"/)
   })
 })

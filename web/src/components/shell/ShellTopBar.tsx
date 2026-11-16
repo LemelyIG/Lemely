@@ -116,9 +116,9 @@ export function ShellTopBar({
           // Same variant as the sidebar rail's `shell-lg:flex` (1248px), so exactly
           // one of {sidebar column, menu button} shows. The bar's drawer margins
           // (`max-shell-lg:`) follow the same breakpoint.
-          // On a native detail route the back control leads the bar; two leading icons side by side clash
-          // (Android), so the phone menu steps aside there and stays on tab roots.
-          className={cn(SHELL_ICON_BUTTON, "shell-lg:hidden", !phoneMenu && "max-shell-sm:hidden", phoneMenu && level === "detail" && "native:hidden")}
+          // On Android a detail route puts the back arrow and the menu icon side by side at the start of the bar,
+          // which clash, so the phone menu steps aside there. iOS keeps it (back left, menu by the bell), and so do tab roots.
+          className={cn(SHELL_ICON_BUTTON, "shell-lg:hidden", !phoneMenu && "max-shell-sm:hidden", phoneMenu && level === "detail" && "android:hidden")}
         >
           <ShellIcon name="menu" />
         </button>
