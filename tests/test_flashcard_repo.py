@@ -41,6 +41,7 @@ from lemely.core.flashcards import GeneratedFlashcard, GeneratedFlashcardDeck
 from lemely.core.spaced_repetition import AGAIN_REVIEW_DELAY, INITIAL_EASE_FACTOR
 from lemely.db.base import Base
 from lemely.db.flashcard_repo import (
+    KNOWN_INTERVAL_DAYS,
     FlashcardGenerationUnavailableError,
     FlashcardNotFoundError,
     FlashcardOwnershipError,
@@ -48,6 +49,7 @@ from lemely.db.flashcard_repo import (
     FlashcardUnavailableError,
     FlashcardUnavailableReason,
     FlashcardValidationError,
+    MasteryCounts,
 )
 from lemely.db.models import User
 from lemely.db.models.attempts import Attempt, WeaknessRecord
@@ -239,7 +241,7 @@ def test_weakness_deck_excludes_a_topic_with_zero_net_lost_marks(
     assert exc_info.value.reason == FlashcardUnavailableReason.no_weaknesses
 
 
-def test_weakness_deck_rejects_a_caller_supplied_topic(
+def test_weakness_deck_rejects_a_topic_that_is_not_a_recorded_weakness(
     pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
 ) -> None:
     student = _seed_user(pg_sessionmaker)
@@ -250,8 +252,20 @@ def test_weakness_deck_rejects_a_caller_supplied_topic(
             subject_code="0625",
             title="Weak spots",
             origin=DeckOrigin.weakness,
-            topic="3 Waves",
+            topic="1 Motion",
         )
+
+
+def test_weakness_deck_accepts_a_chosen_recorded_weakness(
+    pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _seed_weakness(pg_sessionmaker, student, topic="3 Waves", lost_marks=9)
+    _seed_weakness(pg_sessionmaker, student, topic="1 Motion", lost_marks=2)
+    deck = flashcard_service.create_deck(
+        student, subject_code="0625", title="Motion", origin=DeckOrigin.weakness, topic="1 Motion"
+    )
+    assert deck.topic == "1 Motion"
 
 
 # ---------------------------------------------------------------------------
@@ -602,3 +616,143 @@ def test_record_review_unknown_card_is_not_found(
     student = _seed_user(pg_sessionmaker)
     with pytest.raises(FlashcardNotFoundError):
         flashcard_service.record_review(student, uuid.uuid4(), DbReviewGrade.good, now=_FIXED_NOW)
+
+
+# ---------------------------------------------------------------------------
+# Redesign L10: mastery, marks lost, rename, weak topics, due scope, forecast
+# ---------------------------------------------------------------------------
+
+
+def _manual_deck_with_cards(service: FlashcardService, student: uuid.UUID, n: int) -> uuid.UUID:
+    deck = service.create_deck(student, subject_code="0625", title="Deck", origin=DeckOrigin.manual)
+    for i in range(n):
+        service.add_card(student, deck.id, front=f"Q{i}", back=f"A{i}")
+    return deck.id
+
+
+def test_list_decks_reports_new_learning_known_counts(
+    pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    deck_id = _manual_deck_with_cards(flashcard_service, student, 4)
+    cards = flashcard_service.get_deck(student, deck_id).cards
+    # One card reviewed once (learning), one pushed past the known threshold, two untouched.
+    flashcard_service.record_review(student, cards[0].id, DbReviewGrade.good)
+    with pg_sessionmaker.begin() as session:
+        row = session.get(Flashcard, cards[1].id)
+        assert row is not None
+        row.repetitions = 3
+        row.interval_days = KNOWN_INTERVAL_DAYS
+        row.last_reviewed_at = _FIXED_NOW
+
+    [summary] = flashcard_service.list_decks(student)
+    assert summary.mastery == MasteryCounts(new=2, learning=1, known=1)
+    assert summary.card_count == 4
+
+
+def test_weakness_deck_reports_the_marks_its_topic_cost(
+    pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _seed_weakness(pg_sessionmaker, student, topic="3 Waves", lost_marks=5)
+    _seed_weakness(pg_sessionmaker, student, topic="3 Waves", lost_marks=4)
+    flashcard_service.create_deck(
+        student, subject_code="0625", title="Waves", origin=DeckOrigin.weakness
+    )
+    flashcard_service.create_deck(
+        student, subject_code="0625", title="Mine", origin=DeckOrigin.manual, topic="3 Waves"
+    )
+    by_title = {d.title: d for d in flashcard_service.list_decks(student)}
+    assert by_title["Waves"].marks_lost == 9
+    # Only a weakness deck claims "cost you N marks"; a manual deck on the same topic does not.
+    assert by_title["Mine"].marks_lost is None
+
+
+def test_rename_deck_trims_and_rejects_blank_or_long_titles(
+    pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    deck_id = _manual_deck_with_cards(flashcard_service, student, 1)
+    renamed = flashcard_service.rename_deck(student, deck_id, title="  Vectors  ")
+    assert renamed.title == "Vectors"
+    assert renamed.card_count == 1
+    with pytest.raises(FlashcardValidationError):
+        flashcard_service.rename_deck(student, deck_id, title="   ")
+    with pytest.raises(FlashcardValidationError):
+        flashcard_service.rename_deck(student, deck_id, title="x" * 81)
+
+
+def test_rename_someone_elses_deck_is_an_ownership_error(
+    pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    owner = _seed_user(pg_sessionmaker)
+    other = _seed_user(pg_sessionmaker)
+    deck_id = _manual_deck_with_cards(flashcard_service, owner, 0)
+    with pytest.raises(FlashcardOwnershipError):
+        flashcard_service.rename_deck(other, deck_id, title="Mine now")
+
+
+def test_weak_topics_ranks_by_marks_lost_with_accuracy(
+    pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _seed_weakness(pg_sessionmaker, student, topic="3 Waves", lost_marks=6, maximum_marks=10)
+    _seed_weakness(pg_sessionmaker, student, topic="1 Motion", lost_marks=2, maximum_marks=10)
+    _seed_weakness(
+        pg_sessionmaker,
+        student,
+        subject_code="0580",
+        topic="E7 Vectors",
+        lost_marks=9,
+        maximum_marks=15,
+    )
+    topics = flashcard_service.weak_topics(student)
+    assert [(t.subject_code, t.topic, t.marks_lost) for t in topics] == [
+        ("0580", "E7 Vectors", 9),
+        ("0625", "3 Waves", 6),
+        ("0625", "1 Motion", 2),
+    ]
+    assert topics[0].accuracy_pct == 40
+    only_physics = flashcard_service.weak_topics(student, subject_code="0625", limit=1)
+    assert [t.topic for t in only_physics] == ["3 Waves"]
+
+
+def test_due_session_scoped_to_one_deck_and_carries_the_forecast(
+    pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    deck_a = _manual_deck_with_cards(flashcard_service, student, 2)
+    deck_b = _manual_deck_with_cards(flashcard_service, student, 3)
+    first_b = flashcard_service.get_deck(student, deck_b).cards[0]
+    flashcard_service.record_review(student, first_b.id, DbReviewGrade.good)  # due in 1 day
+
+    session_a = flashcard_service.due_session(student, deck_id=deck_a)
+    assert session_a.total_due == 2
+    assert {c.id for c in session_a.cards} <= {
+        c.id for c in flashcard_service.get_deck(student, deck_a).cards
+    }
+
+    session_all = flashcard_service.due_session(student)
+    assert session_all.total_due == 4
+    assert session_all.upcoming == [_FIXED_NOW + timedelta(days=1)]
+    assert session_all.again_delay_minutes == 10
+
+
+def test_due_session_for_someone_elses_deck_is_an_ownership_error(
+    pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    owner = _seed_user(pg_sessionmaker)
+    other = _seed_user(pg_sessionmaker)
+    deck_id = _manual_deck_with_cards(flashcard_service, owner, 1)
+    with pytest.raises(FlashcardOwnershipError):
+        flashcard_service.due_session(other, deck_id=deck_id)
+
+
+def test_cards_carry_the_interval_each_grade_would_give(
+    pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    deck_id = _manual_deck_with_cards(flashcard_service, student, 1)
+    [card] = flashcard_service.due_session(student, deck_id=deck_id).cards
+    # A new card: Again is the 10-minute relearning step (0 days); any pass is 1 day.
+    assert card.next_interval_days == {"again": 0, "hard": 1, "good": 1, "easy": 1}
