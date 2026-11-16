@@ -40,7 +40,7 @@ describe("admin billing fetchers (plan 07; request() adds /api)", () => {
     await api.updatePack("p1", { ...r } as never)
     await api.createRate({ ...r } as never)
     await api.createEstimator({ ...r } as never)
-    await api.updateFreeAllowance({ audience: "student", units: 300, ...r })
+    await api.updateFreeAllowance({ audience: "student", units: 300, validDays: null, expectedVersion: 2, ...r })
     await api.searchCustomers("omar h")
     await api.customer("u1")
     await api.grant("u1", { units: 5, validDays: null, requestId: "rq1", ...r })
@@ -99,14 +99,21 @@ describe("toAdminCatalogue", () => {
       ],
       creditPacks: [],
       freeAllowances: [
-        { audience: "student", creditPackId: "fs", units: 300, validDays: null },
-        { audience: "teacher", creditPackId: "ft", units: 1000, validDays: 30 },
+        { audience: "student", creditPackId: "fs", units: 300, validDays: null, version: 2 },
+        { audience: "teacher", creditPackId: "ft", units: 1000, validDays: 30, version: 3 },
       ],
       usageRates: [],
       usageEstimators: [],
     })
     expect(c.tiers[0]).toMatchObject({ interval: "month", features: ["Mark past papers"], includedSeats: null, seatAllowanceUnits: null, extraSeatPriceMinor: null, drift: null })
     expect(c.tiers[1]).toMatchObject({ interval: "year", includedSeats: 20, seatAllowanceUnits: 300, extraSeatPriceMinor: 3000, drift: "Not synced to Paymob yet" })
-    expect(c.freeAllowances).toEqual({ studentSignupUnits: 300, teacherSignupUnits: 1000, teacherSignupExpiryDays: 30 })
+    expect(c.freeAllowances).toEqual({
+      studentSignupUnits: 300,
+      teacherSignupUnits: 1000,
+      studentSignupExpiryDays: null,
+      teacherSignupExpiryDays: 30,
+      studentVersion: 2,
+      teacherVersion: 3,
+    })
   })
 })

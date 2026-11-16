@@ -32,6 +32,14 @@ vi.mock("@/lib/hooks/useAdminBillingApi", () => ({
   useCreateRate: () => s.updateTier,
   useCreateEstimator: () => s.updateTier,
   useUpdateFreeAllowances: () => s.updateFree,
+  useBillingSettings: () => okQuery(fx.billingSettings),
+  useUpdateBillingSettings: () => s.updateTier,
+  useCreditRates: () => okQuery([fx.creditRate]),
+  useSetCreditRate: () => s.updateTier,
+  useClearCreditRate: () => s.updateTier,
+  useLlmPrices: () => okQuery(fx.llmModels),
+  useSetLlmPrice: () => s.updateTier,
+  useClearLlmPrice: () => s.updateTier,
 }))
 
 import { Catalogue } from "@/portals/admin/screens/billing/Catalogue"
@@ -188,11 +196,13 @@ describe("Catalogue writes", () => {
     await user.type(teacher, "1200")
     await user.click(screen.getByRole("button", { name: "Save allowances" }))
     await waitFor(() => expect((s.updateFree as Fake).mutate).toHaveBeenCalledTimes(1))
-    expect((s.updateFree as Fake).mutate.mock.calls[0][0]).toEqual([{ audience: "teacher", units: 1200, reason: "because the price changed" }])
+    expect((s.updateFree as Fake).mutate.mock.calls[0][0]).toEqual([
+      { audience: "teacher", units: 1200, validDays: 30, expectedVersion: 3, reason: "because the price changed" },
+    ])
   })
 
   it("shows an unset signup pack as Not set and requires a value for it", async () => {
-    s.catalogue = okQuery({ ...fx.adminCatalogue, freeAllowances: { studentSignupUnits: null, teacherSignupUnits: 1000, teacherSignupExpiryDays: 30 } })
+    s.catalogue = okQuery({ ...fx.adminCatalogue, freeAllowances: { ...fx.adminCatalogue.freeAllowances, studentSignupUnits: null, studentVersion: null } })
     const user = userEvent.setup()
     render(wrap(h(Catalogue)))
     expect(screen.getByText("Not set")).toBeTruthy()

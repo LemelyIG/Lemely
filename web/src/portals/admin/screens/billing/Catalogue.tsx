@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
-import { useState, type ReactNode } from "react"
+import { useState } from "react"
 import { WarningCircle } from "@phosphor-icons/react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -33,6 +33,7 @@ import {
   versionRows,
   type VersionStatus,
 } from "@/lib/adminBillingModel"
+import { staleBlock } from "@/lib/adminRatesModel"
 import { formatMoney } from "@/lib/billingFormat"
 import type { AdminCatalogue, AdminCreditPack, AdminPlanTier } from "@/lib/billingTypes"
 import {
@@ -46,6 +47,10 @@ import {
   useUpdatePack,
   useUpdateTier,
 } from "@/lib/hooks/useAdminBillingApi"
+import { BillingRules } from "./BillingRules"
+import { Empty, Section } from "./CataloguePanels"
+import { CreditConversion } from "./CreditConversion"
+import { LlmPrices } from "./LlmPrices"
 import { ReasonedFormDialog } from "./ReasonedFormDialog"
 
 /* Catalogue (spec §8.1): every price, allowance, pack, rate and estimator is data, versioned
@@ -63,27 +68,6 @@ type Dialog =
 const n = (v: number) => new Intl.NumberFormat().format(v)
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 const intervalWord = (t: AdminPlanTier) => (t.interval === "year" ? "yearly" : t.interval === "month" ? "monthly" : "no interval")
-
-function Section({ title, hint, action, children }: { title: string; hint?: string; action: ReactNode; children: ReactNode }) {
-  return (
-    <section className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
-        <div className="flex min-w-0 flex-col gap-1">
-          <h2 className="m-0 text-display-sm text-on-surface">{title}</h2>
-          {hint ? <p className="m-0 max-w-prose text-body-sm text-on-surface-variant">{hint}</p> : null}
-        </div>
-        {action}
-      </div>
-      {children}
-    </section>
-  )
-}
-
-function Empty({ children }: { children: ReactNode }) {
-  return (
-    <p className="m-0 rounded-lg border border-dashed border-outline-variant px-4 py-6 text-body-sm text-on-surface-variant">{children}</p>
-  )
-}
 
 function OnSale({ on }: { on: boolean }) {
   return on ? (
@@ -255,7 +239,18 @@ function StatusCell({ status }: { status: VersionStatus }) {
   return <span className="text-body-sm text-on-surface-variant">Replaced</span>
 }
 
-function Body({ c, open }: { c: AdminCatalogue; open: (d: Dialog) => void }) {
+/** One audience's signup credits: how many, and for how long. */
+function FreeRow({ label, units, days }: { label: string; units: number | null; days: number | null }) {
+  return (
+    <div>
+      <dt className="text-on-surface-variant">{label}</dt>
+      <dd className="m-0 text-data-md">{units === null ? "Not set" : `${n(units)} units`}</dd>
+      <dd className="m-0 text-body-sm text-on-surface-variant">{days === null ? "Never expires" : `Expire after ${n(days)} days`}</dd>
+    </div>
+  )
+}
+
+function Body({ c, open, saved }: { c: AdminCatalogue; open: (d: Dialog) => void; saved: (what: string) => () => void }) {
   const rates = versionRows(c.rates)
   const estimators = versionRows(c.estimators)
   const free = c.freeAllowances
@@ -364,21 +359,15 @@ function Body({ c, open }: { c: AdminCatalogue; open: (d: Dialog) => void }) {
           </Button>
         }
       >
-        <dl className="m-0 grid gap-x-8 gap-y-3 text-body-sm sm:grid-cols-3">
-          <div>
-            <dt className="text-on-surface-variant">Student free allowance</dt>
-            <dd className="m-0 text-data-md">{free.studentSignupUnits === null ? "Not set" : `${n(free.studentSignupUnits)} units`}</dd>
-          </div>
-          <div>
-            <dt className="text-on-surface-variant">Teacher signup credits</dt>
-            <dd className="m-0 text-data-md">{free.teacherSignupUnits === null ? "Not set" : `${n(free.teacherSignupUnits)} units`}</dd>
-          </div>
-          <div>
-            <dt className="text-on-surface-variant">Teacher credits expire after</dt>
-            <dd className="m-0 text-data-md">{free.teacherSignupExpiryDays === null ? "Never" : `${free.teacherSignupExpiryDays} days`}</dd>
-          </div>
+        <dl className="m-0 grid gap-x-8 gap-y-4 text-body-sm sm:grid-cols-2">
+          <FreeRow label="Student free allowance" units={free.studentSignupUnits} days={free.studentSignupExpiryDays} />
+          <FreeRow label="Teacher signup credits" units={free.teacherSignupUnits} days={free.teacherSignupExpiryDays} />
         </dl>
       </Section>
+
+      <BillingRules saved={saved} />
+
+      <CreditConversion saved={saved} />
 
       <Section
         title="Usage rates"
@@ -481,6 +470,8 @@ function Body({ c, open }: { c: AdminCatalogue; open: (d: Dialog) => void }) {
           </Table>
         )}
       </Section>
+
+      <LlmPrices saved={saved} />
     </div>
   )
 }
@@ -525,7 +516,7 @@ export function Catalogue() {
           <div role="status" className={notice ? "mb-6 rounded-md bg-surface-container-low px-4 py-3 text-body-sm text-on-surface" : "sr-only"}>
             {notice}
           </div>
-          <Body c={c} open={open} />
+          <Body c={c} open={open} saved={saved} />
           {dialog?.kind === "tier" ? (
             dialog.tier ? (
               <ReasonedFormDialog
@@ -657,14 +648,8 @@ export function Catalogue() {
               mutation={updateFree}
               toBody={(v, r) => freeChanges(v, r, c.freeAllowances)}
               check={(v) => (freeChanges(v, "unused", c.freeAllowances).length === 0 ? ["Nothing has changed. Change a value to save."] : [])}
-              note={
-                <p className="m-0 text-body-sm text-on-surface-variant">
-                  {c.freeAllowances.teacherSignupExpiryDays === null
-                    ? "Teacher signup credits never expire. "
-                    : `Teacher signup credits expire after ${c.freeAllowances.teacherSignupExpiryDays} days. `}
-                  That is fixed in the product, not editable here.
-                </p>
-              }
+              blocked={staleBlock(updateFree.error)}
+              reload="Reload this page"
               onSaved={saved("Saved the free allowances.")}
             />
           ) : null}

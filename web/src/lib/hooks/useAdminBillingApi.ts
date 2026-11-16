@@ -25,6 +25,14 @@ import type {
   AdminPaymentsPage,
   AdminRefundRequest,
   BillingHealth,
+  BillingSettings,
+  BillingSettingsUpdate,
+  CreditRate,
+  CreditRateClear,
+  CreditRateSet,
+  LlmModelPrice,
+  LlmPriceClear,
+  LlmPriceSet,
   CustomerDetail,
   CustomerSearchResult,
   EstimatorCreate,
@@ -98,6 +106,14 @@ export const adminBillingApi = {
     return request<MarginReport>(`${B}/margin?from=${enc(w.start)}&to=${enc(w.end)}${rate}`)
   },
   health: () => request<BillingHealth>(`${B}/health`),
+  settings: () => request<BillingSettings>(`${B}/settings`),
+  updateSettings: (b: BillingSettingsUpdate) => request<BillingSettings>(`${B}/settings`, put(b)),
+  creditRates: () => request<{ rates: CreditRate[] }>(`${B}/credit-rates`),
+  setCreditRate: (currency: string, b: CreditRateSet) => request<CreditRate>(`${B}/credit-rates/${enc(currency)}`, put(b)),
+  clearCreditRate: (currency: string, b: CreditRateClear) => request<{ rates: CreditRate[] }>(`${B}/credit-rates/${enc(currency)}/clear`, post(b)),
+  llmPrices: () => request<{ models: LlmModelPrice[] }>(`${B}/llm-prices`),
+  setLlmPrice: (model: string, b: LlmPriceSet) => request<unknown>(`${B}/llm-prices/${enc(model)}`, put(b)),
+  clearLlmPrice: (model: string, b: LlmPriceClear) => request<{ models: LlmModelPrice[] }>(`${B}/llm-prices/${enc(model)}/clear`, post(b)),
 }
 
 export const adminBillingKeys = {
@@ -109,6 +125,9 @@ export const adminBillingKeys = {
   problems: ["admin", "billing", "problems"] as const,
   margin: (from: string, to: string, egpPerUsd: string | null = null) => ["admin", "billing", "margin", from, to, egpPerUsd] as const,
   health: ["admin", "billing", "health"] as const,
+  settings: ["admin", "billing", "settings"] as const,
+  creditRates: ["admin", "billing", "credit-rates"] as const,
+  llmPrices: ["admin", "billing", "llm-prices"] as const,
 }
 
 export const useAdminCatalogue = (): UseQueryResult<AdminCatalogue, Error> =>
@@ -231,3 +250,33 @@ export const useMarginReport = (from: string, to: string, egpPerUsd: string | nu
 
 export const useBillingHealth = (): UseQueryResult<BillingHealth, Error> =>
   useQuery({ queryKey: adminBillingKeys.health, queryFn: adminBillingApi.health, refetchInterval: 60_000, retry: adminRetry })
+
+// ── Billing rules, credit conversion, AI token prices ───────────────────────
+
+export const useBillingSettings = (): UseQueryResult<BillingSettings, Error> =>
+  useQuery({ queryKey: adminBillingKeys.settings, retry: adminRetry, queryFn: adminBillingApi.settings })
+
+export const useCreditRates = (): UseQueryResult<CreditRate[], Error> =>
+  useQuery({ queryKey: adminBillingKeys.creditRates, retry: adminRetry, queryFn: adminBillingApi.creditRates, select: (d) => d.rates })
+
+export const useLlmPrices = (): UseQueryResult<LlmModelPrice[], Error> =>
+  useQuery({ queryKey: adminBillingKeys.llmPrices, retry: adminRetry, queryFn: adminBillingApi.llmPrices, select: (d) => d.models })
+
+/**
+ * A write to one rate panel refetches that panel whatever the outcome: success shows the new
+ * value, a 409 `stale_write` shows what someone else saved, and a dropped request may have landed.
+ */
+function useSectionWrite<V, D>(key: readonly string[], fn: (v: V) => Promise<D>): UseMutationResult<D, Error, V> {
+  const qc = useQueryClient()
+  return useMutation({ mutationFn: fn, onSettled: () => qc.invalidateQueries({ queryKey: key }) })
+}
+
+export const useUpdateBillingSettings = () => useSectionWrite(adminBillingKeys.settings, (b: BillingSettingsUpdate) => adminBillingApi.updateSettings(b))
+export const useSetCreditRate = () =>
+  useSectionWrite(adminBillingKeys.creditRates, (v: { currency: string; body: CreditRateSet }) => adminBillingApi.setCreditRate(v.currency, v.body))
+export const useClearCreditRate = () =>
+  useSectionWrite(adminBillingKeys.creditRates, (v: { currency: string; body: CreditRateClear }) => adminBillingApi.clearCreditRate(v.currency, v.body))
+export const useSetLlmPrice = () =>
+  useSectionWrite(adminBillingKeys.llmPrices, (v: { model: string; body: LlmPriceSet }) => adminBillingApi.setLlmPrice(v.model, v.body))
+export const useClearLlmPrice = () =>
+  useSectionWrite(adminBillingKeys.llmPrices, (v: { model: string; body: LlmPriceClear }) => adminBillingApi.clearLlmPrice(v.model, v.body))

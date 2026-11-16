@@ -23,8 +23,8 @@ function mount() {
   return { ...renderHook(() => useUpdateFreeAllowances(), { wrapper }), invalidate }
 }
 
-const student = { audience: "student" as const, units: 400, reason: "starter allowance" }
-const teacher = { audience: "teacher" as const, units: 1200, reason: "starter allowance" }
+const student = { audience: "student" as const, units: 400, validDays: null, expectedVersion: 2, reason: "starter allowance" }
+const teacher = { audience: "teacher" as const, units: 1200, validDays: 30, expectedVersion: 3, reason: "starter allowance" }
 const saved = (audience: string, units: number) => ({ audience, creditPackId: "p", units, validDays: null })
 
 beforeEach(() => req.mockReset())

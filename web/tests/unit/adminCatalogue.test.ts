@@ -15,6 +15,14 @@ vi.mock("@/lib/hooks/useAdminBillingApi", () => ({
   useCreateRate: () => fakeMutation(),
   useCreateEstimator: () => fakeMutation(),
   useUpdateFreeAllowances: () => fakeMutation(),
+  useBillingSettings: () => okQuery(fx.billingSettings),
+  useUpdateBillingSettings: () => fakeMutation(),
+  useCreditRates: () => okQuery([fx.creditRate]),
+  useSetCreditRate: () => fakeMutation(),
+  useClearCreditRate: () => fakeMutation(),
+  useLlmPrices: () => okQuery(fx.llmModels),
+  useSetLlmPrice: () => fakeMutation(),
+  useClearLlmPrice: () => fakeMutation(),
 }))
 vi.mock("@/components/ui/modal", () => ({
   Modal: (p: { open: boolean; title: unknown; children: unknown; footer?: unknown }) =>
@@ -44,7 +52,7 @@ describe("Catalogue", () => {
     const html = renderStatic(h(Catalogue))
     // The kit's table headers and badges use the eyebrow type; no label may sit above a heading.
     expect(html).not.toMatch(/text-eyebrow[^"]*"[^>]*>[^<]*<\/(?:div|p|span)><h[12]/)
-    for (const heading of ["Plan tiers", "Credit packs", "Free allowances", "Usage rates", "Estimators"]) expect(html).toContain(`>${heading}</h2>`)
+    for (const heading of ["Plan tiers", "Credit packs", "Free allowances", "Billing rules", "Credit conversion", "Usage rates", "Estimators", "AI token prices"]) expect(html).toContain(`>${heading}</h2>`)
   })
 
   it("shows a teacher tier's seats and a student tier as seatless", () => {

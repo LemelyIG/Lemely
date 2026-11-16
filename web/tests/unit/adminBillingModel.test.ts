@@ -24,6 +24,7 @@ import {
   refundOutcome,
   refundableMinor,
   ESTIMATOR_FIELDS,
+  FREE_FIELDS,
   PACK_FIELDS,
   RATE_FIELDS,
   TIER_FIELDS,
@@ -125,13 +126,14 @@ describe("admin billing model", () => {
     expect(
       estimatorBody({ action: "mark_paper", inputKind: "none", baseLow: "2", baseHigh: "4", perInputLow: "0", perInputHigh: "0", effectiveFrom: "" }, "tune"),
     ).toMatchObject({ inputKind: "none", baseLow: 2, baseHigh: 4, effectiveFrom: null })
-    expect(freeBody({ studentSignupUnits: "300", teacherSignupUnits: "1000" }, "free")).toEqual([
-      { audience: "student", units: 300, reason: "free" },
-      { audience: "teacher", units: 1000, reason: "free" },
+    expect(freeBody({ studentSignupUnits: "300", studentSignupDays: "", teacherSignupUnits: "1000", teacherSignupDays: "30" }, "free", FREE_NOW)).toEqual([
+      { audience: "student", units: 300, validDays: null, expectedVersion: 2, reason: "free" },
+      { audience: "teacher", units: 1000, validDays: 30, expectedVersion: 3, reason: "free" },
     ])
   })
 })
 
+const FREE_NOW = { studentSignupUnits: 300, teacherSignupUnits: 1000, studentSignupExpiryDays: null, teacherSignupExpiryDays: 30, studentVersion: 2, teacherVersion: 3 }
 const NOW = new Date("2026-11-06T10:00:00Z")
 
 describe("admin billing model: what the server would refuse is refused first", () => {
@@ -239,15 +241,32 @@ describe("admin billing model: what the server would refuse is refused first", (
   })
 
   it("sends only the free allowances that changed, and an unset one always counts as changed", () => {
-    const current = { studentSignupUnits: 300, teacherSignupUnits: 1000, teacherSignupExpiryDays: 30 }
+    const current = FREE_NOW
     expect(freeChanges(freeValues(current), "r", current)).toEqual([])
-    expect(freeChanges({ ...freeValues(current), teacherSignupUnits: "1200" }, "r", current)).toEqual([{ audience: "teacher", units: 1200, reason: "r" }])
-    const unset = { studentSignupUnits: null, teacherSignupUnits: 1000, teacherSignupExpiryDays: 30 }
+    expect(freeChanges({ ...freeValues(current), teacherSignupUnits: "1200" }, "r", current)).toEqual([
+      { audience: "teacher", units: 1200, validDays: 30, expectedVersion: 3, reason: "r" },
+    ])
+    const unset = { ...FREE_NOW, studentSignupUnits: null, studentVersion: null }
     expect(freeValues(unset).studentSignupUnits).toBe("")
     expect(fieldErrors([{ name: "studentSignupUnits", label: "Student free allowance (units)", kind: "number" }], freeValues(unset))).toEqual({
       studentSignupUnits: "Student free allowance (units) is required.",
     })
-    expect(freeChanges({ ...freeValues(unset), studentSignupUnits: "0" }, "r", unset)).toEqual([{ audience: "student", units: 0, reason: "r" }])
+    expect(freeChanges({ ...freeValues(unset), studentSignupUnits: "0" }, "r", unset)).toEqual([
+      { audience: "student", units: 0, validDays: null, expectedVersion: null, reason: "r" },
+    ])
+  })
+
+  it("sends a validity change on its own, 'never expires' as null, and bounds days to 1-3650", () => {
+    const only = freeChanges({ ...freeValues(FREE_NOW), studentSignupDays: "90" }, "r", FREE_NOW)
+    expect(only).toEqual([{ audience: "student", units: 300, validDays: 90, expectedVersion: 2, reason: "r" }])
+    expect(freeChanges({ ...freeValues(FREE_NOW), teacherSignupDays: "" }, "r", FREE_NOW)).toEqual([
+      { audience: "teacher", units: 1000, validDays: null, expectedVersion: 3, reason: "r" },
+    ])
+    const bad = (days: string) => fieldErrors(FREE_FIELDS, { ...freeValues(FREE_NOW), studentSignupDays: days }).studentSignupDays
+    expect(bad("0")).toBe("Student credits last (days) must be a whole number from 1 to 3,650.")
+    expect(bad("3651")).toBe("Student credits last (days) must be a whole number from 1 to 3,650.")
+    expect(bad("3650")).toBeUndefined()
+    expect(bad("")).toBeUndefined()
   })
 
   it("shows an effective-from instant with its time in UTC", () => {

@@ -278,7 +278,10 @@ export function toAdminCatalogue(w: WireAdminCatalogue): AdminCatalogue {
     freeAllowances: {
       studentSignupUnits: free("student")?.units ?? null,
       teacherSignupUnits: free("teacher")?.units ?? null,
+      studentSignupExpiryDays: free("student")?.validDays ?? null,
       teacherSignupExpiryDays: free("teacher")?.validDays ?? null,
+      studentVersion: free("student")?.version ?? null,
+      teacherVersion: free("teacher")?.version ?? null,
     },
   }
 }

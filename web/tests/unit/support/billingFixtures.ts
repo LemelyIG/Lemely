@@ -1,5 +1,8 @@
 import type {
   AdminCatalogue,
+  BillingSettings,
+  CreditRate,
+  LlmModelPrice,
   AdminPaymentRow,
   AssistantRow,
   AutoTopupSettings,
@@ -265,8 +268,78 @@ const adminCatalogue: AdminCatalogue = {
   estimators: [
     { id: "e1", version: 1, action: "mark_paper", inputKind: "none", baseLow: 2, baseHigh: 4, perInputLow: 0, perInputHigh: 0, effectiveFrom: "2026-11-01T00:00:00Z" },
   ],
-  freeAllowances: { studentSignupUnits: 300, teacherSignupUnits: 1000, teacherSignupExpiryDays: 30 },
+  freeAllowances: {
+    studentSignupUnits: 300,
+    teacherSignupUnits: 1000,
+    studentSignupExpiryDays: null,
+    teacherSignupExpiryDays: 30,
+    studentVersion: 2,
+    teacherVersion: 3,
+  },
 }
+
+const billingSettings: BillingSettings = {
+  creditValidityMonths: 12,
+  graceDays: 3,
+  maxExtraSeats: 200,
+  priceChangeNoticeDays: 30,
+  marginEgpPerUsd: "50",
+  codeExecutionUsdPerHour: null,
+  version: 4,
+  updatedAt: "2026-11-12T09:30:00Z",
+  updatedBy: "3f2a91c4-0000-4000-8000-000000000001",
+}
+
+const creditRate: CreditRate = {
+  currency: "EGP",
+  unitsPerMinor: "12.500000",
+  version: 2,
+  updatedAt: "2026-11-12T09:30:00Z",
+  updatedBy: "3f2a91c4-0000-4000-8000-000000000001",
+}
+
+const noCache = { cachedInputUsdPerMtok: null, cacheWrite5mUsdPerMtok: null, cacheWrite1hUsdPerMtok: null }
+const noTier = { tierThresholdTokens: null, tier2InputUsdPerMtok: null, tier2OutputUsdPerMtok: null }
+
+/** One tiered built-in with an override, one flat built-in, one the code does not price. */
+const llmModels: LlmModelPrice[] = [
+  {
+    model: "gemini-3-pro",
+    provider: "gemini",
+    codeDefault: {
+      inputUsdPerMtok: "2.000000",
+      outputUsdPerMtok: "12.000000",
+      cachedInputUsdPerMtok: "0.200000",
+      cacheWrite5mUsdPerMtok: null,
+      cacheWrite1hUsdPerMtok: null,
+      tiered: true,
+      tierThresholdTokens: 200000,
+      tier2InputUsdPerMtok: "4.000000",
+      tier2OutputUsdPerMtok: "18.000000",
+      source: "ai.google.dev/pricing",
+      readOn: "2026-10-01",
+    },
+    override: null,
+    seenInLast30Days: true,
+  },
+  {
+    model: "claude-haiku-4-5",
+    provider: "anthropic",
+    codeDefault: { inputUsdPerMtok: "1.000000", outputUsdPerMtok: "5.000000", ...noCache, tiered: false, ...noTier, source: "anthropic.com/pricing", readOn: "2026-10-01" },
+    override: {
+      model: "claude-haiku-4-5",
+      inputUsdPerMtok: "0.900000",
+      outputUsdPerMtok: "4.500000",
+      ...noCache,
+      ...noTier,
+      version: 3,
+      updatedAt: "2026-11-12T09:30:00Z",
+      updatedBy: "3f2a91c4-0000-4000-8000-000000000001",
+    },
+    seenInLast30Days: false,
+  },
+  { model: "future-model-x", provider: "unknown", codeDefault: null, override: null, seenInLast30Days: true },
+]
 
 const adminPayment: AdminPaymentRow = {
   id: "pay1", payerUserId: "u1", beneficiaryUserId: "u2", purpose: "subscription_first", status: "paid", amountMinor: 25000,
@@ -387,6 +460,9 @@ export const fx = {
   studentCatalogue,
   teacherCatalogue,
   adminCatalogue,
+  billingSettings,
+  creditRate,
+  llmModels,
   adminPayment,
   customer,
   problems,

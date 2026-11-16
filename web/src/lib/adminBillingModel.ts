@@ -74,13 +74,20 @@ type FieldBase = {
   hint?: string
   /** Shown (and validated) only while the form's `audience` value matches. */
   audience?: Audience
+  /**
+   * Shown (and validated) only while this holds. It also sees the last failed write, so a field
+   * can appear because the server asked for it (a confirmation the form could not predict).
+   */
+  showWhen?: (values: FormValues, error: unknown) => boolean
 }
 
 export type FieldSpec = FieldBase &
   (
     | { kind: "text"; optional?: boolean; maxLength?: number; pattern?: RegExp; patternMessage?: string }
     | { kind: "date"; optional?: boolean; future?: boolean }
-    | { kind: "number"; optional?: boolean; positive?: boolean }
+    | { kind: "number"; optional?: boolean; positive?: boolean; min?: number; max?: number }
+    | { kind: "decimal"; optional?: boolean; places: number; max: number }
+    | { kind: "notice"; text: string }
     | { kind: "money"; optional?: boolean; positive?: boolean }
     | { kind: "select"; options: { value: string; label: string }[] }
     | { kind: "checkbox" }
@@ -93,6 +100,7 @@ const str = (v: FormValues, k: string) => String(v[k] ?? "").trim()
 const num = (v: FormValues, k: string) => Number(str(v, k))
 const intOrZero = (v: FormValues, k: string) => (str(v, k) === "" ? 0 : Number(str(v, k)))
 const dayOrNull = (v: FormValues, k: string) => (str(v, k) === "" ? null : isoDay(str(v, k)))
+const numOrNull = (v: FormValues, k: string) => (str(v, k) === "" ? null : num(v, k))
 const moneyOrZero = (v: FormValues, k: string) => (str(v, k) === "" ? 0 : (minorFromMajor(str(v, k)) ?? 0))
 /** Seat fields belong to teacher tiers; the server refuses them on a student tier. */
 const isTeacher = (v: FormValues) => str(v, "audience") === "teacher"
@@ -130,8 +138,10 @@ export function hiddenFeatureCount(raw: Record<string, unknown>): number {
 }
 
 /** The fields a form actually shows for these values (audience-specific ones drop out). */
-export function visibleFields(fields: FieldSpec[], values: FormValues): FieldSpec[] {
-  return fields.filter((f) => f.audience === undefined || f.audience === str(values, "audience"))
+export function visibleFields(fields: FieldSpec[], values: FormValues, error?: unknown): FieldSpec[] {
+  return fields.filter(
+    (f) => (f.audience === undefined || f.audience === str(values, "audience")) && (f.showWhen === undefined || f.showWhen(values, error)),
+  )
 }
 
 const grouped = (n: number) => new Intl.NumberFormat("en-US").format(n)
@@ -164,8 +174,18 @@ export function fieldErrors(fields: FieldSpec[], values: FormValues, now: Date =
         errors[f.name] = f.positive ? `${f.label} must be a whole number above zero.` : `${f.label} must be a whole number, zero or more.`
       } else if (f.positive && Number(raw) === 0) {
         errors[f.name] = `${f.label} must be a whole number above zero.`
-      } else if (Number(raw) > MAX_UNITS) {
-        errors[f.name] = `${f.label} must be at most ${grouped(MAX_UNITS)}.`
+      } else if (f.min !== undefined && f.max !== undefined && (Number(raw) < f.min || Number(raw) > f.max)) {
+        errors[f.name] = `${f.label} must be a whole number from ${grouped(f.min)} to ${grouped(f.max)}.`
+      } else if (Number(raw) > (f.max ?? MAX_UNITS)) {
+        errors[f.name] = `${f.label} must be at most ${grouped(f.max ?? MAX_UNITS)}.`
+      }
+    } else if (f.kind === "decimal") {
+      if (raw === "") {
+        if (!f.optional) errors[f.name] = `${f.label} is required.`
+      } else if (!new RegExp(`^\\d+(\\.\\d{1,${f.places}})?$`).test(raw)) {
+        errors[f.name] = `${f.label} must be an amount with at most ${f.places} decimal places.`
+      } else if (Number(raw) <= 0 || Number(raw) > f.max) {
+        errors[f.name] = `${f.label} must be above 0 and at most ${grouped(f.max)}.`
       }
     } else if (f.kind === "money") {
       const minor = minorFromMajor(raw)
@@ -369,33 +389,43 @@ export function estimatorBody(v: FormValues, reason: string): EstimatorCreate {
   }
 }
 
-/** 07's free-allowance update carries units only; the teacher credits' validity is read-only. */
+/** Validity is days, or empty for "never expires" (07 `FreeAllowanceUpdateDTO.validDays`, 1 to 3650). */
 export const FREE_FIELDS: FieldSpec[] = [
   { name: "studentSignupUnits", label: "Student free allowance (units)", kind: "number" },
+  { name: "studentSignupDays", label: "Student credits last (days)", kind: "number", optional: true, min: 1, max: 3650, hint: "Empty means never expires." },
   { name: "teacherSignupUnits", label: "Teacher signup credits (units)", kind: "number" },
+  { name: "teacherSignupDays", label: "Teacher credits last (days)", kind: "number", optional: true, min: 1, max: 3650, hint: "Empty means never expires." },
 ]
 
 export function freeValues(f: FreeAllowances): FormValues {
+  const text = (n: number | null) => (n === null ? "" : String(n))
   return {
-    studentSignupUnits: f.studentSignupUnits === null ? "" : String(f.studentSignupUnits),
-    teacherSignupUnits: f.teacherSignupUnits === null ? "" : String(f.teacherSignupUnits),
+    studentSignupUnits: text(f.studentSignupUnits),
+    studentSignupDays: text(f.studentSignupExpiryDays),
+    teacherSignupUnits: text(f.teacherSignupUnits),
+    teacherSignupDays: text(f.teacherSignupExpiryDays),
   }
 }
 
 /** The two `FreeAllowanceUpdateDTO` bodies the form produces. */
-export function freeBody(v: FormValues, reason: string): FreeAllowanceUpdate[] {
+export function freeBody(v: FormValues, reason: string, current: FreeAllowances): FreeAllowanceUpdate[] {
   return [
-    { audience: "student", units: num(v, "studentSignupUnits"), reason },
-    { audience: "teacher", units: num(v, "teacherSignupUnits"), reason },
+    { audience: "student", units: num(v, "studentSignupUnits"), validDays: numOrNull(v, "studentSignupDays"), expectedVersion: current.studentVersion, reason },
+    { audience: "teacher", units: num(v, "teacherSignupUnits"), validDays: numOrNull(v, "teacherSignupDays"), expectedVersion: current.teacherVersion, reason },
   ]
 }
 
 /**
- * Only the audiences whose value differs from what the catalogue holds now (an unset one always
- * differs), so a retry after a partial save never re-sends, and re-audits, the one that saved.
+ * Only the audiences whose units or validity differ from what the catalogue holds now (an unset
+ * one always differs), so a retry after a partial save never re-sends, and re-audits, the one
+ * that saved.
  */
 export function freeChanges(v: FormValues, reason: string, current: FreeAllowances): FreeAllowanceUpdate[] {
-  return freeBody(v, reason).filter((b) => b.units !== (b.audience === "student" ? current.studentSignupUnits : current.teacherSignupUnits))
+  return freeBody(v, reason, current).filter((b) =>
+    b.audience === "student"
+      ? b.units !== current.studentSignupUnits || b.validDays !== current.studentSignupExpiryDays
+      : b.units !== current.teacherSignupUnits || b.validDays !== current.teacherSignupExpiryDays,
+  )
 }
 
 // ── Versioned rows ──────────────────────────────────────────────────────────
@@ -491,7 +521,15 @@ export function isForbidden(error: unknown): boolean {
   return error instanceof ApiError && error.status === 403
 }
 
-const FRIENDLY: Record<string, string> = {
+export const FRIENDLY: Record<string, string> = {
+  stale_write: "Someone changed this while you were editing. The page now shows the current values. Close this and edit again.",
+  credit_rate_exists: "A rate was set for this currency while you were editing. The page now shows it. Close this and edit again.",
+  credit_rate_not_set: "This currency has no rate to clear. The page now shows the current state.",
+  llm_price_exists: "An override was set for this model while you were editing. The page now shows it. Close this and edit again.",
+  llm_price_not_set: "This model has no override to clear. The page now shows the current state.",
+  rate_clear_needs_confirm: "Clearing a rate stops conversions. Confirm it in the dialog to continue.",
+  override_drops_tier: "This model is billed at a higher price for long prompts. Add the tier prices, or tick the box to charge one flat rate.",
+  unusual_price: "That price is under 1/100 or over 100 times the usual one, which is often a unit typo. Tick the box to set it anyway.",
   effective_from_in_past: "A new version can't start in the past. Pick a later day, or leave the date empty to start now.",
   low_above_high: "Each low bound must be at or below its high bound.",
   per_input_without_input_kind: "Per input units need a counted input. Choose pages, marks or questions, or set both to 0.",
@@ -553,7 +591,10 @@ export function adminBillingFailureMessage(
       ? "Paymob didn't accept this request, so nothing was changed. Try again in a minute."
       : `Paymob didn't answer cleanly, so the outcome is unknown. ${reload} to check, then try again if it did not save.`
   }
-  if (status === 404) return serverMessage(err) ?? `That row no longer exists. ${reload}.`
+  if (status === 404) {
+    const code = billingErrorCode(err)
+    return (code && FRIENDLY[code]) || serverMessage(err) || `That row no longer exists. ${reload}.`
+  }
   if (status === 409 || status === 422) {
     const code = billingErrorCode(err)
     if (code && FRIENDLY[code]) return FRIENDLY[code]
@@ -563,8 +604,6 @@ export function adminBillingFailureMessage(
 }
 
 // ── Customer actions (spec §8.2, plan 07 A32-A35) ──────────────────────────
-
-const numOrNull = (v: FormValues, k: string) => (str(v, k) === "" ? null : num(v, k))
 
 export const GRANT_FIELDS: FieldSpec[] = [
   { name: "units", label: "Credits to grant", kind: "number", positive: true },

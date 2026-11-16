@@ -31,7 +31,7 @@ import {
  */
 
 /** Short fields pair up on wide dialogs; prose and names take the full row. */
-const HALF: ReadonlySet<FieldSpec["kind"]> = new Set(["number", "money", "date", "select"])
+const HALF: ReadonlySet<FieldSpec["kind"]> = new Set(["number", "decimal", "money", "date", "select"])
 
 export function ReasonedFormDialog<TBody>({
   open,
@@ -153,7 +153,7 @@ export function ReasonedFormDialog<TBody>({
         }}
       >
         {note ? <div className="sm:col-span-2">{note}</div> : null}
-        {visibleFields(fields, values).map((f) => {
+        {visibleFields(fields, values, mutation.error).map((f) => {
           const value = values[f.name]
           const span = HALF.has(f.kind) ? "" : "sm:col-span-2"
           const error = showErrors ? perField[f.name] : undefined
@@ -162,6 +162,13 @@ export function ReasonedFormDialog<TBody>({
               <div key={f.name} className={span}>
                 <Checkbox label={f.label} checked={value === true} onChange={(e) => set(f.name, e.target.checked)} />
               </div>
+            )
+          }
+          if (f.kind === "notice") {
+            return (
+              <p key={f.name} role="note" className="m-0 rounded-md bg-surface-container-low px-3 py-2 text-body-sm text-on-surface sm:col-span-2">
+                {f.text}
+              </p>
             )
           }
           if (f.kind === "select") {
@@ -196,7 +203,7 @@ export function ReasonedFormDialog<TBody>({
               hint={f.hint}
               error={error}
               type={f.kind === "date" ? "date" : "text"}
-              inputMode={f.kind === "money" ? "decimal" : f.kind === "number" ? "numeric" : undefined}
+              inputMode={f.kind === "money" || f.kind === "decimal" ? "decimal" : f.kind === "number" ? "numeric" : undefined}
               min={f.kind === "date" && f.future ? tomorrowUtc() : undefined}
               maxLength={f.kind === "text" ? f.maxLength : undefined}
               value={String(value ?? "")}

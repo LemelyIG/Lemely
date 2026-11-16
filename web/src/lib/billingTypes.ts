@@ -699,6 +699,7 @@ export interface WireFreeAllowance {
   creditPackId: string
   units: number
   validDays: number | null
+  version: number
 }
 
 /** 07 `UsageRateDTO`. */
@@ -786,6 +787,10 @@ export interface PackUpdate extends Reasoned {
 export interface FreeAllowanceUpdate extends Reasoned {
   audience: "student" | "teacher"
   units: number
+  /** `null` = never expires. Always sent, so what the dialog shows is what is stored. */
+  validDays: number | null
+  /** The version read, so a change made meanwhile answers 409 `stale_write`; `null` when unset. */
+  expectedVersion: number | null
 }
 
 /** 07 `UsageRateVersionDTO`. */
@@ -837,8 +842,12 @@ export interface FreeAllowances {
   /** `null` while the signup pack does not exist yet (nothing has set it). */
   studentSignupUnits: number | null
   teacherSignupUnits: number | null
-  /** Read-only: `FreeAllowanceUpdateDTO` carries no validity. */
+  /** `null` = never expires. */
+  studentSignupExpiryDays: number | null
   teacherSignupExpiryDays: number | null
+  /** Row versions for the write's stale check; `null` while the pack does not exist. */
+  studentVersion: number | null
+  teacherVersion: number | null
 }
 
 export interface AdminCatalogue {
@@ -1178,4 +1187,108 @@ export interface PublicCatalogue {
   audience: Audience
   tiers: PublicTier[]
   packs: PublicPack[]
+}
+
+// ── Billing rules, credit conversion and AI token prices (07 T14, T19; UD-13) ──────────────
+
+/** 07 `BillingSettingsDTO`. The two decimals are exact strings or `null` (not set). */
+export interface BillingSettings {
+  creditValidityMonths: number
+  graceDays: number
+  maxExtraSeats: number
+  priceChangeNoticeDays: number
+  marginEgpPerUsd: string | null
+  codeExecutionUsdPerHour: string | null
+  version: number
+  updatedAt: string
+  updatedBy: string | null
+}
+
+/** 07 `BillingSettingsUpdate`: only the fields that changed, plus the version read. */
+export interface BillingSettingsUpdate extends Reasoned {
+  creditValidityMonths?: number
+  graceDays?: number
+  maxExtraSeats?: number
+  priceChangeNoticeDays?: number
+  marginEgpPerUsd?: string | null
+  codeExecutionUsdPerHour?: string | null
+  confirmUnusualPrice?: boolean
+  expectedVersion: number
+}
+
+/** 07 `CreditRateDTO`; `unitsPerMinor` has 6 decimal places. */
+export interface CreditRate {
+  currency: string
+  unitsPerMinor: string
+  version: number
+  updatedAt: string
+  updatedBy: string | null
+}
+
+/** 07 `CreditRateSet`: `expectedVersion` null creates, the version read replaces. */
+export interface CreditRateSet extends Reasoned {
+  unitsPerMinor: string
+  expectedVersion: number | null
+}
+
+/** 07 `CreditRateClear`: refused unless `confirmStopConversions` is true. */
+export interface CreditRateClear extends Reasoned {
+  expectedVersion: number
+  confirmStopConversions: boolean
+}
+
+/** USD per million tokens, exact decimal strings. */
+export interface LlmRates {
+  inputUsdPerMtok: string
+  outputUsdPerMtok: string
+  cachedInputUsdPerMtok: string | null
+  cacheWrite5mUsdPerMtok: string | null
+  cacheWrite1hUsdPerMtok: string | null
+  tierThresholdTokens: number | null
+  tier2InputUsdPerMtok: string | null
+  tier2OutputUsdPerMtok: string | null
+}
+
+/** 07 `LlmCodeDefaultDTO`: the price a model has with no override. */
+export interface LlmCodeDefault extends LlmRates {
+  tiered: boolean
+  source: string
+  readOn: string | null
+}
+
+/** 07 `LlmPriceDTO`. */
+export interface LlmOverride extends LlmRates {
+  model: string
+  version: number
+  updatedAt: string
+  updatedBy: string | null
+}
+
+/** 07 `LlmModelDTO`. A model with no `codeDefault` is one the code does not price. */
+export interface LlmModelPrice {
+  model: string
+  provider: string
+  codeDefault: LlmCodeDefault | null
+  override: LlmOverride | null
+  seenInLast30Days: boolean
+}
+
+/** 07 `LlmPriceSet`: every field replaces what is stored; `expectedVersion` null creates. */
+export interface LlmPriceSet extends Reasoned {
+  inputUsdPerMtok: string
+  outputUsdPerMtok: string
+  cachedInputUsdPerMtok: string | null
+  cacheWrite5mUsdPerMtok: string | null
+  cacheWrite1hUsdPerMtok: string | null
+  tierThresholdTokens: number | null
+  tier2InputUsdPerMtok: string | null
+  tier2OutputUsdPerMtok: string | null
+  confirmDropTier?: boolean
+  confirmUnusualPrice?: boolean
+  expectedVersion: number | null
+}
+
+/** 07 `LlmPriceClear`. */
+export interface LlmPriceClear extends Reasoned {
+  expectedVersion: number
 }
