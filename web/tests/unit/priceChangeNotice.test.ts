@@ -16,6 +16,7 @@ const change = (over: Partial<WirePendingTermsChange> = {}): WirePendingTermsCha
   allowanceChange: null,
   includedSeatsChanges: false,
   seatAllowanceChanges: false,
+  seatAllowanceChange: null,
   endsInsteadOfMoving: false,
   seatsToRemove: null,
   ...over,
@@ -45,8 +46,19 @@ describe("price-change notice", () => {
     expect(less.details).toEqual(["Your usage allowance gets smaller."])
   })
 
+  it("says which way each seat's allowance goes, and nothing when it does not move", () => {
+    const teacher = (d: WirePendingTermsChange["seatAllowanceChange"]) => {
+      const t = sub({ pendingTermsChange: change({ seatAllowanceChanges: d !== "same" && d !== null, seatAllowanceChange: d }) })
+      return notice(t, summary({ subscription: t }), "teacher")!.details
+    }
+    expect(teacher("more")).toContain("Each seat gets a bigger allowance.")
+    expect(teacher("less")).toContain("Each seat gets a smaller allowance.")
+    expect(teacher("same")).toEqual([])
+    expect(teacher(null)).toEqual([])
+  })
+
   it("never states an allowance size", () => {
-    const n = notice(sub({ pendingTermsChange: change({ allowanceChange: "more", seatAllowanceChanges: true }) }))!
+    const n = notice(sub({ pendingTermsChange: change({ allowanceChange: "more", seatAllowanceChanges: true, seatAllowanceChange: "more" }) }))!
     expect(`${n.heading} ${n.details.join(" ")}`).not.toMatch(/\d{3,}\s*(units|credits)/i)
   })
 

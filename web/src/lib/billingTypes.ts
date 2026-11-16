@@ -244,6 +244,8 @@ export interface WirePendingTermsChange {
   allowanceChange: "more" | "less" | null
   includedSeatsChanges: boolean
   seatAllowanceChanges: boolean
+  /** Which way each seat's allowance goes; `null` on a plan without seats. */
+  seatAllowanceChange: "more" | "less" | "same" | null
   endsInsteadOfMoving: boolean
   /** Active seats over the new capacity, as the renewal will shed them; `null` on a plan without seats. */
   seatsToRemove: number | null

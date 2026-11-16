@@ -68,7 +68,8 @@ export function priceChangeNotice(
   if (change.allowanceChange === "less") details.push("Your usage allowance gets smaller.")
   if (audience === "teacher") {
     if (change.includedSeatsChanges) details.push(`Included seats: ${change.includedSeats}.`)
-    if (change.seatAllowanceChanges) details.push("Each seat's allowance changes.")
+    if (change.seatAllowanceChange === "more") details.push("Each seat gets a bigger allowance.")
+    if (change.seatAllowanceChange === "less") details.push("Each seat gets a smaller allowance.")
     if (extras === 0 && change.extraSeatPriceMinor !== (sub.tier.extraSeatPriceMinor ?? 0)) {
       details.push(`Extra seats cost ${formatMoney(change.extraSeatPriceMinor, sub.tier.currency, locale)} each.`)
     }

@@ -105,7 +105,7 @@ function PlanCard({
               <Link to={plansHref} className={buttonVariants({ variant: "primary" })}>
                 {live ? "Change plan" : "See plans"}
               </Link>
-              {live && sub && !sub.cancelAtPeriodEnd ? (
+              {live && sub && !sub.cancelAtPeriodEnd && sub.cancelReason !== "plan_terms_changed" ? (
                 <Button variant="ghost" onClick={onCancel}>
                   Cancel plan
                 </Button>

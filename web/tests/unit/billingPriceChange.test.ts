@@ -44,6 +44,7 @@ const change = (over: Partial<WirePendingTermsChange> = {}): WirePendingTermsCha
   allowanceChange: null,
   includedSeatsChanges: false,
   seatAllowanceChanges: false,
+  seatAllowanceChange: null,
   endsInsteadOfMoving: false,
   seatsToRemove: null,
   ...over,
@@ -97,6 +98,16 @@ describe("price-change banner on the billing page", () => {
     const t = text(overview("teacher"))
     expect(t).toContain(`Remove 5 students from your team before ${formatBillingDate("2026-12-01T00:00:00Z")}. The new plan has 12 seats.`)
     expect(t).toContain("Manage seats")
+  })
+
+  it("the plan card offers no Cancel plan on a plan already ending for the price change", () => {
+    withSub({ cancelAtPeriodEnd: true, cancelReason: "plan_terms_changed", pendingTermsChange: null })
+    expect(text(overview())).not.toContain("Cancel plan")
+    // Defensive: the reason alone is enough, whatever the flag says.
+    withSub({ cancelAtPeriodEnd: false, cancelReason: "plan_terms_changed", pendingTermsChange: null })
+    expect(text(overview())).not.toContain("Cancel plan")
+    withSub({})
+    expect(text(overview())).toContain("Cancel plan")
   })
 
   it("a person who does not pay gets no cancel link", () => {
