@@ -10,6 +10,7 @@ import {
   canReverse,
   refundFieldsFor,
   refundNote,
+  reverseAwareError,
   reverseOutcome,
   voidBody,
   voidFieldsFor,
@@ -473,6 +474,26 @@ describe("refund: reverse the change", () => {
     expect(refundAmountErrors({ amountMajor: "210", reverseChange: true }, 21000, "EGP")).toEqual([])
     expect(refundAmountErrors({ amountMajor: "", reverseChange: true }, 21000, "EGP")).toEqual([])
     expect(refundAmountErrors({ amountMajor: "100", reverseChange: false }, 21000, "EGP")).toEqual([])
+  })
+
+  it("words the full-amount rule by what is reversed", () => {
+    const partial = { amountMajor: "100", reverseChange: true }
+    expect(refundAmountErrors(partial, 21000, "EGP", "credits")).toEqual(["To take back the credits, refund the full amount."])
+    expect(refundAmountErrors(partial, 21000, "EGP", "renewal")).toEqual(["To stop it renewing, refund the full amount."])
+    const err = new ApiError(422, "x", { code: "reverse_needs_full_refund", message: "raw" })
+    expect(adminBillingFailureMessage(reverseAwareError(err, "credits"), "refund")).toBe("To take back the credits, refund the full amount.")
+    expect(adminBillingFailureMessage(reverseAwareError(err, "renewal"), "refund")).toBe("To stop it renewing, refund the full amount.")
+    const other = new ApiError(422, "x", { code: "reverse_unavailable", message: "m" })
+    expect(reverseAwareError(other, "credits")).toBe(other)
+  })
+
+  it("does not offer the box on a renewal seat charge, which the server can only refuse", () => {
+    expect(canReverse(pay("extra_seats", { seatRenewalCharge: true }))).toBe(false)
+    expect(refundFieldsFor(pay("extra_seats", { seatRenewalCharge: true }))).toEqual(REFUND_FIELDS)
+    expect(voidFieldsFor(pay("extra_seats", { seatRenewalCharge: true }))).toEqual([])
+    expect(canReverse(pay("extra_seats", { seatRenewalCharge: false }))).toBe(true)
+    // A renewal charge that became credits still has credits to take back.
+    expect(canReverse(pay("extra_seats", { seatRenewalCharge: true, convertedToCredits: true, creditedUnits: 3 }))).toBe(true)
   })
 
   it("maps the server's reverse refusals to short copy, keeping the reason", () => {

@@ -541,6 +541,7 @@ export function isForbidden(error: unknown): boolean {
 }
 
 const REVERSE_NEEDS_FULL = "To stop it renewing, refund the full amount."
+const REVERSE_NEEDS_FULL_CREDITS = "To take back the credits, refund the full amount."
 
 /** The server's reason is the useful part ("The seats were bought in an earlier period."). */
 function reverseUnavailable(reason: string | null): string {
@@ -568,6 +569,7 @@ export const FRIENDLY: Record<string, string> = {
   not_voidable: "This payment can't be voided any more. Refund it instead.",
   not_refundable: "Only a paid payment can be refunded.",
   reverse_needs_full_refund: REVERSE_NEEDS_FULL,
+  reverse_needs_full_refund_credits: REVERSE_NEEDS_FULL_CREDITS,
 }
 
 function serverMessage(err: unknown): string | null {
@@ -697,7 +699,7 @@ export function refundBody(v: FormValues, reason: string): AdminRefundRequest {
   return v.reverseChange === true ? { amountMinor, reverseChange: true, reason } : { amountMinor, reason }
 }
 
-type ReversePayment = Pick<AdminPaymentRow, "purpose" | "convertedToCredits" | "creditedUnits">
+type ReversePayment = Pick<AdminPaymentRow, "purpose" | "convertedToCredits" | "creditedUnits" | "seatRenewalCharge">
 
 /**
  * What the reverse box would do for this payment, or null when it would do nothing.
@@ -705,12 +707,14 @@ type ReversePayment = Pick<AdminPaymentRow, "purpose" | "convertedToCredits" | "
  *  - `renewal`: an applied seat or upgrade purchase, which keeps renewing on a money-only refund.
  * Every other kind needs no box: a full refund already ends the plan or claws the credits back.
  */
-export function reverseKind(p: Pick<AdminPaymentRow, "purpose" | "convertedToCredits">): "credits" | "renewal" | null {
+export function reverseKind(p: Pick<AdminPaymentRow, "purpose" | "convertedToCredits" | "seatRenewalCharge">): "credits" | "renewal" | null {
   if (p.convertedToCredits) return "credits"
+  // A renewal seat charge paid for seats that already existed: the server can only refuse it.
+  if (p.seatRenewalCharge === true) return null
   return p.purpose === "extra_seats" || p.purpose === "upgrade_proration" ? "renewal" : null
 }
 
-export function canReverse(p: Pick<AdminPaymentRow, "purpose" | "convertedToCredits">): boolean {
+export function canReverse(p: Pick<AdminPaymentRow, "purpose" | "convertedToCredits" | "seatRenewalCharge">): boolean {
   return reverseKind(p) !== null
 }
 
@@ -728,6 +732,16 @@ function reverseField(p: ReversePayment, verb: "Refund" | "Void"): FieldSpec[] {
 /** The refund form's fields; the reverse box appears only where it does something. */
 export function refundFieldsFor(p: ReversePayment): FieldSpec[] {
   return [...REFUND_FIELDS, ...reverseField(p, "Refund")]
+}
+
+/**
+ * The server's `reverse_needs_full_refund` says nothing about what is being reversed, so a
+ * converted payment's copy is picked here: the error is re-coded before the dialog words it.
+ */
+export function reverseAwareError(err: unknown, kind: "credits" | "renewal" | null): unknown {
+  if (kind !== "credits" || !(err instanceof ApiError) || billingErrorCode(err) !== "reverse_needs_full_refund") return err
+  const detail = (err.detail ?? {}) as Record<string, unknown>
+  return new ApiError(err.status, err.message, { ...detail, code: "reverse_needs_full_refund_credits" })
 }
 
 /** The void form's fields: the same box, with the same rules. */
@@ -813,10 +827,10 @@ export function canVoid(p: Pick<AdminPaymentRow, "status" | "refundedMinor">): b
 }
 
 /** Cross-field rule for the refund form: the amount may not exceed what is left. */
-export function refundAmountErrors(v: FormValues, remainingMinor: number, currency: string): string[] {
+export function refundAmountErrors(v: FormValues, remainingMinor: number, currency: string, reverse: "credits" | "renewal" | null = "renewal"): string[] {
   const minor = str(v, "amountMajor") === "" ? null : minorFromMajor(str(v, "amountMajor"))
   if (minor !== null && minor > remainingMinor) return [`Only ${formatMoney(remainingMinor, currency)} is left to refund on this payment.`]
-  if (v.reverseChange === true && minor !== null && minor !== remainingMinor) return [REVERSE_NEEDS_FULL]
+  if (v.reverseChange === true && minor !== null && minor !== remainingMinor) return [reverse === "credits" ? REVERSE_NEEDS_FULL_CREDITS : REVERSE_NEEDS_FULL]
   return []
 }
 

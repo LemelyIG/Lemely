@@ -11,6 +11,8 @@ import {
   refundBody,
   refundFieldsFor,
   refundNote,
+  reverseAwareError,
+  reverseKind,
   reverseOutcome,
   voidBody,
   voidFieldsFor,
@@ -145,9 +147,9 @@ export function PaymentActions({ payment }: { payment: AdminPaymentRow }) {
           fields={refundFieldsFor(payment)}
           initial={{ amountMajor: majorFromMinor(remaining) }}
           submitLabel="Refund"
-          mutation={refund}
+          mutation={{ ...refund, error: reverseAwareError(refund.error, reverseKind(payment)) } as typeof refund}
           toBody={(v, r) => ({ id: payment.id, body: refundBody(v, r) })}
-          check={(v) => refundAmountErrors(v, remaining, payment.currency)}
+          check={(v) => refundAmountErrors(v, remaining, payment.currency, reverseKind(payment))}
           reload="Reload this page"
           note={<p className="m-0 text-body-sm text-on-surface">{refundNote(payment)}</p>}
         />
