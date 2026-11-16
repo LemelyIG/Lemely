@@ -1,0 +1,108 @@
+import type { ReviewQueueFilters } from "@/lib/reviewQueueQuery"
+import type { ReviewQueueItem } from "@/lib/teacherTypes"
+import { FilterBar } from "./FilterBar"
+import { QueueHeader } from "./QueueHeader"
+import { QueueRow } from "./QueueRow"
+import { Cleared, FirstRun, NoMatch, NothingWaiting, QueueError, QueueLoading, SparseNote } from "./QueueStates"
+import "./review.css"
+import { clearFilters, removeFilter, toggleFilter, type FilterOptions, type QueueScreenState, type Tally } from "./reviewQueueModel"
+
+export interface QueueColumnProps {
+  state: QueueScreenState
+  /** Visible server rows; hidden ids stay passed so the collapse can animate. */
+  items: ReviewQueueItem[]
+  hiddenIds: ReadonlySet<string>
+  focusId: string | null
+  left: number
+  done: number
+  tally: Tally
+  filters: ReviewQueueFilters
+  options: FilterOptions
+  shownLine: string | null
+  selecting: boolean
+  picked: ReadonlySet<string>
+  bulk: { label: string; disabled: boolean }
+  bulkSkips: { label: string; reason: string }[] | null
+  bulkError: string | null
+  hasMore: boolean
+  loadingMore: boolean
+  errorMessage: string
+  phone: boolean
+  markHref: string
+  searchRef: React.RefObject<HTMLInputElement | null>
+  onOpen(id: string): void
+  onPick(id: string): void
+  onToggleSelect(): void
+  onBulk(): void
+  onDismissSkips(): void
+  onFilters(f: ReviewQueueFilters): void
+  onLoadMore(): void
+  onRetry(): void
+}
+
+export function QueueColumn(p: QueueColumnProps) {
+  const set = (f: ReviewQueueFilters) => p.onFilters(f)
+  const showChrome = p.state === "queue" || p.state === "sparse" || p.state === "no-match"
+  return (
+    <section aria-label="Review queue" className="grid min-w-0 content-start gap-3 bg-surface-container-low p-4 shell-sm:border-e shell-sm:border-outline-variant shell-sm:p-[18px] shell-lg:p-[22px] shell-lg:pe-4">
+      {p.state === "loading" ? <QueueLoading /> : null}
+      {p.state === "error" ? <QueueError message={p.errorMessage} onRetry={p.onRetry} /> : null}
+      {p.state === "first-run" ? <FirstRun markHref={p.markHref} phone={p.phone} /> : null}
+      {p.state === "nothing-waiting" ? <NothingWaiting /> : null}
+      {p.state === "cleared" ? <Cleared tally={p.tally} markHref={p.markHref} /> : null}
+      {showChrome ? (
+        <>
+          <QueueHeader left={p.left} done={p.done} />
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={p.onToggleSelect} aria-pressed={p.selecting} className="rounded-[14px] bg-surface-container-lowest px-3.5 py-[9px] text-[13px] font-bold shadow-[inset_0_0_0_1.5px_var(--color-outline)] active:scale-[.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:min-h-11">
+              {p.selecting ? "Cancel" : "Select"}
+            </button>
+            <span className="flex-1" />
+            <button type="button" onClick={p.onBulk} disabled={p.bulk.disabled} className="rounded-[14px] bg-primary px-3.5 py-[9px] text-[13px] font-bold text-on-primary active:scale-[.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:bg-outline pointer-coarse:min-h-11">
+              {p.bulk.label}
+            </button>
+          </div>
+          {p.bulkError ? <div role="alert" className="text-[13px] text-error">Couldn't approve: {p.bulkError}</div> : null}
+          {p.bulkSkips && p.bulkSkips.length > 0 ? (
+            <div role="status" className="grid gap-1.5 rounded-[14px] bg-surface-container px-3.5 py-2.5 text-[13px]">
+              <div className="flex items-center justify-between gap-3">
+                <b>Some answers were skipped</b>
+                <button type="button" onClick={p.onDismissSkips} className="text-primary focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11">Dismiss</button>
+              </div>
+              <ul className="m-0 list-disc ps-4 text-on-surface-variant">
+                {p.bulkSkips.map((s) => (
+                  <li key={s.label}>{s.label}: {s.reason}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          <FilterBar
+            filters={p.filters}
+            options={p.options}
+            shownLine={p.shownLine}
+            searchRef={p.searchRef}
+            onSearch={(q) => set({ ...p.filters, q })}
+            onSort={(sort) => set({ ...p.filters, sort })}
+            onToggle={(c, v) => set(toggleFilter(p.filters, c, v))}
+            onRemove={(c, v) => set(removeFilter(p.filters, c, v))}
+          />
+          {p.state === "no-match" ? (
+            <NoMatch onClear={() => set(clearFilters(p.filters))} />
+          ) : (
+            <ul className="m-0 grid list-none gap-1 p-0" aria-label="Answers to check">
+              {p.items.map((item) => (
+                <QueueRow key={item.itemId} item={item} focused={item.itemId === p.focusId} gone={p.hiddenIds.has(item.itemId)} selecting={p.selecting} picked={p.picked.has(item.itemId)} onOpen={p.onOpen} onPick={p.onPick} />
+              ))}
+            </ul>
+          )}
+          {p.state === "sparse" ? <SparseNote markHref={p.markHref} /> : null}
+          {p.hasMore ? (
+            <div className="flex justify-center">
+              <button type="button" onClick={p.onLoadMore} disabled={p.loadingMore} className="rounded-[14px] px-3.5 py-2 text-[13px] font-bold text-primary focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11">{p.loadingMore ? "Loading…" : "Load more"}</button>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </section>
+  )
+}

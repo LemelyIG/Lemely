@@ -1,0 +1,44 @@
+/* L5 review queue: motion and the ruled answer card, from review-r1/final2.css.
+   No colours are defined here; every colour is a design token. */
+:root {
+  --lm-rq-menu-shadow: 0 12px 32px -8px oklch(0.3 0.06 242 / 0.45), inset 0 0 0 1px var(--color-outline-variant);
+}
+@keyframes lm-rq-bump {
+  0% { transform: translateY(8px) scale(0.9); opacity: 0.4; }
+  60% { transform: scale(1.08); }
+  100% { transform: none; opacity: 1; }
+}
+@keyframes lm-rq-skel {
+  50% { opacity: 0.55; }
+}
+.lm-rq-bump { animation: lm-rq-bump 0.35s var(--ease-expo); }
+.lm-rq-bump-lg { animation: lm-rq-bump 0.6s var(--ease-expo); }
+.lm-rq-skel { animation: lm-rq-skel 1.6s ease-in-out infinite; }
+.lm-rq-row {
+  transition: opacity 0.3s var(--ease-out), transform 0.3s var(--ease-out),
+    max-height 0.35s var(--ease-out), background-color 0.15s;
+  max-height: 100px;
+  overflow: hidden;
+}
+.lm-rq-row[data-gone] {
+  opacity: 0;
+  transform: translateX(24px);
+  max-height: 0;
+  padding-block: 0 !important;
+  border: 0 !important;
+  pointer-events: none;
+}
+.lm-rq-ruled {
+  background-image: repeating-linear-gradient(
+    transparent 0 33px,
+    var(--color-primary-container) 33px 34px
+  );
+}
+.lm-rq-toast {
+  transition: opacity 0.25s var(--ease-out), transform 0.25s var(--ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  .lm-rq-bump, .lm-rq-bump-lg, .lm-rq-skel { animation: none; }
+  .lm-rq-row, .lm-rq-toast { transition: none; }
+  .lm-rq-toast { transform: translateX(-50%) !important; }
+}
