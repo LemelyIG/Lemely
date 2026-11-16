@@ -11,7 +11,8 @@ re-distribution). The UI credits the source.
 
 Every failure (transport error, timeout, non-200, bad JSON, missing or out-of-band rate) returns
 ``None`` and logs one warning. Nothing raises into a request and nothing alerts. A success is cached
-in process for 24 hours; a failure for 10 minutes, so a dead feed is not hammered.
+in process for 24 hours; a failure for 10 minutes (20 after a 429, the feed's own ban), so a dead
+feed is not hammered. The whole fetch gets one 2 s wall-clock budget.
 """
 
 from __future__ import annotations
@@ -37,6 +38,10 @@ SOURCE_NAME: Final = "open.er-api.com"
 TIMEOUT_SECONDS: Final = 2.0
 SUCCESS_TTL_SECONDS: Final = 24 * 60 * 60
 FAILURE_TTL_SECONDS: Final = 10 * 60
+#: The source bans a rate-limited caller for 20 minutes after a 429; do not call into the ban.
+RATE_LIMITED_TTL_SECONDS: Final = 20 * 60
+#: One wall-clock budget for the whole fetch (connect, read, parsing), not per phase.
+DEADLINE_SECONDS: Final = 2.0
 #: A rate outside this band is a feed fault, not a market (EGP has traded between about 5 and 60).
 MIN_RATE: Final = Decimal(1)
 MAX_RATE: Final = Decimal(1000)
@@ -49,6 +54,12 @@ class FxReference:
     rate: Decimal
     source: str
     as_of: date
+
+
+@dataclass(frozen=True, slots=True)
+class _Fetched:
+    value: FxReference | None
+    ttl: float
 
 
 @dataclass(slots=True)
@@ -91,28 +102,46 @@ def _parse(payload: object) -> FxReference | None:
     return FxReference(rate=rate, source=SOURCE_NAME, as_of=as_of)
 
 
-def _fetch(client: httpx.Client | None) -> FxReference | None:
-    """One request to the source; ``None`` plus one warning on any failure."""
+def _fetch(client: httpx.Client | None) -> _Fetched:
+    """One request to the source; no reading plus one warning on any failure."""
     owned = client is None
     http = client or httpx.Client(timeout=TIMEOUT_SECONDS)
     try:
         response = http.get(SOURCE_URL, timeout=TIMEOUT_SECONDS)
         if response.status_code != 200:
             logger.warning("fx reference: HTTP %s from %s", response.status_code, SOURCE_NAME)
-            return None
+            limited = response.status_code == 429
+            return _Fetched(None, RATE_LIMITED_TTL_SECONDS if limited else FAILURE_TTL_SECONDS)
         reading = _parse(response.json())
     except httpx.HTTPError as exc:
         logger.warning("fx reference: %s from %s", type(exc).__name__, SOURCE_NAME)
-        return None
+        return _Fetched(None, FAILURE_TTL_SECONDS)
     except ValueError:
         logger.warning("fx reference: unreadable body from %s", SOURCE_NAME)
-        return None
+        return _Fetched(None, FAILURE_TTL_SECONDS)
     finally:
         if owned:
             http.close()
     if reading is None:
         logger.warning("fx reference: no usable EGP rate from %s", SOURCE_NAME)
-    return reading
+        return _Fetched(None, FAILURE_TTL_SECONDS)
+    return _Fetched(reading, SUCCESS_TTL_SECONDS)
+
+
+def _fetch_within_deadline(client: httpx.Client | None) -> _Fetched:
+    """``_fetch`` on a daemon thread, abandoned once ``DEADLINE_SECONDS`` of wall clock pass.
+
+    httpx timeouts apply per phase, so a slow feed could hold a request for several of them; this
+    caps the whole wait. An abandoned fetch ends on its own at its per-phase timeouts.
+    """
+    box: list[_Fetched] = []
+    worker = threading.Thread(target=lambda: box.append(_fetch(client)), daemon=True)
+    worker.start()
+    worker.join(DEADLINE_SECONDS)
+    if box:
+        return box[0]
+    logger.warning("fx reference: no answer from %s within %.1f s", SOURCE_NAME, DEADLINE_SECONDS)
+    return _Fetched(None, FAILURE_TTL_SECONDS)
 
 
 def get_usd_egp_reference(
@@ -122,15 +151,15 @@ def get_usd_egp_reference(
 ) -> FxReference | None:
     """The cached market USD to EGP reading, fetched when the cache has run out.
 
-    ``None`` means no usable reading (failure inside the last 10 minutes, or just now). It never
-    raises. The lock is held across the fetch so concurrent requests share one call.
+    ``None`` means no usable reading (a failure inside the last 10 minutes, 20 after a 429, or
+    just now). It never raises. The lock is held across the fetch so concurrent requests share
+    one call.
     """
     global _entry
     with _lock:
         now = clock()
         if _entry is not None and now < _entry.expires_at:
             return _entry.value
-        value = _fetch(client)
-        ttl = SUCCESS_TTL_SECONDS if value is not None else FAILURE_TTL_SECONDS
-        _entry = _Entry(value=value, expires_at=clock() + ttl)
-        return value
+        fetched = _fetch_within_deadline(client)
+        _entry = _Entry(value=fetched.value, expires_at=clock() + fetched.ttl)
+        return fetched.value

@@ -7,6 +7,8 @@ sleeps.
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from datetime import date
 from decimal import Decimal
 from typing import TYPE_CHECKING
@@ -198,3 +200,68 @@ def test_the_owned_client_is_built_with_the_two_second_timeout(
     monkeypatch.setattr(httpx, "Client", factory)
     assert get_usd_egp_reference() is not None
     assert built == [2.0]
+
+
+def test_a_429_is_negative_cached_for_twenty_minutes() -> None:
+    clock = Clock()
+    replies = iter([httpx.Response(429), httpx.Response(200, json=_body())])
+    feed = Feed(lambda _r: next(replies))
+    client = feed.client()
+    assert get_usd_egp_reference(client=client, clock=clock) is None
+    clock.now += 20 * 60 - 1
+    assert get_usd_egp_reference(client=client, clock=clock) is None
+    assert feed.calls == 1  # still inside the feed's own 20 minute ban
+    clock.now += 2
+    assert get_usd_egp_reference(client=client, clock=clock) is not None
+    assert feed.calls == 2
+
+
+def test_other_failures_still_retry_after_ten_minutes() -> None:
+    clock = Clock()
+    feed = Feed(lambda _r: httpx.Response(503))
+    client = feed.client()
+    get_usd_egp_reference(client=client, clock=clock)
+    clock.now += 10 * 60 + 1
+    get_usd_egp_reference(client=client, clock=clock)
+    assert feed.calls == 2
+
+
+def test_the_deadline_is_two_seconds_of_wall_clock() -> None:
+    assert fx_reference.DEADLINE_SECONDS == 2.0
+
+
+def test_a_feed_that_stalls_is_abandoned_at_the_deadline(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(fx_reference, "DEADLINE_SECONDS", 0.2)
+    release = threading.Event()
+
+    def stall(_request: httpx.Request) -> httpx.Response:
+        release.wait(10)  # slower than the deadline, faster than the test's patience
+        return httpx.Response(200, json=_body())
+
+    clock = Clock()
+    client = Feed(stall).client()
+    started = time.monotonic()
+    try:
+        with caplog.at_level(logging.WARNING, logger="lemely.io.fx_reference"):
+            assert get_usd_egp_reference(client=client, clock=clock) is None
+        elapsed = time.monotonic() - started
+        assert elapsed < 1.0
+        assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 1
+        # the stall is negative cached: the next call does not wait again
+        again = time.monotonic()
+        assert get_usd_egp_reference(client=client, clock=clock) is None
+        assert time.monotonic() - again < 0.1
+    finally:
+        release.set()
+
+
+def test_a_slow_but_in_time_answer_is_used(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(fx_reference, "DEADLINE_SECONDS", 2.0)
+
+    def slowish(_request: httpx.Request) -> httpx.Response:
+        time.sleep(0.1)
+        return httpx.Response(200, json=_body())
+
+    assert get_usd_egp_reference(client=Feed(slowish).client()) is not None
