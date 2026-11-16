@@ -36,7 +36,14 @@ from lemely.io.llm.errors import CapTruncatedError as _CapTruncatedError
 from lemely.io.llm.errors import TransientCallError as _TransientError
 from lemely.io.llm.gemini_provider import GeminiProvider
 from lemely.io.llm.model_costs import record_model_cost
-from lemely.io.llm.pricing import CLAUDE_PRICING, PriceRow, claude_row, code_claude_row, row_cost
+from lemely.io.llm.pricing import (
+    CLAUDE_PRICING,
+    CODE_EXECUTION_USD_PER_CONTAINER_HOUR,
+    PriceRow,
+    claude_row,
+    code_claude_row,
+    row_cost,
+)
 from lemely.io.llm.request import (
     LEGACY_CLAUDE_CACHE_PLAN,
     CachePlan,
@@ -463,7 +470,7 @@ def _resolve_pricing(
 ) -> tuple[float, float]:
     """Return (input_usd_per_1k, output_usd_per_1k) for the given model.
 
-    Checks an admin price override first (UD13-D), then user-configured overrides. Then resolves the 3.8/3.6-flash promotional rate (US-026 — see `FLASH_3X_PROMO_END_DATE`) for
+    Checks user-configured overrides first. Then resolves the 3.8/3.6-flash promotional rate (US-026 — see `FLASH_3X_PROMO_END_DATE`) for
     "today" and merges it into a COPY of `_DEFAULT_PRICING` under those two
     exact keys, so the length-descending substring match below is the ONLY
     matching mechanism in this function — a promo model can never shadow, or
@@ -476,10 +483,6 @@ def _resolve_pricing(
     as a default), so `mock.patch("lemely.io.gemini._today", ...)` reaches
     this function too.
     """
-    override = price_overrides.resolve(model, None)
-    if override is not None:
-        # An admin override (UD13-D) wins over config and the table; flat input/output only.
-        return (override.input, override.output)
     user = settings.gemini.pricing
     if model in user:
         p = user[model]
@@ -515,20 +518,33 @@ def _dated_cached_table(today: date) -> dict[str, float]:
     return {**_CACHED_INPUT_PRICING, **dict.fromkeys(_FLASH_3X_PROMO_MODELS, cached)}
 
 
-def price_row(model: str, settings: Settings, *, on: date) -> PriceRow:
+def price_row(
+    model: str,
+    settings: Settings,
+    *,
+    on: date,
+    snapshot: price_overrides.Snapshot | None = None,
+) -> PriceRow:
     """The USD-per-1k price row for ``model`` as of ``on``.
 
     The same user-override-then-longest-substring match as `_resolve_pricing`,
     but an unknown model raises :class:`UnpricedModelError` instead of
     silently borrowing another model's rate. A user override carries no cached
-    rate, so its cached tokens bill at its input rate.
+    rate, so its cached tokens bill at its input rate. An admin price override
+    (UD13-D) wins over both; it comes from ``snapshot`` when given, else from the
+    installed registry.
     """
     user = settings.gemini.pricing
     config_row: PriceRow | None = None
     if model in user:
         p = user[model]
         config_row = PriceRow(float(p[0]), float(p[0]), float(p[1]))
-    row = price_overrides.resolve(model, code_price_row(model, on), config_row=config_row)
+    row = price_overrides.resolve_in(
+        snapshot if snapshot is not None else price_overrides.current(),
+        model,
+        code_price_row(model, on),
+        config_row,
+    )
     if row is None:
         raise UnpricedModelError(model)
     return row
@@ -584,14 +600,18 @@ def price_call(
     input is at the cached rate, and ``output_tokens`` must already include
     thinking tokens (they bill as output).
     """
+    # One snapshot prices the whole call: the token row and the container hour never mix two.
+    snapshot = price_overrides.current()
+    hour = price_overrides.code_execution_hour_in(snapshot)
     return row_cost(
-        price_row(model, settings, on=on),
+        price_row(model, settings, on=on, snapshot=snapshot),
         input_tokens=input_tokens,
         cached_tokens=cached_tokens,
         output_tokens=output_tokens,
         cache_write_5m_tokens=cache_write_5m_tokens,
         cache_write_1h_tokens=cache_write_1h_tokens,
         container_seconds=container_seconds,
+        container_usd_per_hour=CODE_EXECUTION_USD_PER_CONTAINER_HOUR if hour is None else hour,
     )
 
 

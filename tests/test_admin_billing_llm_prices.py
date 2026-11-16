@@ -404,6 +404,7 @@ def test_a_partial_tier_is_refused(client: TestClient, sm: sessionmaker[Session]
 def test_the_edges_are_accepted(client: TestClient) -> None:
     resp = _put(
         client,
+        "edge-model",
         inputUsdPerMtok="1000",
         outputUsdPerMtok="0.000001",
         tierThresholdTokens=10_000_000,
@@ -486,6 +487,7 @@ def test_the_container_hour_is_above_zero_and_at_most_100(
                     fields={"code_execution_usd_per_hour": value},
                     expected_version=1,
                     reason=REASON,
+                    confirm_unusual_price=True,
                 )
             except Exception as exc:
                 return str(getattr(exc, "code", exc))
@@ -511,3 +513,184 @@ def test_the_router_alone_refuses_other_roles(role: str, sm: sessionmaker[Sessio
     assert probe.put(f"{BASE}/{SONNET}", json={}).status_code == 403
     assert probe.post(f"{BASE}/{SONNET}/clear", json={}).status_code == 403
     assert audit_count(sm) == 0
+
+
+# --- a tier the vendor has (review I1) -----------------------------------------------------
+
+HAIKU = "claude-haiku-5-5"
+HAIKU_FLAT = {"inputUsdPerMtok": "0.11", "outputUsdPerMtok": "0.5"}
+
+
+def _flat(client: TestClient, model: str = HAIKU, /, **extra: object) -> Response:
+    return client.put(
+        f"{BASE}/{model}",
+        json={**HAIKU_FLAT, "expectedVersion": None, "reason": REASON, **extra},
+    )
+
+
+def test_a_flat_price_on_a_tiered_code_row_is_422_override_drops_tier(
+    client: TestClient, sm: sessionmaker[Session]
+) -> None:
+    resp = _flat(client)
+    assert resp.status_code == 422, resp.text
+    assert _error(resp)["code"] == "override_drops_tier"
+    assert "100000" in _error(resp)["message"]
+    assert audit_count(sm) == 0
+    assert claude_row(HAIKU) == CLAUDE_PRICING[HAIKU]
+
+
+def test_confirm_drop_tier_sets_the_flat_price_and_the_audit_row_records_it(
+    client: TestClient, sm: sessionmaker[Session]
+) -> None:
+    resp = _flat(client, confirmDropTier=True)
+    assert resp.status_code == 200, resp.text
+    (row,) = audit_rows(sm, ACTION_SET)
+    assert row.after is not None
+    assert row.after["confirmed"] == ["drop_tier"]
+
+
+def test_a_price_that_keeps_the_tier_needs_no_confirmation(
+    client: TestClient, sm: sessionmaker[Session]
+) -> None:
+    resp = _flat(
+        client,
+        tierThresholdTokens=100_000,
+        tier2InputUsdPerMtok="0.55",
+        tier2OutputUsdPerMtok="2.5",
+    )
+    assert resp.status_code == 200, resp.text
+    (row,) = audit_rows(sm, ACTION_SET)
+    assert row.after is not None
+    assert "confirmed" not in row.after
+
+
+def test_a_flat_price_on_an_untiered_model_needs_no_confirmation(client: TestClient) -> None:
+    assert (
+        _put(
+            client,
+            SONNET,
+            tierThresholdTokens=None,
+            tier2InputUsdPerMtok=None,
+            tier2OutputUsdPerMtok=None,
+        ).status_code
+        == 200
+    )
+    assert _flat(client, "never-priced-model").status_code == 200
+
+
+def test_a_replace_that_flattens_a_tiered_override_is_refused_too(client: TestClient) -> None:
+    kept = {
+        "tierThresholdTokens": 100_000,
+        "tier2InputUsdPerMtok": "0.55",
+        "tier2OutputUsdPerMtok": "2.5",
+    }
+    assert _flat(client, **kept).status_code == 200
+    resp = _flat(client, expectedVersion=1)
+    assert resp.status_code == 422
+    assert _error(resp)["code"] == "override_drops_tier"
+
+
+# --- an unusual price (review M1) -----------------------------------------------------------
+
+
+def _sonnet_input(client: TestClient, price: str, **extra: object) -> Response:
+    """Sonnet's code input is 2 USD/MTok; only the input price is under test."""
+    return _put(
+        client,
+        inputUsdPerMtok=price,
+        outputUsdPerMtok="10",
+        cachedInputUsdPerMtok=None,
+        cacheWrite5mUsdPerMtok=None,
+        cacheWrite1hUsdPerMtok=None,
+        tierThresholdTokens=None,
+        tier2InputUsdPerMtok=None,
+        tier2OutputUsdPerMtok=None,
+        **extra,
+    )
+
+
+@pytest.mark.parametrize("price", ["0.0001", "0.019", "200.01", "1000"])
+def test_a_price_far_from_the_default_is_422_unusual_price_until_confirmed(
+    price: str, client: TestClient, sm: sessionmaker[Session]
+) -> None:
+    resp = _sonnet_input(client, price)
+    assert resp.status_code == 422, resp.text
+    assert _error(resp)["code"] == "unusual_price"
+    assert "inputUsdPerMtok" in _error(resp)["message"]
+    assert audit_count(sm) == 0
+    ok = _sonnet_input(client, price, confirmUnusualPrice=True)
+    assert ok.status_code == 200, ok.text
+    (row,) = audit_rows(sm, ACTION_SET)
+    assert row.after is not None
+    assert row.after["confirmed"] == ["unusual_price"]
+
+
+@pytest.mark.parametrize("price", ["0.02", "0.5", "2", "199.999999", "200"])
+def test_a_price_within_a_hundredfold_of_the_default_needs_no_confirmation(
+    price: str, client: TestClient
+) -> None:
+    assert _sonnet_input(client, price).status_code == 200
+
+
+def test_the_per_1k_typo_is_caught(client: TestClient) -> None:
+    """0.002 typed where 2.0 per MTok was meant is legal as a rate and 1000x too cheap."""
+    resp = _sonnet_input(client, "0.002")
+    assert resp.status_code == 422
+    assert _error(resp)["code"] == "unusual_price"
+
+
+def test_the_other_prices_are_checked_against_their_own_default(client: TestClient) -> None:
+    resp = _put(client, SONNET, cachedInputUsdPerMtok="50")  # code cached is 0.1: 500x
+    assert resp.status_code == 422
+    assert "cachedInputUsdPerMtok" in _error(resp)["message"]
+
+
+def test_a_model_with_no_default_price_is_not_range_checked(client: TestClient) -> None:
+    assert _put(client, "unpriced-model", inputUsdPerMtok="900").status_code == 200
+
+
+def test_the_default_is_the_config_price_when_one_is_set(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    base = make_settings(tempfile.mkdtemp())
+    settings = base.model_copy(
+        update={"gemini": base.gemini.model_copy(update={"pricing": {SONNET: [0.0005, 0.001]}})}
+    )
+    client = _client(sm, admin, settings)
+    # 0.5 USD/MTok in config: 3 is fine against it, 60 is 120x.
+    assert _sonnet_input(client, "60").status_code == 422
+    assert _sonnet_input(client, "3").status_code == 200
+
+
+def test_the_container_hour_is_range_checked_against_the_code_value(
+    sm: sessionmaker[Session], admin: uuid.UUID
+) -> None:
+    def update(value: str, version: int, **extra: object) -> int:
+        client = _client(sm, admin, make_settings(tempfile.mkdtemp()))
+        client.app.dependency_overrides[get_billing_settings_service] = _settings_dependency(sm)  # type: ignore[attr-defined]
+        return client.put(
+            "/api/admin/billing/settings",
+            json={
+                "codeExecutionUsdPerHour": value,
+                "expectedVersion": version,
+                "reason": REASON,
+                **extra,
+            },
+        ).status_code
+
+    assert update("0.0004", 1) == 422  # code value 0.05: below 1/100
+    assert update("5.01", 1) == 422
+    assert update("0.0005", 1) == 200
+    assert update("5", 2) == 200
+    assert update("50", 3) == 422
+    assert update("50", 3, confirmUnusualPrice=True) == 200
+
+
+def _settings_dependency(
+    sm: sessionmaker[Session],
+) -> Callable[[], Iterator[BillingSettingsService]]:
+    def dependency() -> Iterator[BillingSettingsService]:
+        with sm.begin() as session:
+            yield BillingSettingsService(session, now=lambda: NOW)
+
+    return dependency

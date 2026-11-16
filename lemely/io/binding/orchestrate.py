@@ -88,7 +88,7 @@ from lemely.core.text_agreement import text_agreement
 from lemely.io.binding.chunked_read import ChunkedLabelReader
 from lemely.io.binding.label_binder import BoundRead, LabelBinder, to_bound_read
 from lemely.io.binding.second_read_triggers import second_read_triggers
-from lemely.io.llm.pricing import claude_row
+from lemely.io.llm.pricing import code_claude_row
 from lemely.io.providers import is_anthropic_model
 from lemely.io.providers.anthropic_adapter import resolve_effort
 from lemely.runtime.errors import CostCeilingError, ExternalServiceError, LemelyError
@@ -551,7 +551,9 @@ def chunked_reader_for(client: GeminiClient, binding: BindingSettings) -> Chunke
         return ChunkedLabelReader(client)
     for model in (binding.read_model, second_read_model(binding)):
         if model is not None and is_anthropic_model(model):
-            row = claude_row(model)
+            # The vendor's tier, not the admin's price (UD13-D): an override changes what the
+            # ledger records, never what Anthropic bills above the threshold.
+            row = code_claude_row(model)
             if row is not None and row.tier_threshold_tokens is not None:
                 return ChunkedLabelReader(client, tier_guard=True)
     return None

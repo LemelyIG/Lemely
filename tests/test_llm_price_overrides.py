@@ -32,7 +32,6 @@ from lemely.io import gemini
 from lemely.io.gemini import (
     UnpricedModelError,
     _reset_process_counters,
-    _resolve_pricing,
     price_call,
     price_row,
 )
@@ -128,12 +127,6 @@ def test_an_override_prices_a_model_the_code_does_not_know() -> None:
     price_overrides.install(_snapshot(_override("claude-new-9")))
     assert price_row("claude-new-9", settings, on=_TODAY).input == 0.003
     assert claude_row("claude-new-9") is not None
-
-
-def test_the_unrecognised_model_fallback_also_honours_an_override() -> None:
-    settings = make_settings(tempfile.mkdtemp())
-    price_overrides.install(_snapshot(_override("odd-model")))
-    assert _resolve_pricing("odd-model", settings) == (0.003, 0.015)
 
 
 def test_a_null_cache_rate_falls_back_to_the_code_row_then_to_input() -> None:
@@ -618,3 +611,46 @@ def test_the_registry_imports_neither_the_database_nor_the_web_layer() -> None:
         elif isinstance(node, ast.ImportFrom):
             imported.add(node.module or "")
     assert not {m for m in imported if m.startswith(("lemely.db", "lemely.web", "sqlalchemy"))}
+
+
+# --- the vendor's tier is not the admin's price (review I1) -------------------------------
+
+
+def test_a_flat_haiku_override_keeps_the_binder_tier_guard_on() -> None:
+    """The guard follows the vendor's 100k tier; an override only changes the recorded price."""
+    from lemely.io.binding.orchestrate import chunked_reader_for
+    from lemely.runtime.config import BindingSettings
+
+    binding = BindingSettings()
+    assert binding.read_model == _HAIKU
+    before = chunked_reader_for(object(), binding)  # type: ignore[arg-type]
+    assert before is not None
+    price_overrides.install(
+        _snapshot(_override(_HAIKU, input_usd_per_mtok=_D("0.11"), output_usd_per_mtok=_D("0.5")))
+    )
+    flat = claude_row(_HAIKU)
+    assert flat is not None
+    assert flat.tier_threshold_tokens is None  # the override itself is flat
+    after = chunked_reader_for(object(), binding)  # type: ignore[arg-type]
+    assert after is not None
+    assert after.tier_guard is True
+
+
+def test_one_call_is_priced_from_one_snapshot() -> None:
+    """The token row and the container hour come from the same snapshot (review M5)."""
+    settings = make_settings(tempfile.mkdtemp())
+    price_overrides.install(_snapshot(_override(_GEMINI), hour=_D("0.5")))
+    with (
+        patch.object(price_overrides, "code_execution_usd_per_hour", side_effect=AssertionError),
+        patch.object(price_overrides, "resolve", side_effect=AssertionError),
+    ):
+        cost = price_call(
+            _GEMINI,
+            settings,
+            input_tokens=1000,
+            cached_tokens=0,
+            output_tokens=0,
+            on=_TODAY,
+            container_seconds=3600,
+        )
+    assert cost == pytest.approx(0.003 + 0.5)

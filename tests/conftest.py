@@ -169,6 +169,20 @@ def _disable_teacher_seat_enforcement() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _reset_llm_price_overrides() -> Iterator[None]:
+    """No admin AI price override leaks between tests (UD13-D).
+
+    The registry is process-global, and the app lifespan installs one at startup, so a test that
+    ran a lifespan or installed a snapshot would otherwise price every later test in the worker.
+    """
+    from lemely.io.llm import price_overrides
+
+    price_overrides.install(None)
+    yield
+    price_overrides.install(None)
+
+
+@pytest.fixture(autouse=True)
 def _reset_structlog_config() -> Iterator[None]:
     """Undo any real ``configure_logging()`` call so ``capture_logs()`` stays reliable.
 

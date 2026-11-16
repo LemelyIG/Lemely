@@ -18,6 +18,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import TYPE_CHECKING, Final
 
 import sqlalchemy as sa
@@ -40,9 +41,10 @@ from lemely.io.llm.price_overrides import InvalidPriceError, Override
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Callable, Mapping
-    from decimal import Decimal
 
     from sqlalchemy.orm import Session
+
+    from lemely.io.llm.pricing import PriceRow
 
 ACTION_SET: Final = AuditAction.LLM_PRICE_SET
 ACTION_CLEAR: Final = AuditAction.LLM_PRICE_CLEAR
@@ -146,6 +148,56 @@ def _stale(model: str) -> AdminConflictError:
     )
 
 
+#: A price this many times below or above the default is refused without a confirmation.
+UNUSUAL_FACTOR: Final = Decimal(100)
+_WIRE: Final = {
+    "input_usd_per_mtok": "inputUsdPerMtok",
+    "output_usd_per_mtok": "outputUsdPerMtok",
+    "cached_input_usd_per_mtok": "cachedInputUsdPerMtok",
+    "cache_write_5m_usd_per_mtok": "cacheWrite5mUsdPerMtok",
+    "cache_write_1h_usd_per_mtok": "cacheWrite1hUsdPerMtok",
+    "tier2_input_usd_per_mtok": "tier2InputUsdPerMtok",
+    "tier2_output_usd_per_mtok": "tier2OutputUsdPerMtok",
+}
+
+
+def per_mtok(per_1k: float) -> Decimal:
+    """A per-1k float rate of the code tables as an exact per-million-token ``Decimal``."""
+    return Decimal(repr(per_1k)) * 1000
+
+
+def unusual_rates(rates: Mapping[str, object], default: PriceRow) -> list[str]:
+    """Wire names of the given prices below 1/100 or above 100x the same price of ``default``."""
+    tier = default.tier2
+    reference: dict[str, float | None] = {
+        "input_usd_per_mtok": default.input,
+        "output_usd_per_mtok": default.output,
+        "cached_input_usd_per_mtok": default.cached_input,
+        "cache_write_5m_usd_per_mtok": default.cache_write_5m,
+        "cache_write_1h_usd_per_mtok": default.cache_write_1h,
+        "tier2_input_usd_per_mtok": tier.input if tier is not None else None,
+        "tier2_output_usd_per_mtok": tier.output if tier is not None else None,
+    }
+    found: list[str] = []
+    for name, base in reference.items():
+        given = rates.get(name)
+        if given is None or base is None or base <= 0 or not isinstance(given, Decimal):
+            continue
+        ratio = given / per_mtok(base)
+        if ratio < 1 / UNUSUAL_FACTOR or ratio > UNUSUAL_FACTOR:
+            found.append(_WIRE[name])
+    return found
+
+
+def dropped_tier(rates: Mapping[str, object], code_row: PriceRow | None) -> int | None:
+    """The input-token threshold of the code row's tier when ``rates`` drops it, else ``None``."""
+    if code_row is None or code_row.tier2 is None:
+        return None
+    if rates.get("tier_threshold_tokens") is not None:
+        return None
+    return code_row.tier_threshold_tokens
+
+
 class LlmPriceService:
     """Audited writes of the per-model price overrides.
 
@@ -201,11 +253,46 @@ class LlmPriceService:
         rates: Mapping[str, object],
         expected_version: int | None,
         reason: str,
+        code_row: PriceRow | None = None,
+        default_row: PriceRow | None = None,
+        confirm_drop_tier: bool = False,
+        confirm_unusual_price: bool = False,
     ) -> LlmPriceView:
-        """Create (``expected_version`` ``None``) or replace the override of ``model``."""
+        """Create (``expected_version`` ``None``) or replace the override of ``model``.
+
+        ``code_row`` is the code table's own row (the vendor's tiers); ``default_row`` is the
+        price the model has with no override (config, else code). Both are ``None`` for a model
+        the code does not price. Dropping a tier of ``code_row`` is refused (422
+        ``override_drops_tier``) and so is a price below 1/100 or above 100x ``default_row``'s
+        (422 ``unusual_price``), each unless its ``confirm_*`` flag is set; a confirmation used is
+        written into the audit row.
+        """
         require_reason(reason)
         validate_model(model)
         validate_rates(model, rates)
+        confirmed: list[str] = []
+        dropped = dropped_tier(rates, code_row)
+        if dropped is not None:
+            if not confirm_drop_tier:
+                raise AdminInvalidError(
+                    "override_drops_tier",
+                    f"{model} is billed by its vendor at a higher price above "
+                    f"{dropped} input tokens, and this price has no tier. "
+                    "Send the tier prices with it, or confirmDropTier: true to record every "
+                    "call at the flat price.",
+                )
+            confirmed.append("drop_tier")
+        if default_row is not None:
+            odd = unusual_rates(rates, default_row)
+            if odd:
+                if not confirm_unusual_price:
+                    raise AdminInvalidError(
+                        "unusual_price",
+                        f"{', '.join(odd)} is below 1/100 or above 100 times the default price "
+                        "of this model, which is usually a unit typo. Send "
+                        "confirmUnusualPrice: true to set it anyway.",
+                    )
+                confirmed.append("unusual_price")
         row = self._locked(model)
         before: dict[str, object] | None = None
         if row is None:
@@ -235,16 +322,10 @@ class LlmPriceService:
             row.updated_at = self._now()
         self._s.flush()
         self._s.refresh(row)  # the audit and the answer carry the stored (quantised) values
-        audited(
-            self._s,
-            admin_id,
-            ACTION_SET,
-            TARGET,
-            row.id,
-            reason,
-            before,
-            snapshot(row, _AUDIT_FIELDS),
-        )
+        after = snapshot(row, _AUDIT_FIELDS)
+        if confirmed:
+            after["confirmed"] = confirmed
+        audited(self._s, admin_id, ACTION_SET, TARGET, row.id, reason, before, after)
         self.wrote = True
         return _view(row)
 

@@ -42,6 +42,8 @@ class BillingSettingsUpdate(ApiModel):
     priceChangeNoticeDays: StrictInt | None = None
     marginEgpPerUsd: Decimal | None = None
     codeExecutionUsdPerHour: Decimal | None = None
+    #: Needed for a container-hour price below 1/100 or above 100x the code value.
+    confirmUnusualPrice: bool = False
     expectedVersion: StrictInt
     reason: Reason
 
@@ -135,6 +137,10 @@ class LlmPriceSet(ApiModel):
     tierThresholdTokens: StrictInt | None = None
     tier2InputUsdPerMtok: Decimal | None = None
     tier2OutputUsdPerMtok: Decimal | None = None
+    #: Needed to set a flat price on a model whose vendor price has a tier (422 otherwise).
+    confirmDropTier: bool = False
+    #: Needed for a price below 1/100 or above 100x the model's default (422 otherwise).
+    confirmUnusualPrice: bool = False
     expectedVersion: StrictInt | None
     reason: Reason
 

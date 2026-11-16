@@ -312,7 +312,9 @@ def test_an_integer_setting_cannot_be_null(client: TestClient, sm: sessionmaker[
 def test_the_decimal_settings_bounds_and_precision(
     client: TestClient, sm: sessionmaker[Session], field: str, value: str, ok: bool
 ) -> None:
-    resp = _put(client, **{field: value})
+    # The range check against the code value (T19 review M1) is tested in
+    # test_admin_billing_llm_prices.py; here the bounds themselves are under test.
+    resp = _put(client, confirmUnusualPrice=True, **{field: value})
     if ok:
         assert resp.status_code == 200, resp.text
         assert len(audit_rows(sm, ACTION_SETTINGS_UPDATE)) == 1

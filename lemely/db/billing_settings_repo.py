@@ -55,6 +55,7 @@ from lemely.db.admin_billing_repo import (
 from lemely.db.models.admin_audit import AdminAuditLog
 from lemely.db.models.billing_ops import BillingSettings, CreditConversionRate
 from lemely.io.llm.price_overrides import CODE_EXECUTION_HOUR_MAX
+from lemely.io.llm.pricing import CODE_EXECUTION_USD_PER_CONTAINER_HOUR
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -305,9 +306,19 @@ class BillingSettingsService:
         fields: Mapping[str, object],
         expected_version: int,
         reason: str,
+        confirm_unusual_price: bool = False,
     ) -> BillingSettingsView:
         require_reason(reason)
         clean = validate_settings(fields)
+        hour = clean.get("code_execution_usd_per_hour")
+        if isinstance(hour, Decimal) and not confirm_unusual_price:
+            base = Decimal(repr(CODE_EXECUTION_USD_PER_CONTAINER_HOUR))
+            if hour < base / 100 or hour > base * 100:
+                raise AdminInvalidError(
+                    "unusual_price",
+                    f"codeExecutionUsdPerHour is below 1/100 or above 100 times the code value "
+                    f"({base}). Send confirmUnusualPrice: true to set it anyway.",
+                )
         ensure_billing_settings(self._s)
         row = self._s.execute(
             sa.select(BillingSettings)

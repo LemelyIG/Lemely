@@ -639,7 +639,7 @@ class Sweeper:
                     lambda: prune_webhook_failures(self.sessionmaker, now=moment),
                 )
             )
-            # UD13-D, DV-6: other instances pick up an admin AI price change within a minute.
+            # UD13-D, DV-6: other instances pick up an admin AI price change within one sweep pass.
             jobs.append(("billing.llm_price_refresh", lambda: refresh_prices(self.sessionmaker)))
         if self.usage_metering:
             jobs.extend(

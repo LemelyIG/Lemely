@@ -4,7 +4,10 @@
 never run shows as ``never_run`` instead of being absent. ``job_runs`` also holds the
 notification jobs (announcements, tutoring email, streaks); those are not billing and are left
 off: only a recorded name under a billing prefix is listed beyond the fixed names, which is how
-a job a later phase registers appears before this list learns it. Read-only: no audit rows.
+a job a later phase registers appears before this list learns it. ``job_runs`` holds one row per
+job name, shared by every instance: a healthy instance running ``billing.llm_price_refresh`` hides
+a stale one, whose only signal is the ``llm_price_refresh_failed`` log (``alert=True`` from the
+fifth failure in a row). Read-only: no audit rows.
 
 ``verified_events`` counts every stored ``paymob_events`` row in the window: callbacks and
 reconcile inquiry results alike (the table records no source), so the error rate is "HMAC
@@ -41,6 +44,7 @@ if TYPE_CHECKING:
 
 BILLING_JOB_NAMES: Final = (
     "admin.expire_manual_subscriptions",
+    "billing.llm_price_refresh",
     "billing.prune_webhook_failures",
     "billing.reconcile_pending",
     "billing.terms_change_notices",

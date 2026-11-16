@@ -3,9 +3,10 @@
 ``lemely.io.llm.price_overrides`` is the one cached value in the billing code: LLM calls price
 themselves in worker threads and CLI runs that hold no session, and ``lemely.io`` may not import
 ``lemely.db``. This module is the only writer. It runs at app start, after every admin price write
-commits in that process, and from the ``billing.llm_price_refresh`` sweeper job every 60 seconds,
-so another instance sees a change within a minute. A call already made keeps the price it was
-costed at, and a settled job keeps its recorded cost (``usage_job_model_costs``).
+commits in that process, and from the ``billing.llm_price_refresh`` sweeper job, once per sweep
+pass, so another instance sees a change within one pass (normally about a minute, longer when a
+pass is slow). A call already made keeps the price it was costed at, and a settled job keeps its
+recorded cost (``usage_job_model_costs``).
 
 Safe across processes and threads:
 

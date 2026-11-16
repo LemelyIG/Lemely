@@ -77,8 +77,9 @@ SettingsService = Annotated[BillingSettingsService, Depends(get_billing_settings
 def llm_price_scope(factory: sessionmaker[Session]) -> Iterator[LlmPriceService]:
     """One price service on one transaction; after a committed write, refresh this process.
 
-    The other instances pick the change up from the ``billing.llm_price_refresh`` job within 60
-    seconds. A refused request raises inside the ``with``, rolls back and never refreshes.
+    The other instances pick the change up from the ``billing.llm_price_refresh`` job within one
+    sweep pass (normally about 60 seconds, longer when a pass is slow). A refused request raises
+    inside the ``with``, rolls back and never refreshes.
     """
     with factory.begin() as session:
         service = LlmPriceService(session)
@@ -140,6 +141,7 @@ def update_settings(
                 fields=fields,
                 expected_version=body.expectedVersion,
                 reason=body.reason,
+                confirm_unusual_price=body.confirmUnusualPrice,
             )
         )
 
@@ -228,6 +230,21 @@ def llm_price_dto(view: LlmPriceView) -> LlmPriceDTO:
     )
 
 
+def _default_rows(
+    name: str, settings: Settings, today: date
+) -> tuple[PriceRow | None, PriceRow | None]:
+    """``(code row, default row)`` of ``name``.
+
+    The code row is the code table's own (the vendor's tiers). The default row is the price with no
+    override: the config rate when set, else the code row.
+    """
+    code_row = code_price_row(name, today)
+    rate = settings.gemini.pricing.get(name)
+    if rate is None:
+        return code_row, code_row
+    return code_row, PriceRow(float(rate[0]), float(rate[0]), float(rate[1]))
+
+
 def _model_rows(service: LlmPriceService, settings: Settings, *, today: date) -> list[LlmModelDTO]:
     """Code table keys, config keys, models seen in the last 30 days and overrides, by name."""
     overrides = {view.model: view for view in service.list()}
@@ -290,8 +307,13 @@ def _rates(body: LlmPriceSet) -> dict[str, object]:
 
 @router.put("/llm-prices/{model}", response_model=LlmPriceDTO)
 def set_llm_price(
-    model: str, body: LlmPriceSet, auth: AdminAuth, service: PriceService
+    model: str,
+    body: LlmPriceSet,
+    auth: AdminAuth,
+    service: PriceService,
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> LlmPriceDTO:
+    code_row, default_row = _default_rows(model, settings, datetime.now(UTC).date())
     with mapped_errors():
         return llm_price_dto(
             service.set_price(
@@ -300,6 +322,10 @@ def set_llm_price(
                 rates=_rates(body),
                 expected_version=body.expectedVersion,
                 reason=body.reason,
+                code_row=code_row,
+                default_row=default_row,
+                confirm_drop_tier=body.confirmDropTier,
+                confirm_unusual_price=body.confirmUnusualPrice,
             )
         )
 

@@ -77,11 +77,14 @@ def row_cost(
     cache_write_5m_tokens: int = 0,
     cache_write_1h_tokens: int = 0,
     container_seconds: float = 0.0,
+    container_usd_per_hour: float | None = None,
 ) -> float:
     """USD for one call. ``input_tokens`` is the total: uncached + reads + writes.
 
     The tier is chosen on that total. With no writes, no container time and no tier,
     the sum is formed in the same order as before, so Gemini costs are bit-identical.
+    ``container_usd_per_hour`` is the container-hour price the caller took from the same snapshot
+    as ``row``; left out, the installed registry (else the code value) is read.
     """
     total = max(input_tokens, 0)
     if (
@@ -96,7 +99,9 @@ def row_cost(
     uncached = max(total - cached - write_5m - write_1h, 0)
     write_5m_rate = row.cache_write_5m if row.cache_write_5m is not None else row.input
     write_1h_rate = row.cache_write_1h if row.cache_write_1h is not None else row.input
-    container_hour = price_overrides.code_execution_usd_per_hour()
+    container_hour = container_usd_per_hour
+    if container_hour is None:
+        container_hour = price_overrides.code_execution_usd_per_hour()
     if container_hour is None:
         container_hour = CODE_EXECUTION_USD_PER_CONTAINER_HOUR
     return (

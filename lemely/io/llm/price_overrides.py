@@ -210,14 +210,13 @@ def current() -> Snapshot | None:
     return _current
 
 
-def resolve(
-    model: str, code_row: PriceRow | None, *, config_row: PriceRow | None = None
+def resolve_in(
+    snapshot: Snapshot | None,
+    model: str,
+    code_row: PriceRow | None,
+    config_row: PriceRow | None = None,
 ) -> PriceRow | None:
-    """The row for ``model``: an exact override, else the config row, else the code row.
-
-    ``None`` only when all three are absent (an unknown model).
-    """
-    snapshot = _current
+    """:func:`resolve` against one given snapshot, so a caller can price a whole call from one."""
     if snapshot is not None:
         override = snapshot.overrides.get(model)
         if override is not None:
@@ -227,14 +226,29 @@ def resolve(
     return code_row
 
 
+def resolve(
+    model: str, code_row: PriceRow | None, *, config_row: PriceRow | None = None
+) -> PriceRow | None:
+    """The row for ``model``: an exact override, else the config row, else the code row.
+
+    ``None`` only when all three are absent (an unknown model).
+    """
+    return resolve_in(_current, model, code_row, config_row)
+
+
 def has_override(model: str) -> bool:
+    """True when the installed snapshot holds an override for exactly ``model``."""
     snapshot = _current
     return snapshot is not None and model in snapshot.overrides
 
 
-def code_execution_usd_per_hour() -> float | None:
-    """The admin's container-hour price, or ``None`` for the code value."""
-    snapshot = _current
+def code_execution_hour_in(snapshot: Snapshot | None) -> float | None:
+    """The container-hour price of ``snapshot`` as a float, or ``None`` for the code value."""
     if snapshot is None or snapshot.code_execution_usd_per_hour is None:
         return None
     return float(snapshot.code_execution_usd_per_hour)
+
+
+def code_execution_usd_per_hour() -> float | None:
+    """The admin's container-hour price, or ``None`` for the code value."""
+    return code_execution_hour_in(_current)
