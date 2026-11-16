@@ -7,9 +7,9 @@ export function titleLevelFor(trail: readonly unknown[], tabRoot = false): "root
 /** A bottom-tab destination is a root whatever its trail says: the teacher trail for
  * Grading, Review and Classes is [Overview, Section] (two crumbs, for the desktop breadcrumb),
  * and a tab you tapped into has nothing to go back to. */
-export function isTabRoot(pathname: string, tabPaths: readonly string[]): boolean {
+export function isTabRoot(pathname: string, tabPaths: readonly string[], isRoot?: (pathname: string) => boolean): boolean {
   const path = pathname.replace(/\/+$/, "") || "/"
-  return tabPaths.includes(path)
+  return tabPaths.includes(path) || !!isRoot?.(path)
 }
 
 /** The large title sits directly under the sticky bar, so its bottom reaches

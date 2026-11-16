@@ -17,6 +17,9 @@ export const SHELL_BUTTON_PRIMARY = `${SHELL_BUTTON} bg-primary text-on-primary 
 /** `.as-btn-tonal` */
 export const SHELL_BUTTON_TONAL = `${SHELL_BUTTON} bg-secondary-container text-on-secondary-container hover:bg-[color-mix(in_oklch,var(--color-secondary-container),var(--color-primary)_8%)]`
 
+/** Mock DRAIL6 `.rscan.soft`: the outlined "Scan a paper" (rail foot, tablet bar). */
+export const SHELL_BUTTON_OUTLINE = `${SHELL_BUTTON} bg-transparent text-primary shadow-[inset_0_0_0_1.5px_var(--color-primary)] hover:bg-primary-container`
+
 /** `.as-iconbtn`, open state from Radix's `data-state`. */
 export const SHELL_ICON_BUTTON =
   "lm-native-iconbtn lm-press lm-press-scale relative grid size-9 flex-none cursor-pointer place-items-center rounded-chip text-on-surface-variant transition-colors duration-150 native:transition-[color,background-color,border-color,scale] native:duration-[var(--dur-instant)] hover:bg-surface-container-low hover:text-on-surface data-[state=open]:bg-surface-container-low data-[state=open]:text-on-surface pointer-coarse:size-11 " +
