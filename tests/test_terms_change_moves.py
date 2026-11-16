@@ -1074,7 +1074,8 @@ def test_a_kept_charge_tells_the_payer_once_and_states_no_amount(
             )
         )
     assert len(rows) == 1
-    assert set(rows[0].context) == {"payment_id"}  # no amount, no plan, no card
+    assert set(rows[0].context) == {"payment_id", "plan_ended"}  # no amount, plan or card
+    assert rows[0].context["plan_ended"] is False  # set to end, not yet ended
     assert rows[0].dedupe_key == f"charge_after_plan_end:{rows[0].context['payment_id']}"
 
 
@@ -1366,3 +1367,71 @@ def test_the_ends_mail_restart_moves_the_screens_dates_to_the_mailed_date(
         change = pending_terms_change(session, sub, interval="monthly", amount_updatable=False)
     assert change is not None
     assert (change.effective_at, change.first_renewal_at) == (mailed, mailed)
+
+
+@pytest.mark.parametrize("later_status", ["refunded", "partially_refunded"])
+def test_a_revert_after_a_kept_charge_that_was_since_refunded_still_keeps_the_cancel(
+    sm: sessionmaker[Session], later_status: str
+) -> None:
+    """R5-M1: the operator refunds the kept charge, then the admin reverts. The charge still
+    bought no period, so the plan still ends: nobody is told it continues."""
+    owner, sid, tier = _fixed_cancelled(sm)
+    charged = PUSH_FROM - timedelta(hours=1)
+    _renew(sm, 10_000, txn=981, at=charged, updatable=False)
+    with sm.begin() as session:  # the refund the mail promised changes only the status
+        session.execute(
+            sa.update(Payment)
+            .where(
+                Payment.subscription_id == sid,
+                Payment.purpose == PaymentPurpose.subscription_renewal,
+            )
+            .values(status=later_status)
+        )
+    edit_tier_terms(sm, tier, price_minor=10_000)
+    with capture_logs() as logs:
+        assert _notify(sm, now=charged + timedelta(minutes=20), updatable=False) == 1
+    assert [e["event"] for e in logs if e.get("alert")] == [
+        "subscription_terms_revert_after_kept_charge"
+    ]
+    row = _sub(sm, sid)
+    assert (row.cancel_at_period_end, row.cancel_source) == (True, "platform_terms")
+    assert "plan_terms_cancelled" not in [m.template for m in _mail(sm, owner)]
+
+
+def _charge_mails(sm: sessionmaker[Session], owner: uuid.UUID) -> list[EmailOutbox]:
+    with sm() as session:
+        return list(
+            session.scalars(
+                sa.select(EmailOutbox).where(
+                    EmailOutbox.recipient_user_id == owner,
+                    EmailOutbox.template == "charge_after_plan_end",
+                )
+            )
+        )
+
+
+def test_a_charge_on_a_plan_that_has_already_ended_tells_the_payer_it_will_be_refunded(
+    sm: sessionmaker[Session],
+) -> None:
+    """R5-M2: the same once-per-payment mail, in its "after it had ended" wording."""
+    tier = seed_tier(sm, price_minor=10_000)
+    owner, sid = _linked(sm, tier, status=SubscriptionStatus.cancelled, period_end=END)
+    with capture_logs() as logs:
+        _renew(sm, 10_000, txn=991, at=END + timedelta(hours=3), updatable=False)
+    assert [e["event"] for e in logs if e.get("alert")] == [
+        "subscription_charge_on_ended_subscription"
+    ]
+    [mail] = _charge_mails(sm, owner)
+    assert mail.context["plan_ended"] is True
+    assert set(mail.context) == {"payment_id", "plan_ended"}  # no amount
+    assert _sub(sm, sid).current_period_end == END  # nothing was granted
+
+
+def test_a_charge_kept_for_another_reason_sends_the_payer_nothing(
+    sm: sessionmaker[Session],
+) -> None:
+    """The words do not fit a checkout that never activated: that stays alert-only."""
+    tier = seed_tier(sm, price_minor=10_000)
+    owner, _ = _linked(sm, tier, status=SubscriptionStatus.expired, period_end=END)
+    _renew(sm, 10_000, txn=992, at=END + timedelta(hours=3), updatable=False)
+    assert _charge_mails(sm, owner) == []

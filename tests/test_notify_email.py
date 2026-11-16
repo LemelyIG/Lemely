@@ -710,3 +710,14 @@ def test_charge_after_plan_end_context_refuses_extra_keys_and_a_missing_payment(
         )
     with pytest.raises(InvalidEmailContext):
         validate_context("charge_after_plan_end", {})
+
+
+def test_charge_after_plan_end_for_a_plan_that_had_ended_says_so_and_promises_no_end_date() -> None:
+    _, _, text = render_email(
+        "charge_after_plan_end",
+        {"payment_id": str(PAYMENT_ID_FOR_REFUND), "plan_ended": True},
+        app_base_url=BASE_URL,
+    )
+    assert "after it had ended" in text
+    assert "refund it" in text
+    assert "still ends" not in text  # it already ended

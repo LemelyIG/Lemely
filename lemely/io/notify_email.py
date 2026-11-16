@@ -663,11 +663,17 @@ class ChargeAfterPlanEnd(EmailContext):
     button: ClassVar[str] = "Open billing"
 
     payment_id: uuid.UUID
+    #: The plan had already ended when the payment arrived (not only been set to end).
+    plan_ended: bool = False
 
     def lead(self) -> str:
+        if self.plan_ended:
+            return "We received a payment for your Lemely plan after it had ended."
         return "We received a payment for your Lemely plan after it was set to end."
 
     def detail(self) -> str | None:
+        if self.plan_ended:
+            return "We will refund it, so you do not need to do anything."
         return (
             "We will refund it, so you do not need to do anything. Your plan still ends on the "
             "date we told you."

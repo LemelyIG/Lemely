@@ -36,7 +36,6 @@ from lemely.db.models.billing import (
     PLAN_LIVE_STATUSES,
     Payment,
     PaymentPurpose,
-    PaymentStatus,
     PlanAudience,
     PlanTier,
     PlanTierTerms,
@@ -543,11 +542,16 @@ def _revert_platform_cancelled_one(
 
 
 def _has_kept_charge(session: Session, sub: Subscription) -> bool:
-    """A paid renewal in the current period that bought no period (kept for a refund)."""
+    """A renewal charged in the current period that bought no period (kept for a refund).
+
+    Matched on ``paid_at`` and no period, whatever the payment's status is now: the refund the
+    payer was promised changes the status to ``refunded`` or ``partially_refunded``, and the
+    charge still bought nothing.
+    """
     stmt = sa.select(Payment.id).where(
         Payment.subscription_id == sub.id,
         Payment.purpose == PaymentPurpose.subscription_renewal,
-        Payment.status == PaymentStatus.paid,
+        Payment.paid_at.is_not(None),
         ~sa.exists().where(SubscriptionPeriod.payment_id == Payment.id),
     )
     if sub.current_period_start is not None:

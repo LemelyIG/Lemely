@@ -1467,6 +1467,15 @@ def _settle_renewal(
                 payment,
                 reason="cancelled" if status is SubscriptionStatus.cancelled else "not_a_plan",
             )
+            if status is SubscriptionStatus.cancelled:
+                # The payer is told the payment will be refunded (once per payment, no amount).
+                # Only for a plan that really ended: the other reasons would need other words.
+                enqueue_charge_after_plan_end(
+                    session,
+                    payer_user_id=payment.payer_user_id,
+                    payment_id=payment.id,
+                    plan_ended=True,
+                )
             return False
         if subscription.activated_at is None:
             _note_charge_kept(subscription, payment, reason="never_activated")
