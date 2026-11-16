@@ -475,6 +475,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/student/attempts/{attempt_id}/restore"): STUDENT,
     ("GET", "/api/student/attempts/deleted"): STUDENT,
     ("GET", "/api/student/overview"): STUDENT,
+    ("GET", "/api/student/home"): STUDENT,
     ("GET", "/api/student/parent-links"): STUDENT,
     ("DELETE", "/api/student/parent-links/{parent_id}"): STUDENT,
     # spec §4: the child-issued parent-invite surface (P3.6a's "Your parent
