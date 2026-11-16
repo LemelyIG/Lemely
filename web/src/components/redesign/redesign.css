@@ -178,6 +178,7 @@ button.rd-step { cursor: pointer; }
 .rd-steps-labels [data-ghost] { align-self: end; color: var(--md-on-surface-variant); }
 @media (prefers-reduced-motion: no-preference) {
   .rd-step:not([data-ghost]) { animation: rd-grow 0.7s var(--ease-out) calc(var(--i, 0) * 60ms) both; }
+  .rd-steps[data-empty] .rd-step[data-goal] { animation: none; }
   button.rd-step:hover { translate: 0 -3px; filter: saturate(1.15); }
 }
 @keyframes rd-grow { from { transform: scaleY(0.4); } }

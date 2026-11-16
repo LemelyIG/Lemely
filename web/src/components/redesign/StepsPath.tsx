@@ -37,7 +37,7 @@ export function StepsPath({ papers, goal, onSelect, goalPct = 100, goalCaption, 
   const columns = Math.max(1, papers.length + ghostCount + (goal ? 1 : 0))
   const last = papers.length - 1
   return (
-    <div className="rd-steps" role="group" aria-label={ariaLabel ?? stepsSummary(papers, goal, goalNote)}>
+    <div className="rd-steps" data-empty={papers.length === 0 ? "" : undefined} role="group" aria-label={ariaLabel ?? stepsSummary(papers, goal, goalNote)}>
       <div className="rd-steps-track" style={css({ "--n": columns })}>
         {papers.map((p, i) => {
           const style = css({ "--h": `${stepHeight(p.pct, goalPct)}%`, "--c": gradeColorVar(p.grade), "--i": i })

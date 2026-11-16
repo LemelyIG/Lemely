@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
@@ -58,5 +60,13 @@ describe("StepsPath", () => {
     expect(out).toMatch(/--h:30%/)
     expect(out).toMatch(/--h:70%/)
     expect(out).not.toContain(">next<")
+  })
+  it("first run marks the path empty so the goal block stays static (mock .ghostp .stp.goal)", () => {
+    expect(html({ papers: [], goal: "A*", ghosts: 4 })).toMatch(/class="rd-steps"[^>]*data-empty=""/)
+    expect(html({ papers: PAPERS, goal: "A*" })).not.toContain("data-empty")
+  })
+  it("the css switches the goal grow off for an empty path, inside the motion block", () => {
+    const css = readFileSync(join(__dirname, "../../../src/components/redesign/redesign.css"), "utf8")
+    expect(css).toMatch(/@media \(prefers-reduced-motion: no-preference\)[\s\S]*\.rd-steps\[data-empty\] \.rd-step\[data-goal\] \{ animation: none; \}/)
   })
 })
