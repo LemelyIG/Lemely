@@ -27,9 +27,7 @@ import { fileURLToPath, URL } from "node:url"
  * signed-in student at `/student/directions`. `index.html` is the component
  * kit; `directions.html` is the gallery. Vite only builds `index.html` from a
  * root by default, so the second entry has to be named explicitly or it would
- * be served in dev and silently missing from `npm run build:kit`. The student
- * home variant pages (`student-home*.html`) are named entries for the same
- * reason `directions.html` is.
+ * be served in dev and silently missing from `npm run build:kit`.
  */
 const previewEntry = (name: string) =>
   fileURLToPath(new URL(`./dev-previews/${name}.html`, import.meta.url))
@@ -52,10 +50,6 @@ export default defineConfig({
       input: {
         index: previewEntry("index"),
         directions: previewEntry("directions"),
-        "student-home": previewEntry("student-home"),
-        "student-home-a": previewEntry("student-home-a"),
-        "student-home-b": previewEntry("student-home-b"),
-        "student-home-c": previewEntry("student-home-c"),
         "redesign-kit": previewEntry("redesign-kit"),
       },
     },
