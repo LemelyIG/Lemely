@@ -213,7 +213,7 @@ describe("billing failure copy", () => {
       "Can't upgrade mid-period. Cancel at period end, then subscribe to the new plan.",
     )
     expect(say(err("upgrade_unavailable"))).toBe("This plan can't be upgraded now. Nothing was charged.")
-    expect(say(err("subscription_not_active"))).toBe("Your last payment failed. Pay it before changing your plan.")
+    expect(say(err("subscription_not_active"))).toBe("Your plan isn't active right now. Check billing, then try again.")
     expect(say(err("seat_reduction_locked"))).toBe("Reduction locked. You can change it at your next renewal.")
     expect(say(err("seats_not_sold", { extraSeats: 3 }))).toMatch(/you hold 3\b/)
     expect(say(err("seats_exceed_new_tier", { inUse: 5, capacity: 3 }))).toBe("That plan has 3 seats; 5 in use. Remove students first.")
@@ -229,7 +229,7 @@ describe("billing failure copy", () => {
   it("maps the real seat-limit refusal: 422 invalid_seats, never a 409 code", () => {
     // `_plan_seats` raises MerchantChargeError("invalid_seats"), which `_CHARGE_STATUS` answers with 422.
     const real = new ApiError(422, "422", { error: "invalid_seats", message: "That would pass the most extra seats allowed" })
-    expect(billingFailureMessage(real, "add seats")).toBe("That's more seats than a plan can hold. Try fewer.")
+    expect(billingFailureMessage(real, "add seats")).toBe("That's over the extra-seat limit. Try fewer.")
     // The two void reasons are never error codes, so they get no special copy.
     for (const code of ["seats_over_limit", "seats_changing"]) {
       expect(billingFailureMessage(new ApiError(409, "409", { error: code, message: "x" }), "add seats")).toBe("Couldn't add seats. Nothing was charged. Try again.")

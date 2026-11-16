@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "./support/dom-setup"
 import { createElement as h } from "react"
-import { render, screen } from "@testing-library/react"
+import { cleanup, render, screen } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { beforeEach, describe, expect, it, vi } from "vitest"
@@ -69,6 +69,14 @@ describe("CheckoutReturn", () => {
     expect(screen.getByRole("heading", { name: "Payment received, we're handling it" })).toBeTruthy()
     expect(mark()).toBe("attention")
     expect(mark()).not.toBe("confirming")
+    // The rendered icon, not just its label: the lifebuoy and the hourglass draw differently.
+    const attention = document.querySelector("[data-mark]")?.innerHTML
+    cleanup()
+    show({ status: "pending", outcome: null, paidAt: null })
+    expect(document.querySelector("[data-mark]")?.innerHTML).not.toBe(attention)
+    expect(attention).toMatch(/<(path|circle)/)
+    cleanup()
+    show({ outcome: "needs_attention", voidReason: "seats_over_limit", purpose: "extra_seats", description: "2 extra seats" })
     expect(screen.getByText("0f3a9c1e")).toBeTruthy()
     expect(link("Contact support")).toMatch(/^mailto:contact@lemelyig\.com\?subject=Payment%200f3a9c1e$/)
     expect(document.body.textContent).not.toMatch(/\b(hours?|days?|minutes?|within)\b/i)

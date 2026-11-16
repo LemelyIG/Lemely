@@ -58,7 +58,7 @@ export function AddSeatsDialog({
   const busy = add.isPending || launch.redirecting
   const message = launch.unsafe ? UNSAFE_CHECKOUT_URL : failure && !needsPhone ? billingFailureMessage(failure, "add seats") : null
   const quoteLine =
-    q && seats !== null && !needsPhone ? (
+    q && seats !== null && !needsPhone && !(add.isError && refused) ? (
       launch.redirecting ? (
         "Taking you to payment…"
       ) : (
@@ -81,7 +81,7 @@ export function AddSeatsDialog({
       size="sm"
       title="Add seats"
       footer={
-        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <div className="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row sm:justify-end">
           <Button variant="ghost" className="w-full sm:w-auto" onClick={onClose} disabled={busy}>Not now</Button>
           {q && seats !== null && !needsPhone ? (
             <Button variant="primary" className="w-full sm:w-auto" loading={busy} disabled={refused} onClick={() => launch.launch({ subscriptionId, seats })}>

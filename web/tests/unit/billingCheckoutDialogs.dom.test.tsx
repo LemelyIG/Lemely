@@ -196,6 +196,44 @@ describe("PlanChangeDialog to Paymob", () => {
     expect(screen.queryByRole("button", { name: /Continue to payment/ })).toBeNull()
   })
 
+  it.each([
+    ["upgrade_unavailable", { next: "cancel_and_resubscribe" }],
+    ["seats_not_sold", { extraSeats: 3 }],
+    ["subscription_not_active", {}],
+  ])("drops the price line once %s refuses, so no price or next step is left on screen", async (code, extra) => {
+    s.upgrade = settling({ err: new ApiError(409, "x", { error: code, message: "x", ...extra }) })
+    openPlan()
+    expect(screen.getByRole("status").textContent).toMatch(/Pay EGP\s75\.00 now/)
+    await userEvent.setup().click(cont())
+    await screen.findByRole("alert")
+    expect(document.body.textContent).not.toMatch(/Pay EGP|confirm with your bank/)
+  })
+
+  it.each([
+    ["offline", new ApiError(0, "x")],
+    ["a 503", new ApiError(503, "x", { error: "payments_unavailable", message: "x" })],
+  ])("offers Try again when the quote fails on %s, and asks for the quote again", async (_n, err) => {
+    s.quote = Object.assign(fakeMutation({ isError: true, error: err }), { variables: { subscriptionId: "sub1", planTierId: "t-up" } })
+    openPlan()
+    expect(mut(s.quote)).toHaveBeenCalledTimes(1)
+    await userEvent.setup().click(screen.getByRole("button", { name: "Try again" }))
+    expect(mut(s.quote)).toHaveBeenCalledTimes(2)
+    expect(mut(s.quote).mock.calls[1][0]).toEqual({ subscriptionId: "sub1", planTierId: "t-up" })
+  })
+
+  it("offers no Try again for a terminal quote refusal", () => {
+    s.quote = Object.assign(fakeMutation({ isError: true, error: new ApiError(409, "x", { error: "upgrade_unavailable", message: "x" }) }), {
+      variables: { subscriptionId: "sub1", planTierId: "t-up" },
+    })
+    openPlan()
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull()
+  })
+
+  it("stacks the footer full width on phones", () => {
+    openPlan()
+    expect(cont().parentElement?.className).toMatch(/\bw-full\b.*sm:w-auto/)
+  })
+
   it("names the extra seats held on seats_not_sold", async () => {
     s.upgrade = settling({ err: new ApiError(409, "x", { error: "seats_not_sold", message: "x", extraSeats: 3 }) })
     openPlan()
@@ -297,10 +335,45 @@ describe("AddSeatsDialog to Paymob", () => {
     open()
     const user = userEvent.setup()
     await user.click(screen.getByRole("button", { name: "Get the price" }))
-    expect((await screen.findByRole("alert")).textContent).toBe("That's more seats than a plan can hold. Try fewer.")
+    expect((await screen.findByRole("alert")).textContent).toBe("That's over the extra-seat limit. Try fewer.")
     expect((screen.getByRole("button", { name: "Get the price" }) as HTMLButtonElement).disabled).toBe(true)
     await user.type(screen.getByLabelText("How many seats"), "0")
     expect((screen.getByRole("button", { name: "Get the price" }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it.each([
+    ["seat_charge_overdue", 409],
+    ["plan_change_pending", 409],
+    ["subscription_not_active", 409],
+  ])("a refused purchase (%s) disables Continue and drops the price line until the count changes", async (code, status) => {
+    sessionStore()
+    s.addSeats = settling({ err: new ApiError(status, "x", { error: code, message: "x" }) })
+    open()
+    const user = userEvent.setup()
+    expect(screen.getByRole("status").textContent).toMatch(/Pay EGP/)
+    await user.click(cont())
+    await screen.findByRole("alert")
+    expect(cont().disabled).toBe(true)
+    expect(document.body.textContent).not.toMatch(/Pay EGP|confirm with your bank/)
+    await user.type(screen.getByLabelText("How many seats"), "2")
+    expect(screen.queryByRole("alert")).toBeNull()
+  })
+
+  it.each([
+    ["offline", new ApiError(0, "x")],
+    ["a 503", new ApiError(503, "x", { error: "payments_unavailable", message: "x" })],
+    ["charge_in_flight", new ApiError(409, "x", { error: "charge_in_flight", message: "x" })],
+  ])("a transient failure (%s) leaves Continue pressable and the price on screen, and a second try goes out", async (_n, err) => {
+    sessionStore()
+    s.addSeats = settling({ err })
+    open()
+    const user = userEvent.setup()
+    await user.click(cont())
+    await screen.findByRole("alert")
+    expect(cont().disabled).toBe(false)
+    expect(screen.getByRole("status").textContent).toMatch(/Pay EGP/)
+    await user.click(cont())
+    expect(mut(s.addSeats)).toHaveBeenCalledTimes(2)
   })
 
   it("asks for a phone number in place, then retries the same purchase", async () => {

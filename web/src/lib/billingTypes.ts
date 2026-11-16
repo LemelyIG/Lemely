@@ -239,8 +239,8 @@ export interface WireBillingSummary {
 
 // ── Wire DTOs: Phase 06 (merchant charges) ──────────────────────────────────
 
-/** 06 `ChargeQuoteDTO`, for `…/upgrade/quote` and `…/seats/quote` (R3). No side effects; the
- * card it would charge is the summary's `savedCard`. */
+/** 06 `ChargeQuoteDTO`, for `…/upgrade/quote` and `…/seats/quote` (R3). No side effects.
+ * Paymob's page offers any saved card. */
 export interface WireQuote {
   amountMinor: number
   currency: string

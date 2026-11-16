@@ -116,7 +116,7 @@ export function PlanChangeDialog({
   } else if (quote.isPending) {
     status = "Getting the price…"
     statusClass = "m-0 text-body-sm text-on-surface-variant"
-  } else if (q) {
+  } else if (q && !refused && !needsPhone) {
     status = (
       <>
         Pay <span className="text-data-md">{formatMoney(q.amountMinor, q.currency)}</span> now for the rest of this period. You'll
@@ -137,13 +137,22 @@ export function PlanChangeDialog({
       dismissible={!busy}
       title={`Change to ${tier.name}`}
       footer={
-        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <div className="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row sm:justify-end">
           <Button variant="ghost" className="w-full sm:w-auto" onClick={onClose} disabled={busy}>
             {downgraded ? "Close" : "Not now"}
           </Button>
           {canConfirm ? (
             <Button variant="primary" className="w-full sm:w-auto" loading={busy} onClick={confirm}>
               {isUpgrade && q ? "Continue to payment" : "Schedule the change"}
+            </Button>
+          ) : isUpgrade && quoteFailed && !isTerminalRefusal(quote.error) ? (
+            <Button
+              variant="primary"
+              className="w-full sm:w-auto"
+              loading={quote.isPending}
+              onClick={() => requestQuote({ subscriptionId, planTierId: tier.id })}
+            >
+              Try again
             </Button>
           ) : null}
         </div>

@@ -44,7 +44,7 @@ const CONFLICTS: Record<string, string> = {
   invite_limit: "Too many open invites. Revoke one first.",
   not_an_upgrade: "That isn't an upgrade.",
   not_a_teacher_plan: "Extra seats are for teacher plans only.",
-  subscription_not_active: "Your last payment failed. Pay it before changing your plan.",
+  subscription_not_active: "Your plan isn't active right now. Check billing, then try again.",
   upgrade_unavailable: "This plan can't be upgraded now. Nothing was charged.",
   seat_reduction_unavailable: "Seats can't be reduced now. Nothing changed.",
   seat_reduction_locked: "Reduction locked. You can change it at your next renewal.",
@@ -54,7 +54,7 @@ const CONFLICTS: Record<string, string> = {
 
 /** 422 refusals from the charge routes. */
 const INVALID: Record<string, string> = {
-  invalid_seats: "That's more seats than a plan can hold. Try fewer.",
+  invalid_seats: "That's over the extra-seat limit. Try fewer.",
   invalid_settings: "Those settings aren't valid. Check them and try again.",
 }
 
