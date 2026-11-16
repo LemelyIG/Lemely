@@ -18,6 +18,9 @@ import { injectSession, readSeed } from "./seed"
  * URL the switcher navigates to.
  */
 
+/** The Inbox tab carries an unread badge inside the link ("Inbox 3"). */
+const INBOX = /^Inbox(\s\d+\+?)?$/
+
 async function signInStudent(page: Page): Promise<void> {
   const student = readSeed().students.correctedPaper
   await page.goto("/login")
@@ -53,7 +56,10 @@ test.describe("F1 student shell", () => {
     await expect(nav.getByRole("link", { name: "Home", exact: true })).toHaveAttribute("aria-current", "page")
 
     // The top bar's menu button opens the sheet: subject tree plus the More group.
-    await page.getByRole("button", { name: "Open student navigation" }).click()
+    const menu = page.getByRole("button", { name: "Open student navigation" })
+    await expect(menu).toHaveAttribute("aria-haspopup", "dialog")
+    await expect(nav.getByRole("link", { name: "Scan a paper" })).toHaveAttribute("data-emphasis", "true")
+    await menu.click()
     const sheet = page.getByRole("dialog")
     await expect(sheet).toBeVisible()
     for (const name of ["Your classes", "Standings", "Friends", "Tutors", "Sessions"]) {
@@ -105,12 +111,12 @@ test.describe("F1 parent shell", () => {
     const { childId, childName } = await openParent(page)
 
     const nav = page.getByRole("navigation", { name: "Primary" })
-    for (const name of ["Overview", "Topics", "Inbox", "Tutoring"]) {
-      await expect(nav.getByRole("link", { name, exact: true })).toBeVisible()
+    for (const name of [/^Overview$/, /^Topics$/, INBOX, /^Tutoring$/]) {
+      await expect(nav.getByRole("link", { name })).toBeVisible()
     }
     await expect(nav.getByRole("button", { name: "More" })).toBeVisible()
     // One child: the name is a plain label in the top bar, not a control.
-    await expect(page.getByText(childName).first()).toBeVisible()
+    await expect(page.locator("header").getByText(childName)).toBeVisible()
     await expect(page.getByRole("combobox", { name: "Choose which child to view" })).toHaveCount(0)
 
     await nav.getByRole("link", { name: "Topics", exact: true }).click()
@@ -130,8 +136,8 @@ test.describe("F1 parent shell", () => {
 
     const rail = page.getByRole("navigation", { name: "Main" })
     await expect(rail.getByText(childName)).toBeVisible({ timeout: 15_000 })
-    for (const name of ["Overview", "Topics", "Inbox", "Tutoring", "Tutors"]) {
-      await expect(rail.getByRole("link", { name, exact: true })).toBeVisible()
+    for (const name of [/^Overview$/, /^Topics$/, INBOX, /^Tutoring$/, /^Tutors$/]) {
+      await expect(rail.getByRole("link", { name })).toBeVisible()
     }
     // One child, so no "Your children" row.
     await expect(rail.getByRole("link", { name: "Your children" })).toHaveCount(0)
@@ -140,15 +146,19 @@ test.describe("F1 parent shell", () => {
 
   test("two children: the switcher is a select and keeps the topics and tutoring tails", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 })
+    const errors = watchConsole(page)
     const seed = readSeed()
+    const childId = seed.students.declining.userId
     const other = { childId: "00000000-0000-4000-8000-0000000000b2", displayName: "Second Child" }
-    // Real list plus one extra child; the extra child's pages are never opened.
+    // Real list plus one extra child; the extra child's pages are never loaded as data.
     await page.route("**/api/parent/children", async (route) => {
       const response = await route.fetch()
       const body = (await response.json()) as { children: Record<string, unknown>[] }
-      await route.fulfill({ response, json: { ...body, children: [...body.children, { ...body.children[0], ...other }] } })
+      await route.fulfill({ json: { ...body, children: [...body.children, { ...body.children[0], ...other }] } })
     })
-    const { childId } = await openParent(page)
+    // With two children /parent stays on the list, so open the child directly.
+    await injectSession(page, { accessToken: seed.parent.accessToken, userId: seed.parent.userId, role: "parent" })
+    await page.goto(`/parent/children/${childId}`)
 
     const rail = page.getByRole("navigation", { name: "Main" })
     await expect(rail.getByRole("link", { name: "Your children" })).toBeVisible({ timeout: 15_000 })
@@ -162,6 +172,9 @@ test.describe("F1 parent shell", () => {
       await switcher.selectOption(other.childId)
       await expect(page).toHaveURL(new RegExp(`/parent/children/${other.childId}/${tail}$`))
     }
-    expect(seed.students.declining.userId).toBe(childId)
+    // Switching lands on the fake child's pages, whose data requests 404 (the browser's own
+    // "Failed to load resource" lines, already filtered); an app error from rendering that
+    // not-found state is the only thing that would reach this list.
+    expect(errors).toEqual([])
   })
 })
