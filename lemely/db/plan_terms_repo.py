@@ -16,7 +16,7 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Literal
 
 import sqlalchemy as sa
 import structlog
@@ -339,21 +339,31 @@ def _seats_held(session: Session, teacher_id: uuid.UUID) -> int:
     )
 
 
+def seats_over_capacity(
+    session: Session, teacher_user_id: uuid.UUID, terms: TierTerms, *, extra_seats: int
+) -> int:
+    """Active students over the capacity ``terms`` give a teacher holding ``extra_seats``.
+
+    The one rule behind the notice email, the billing summary and the renewal's shed: active seats
+    only (a seat already leaving does not count, so the number falls to zero once the teacher has
+    removed enough students), minus the included seats plus the extra seats the terms still sell.
+    """
+    capacity = terms.included_seats + (extra_seats if terms.extra_seat_price_minor > 0 else 0)
+    return max(0, _seats_held(session, teacher_user_id) - capacity)
+
+
 def seats_to_remove(
     session: Session, sub: Subscription, tier: PlanTier, new_terms: TierTerms
 ) -> int | None:
     """Active students over the capacity ``new_terms`` give: how many must go before the renewal.
 
-    The one definition, shared by the notice email, the renewal's shed and the billing summary:
-    active seats only (a seat already leaving does not count, so the number falls to zero once the
-    teacher has removed enough students), minus the new included seats plus the extra seats the
-    new terms still sell. ``None`` for a plan that holds no seats (not a teacher plan).
+    :func:`seats_over_capacity` at the seat count the next renewal will use (a pending seat
+    change when there is one). ``None`` for a plan that holds no seats (not a teacher plan).
     """
     if tier.audience is not PlanAudience.teacher:
         return None
     seats = sub.pending_extra_seats if sub.pending_extra_seats is not None else sub.extra_seats or 0
-    capacity = new_terms.included_seats + (seats if new_terms.extra_seat_price_minor > 0 else 0)
-    return max(0, _seats_held(session, sub.user_id) - capacity)
+    return seats_over_capacity(session, sub.user_id, new_terms, extra_seats=seats)
 
 
 def queue_terms_change_notices(
@@ -656,8 +666,15 @@ class PendingTermsChange:
     allowance_changes: bool
     included_seats_changes: bool
     seat_allowance_changes: bool
+    seat_allowance_change: Literal["more", "less", "same"] | None
+    """``more``, ``less`` or ``same`` for a teacher plan; ``None`` on a plan that holds no seats."""
     ends_instead_of_moving: bool
     seats_to_remove: int | None
+
+
+def _direction(current: int, new: int) -> Literal["more", "less", "same"]:
+    """``more``, ``less`` or ``same``: which way a quantity moves (units are never shown)."""
+    return "more" if new > current else "less" if new < current else "same"
 
 
 def pending_terms_change(
@@ -689,6 +706,11 @@ def pending_terms_change(
         allowance_changes=new_terms.allowance_units != cur_terms.allowance_units,
         included_seats_changes=new_terms.included_seats != cur_terms.included_seats,
         seat_allowance_changes=new_terms.seat_allowance_units != cur_terms.seat_allowance_units,
+        seat_allowance_change=(
+            None
+            if tier_for_terms(session, sub.plan_tier_id).audience is not PlanAudience.teacher
+            else _direction(cur_terms.seat_allowance_units, new_terms.seat_allowance_units)
+        ),
         ends_instead_of_moving=(
             not amount_updatable
             and renewal_amount(new_terms, seats) != renewal_amount(cur_terms, seats)
@@ -884,6 +906,7 @@ __all__ = [
     "queue_terms_change_notices",
     "renewal_amount",
     "same_terms",
+    "seats_over_capacity",
     "seats_to_remove",
     "subscriber_counts",
     "subscribers_to_move",

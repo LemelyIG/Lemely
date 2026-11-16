@@ -153,3 +153,32 @@ def test_after_a_payer_cancel_the_summary_says_cancelling_with_no_reason_and_kee
     )
     view = _view(_client(sm, student, Role.student))
     assert (view["cancelAtPeriodEnd"], view["cancelReason"]) == (True, "plan_terms_changed")
+
+
+def test_seat_allowance_change_says_which_way_each_seats_allowance_goes(
+    sm: sessionmaker[Session],
+) -> None:
+    """``seatAllowanceChange``: ``more``, ``less`` or ``same`` on a teacher plan (never units)."""
+    for units, price, expected in (
+        (150, 9_900, "more"),
+        (50, 9_900, "less"),
+        (100, 12_000, "same"),
+    ):
+        teacher, tier, sub, _ = _teacher_with_seats(sm, seats=1, included=5)
+        edit_tier_terms(sm, tier, seat_allowance_units=units, price_minor=price)
+        _set_pending_terms(sm, sub, version=2, effective_at=LATER)
+        change = _change(sm, teacher, Role.teacher)
+        assert change["seatAllowanceChange"] == expected
+        assert change["seatAllowanceChanges"] is (expected != "same")
+        assert "seatAllowanceUnits" not in change
+
+
+def test_seat_allowance_change_is_null_on_a_plan_that_holds_no_seats(
+    sm: sessionmaker[Session],
+) -> None:
+    student = add_user(sm, Role.student)
+    tier = _tier(sm, price_minor=9_900)
+    sub = _sub(sm, user=student, tier=tier, payer=student)
+    edit_tier_terms(sm, tier, price_minor=12_000)
+    _set_pending_terms(sm, sub, version=2, effective_at=LATER)
+    assert _change(sm, student, Role.student)["seatAllowanceChange"] is None

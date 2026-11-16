@@ -84,6 +84,7 @@ from lemely.db.plan_terms_repo import (
     current_terms_for,
     other_version_priced_at,
     renewal_amount,
+    seats_over_capacity,
     terms_for,
     terms_in_force_for_next_period,
     tier_terms,
@@ -613,10 +614,10 @@ def _shed_excess_seats(
     DV-13: member rows before ledger owner locks). ``terms`` are the period's terms: the capacity
     changes at the renewal instant and never mid-period.
     """
-    capacity = seat_capacity_for(
-        included_seats=terms.included_seats, extra_seats=subscription.extra_seats or 0
+    # The one rule the notice email and the billing summary use (plan_terms_repo).
+    excess = seats_over_capacity(
+        session, subscription.user_id, terms, extra_seats=subscription.extra_seats or 0
     )
-    excess = _seats_in_use(session, subscription.user_id) - capacity
     if excess <= 0:
         return 0
     newest = session.scalars(

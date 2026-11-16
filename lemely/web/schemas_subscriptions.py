@@ -45,6 +45,9 @@ class PendingTermsChangeDTO(ApiModel):
     allowanceChange: Literal["more", "less"] | None
     includedSeatsChanges: bool
     seatAllowanceChanges: bool
+    seatAllowanceChange: Literal["more", "less", "same"] | None
+    """Which way each seat's monthly allowance goes (units are never shown); ``None`` on a plan
+    that holds no seats."""
     endsInsteadOfMoving: bool
     seatsToRemove: int | None
     """Active students over the new plan's seats (those already leaving are not counted), the same

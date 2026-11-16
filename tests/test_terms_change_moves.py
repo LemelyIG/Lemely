@@ -1460,3 +1460,49 @@ def test_a_charge_on_a_row_that_is_not_a_plan_is_kept_and_sends_the_payer_nothin
     kept = [e for e in logs if e["event"] == "subscription_charge_on_ended_subscription"]
     assert [e["reason"] for e in kept] == ["not_a_plan"]
     assert _charge_mails(sm, owner) == []
+
+
+@pytest.mark.parametrize(("already_leaving", "expected"), [(0, 2), (1, 1)])
+def test_the_email_the_summary_and_the_renewal_shed_agree_on_the_seats_to_remove(
+    sm: sessionmaker[Session], already_leaving: int, expected: int
+) -> None:
+    """One rule (``seats_over_capacity``): active students over the new capacity, a seat already
+    leaving not counted. The notice mail's ``seats_over``, the summary's ``seatsToRemove`` and
+    the students the renewal then moves to leaving are the same number."""
+    teacher = seed_user(sm, Role.teacher)
+    tier = seed_tier(sm, audience=PlanAudience.teacher, price_minor=10_000, included_seats=5)
+    _, sid = _linked(sm, tier, user=teacher, period_end=END)
+    members = [
+        seed_seat(sm, teacher_id=teacher, student_id=seed_user(sm, Role.student)) for _ in range(5)
+    ]
+    with sm.begin() as session:
+        team = TeacherTeamService(session)
+        for member in members[:already_leaving]:
+            team.request_removal(member, now=NOW0)
+    edit_tier_terms(sm, tier, included_seats=3)
+    _notify(sm)
+    (mail,) = _mail(sm, teacher)
+    with sm() as session:
+        sub = session.get(Subscription, sid)
+        assert sub is not None
+        change = pending_terms_change(session, sub, interval="monthly", amount_updatable=True)
+    assert change is not None
+    assert mail.context["seats_over"] == change.seats_to_remove == expected
+
+    def leaving() -> int:
+        with sm() as session:
+            return int(
+                session.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(TeacherMember)
+                    .where(
+                        TeacherMember.teacher_user_id == teacher,
+                        TeacherMember.status == TeacherMemberStatus.leaving,
+                    )
+                )
+                or 0
+            )
+
+    before = leaving()
+    _renew(sm, 10_000)  # the renewal moves the subscriber to the new terms and sheds
+    assert leaving() - before == expected
