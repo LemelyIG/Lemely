@@ -80,6 +80,20 @@ class ReviewGrade(enum.Enum):
     easy = "easy"
 
 
+class DeckGenerationStatus(enum.StrEnum):
+    """Where an AI deck's card writing stands (redesign L10).
+
+    ``ready`` is also the value for every manual deck and every deck written before generation
+    became asynchronous, so a reader never has to special-case "no status". Stored as a short
+    string with a check constraint rather than a Postgres enum: the set is small, and widening
+    it later should not need an ``ALTER TYPE``.
+    """
+
+    writing = "writing"
+    ready = "ready"
+    failed = "failed"
+
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -99,6 +113,9 @@ class FlashcardDeck(TimestampMixin, Base):
     __tablename__ = "flashcard_decks"
     __table_args__ = (
         sa.Index("ix_flashcard_decks_user_id_subject_code", "user_id", "subject_code"),
+        sa.CheckConstraint(
+            "generation_status IN ('writing', 'ready', 'failed')", name="generation_status"
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -119,6 +136,18 @@ class FlashcardDeck(TimestampMixin, Base):
         sa.Enum(DeckOrigin, name="deckorigin"),
         nullable=False,
     )
+    generation_status: Mapped[str] = mapped_column(
+        sa.String(16), nullable=False, server_default=sa.text("'ready'")
+    )
+    """A :class:`DeckGenerationStatus` value. ``writing`` while the background job runs."""
+    requested_count: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    """How many cards the student asked the model for. ``NULL`` for a manual deck."""
+    generation_started_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    """When the current writing attempt began; a stale ``writing`` deck is reported failed."""
+    generation_error: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
+    """A short machine code (``model_error``, ``no_cards``, ``timeout``, ``unavailable``)."""
 
     cards: Mapped[list[Flashcard]] = relationship(
         "Flashcard", back_populates="deck", cascade="all, delete-orphan"
@@ -234,6 +263,7 @@ class FlashcardReview(TimestampMixin, Base):
 
 __all__ = [
     "CardSource",
+    "DeckGenerationStatus",
     "DeckOrigin",
     "Flashcard",
     "FlashcardDeck",
