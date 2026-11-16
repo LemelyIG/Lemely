@@ -54,6 +54,7 @@ from lemely.db.models.quizzes import QuestionBank, Quiz, QuizAssignment, QuizSub
 from lemely.db.models.study_plan import StudyPlanActivityType
 from lemely.db.models.users import User
 from lemely.db.study_plan_repo import (
+    PlanView,
     StudyPlanMoveError,
     StudyPlanNotFoundError,
     StudyPlanOwnershipError,
@@ -685,7 +686,7 @@ _SUN = _MON + timedelta(days=6)  # 2026-08-09, this ISO week's Sunday
 
 def _seed_plan(
     sm: sessionmaker[Session], service: StudyPlanService, *, topic: str = "1 Motion"
-) -> tuple[uuid.UUID, object]:
+) -> tuple[uuid.UUID, PlanView]:
     """One weak topic and the default 11-hour week: 7 blocks, Wed..Tue (spills past Sunday)."""
     student = _seed_user(sm)
     _seed_weakness(sm, student, topic=topic, lost_marks=5)
@@ -825,3 +826,20 @@ def test_next_week_generation_lands_on_next_mondays_week(
     )
     assert found is not None
     assert found.id == upcoming.id
+
+
+def test_a_next_week_session_cannot_move_before_its_own_week(
+    pg_sessionmaker: sessionmaker[Session], study_plan_service: StudyPlanService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _seed_weakness(pg_sessionmaker, student, topic="1 Motion", lost_marks=5)
+    upcoming = study_plan_service.generate(student, "0625", next_week=True)
+    session_id = upcoming.sessions[0].id
+
+    with pytest.raises(StudyPlanMoveError) as exc:
+        study_plan_service.move_session(student, session_id, _WED)
+    assert exc.value.code == "outside_week"
+
+    # Inverse: a day inside next week is allowed.
+    inside = upcoming.week_start + timedelta(days=2)
+    assert study_plan_service.move_session(student, session_id, inside).date == inside

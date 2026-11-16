@@ -66,7 +66,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from sqlalchemy import func, select
 
@@ -135,6 +135,9 @@ class StudyPlanOwnershipError(StudyPlanError):
     """
 
 
+MoveErrorCode = Literal["completed", "superseded", "past_day", "outside_week"]
+
+
 class StudyPlanMoveError(StudyPlanError):
     """A move the plan does not allow.
 
@@ -143,15 +146,16 @@ class StudyPlanMoveError(StudyPlanError):
     * ``"completed"``: the session is done, and a completion record is history.
     * ``"superseded"``: a rebuild replaced the plan, so the id is stale.
     * ``"past_day"``: the target is before today.
-    * ``"outside_week"``: the target is after the plan's last day.
+    * ``"outside_week"``: the target is before the plan's own week (a next-week
+      plan) or after its last day.
 
     The plan's last day is its ISO Sunday, or its latest session if the scheduler
     placed one past Sunday (sessions start at ``now.date()``).
     """
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: MoveErrorCode, message: str) -> None:
         super().__init__(message)
-        self.code = code
+        self.code: MoveErrorCode = code
 
 
 @dataclass(frozen=True, slots=True)
@@ -407,7 +411,7 @@ class StudyPlanService:
                 )
             )
             last_day = max(plan.week_start + timedelta(days=6), latest or plan.week_start)
-            if to_date > last_day:
+            if to_date < plan.week_start or to_date > last_day:
                 raise StudyPlanMoveError(
                     "outside_week", "A session can only move within its own week"
                 )
