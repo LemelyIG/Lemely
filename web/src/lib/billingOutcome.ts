@@ -27,7 +27,17 @@ const CONFLICTS: Record<string, string> = {
     "More students hold seats than this would leave. Remove students first. A removed student's seat frees up at the end of the month.",
   seats_insufficient: "That plan has fewer seats than students you have seated. Remove students first, then change the plan.",
   seats_exceed_new_tier: "That plan has fewer seats than students you have seated. Remove students first, then change the plan.",
-  charge_in_flight: "A charge for this is already being confirmed. Wait a minute, then check again.",
+  charge_in_flight: "A payment for this is already being confirmed. Wait a minute, then check again.",
+  not_an_upgrade: "That plan isn't an upgrade from your current one. Pick it from the plans page instead.",
+  not_a_teacher_plan: "Extra seats are only for teacher plans.",
+  subscription_not_active: "Your plan's last payment didn't go through, so it can't be changed until it's paid.",
+  upgrade_unavailable: "This plan can't be upgraded mid-period right now. Your plan is unchanged and nothing was charged.",
+  seat_reduction_unavailable: "Seats can't be reduced right now. Nothing has changed.",
+  seat_reduction_locked: "You can change this reduction at your next renewal.",
+  seats_changing: "Your seats were just changed. Check the count, then try again.",
+  seats_over_limit: "That would take you past the most seats a plan can hold.",
+  settings_changing: "These settings just changed. Reload and try again.",
+  cap_below_pack_price: "The monthly limit is lower than the price of one pack. Raise the limit or pick a smaller pack.",
   plan_change_pending: "A plan change is already scheduled. It applies at the end of this period.",
   downgrade_unavailable:
     "This plan can't be scheduled as a downgrade right now. Your current plan is unchanged and nothing was charged. You can still cancel it from the billing page.",
@@ -40,6 +50,42 @@ const CONFLICTS: Record<string, string> = {
   invite_limit: "There are too many open invites. Revoke one first.",
 }
 
+/** A numeric fact the refusal carries (`extraSeats`, `inUse`, `capacity`), or null. */
+function detailCount(err: unknown, key: "extraSeats" | "inUse" | "capacity"): number | null {
+  if (!(err instanceof ApiError)) return null
+  const v = (err.detail as Record<string, unknown> | undefined)?.[key]
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null
+}
+
+/** The cancel-and-resubscribe fallback `upgrade_unavailable` carries when the plan has a fixed amount. */
+function wantsCancelAndResubscribe(err: unknown): boolean {
+  if (!(err instanceof ApiError)) return false
+  return (err.detail as { next?: unknown } | undefined)?.next === "cancel_and_resubscribe"
+}
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
+
+/** Conflicts whose wording depends on facts in the refusal. */
+function detailedConflict(code: string, err: unknown): string | null {
+  if (code === "upgrade_unavailable" && wantsCancelAndResubscribe(err)) {
+    return "This plan can't be upgraded mid-period. Cancel at the end of the period and subscribe to the new plan."
+  }
+  if (code === "seats_not_sold") {
+    const extra = detailCount(err, "extraSeats")
+    return extra
+      ? `That plan doesn't include extra seats, and you have ${plural(extra, "extra seat", "extra seats")}. Remove them first, then change the plan.`
+      : "That plan doesn't include extra seats. Remove any extra seats first, then change the plan."
+  }
+  if (code === "seats_exceed_new_tier") {
+    const inUse = detailCount(err, "inUse")
+    const capacity = detailCount(err, "capacity")
+    return inUse !== null && capacity !== null
+      ? `That plan has ${plural(capacity, "seat", "seats")} and ${inUse} ${inUse === 1 ? "is" : "are"} in use. Remove students first, then change the plan.`
+      : null
+  }
+  return null
+}
+
 export function billingFailureMessage(err: unknown, action: string): string {
   const status = err instanceof ApiError ? err.status : -1
   if (status === 0) return "You're offline. Nothing was charged. Try again when you're back online."
@@ -48,7 +94,11 @@ export function billingFailureMessage(err: unknown, action: string): string {
   if (status === 429) return "Too many attempts. Wait a minute and try again."
   if (status === 409) {
     const code = billingErrorCode(err)
-    if (code && CONFLICTS[code]) return CONFLICTS[code]
+    if (code) {
+      const specific = detailedConflict(code, err)
+      if (specific) return specific
+      if (CONFLICTS[code]) return CONFLICTS[code]
+    }
   }
   // UD-11. `PlansView` shows the phone field in place of this line; any other caller still gets a
   // sentence that names the fix instead of "check the details".

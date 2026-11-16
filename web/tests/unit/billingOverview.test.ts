@@ -244,25 +244,27 @@ describe("PlanChangeDialog", () => {
   const up = { ...fx.studentMonthly, id: "t-up", name: "Student Max", priceMinor: 40000 }
   const down = { ...fx.studentMonthly, id: "t-down", name: "Student Lite", priceMinor: 10000 }
   const dialog = (tier = up, savedCard = fx.summary.savedCard) =>
-    renderStatic(h(PlanChangeDialog, { open: true, onClose: () => undefined, subscription: fx.activeSub, tier, savedCard }))
+    renderStatic(h(PlanChangeDialog, { open: true, onClose: () => undefined, subscription: fx.activeSub, tier, savedCard, returnTo: "/teacher/billing" }))
 
   it("announces quoting an upgrade", () => {
     s.quote = fakeMutation({ isPending: true })
     expect(dialog()).toContain("Working out the price")
   })
 
-  it("prices an upgrade against the saved card", () => {
+  it("prices an upgrade and offers the saved card on Paymob's page", () => {
     s.quote = fakeMutation({ isSuccess: true, data: { amountMinor: 7500, currency: "EGP", allowanceUnits: 900, periodEnd: "2026-12-01T00:00:00Z" } })
     const html = dialog()
-    expect(html).toMatch(/Pay EGP\s75\.00 and upgrade/)
+    expect(html).toMatch(/Continue to payment \(EGP\s75\.00\)/)
+    expect(html).toContain("confirm it with your bank on the next page")
     expect(html).toContain("Mastercard")
+    expect(html).not.toMatch(/upgraded|Upgraded/)
   })
 
-  it("refuses an upgrade without a saved card", () => {
+  it("still offers payment with no saved card: the card is typed on Paymob's page", () => {
     s.quote = fakeMutation({ isSuccess: true, data: { amountMinor: 7500, currency: "EGP", allowanceUnits: 900, periodEnd: "2026-12-01T00:00:00Z" } })
     const html = dialog(up, null)
-    expect(html).toContain("Upgrades are charged to a saved card.")
-    expect(html).not.toContain("and upgrade")
+    expect(html).toMatch(/Continue to payment/)
+    expect(html).not.toContain("saved card")
   })
 
   it("schedules a downgrade with no quote and no charge", () => {
@@ -271,9 +273,10 @@ describe("PlanChangeDialog", () => {
     expect(html).toContain("Schedule the change")
   })
 
-  it("follows an upgrade payment and reports a scheduled downgrade", () => {
-    s.upgrade = fakeMutation({ isSuccess: true, data: { paymentId: "pay1", status: "pending", amountMinor: 7500, currency: "EGP" } })
-    expect(dialog()).toContain("Confirming your payment")
+  it("holds the loading state on the way to checkout and reports a scheduled downgrade", () => {
+    s.upgrade = fakeMutation({ isSuccess: true, data: { paymentId: "pay1", checkoutUrl: "https://eg.checkout.paymob.com/?x=1" } })
+    expect(dialog()).toContain("Taking you to the payment page")
+    expect(dialog()).toContain('data-dismissible="false"')
     s.upgrade = fakeMutation()
     s.downgrade = fakeMutation({ isSuccess: true, data: { ...wireSub, pendingPlanTierId: "t-down" } })
     expect(dialog(down)).toMatch(/role="status"[^>]*>Scheduled\. Student Lite starts on/)

@@ -6,15 +6,19 @@ import {
   invalidateOnPaid,
   isSafeCheckoutUrl,
   packCheckoutRequest,
+  backLabel,
+  paidResult,
   rememberReturnTo,
+  retryPath,
   returnCopy,
   returnToFor,
   seatsIncludedLabel,
   startCheckoutRedirect,
   subscriptionCheckoutRequest,
   tiersForInterval,
+  type PaymentResult,
 } from "@/lib/checkoutReturn"
-import type { PlanTier } from "@/lib/billingTypes"
+import type { PaymentPurpose, PaymentVoidReason, PlanTier } from "@/lib/billingTypes"
 
 function memoryStorage(): Storage {
   const m = new Map<string, string>()
@@ -101,6 +105,62 @@ describe("checkout redirect", () => {
     expect(startCheckoutRedirect({ paymentId: "p10", checkoutUrl: "javascript:x" }, "/", go)).toBe(false)
     expect(go).toHaveBeenCalledTimes(1)
     vi.unstubAllGlobals()
+  })
+})
+
+describe("paid results", () => {
+  const copy = (p: Partial<PaymentResult>, purpose: PaymentPurpose = "upgrade_proration") =>
+    returnCopy("paid", purpose, false, { outcome: null, creditedUnits: null, voidReason: null, ...p })
+
+  it("reads the normal paid copy when applied or when the fields are null", () => {
+    expect(copy({ outcome: "applied" }).heading).toBe("Plan upgraded")
+    expect(copy({}).heading).toBe("Plan upgraded")
+    expect(copy({}, "extra_seats").heading).toBe("Seats added")
+  })
+
+  it("reads the credited copy when creditedUnits is a number, and keeps the reason", () => {
+    const c = copy({ outcome: "credited", creditedUnits: 120, voidReason: "plan_ended" })
+    expect(c.heading).toBe("Added to your credits")
+    expect(c.body).toMatch(/plan ended before this payment cleared/)
+    expect(c.body).toMatch(/Nothing else changed/)
+    expect(copy({ outcome: "credited", creditedUnits: 120, voidReason: "seats_over_limit" }).body).toMatch(/seat limit/)
+    expect(copy({ outcome: "credited", creditedUnits: 120, voidReason: null }).body).toBe(
+      "Your plan changed before this payment cleared, so we added it to your credits instead. Nothing else changed.",
+    )
+    // A renewal seat row has no outcome but does carry credits.
+    expect(copy({ creditedUnits: 5, voidReason: "period_ended" }).heading).toBe("Added to your credits")
+    expect(copy({ creditedUnits: null }).heading).toBe("Plan upgraded")
+  })
+
+  it("says the payment was received and is being handled on needs_attention", () => {
+    const c = copy({ outcome: "needs_attention", voidReason: "seats_changing" })
+    expect(c.heading).toBe("Payment received, we're handling it")
+    expect(c.body).not.toMatch(/credits|added|upgraded/i)
+    expect(paidResult({ outcome: "needs_attention", creditedUnits: 5, voidReason: null })).toBe("needs_attention")
+  })
+
+  it("never writes an amount of money", () => {
+    for (const reason of ["plan_ended", "period_rolled", "superseded", "seats_changing", "seats_over_limit", "seats_not_sold", "period_ended", "seats_dropped", "not_an_upgrade_now"]) {
+      expect(copy({ outcome: "credited", creditedUnits: 9, voidReason: reason as PaymentVoidReason }).body).not.toMatch(/\d|EGP/)
+    }
+  })
+})
+
+describe("where the way back and Try again go", () => {
+  it("sends plans and packs to the plans page and extra seats to the team page itself", () => {
+    expect(retryPath("subscription_first", "/teacher/billing")).toBe("/teacher/billing/plans")
+    expect(retryPath("credit_pack", "/student/billing")).toBe("/student/billing/plans")
+    expect(retryPath("upgrade_proration", "/teacher/billing")).toBe("/teacher/billing/plans")
+    expect(retryPath("extra_seats", "/teacher/team")).toBe("/teacher/team")
+    expect(retryPath("credit_pack", "/parent")).toBe("/parent")
+    expect(retryPath("credit_pack", "/")).toBe("/")
+  })
+
+  it("labels the way back for the page it goes to", () => {
+    expect(backLabel("extra_seats")).toBe("Back to your team")
+    expect(backLabel("extra_seats", true)).toBe("Go to your team")
+    expect(backLabel("upgrade_proration")).toBe("Back to billing")
+    expect(backLabel("credit_pack", true)).toBe("Go to billing")
   })
 })
 

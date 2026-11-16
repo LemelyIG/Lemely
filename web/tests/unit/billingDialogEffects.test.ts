@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ApiError } from "@/lib/api"
 import { billingFailureMessage } from "@/lib/billingOutcome"
 import { fx } from "./support/billingFixtures"
-import { fakeMutation, okQuery, renderStatic } from "./support/billingRender"
+import { fakeMutation, renderStatic } from "./support/billingRender"
 
 /*
  * `renderToStaticMarkup` never runs effects, so these tests run them: `useEffect` is replaced by
@@ -15,7 +15,6 @@ const s = vi.hoisted(() => ({
   quote: null as unknown,
   upgrade: null as unknown,
   downgrade: null as unknown,
-  payment: null as unknown,
   invalidated: [] as unknown[][],
 }))
 
@@ -27,43 +26,24 @@ vi.mock("@/lib/hooks/useBillingApi", () => ({
   useUpgradeQuote: () => s.quote,
   useUpgrade: () => s.upgrade,
   useDowngrade: () => s.downgrade,
-  usePaymentStatus: () => s.payment,
   invalidateBilling: (...a: unknown[]) => void s.invalidated.push(a),
 }))
 vi.mock("@/components/ui/modal", () => ({
   Modal: (p: { open: boolean; children: unknown }) => (p.open ? h("div", { role: "dialog" }, p.children as never) : null),
 }))
 
-import { PaymentProgress } from "@/portals/billing/PaymentProgress"
 import { PlanChangeDialog } from "@/portals/billing/PlanChangeDialog"
 
 const up = { ...fx.studentMonthly, id: "t-up", name: "Student Max", priceMinor: 40000 }
 const down = { ...fx.studentMonthly, id: "t-down", name: "Student Lite", priceMinor: 10000 }
 const dialog = (tier = up, savedCard = fx.summary.savedCard) =>
-  renderStatic(h(PlanChangeDialog, { open: true, onClose: () => undefined, subscription: fx.activeSub, tier, savedCard }))
+  renderStatic(h(PlanChangeDialog, { open: true, onClose: () => undefined, subscription: fx.activeSub, tier, savedCard, returnTo: "/teacher/billing" }))
 
 beforeEach(() => {
   s.quote = fakeMutation()
   s.upgrade = fakeMutation()
   s.downgrade = fakeMutation()
   s.invalidated = []
-  s.payment = Object.assign(okQuery(fx.payment), { pollingStopped: false })
-})
-
-describe("PaymentProgress", () => {
-  it("refreshes billing once when the payment is paid, not while it is confirming", () => {
-    renderStatic(h(PaymentProgress, { paymentId: "pay1" }))
-    expect(s.invalidated).toHaveLength(0)
-    s.payment = Object.assign(okQuery({ ...fx.payment, status: "paid", paidAt: "2026-11-05T09:01:00Z" }), { pollingStopped: false })
-    renderStatic(h(PaymentProgress, { paymentId: "pay1" }))
-    expect(s.invalidated).toHaveLength(1)
-  })
-
-  it("does not refresh for a failed payment", () => {
-    s.payment = Object.assign(okQuery({ ...fx.payment, status: "failed" }), { pollingStopped: false })
-    renderStatic(h(PaymentProgress, { paymentId: "pay1" }))
-    expect(s.invalidated).toHaveLength(0)
-  })
 })
 
 describe("PlanChangeDialog quote request", () => {
@@ -74,9 +54,9 @@ describe("PlanChangeDialog quote request", () => {
     expect(mutate()).toHaveBeenCalledWith({ subscriptionId: "sub1", planTierId: "t-up" })
   })
 
-  it("skips the quote when there is no saved card to charge", () => {
+  it("quotes an upgrade with no saved card: the card is typed on Paymob's page", () => {
     dialog(up, null)
-    expect(mutate()).not.toHaveBeenCalled()
+    expect(mutate()).toHaveBeenCalledWith({ subscriptionId: "sub1", planTierId: "t-up" })
   })
 
   it("never quotes a downgrade", () => {

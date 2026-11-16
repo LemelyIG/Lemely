@@ -125,7 +125,28 @@ export interface WirePaymentStatus {
   currency: string
   description: string
   paidAt: string | null
+  /** Credits an upgrade or seat payment became when its effect was void at settle time; else null. */
+  creditedUnits: number | null
+  /** What a paid upgrade or seat payment came to; null for other purposes and before it is paid. */
+  outcome: PaymentOutcome | null
+  /** Why an upgrade or seat payment was voided, credited or not; null otherwise. */
+  voidReason: PaymentVoidReason | null
 }
+
+/** `outcome` on `GET /billing/payments/{id}`. */
+export type PaymentOutcome = "applied" | "credited" | "needs_attention"
+
+/** `voidReason` on `GET /billing/payments/{id}`: the nine reasons the backend can stamp. */
+export type PaymentVoidReason =
+  | "plan_ended"
+  | "period_rolled"
+  | "superseded"
+  | "not_an_upgrade_now"
+  | "seats_changing"
+  | "seats_over_limit"
+  | "seats_not_sold"
+  | "period_ended"
+  | "seats_dropped"
 
 /** 02 `ReceiptDTO`. */
 export interface WireReceipt {
@@ -217,14 +238,6 @@ export interface WireBillingSummary {
 }
 
 // ── Wire DTOs: Phase 06 (merchant charges) ──────────────────────────────────
-
-/** 06 `ChargeDTO` (202 from upgrade and extra seats). */
-export interface WireCharge {
-  paymentId: string
-  status: PaymentStatus
-  amountMinor: number
-  currency: string
-}
 
 /** 06 `ChargeQuoteDTO`, for `…/upgrade/quote` and `…/seats/quote` (R3). No side effects; the
  * card it would charge is the summary's `savedCard`. */
@@ -459,7 +472,6 @@ export type Receipt = WireReceipt
 
 export type AutoTopupSettings = WireAutoTopup
 
-export type MerchantChargeStarted = WireCharge
 export type SeatReductionResult = WireSeats
 
 export interface EstimateResponse {

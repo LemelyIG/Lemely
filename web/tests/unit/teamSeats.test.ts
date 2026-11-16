@@ -50,7 +50,7 @@ const text = (html: string) => html.replace(/<[^>]+>/g, "").replace(/&#x27;/g, "
 
 const quoted = { amountMinor: 4500, currency: "EGP", allowanceUnits: null, periodEnd: "2026-12-01T00:00:00Z" }
 const addDialog = (savedCard = fx.team.savedCard) =>
-  renderStatic(h(AddSeatsDialog, { open: true, onClose: () => undefined, subscriptionId: "sub-t", perSeatMinor: 3000, savedCard }))
+  renderStatic(h(AddSeatsDialog, { open: true, onClose: () => undefined, subscriptionId: "sub-t", perSeatMinor: 3000, savedCard, returnTo: "/teacher/team" }))
 
 describe("SeatsPanel", () => {
   it("shows capacity, the seat list and actions", () => {
@@ -251,20 +251,20 @@ describe("seat count dialogs", () => {
     expect(html).not.toContain("Pay EGP")
   })
 
-  it("quotes and confirms extra seats against the saved card", () => {
+  it("quotes extra seats, then continues to Paymob's checkout", () => {
     s.m.quote = fakeMutation({ isSuccess: true, data: quoted })
     const html = addDialog()
-    expect(html).toMatch(/Pay EGP\s45\.00 for 1 seat</)
+    expect(html).toMatch(/Continue to payment \(EGP\s45\.00\)</)
     expect(text(html)).toMatch(/For 1 seat you pay EGP\s45\.00 now/)
     expect(text(html)).toMatch(/EGP\s30\.00 per seat/)
     expect(html).toContain("Mastercard")
   })
 
-  it("refuses without a saved card", () => {
+  it("still offers payment with no saved card", () => {
     s.m.quote = fakeMutation({ isSuccess: true, data: quoted })
     const html = addDialog(null)
-    expect(html).toContain("Seats are charged to a saved card.")
-    expect(html).not.toContain("Pay EGP")
+    expect(html).toContain("Continue to payment")
+    expect(html).not.toContain("saved card")
   })
 
   it("locks the seat count while the charge is being made", () => {
@@ -274,9 +274,12 @@ describe("seat count dialogs", () => {
     expect(addDialog()).toMatch(/<input(?=[^>]*type="number")[^>]*\sdisabled=""/)
   })
 
-  it("follows the charge after confirming", () => {
-    s.m.add = fakeMutation({ isSuccess: true, data: { paymentId: "pay1", status: "pending", amountMinor: 4500, currency: "EGP" } })
-    expect(addDialog()).toContain("Confirming your payment")
+  it("holds the loading state on the way to checkout, never saying the seats were added", () => {
+    s.m.quote = fakeMutation({ isSuccess: true, data: quoted })
+    s.m.add = fakeMutation({ isSuccess: true, data: { paymentId: "pay1", checkoutUrl: "https://eg.checkout.paymob.com/?x=1" } })
+    const html = addDialog()
+    expect(html).toContain("Taking you to the payment page")
+    expect(html).not.toMatch(/Seats added|were added/)
   })
 
   it("reports a failed quote", () => {

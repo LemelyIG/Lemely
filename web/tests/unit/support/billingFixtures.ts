@@ -111,6 +111,9 @@ const payment: PaymentStatusView = {
   currency: "EGP",
   description: "500 credits",
   paidAt: null,
+  creditedUnits: null,
+  outcome: null,
+  voidReason: null,
 }
 
 // "Not set up" exactly as plan 06 sends it.

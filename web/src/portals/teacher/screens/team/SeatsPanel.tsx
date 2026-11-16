@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 /* Allowance shown as a share, never as units; a six-column table from xl and stacked cards below, one of them hidden at any width. Plan-inactive and every-seat-taken notices say what to do next. */
 import { useState } from "react"
-import { Link } from "react-router-dom"
+import { Link, useLocation } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
 import { ProgressBar } from "@/components/ui/progress-bar"
@@ -73,6 +73,7 @@ function SeatActions({
 
 export function SeatsPanel({ team }: { team: TeamView }) {
   const cap = seatCapacityModel(team)
+  const { pathname } = useLocation()
   const [adding, setAdding] = useState(false)
   const [reducing, setReducing] = useState(false)
   // Held by id so the dialog always reads the current row after the list refreshes.
@@ -175,6 +176,7 @@ export function SeatsPanel({ team }: { team: TeamView }) {
           subscriptionId={team.subscriptionId}
           perSeatMinor={team.extraSeatPriceMinor}
           savedCard={team.savedCard}
+          returnTo={pathname}
         />
       ) : null}
       {team.subscriptionId && reducing ? (

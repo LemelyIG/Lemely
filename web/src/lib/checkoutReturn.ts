@@ -5,6 +5,7 @@ import type {
   CheckoutResponse,
   PackCheckoutRequest,
   PaymentPurpose,
+  PaymentStatusView,
   PlanTier,
   SubscriptionCheckoutRequest,
 } from "@/lib/billingTypes"
@@ -154,7 +155,76 @@ const PAID: Record<PaymentPurpose, ReturnCopy> = {
   subscription_renewal: { heading: "Renewal paid", body: "Your plan continues for another period." },
 }
 
-export function returnCopy(phase: PaymentPhase, purpose: PaymentPurpose, pollingStopped: boolean): ReturnCopy {
+/** The part of a payment status that decides what a paid upgrade or seat payment came to. */
+export type PaymentResult = Pick<PaymentStatusView, "outcome" | "creditedUnits" | "voidReason">
+
+/** How a paid payment ended: as bought, turned into credits, or received and being handled. */
+export type PaidResult = "applied" | "credited" | "needs_attention"
+
+/**
+ * `outcome` decides. `credited` also covers a renewal seat row, whose `outcome` is null but whose
+ * `creditedUnits` is set. Without either field the payment is simply as bought.
+ */
+export function paidResult(p: PaymentResult | undefined): PaidResult {
+  if (p?.outcome === "needs_attention") return "needs_attention"
+  if (p?.outcome === "credited" || (p?.outcome !== "applied" && typeof p?.creditedUnits === "number")) return "credited"
+  return "applied"
+}
+
+const CREDITED_TAIL = "so we added it to your credits instead. Nothing else changed."
+
+/** Why the payment became credits, in words that match what actually happened (generic when unknown). */
+const CREDITED_BODY: Record<string, string> = {
+  plan_ended: `Your plan ended before this payment cleared, ${CREDITED_TAIL}`,
+  period_rolled: `Your plan renewed before this payment cleared, ${CREDITED_TAIL}`,
+  period_ended: `Your plan renewed before this payment cleared, ${CREDITED_TAIL}`,
+  superseded: `Another change to your plan went through first, ${CREDITED_TAIL}`,
+  not_an_upgrade_now: `Another change to your plan went through first, ${CREDITED_TAIL}`,
+  seats_changing: `Your seats were changed while this payment was clearing, ${CREDITED_TAIL}`,
+  seats_dropped: `Your seats were changed while this payment was clearing, ${CREDITED_TAIL}`,
+  seats_over_limit: `Your team was already at its seat limit, ${CREDITED_TAIL}`,
+  seats_not_sold: `Your plan doesn't include extra seats, ${CREDITED_TAIL}`,
+}
+
+export const CREDITED_FALLBACK = `Your plan changed before this payment cleared, ${CREDITED_TAIL}`
+
+const NEEDS_ATTENTION: ReturnCopy = {
+  heading: "Payment received, we're handling it",
+  body: "Your payment came through, but we couldn't apply the change automatically. We'll sort it out or refund it. You don't need to pay again.",
+}
+
+/** The paid copy for a payment, by what it came to. */
+function paidCopy(purpose: PaymentPurpose, payment: PaymentResult | undefined): ReturnCopy {
+  const result = paidResult(payment)
+  if (result === "needs_attention") return NEEDS_ATTENTION
+  if (result === "credited") {
+    return { heading: "Added to your credits", body: (payment?.voidReason && CREDITED_BODY[payment.voidReason]) || CREDITED_FALLBACK }
+  }
+  return PAID[purpose]
+}
+
+/**
+ * Where "Try again" goes: back to where the payer started. A plan or pack is bought from the
+ * plans page under the billing page; extra seats are bought from the team page itself, so that
+ * remembered path is the target as it is.
+ */
+export function retryPath(purpose: PaymentPurpose, backTo: string): string {
+  if (purpose === "extra_seats") return backTo
+  return backTo === "/" || backTo === "/parent" ? backTo : `${backTo}/plans`
+}
+
+/** The label of the way back, which is the team page for extra seats and billing otherwise. */
+export function backLabel(purpose: PaymentPurpose, confirming = false): string {
+  const verb = confirming ? "Go to" : "Back to"
+  return purpose === "extra_seats" ? `${verb} your team` : `${verb} billing`
+}
+
+export function returnCopy(
+  phase: PaymentPhase,
+  purpose: PaymentPurpose,
+  pollingStopped: boolean,
+  payment?: PaymentResult,
+): ReturnCopy {
   switch (phase) {
     case "confirming":
       return pollingStopped
@@ -167,7 +237,7 @@ export function returnCopy(phase: PaymentPhase, purpose: PaymentPurpose, polling
             body: "Paymob is confirming the payment with your bank. This usually takes a few seconds. Keep this page open.",
           }
     case "paid":
-      return PAID[purpose]
+      return paidCopy(purpose, payment)
     case "failed":
       return {
         heading: "Payment didn't go through",

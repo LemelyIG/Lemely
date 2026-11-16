@@ -206,6 +206,28 @@ describe("billing failure copy", () => {
     expect(billingFailureMessage(errorShape("weird"), "upgrade")).toBe("Couldn't upgrade. Nothing was charged. Try again.")
   })
 
+  it("words the new refusals plainly, with the facts the backend sends", () => {
+    const err = (error: string, extra: object = {}, status = 409) => new ApiError(status, String(status), { error, message: "x", ...extra })
+    const say = (e: ApiError) => billingFailureMessage(e, "change your plan")
+    expect(say(err("upgrade_unavailable", { next: "cancel_and_resubscribe" }))).toBe(
+      "This plan can't be upgraded mid-period. Cancel at the end of the period and subscribe to the new plan.",
+    )
+    expect(say(err("upgrade_unavailable"))).toMatch(/can't be upgraded/)
+    expect(say(err("subscription_not_active"))).toBe("Your plan's last payment didn't go through, so it can't be changed until it's paid.")
+    expect(say(err("seat_reduction_locked"))).toBe("You can change this reduction at your next renewal.")
+    expect(say(err("seats_not_sold", { extraSeats: 3 }))).toMatch(/3 extra seats/)
+    expect(say(err("seats_not_sold", { extraSeats: 1 }))).toMatch(/1 extra seat\b/)
+    expect(say(err("seats_exceed_new_tier", { inUse: 5, capacity: 3 }))).toMatch(/3 seats and 5 are in use/)
+    expect(say(err("seats_exceed_new_tier"))).toMatch(/fewer seats than students/)
+    for (const code of ["not_an_upgrade", "not_a_teacher_plan", "seat_reduction_unavailable", "seats_changing", "seats_over_limit", "settings_changing", "period_ending", "cap_below_pack_price", "charge_in_flight"]) {
+      const text = say(err(code))
+      expect(text, code).not.toMatch(/^Couldn't/)
+      expect(text, code).not.toMatch(/[!—]/)
+    }
+    expect(say(err("charge_in_flight"))).toMatch(/already being confirmed/)
+    expect(say(err("no_saved_card"))).toMatch(/saved card/)
+  })
+
   it("says nothing was charged when offline or when payments are down", () => {
     expect(billingFailureMessage(new ApiError(0, "x"), "buy credits")).toMatch(/offline/)
     expect(billingFailureMessage(new ApiError(503, "x"), "buy credits")).toMatch(/Payments are unavailable/)

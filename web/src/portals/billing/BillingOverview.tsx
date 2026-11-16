@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
 /* V3: past-due notice, debt notice, plan, meters, auto top-up and links all sit in one equal-gap stack; the `-mt-6` that cancels the empty debt live region's gap is a workaround, not a layout. */
 import { useState, type ReactNode } from "react"
-import { Link, useSearchParams } from "react-router-dom"
+import { Link, useLocation, useSearchParams } from "react-router-dom"
 import { CreditBalanceCard } from "@/components/billing/credit-balance"
 import { DebtNotice } from "@/components/billing/debt-notice"
 import { UsageMeterCard } from "@/components/billing/usage-meter"
@@ -146,6 +146,7 @@ function PlanChangeHost({
   onClose: () => void
 }) {
   const [pinned, setPinned] = useState<PinnedChange | null>(null)
+  const { pathname } = useLocation()
   const known = tiers.find((t) => t.id === changeTierId)?.id ?? null
   const active = nextPinned(pinned, known, subscription)
   if (active !== pinned) setPinned(active)
@@ -158,6 +159,7 @@ function PlanChangeHost({
       subscription={active?.subscription ?? subscription}
       tier={tier}
       savedCard={savedCard}
+      returnTo={pathname}
     />
   )
 }

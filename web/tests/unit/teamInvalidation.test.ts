@@ -64,13 +64,19 @@ describe("team writes", () => {
 })
 
 describe("seat purchases", () => {
-  for (const [name, hook] of Object.entries({ useAddSeats, useReduceSeats })) {
-    it(`${name} refreshes billing and the team`, () => {
-      hook()
-      captured.options?.onSuccess?.()
-      const keys = invalidated().map((k) => JSON.stringify(k))
-      for (const k of BILLING_SUCCESS_KEYS) expect(keys).toContain(JSON.stringify(k))
-      expect(keys).toContain(JSON.stringify(["team"]))
-    })
-  }
+  it("useReduceSeats refreshes billing and the team", () => {
+    useReduceSeats()
+    captured.options?.onSuccess?.()
+    const keys = invalidated().map((k) => JSON.stringify(k))
+    for (const k of BILLING_SUCCESS_KEYS) expect(keys).toContain(JSON.stringify(k))
+    expect(keys).toContain(JSON.stringify(["team"]))
+  })
+
+  // Adding seats leaves for Paymob's checkout: nothing changes until the return page sees paid.
+  it("useAddSeats refreshes nothing on success", () => {
+    useAddSeats()
+    expect(captured.options?.onSuccess).toBeUndefined()
+    captured.options?.onSuccess?.()
+    expect(invalidated()).toEqual([])
+  })
 })

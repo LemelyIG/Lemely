@@ -7,13 +7,16 @@ import { formatBillingDate, formatMoney } from "@/lib/billingFormat"
 import { billingErrorCode, billingFailureMessage } from "@/lib/billingOutcome"
 import type { PlanTier, SavedCardView, SubscriptionView } from "@/lib/billingTypes"
 import { useDowngrade, useUpgrade, useUpgradeQuote } from "@/lib/hooks/useBillingApi"
-import { PaymentProgress } from "./PaymentProgress"
+import { isCheckoutPhoneRequired } from "@/lib/phone"
+import { CheckoutPhonePrompt } from "./CheckoutPhonePrompt"
+import { UNSAFE_CHECKOUT_URL, useCheckoutLaunch } from "./useCheckoutLaunch"
 
 /*
  * Upgrade now, downgrade at period end (spec §2.6, §5.3). An upgrade is quoted first
- * (`…/upgrade/quote`, no side effects) so the payer sees the exact prorated charge, then charged
- * to the saved card as a merchant-initiated payment and confirmed by webhook. A downgrade has no
- * charge and applies at the current period end.
+ * (`…/upgrade/quote`, no side effects) so the payer sees the exact prorated charge, then sent to
+ * Paymob's hosted checkout to pay and confirm with their bank. The dialog never says "upgraded":
+ * nothing has changed until the return page (`/billing/return/{id}`) sees the payment paid. A
+ * downgrade has no charge and applies at the current period end.
  *
  * The mutations outlive a close, so every result is read only when it was made for the tier on
  * screen (`forTier`); the parent also keys this dialog by tier id so a new open starts clean.
@@ -35,38 +38,43 @@ export function PlanChangeDialog({
   subscription,
   tier,
   savedCard,
+  returnTo,
+  go,
 }: {
   open: boolean
   onClose: () => void
   subscription: SubscriptionView
   tier: PlanTier | null
+  /** Offered on Paymob's page when the payer has one; never required. */
   savedCard: SavedCardView | null
+  /** The page this dialog was opened from; the payer lands back on it from "Back to billing". */
+  returnTo: string
+  /** Leaves for checkout; the browser's `location.assign` unless a test injects one. */
+  go?: (url: string) => void
 }) {
   const quote = useUpgradeQuote()
   const upgrade = useUpgrade()
   const downgrade = useDowngrade()
+  const launch = useCheckoutLaunch(upgrade, returnTo, go)
   const { mutate: requestQuote } = quote
   const statusRef = useRef<HTMLParagraphElement>(null)
-  const progressRef = useRef<HTMLDivElement>(null)
-  const isUpgrade = tier !== null && tier.priceMinor > subscription.tier.priceMinor
+  const higherPrice = tier !== null && tier.priceMinor > subscription.tier.priceMinor
+  // F1: an upgrade is only offered inside the interval being paid; across intervals it is not one.
+  const crossInterval = higherPrice && tier.interval !== subscription.tier.interval
+  const isUpgrade = higherPrice && !crossInterval
   const tierId = tier?.id ?? null
   const subscriptionId = subscription.subscriptionId
-  const hasCard = savedCard !== null
 
-  // The quote exists to price the charge to the saved card; with no card there is nothing to charge.
   useEffect(() => {
-    if (open && isUpgrade && tierId && hasCard) requestQuote({ subscriptionId, planTierId: tierId })
-  }, [open, isUpgrade, tierId, hasCard, subscriptionId, requestQuote])
+    if (open && isUpgrade && tierId) requestQuote({ subscriptionId, planTierId: tierId })
+  }, [open, isUpgrade, tierId, subscriptionId, requestQuote])
 
-  const upgraded = tierId !== null && upgrade.isSuccess && forTier(upgrade.variables, tierId)
   const downgraded = tierId !== null && downgrade.isSuccess && forTier(downgrade.variables, tierId)
-  const done = upgraded || downgraded
 
   // The confirm button unmounts when the change goes through; keep focus inside the dialog.
   useEffect(() => {
-    if (upgraded) progressRef.current?.focus()
-    else if (downgraded) statusRef.current?.focus()
-  }, [upgraded, downgraded])
+    if (downgraded) statusRef.current?.focus()
+  }, [downgraded])
 
   if (!tier) return null
   const q = quote.isSuccess && forTier(quote.variables, tier.id) ? quote.data : undefined
@@ -74,52 +82,54 @@ export function PlanChangeDialog({
   const downgradeFailed = downgrade.isError && forTier(downgrade.variables, tier.id)
   const quoteFailed = quote.isError && forTier(quote.variables, tier.id)
   const failure = upgradeFailed ? upgrade.error : downgradeFailed ? downgrade.error : quoteFailed ? quote.error : null
+  const needsPhone = upgradeFailed && isCheckoutPhoneRequired(upgrade.error)
   // `downgrade_unavailable` says this plan cannot be scheduled right now, so offering the same button again would contradict it.
   const unavailable = downgradeFailed && billingErrorCode(downgrade.error) === "downgrade_unavailable"
-  const canConfirm = !done && !unavailable && (isUpgrade ? q !== undefined && hasCard : true)
-  const busy = upgrade.isPending || downgrade.isPending
+  const canConfirm = !downgraded && !unavailable && !crossInterval && !needsPhone && (isUpgrade ? q !== undefined : true)
+  const busy = upgrade.isPending || launch.redirecting || downgrade.isPending
   const end = subscription.currentPeriodEnd ? formatBillingDate(subscription.currentPeriodEnd) : "the end of this period"
 
   // What the persistent live line says right now, if anything.
   let status: ReactNode = null
   let statusClass = STATUS_SHOWN
   let body: ReactNode = null
-  if (upgraded && upgrade.data) {
-    body = (
-      <div ref={progressRef} tabIndex={-1} className="focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary">
-        <PaymentProgress paymentId={upgrade.data.paymentId} />
-      </div>
-    )
+  if (launch.redirecting) {
+    status = "Taking you to the payment page…"
+    statusClass = "m-0 text-body-sm text-on-surface-variant"
   } else if (downgraded && downgrade.data) {
     status = `Scheduled. ${tier.name} starts on ${
       downgrade.data.currentPeriodEnd ? formatBillingDate(downgrade.data.currentPeriodEnd) : end
     }.`
+  } else if (crossInterval) {
+    body = (
+      <p className="m-0 text-body-md text-on-surface">
+        {tier.name} bills every {tier.interval}, so it can't be switched to mid-period. Cancel at the end of the period and subscribe to
+        it then.
+      </p>
+    )
   } else if (!isUpgrade) {
     body = (
       <p className="m-0 text-body-md text-on-surface">
         {tier.name} starts on {end}. You keep {subscription.tier.name} until then, and nothing is charged now.
       </p>
     )
-  } else if (!hasCard) {
-    body = (
-      <p className="m-0 text-body-md text-on-surface">
-        Upgrades are charged to a saved card. Buy a credit pack by card once and Lemely keeps the card for later charges.
-      </p>
-    )
   } else if (quote.isPending) {
     status = "Working out the price…"
     statusClass = "m-0 text-body-sm text-on-surface-variant"
-  } else if (q && savedCard) {
+  } else if (q) {
     status = (
       <>
-        You pay <span className="text-data-md">{formatMoney(q.amountMinor, q.currency)}</span> now for the rest of this period,
-        charged to {savedCard.brand} {savedCard.maskedPan}. The extra allowance is added straight away.
+        You pay <span className="text-data-md">{formatMoney(q.amountMinor, q.currency)}</span> now for the rest of this period. You'll
+        confirm it with your bank on the next page.
+        {savedCard ? ` Your saved card (${savedCard.brand} ${savedCard.maskedPan}) will be offered there.` : ""}
       </>
     )
   }
 
   const confirm = () =>
-    isUpgrade ? upgrade.mutate({ subscriptionId, planTierId: tier.id }) : downgrade.mutate({ subscriptionId, planTierId: tier.id })
+    isUpgrade ? launch.launch({ subscriptionId, planTierId: tier.id }) : downgrade.mutate({ subscriptionId, planTierId: tier.id })
+
+  const message = launch.unsafe && isUpgrade ? UNSAFE_CHECKOUT_URL : failure && !needsPhone ? billingFailureMessage(failure, "change your plan") : null
 
   return (
     <Modal
@@ -128,13 +138,13 @@ export function PlanChangeDialog({
       dismissible={!busy}
       title={`Change to ${tier.name}`}
       footer={
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           <Button variant="ghost" onClick={onClose} disabled={busy}>
-            {done ? "Close" : "Not now"}
+            {downgraded ? "Close" : "Not now"}
           </Button>
           {canConfirm ? (
             <Button variant="primary" loading={busy} onClick={confirm}>
-              {isUpgrade && q ? `Pay ${formatMoney(q.amountMinor, q.currency)} and upgrade` : "Schedule the change"}
+              {isUpgrade && q ? `Continue to payment (${formatMoney(q.amountMinor, q.currency)})` : "Schedule the change"}
             </Button>
           ) : null}
         </div>
@@ -142,11 +152,12 @@ export function PlanChangeDialog({
     >
       <div className="flex flex-col gap-3">
         {body}
+        {needsPhone ? <CheckoutPhonePrompt onSaved={() => upgrade.variables && launch.launch(upgrade.variables)} /> : null}
         <p ref={statusRef} role="status" tabIndex={-1} className={status ? statusClass : "sr-only"}>
           {status}
         </p>
-        <p role="alert" className={failure ? "m-0 text-body-sm text-error" : "sr-only"}>
-          {failure ? billingFailureMessage(failure, "change your plan") : null}
+        <p role="alert" className={message ? "m-0 text-body-sm text-error" : "sr-only"}>
+          {message}
         </p>
       </div>
     </Modal>

@@ -10,7 +10,6 @@ import type {
   BillingSummary,
   Catalogue,
   CheckoutResponse,
-  MerchantChargeStarted,
   PackCheckoutRequest,
   PaymentStatus,
   PaymentStatusView,
@@ -23,7 +22,6 @@ import type {
   WireAutoTopup,
   WireBillingSummary,
   WireCatalogue,
-  WireCharge,
   WireCheckout,
   WirePaymentStatus,
   WirePublicCatalogue,
@@ -60,7 +58,7 @@ export const billingApi = {
   payment: (paymentId: string) => request<WirePaymentStatus>(`/billing/payments/${enc(paymentId)}`),
   upgradeQuote: (subscriptionId: string, planTierId: string) =>
     request<WireQuote>(`${sub(subscriptionId)}/upgrade/quote`, post({ planTierId })),
-  upgrade: (subscriptionId: string, planTierId: string) => request<WireCharge>(`${sub(subscriptionId)}/upgrade`, post({ planTierId })),
+  upgrade: (subscriptionId: string, planTierId: string) => request<WireCheckout>(`${sub(subscriptionId)}/upgrade`, post({ planTierId })),
   downgrade: (subscriptionId: string, planTierId: string) =>
     request<WireSubscription>(`${sub(subscriptionId)}/downgrade`, post({ planTierId })),
   cancel: (subscriptionId: string) => request<WireSubscription>(`${sub(subscriptionId)}/cancel`, post()),
@@ -69,7 +67,7 @@ export const billingApi = {
   saveAutoTopup: (body: AutoTopupUpdate) => request<WireAutoTopup>("/billing/auto-topup", { method: "PUT", body: JSON.stringify(body) }),
   cards: () => request<WireSavedCardList>("/billing/cards"),
   seatQuote: (subscriptionId: string, seats: number) => request<WireQuote>(`${sub(subscriptionId)}/seats/quote`, post({ seats })),
-  addSeats: (subscriptionId: string, seats: number) => request<WireCharge>(`${sub(subscriptionId)}/seats`, post({ seats })),
+  addSeats: (subscriptionId: string, seats: number) => request<WireCheckout>(`${sub(subscriptionId)}/seats`, post({ seats })),
   /** `extraSeats` is the new total from the next renewal, not a delta (06 `SeatReductionRequest`). */
   reduceSeats: (subscriptionId: string, extraSeats: number) =>
     request<WireSeats>(`${sub(subscriptionId)}/seats/pending`, { method: "PUT", body: JSON.stringify({ extraSeats }) }),
@@ -212,12 +210,13 @@ export function useUpgradeQuote(): UseMutationResult<Quote, Error, PlanTarget> {
   return useMutation({ mutationFn: ({ subscriptionId, planTierId }) => billingApi.upgradeQuote(subscriptionId, planTierId) })
 }
 
-/** 202 `ChargeDTO`: poll its `paymentId` (spec §5.3). */
-export function useUpgrade(): UseMutationResult<WireCharge, Error, PlanTarget> {
-  const qc = useQueryClient()
+/**
+ * 201 `CheckoutDTO`: redirect to its `checkoutUrl`. Nothing has changed until the return page
+ * sees the payment paid, so nothing is invalidated here.
+ */
+export function useUpgrade(): UseMutationResult<CheckoutResponse, Error, PlanTarget> {
   return useMutation({
     mutationFn: ({ subscriptionId, planTierId }) => billingApi.upgrade(subscriptionId, planTierId),
-    onSuccess: () => invalidateBilling(qc),
   })
 }
 
@@ -270,14 +269,10 @@ export function useSeatQuote(): UseMutationResult<Quote, Error, { subscriptionId
   return useMutation({ mutationFn: ({ subscriptionId, seats }) => billingApi.seatQuote(subscriptionId, seats) })
 }
 
-export function useAddSeats(): UseMutationResult<MerchantChargeStarted, Error, { subscriptionId: string; seats: number }> {
-  const qc = useQueryClient()
+/** 201 `CheckoutDTO`, as for an upgrade: the seats are added once the return page sees `paid`. */
+export function useAddSeats(): UseMutationResult<CheckoutResponse, Error, { subscriptionId: string; seats: number }> {
   return useMutation({
     mutationFn: ({ subscriptionId, seats }) => billingApi.addSeats(subscriptionId, seats),
-    onSuccess: () => {
-      invalidateBilling(qc)
-      void qc.invalidateQueries({ queryKey: ["team"] })
-    },
   })
 }
 

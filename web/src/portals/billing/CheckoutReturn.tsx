@@ -2,7 +2,7 @@
 /* Glyph, heading, one line of body, the amount, then at most two actions. mismatch and reversed share the neutral tone with confirming; deliberate (PRODUCT.md: no red for money states the user did not cause) but the glyph alone has to carry the difference. */
 import { useEffect, useRef, type ReactNode } from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import { ArrowCounterClockwise, CheckCircle, Hourglass, WarningCircle, type Icon } from "@phosphor-icons/react"
+import { ArrowCounterClockwise, CheckCircle, Coins, Hourglass, WarningCircle, type Icon } from "@phosphor-icons/react"
 import { Link, Navigate, useParams } from "react-router-dom"
 import { BrandLockup } from "@/components/ui/brand-lockup"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -10,15 +10,20 @@ import { MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { ErrorState } from "@/components/ui/state-views"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { formatMoney, paymentPhase, type PaymentPhase } from "@/lib/billingFormat"
-import { defaultBillingPath, invalidateOnPaid, returnCopy, returnToFor } from "@/lib/checkoutReturn"
+import { backLabel, defaultBillingPath, invalidateOnPaid, paidResult, retryPath, returnCopy, returnToFor } from "@/lib/checkoutReturn"
 import { invalidateBilling, usePaymentStatus } from "@/lib/hooks/useBillingApi"
+import { invalidateTeam } from "@/lib/hooks/useTeamApi"
 
 /*
  * `/billing/return/:paymentId`: where Paymob's hosted checkout sends the payer back (spec §5.1
  * step 5). Paymob's query parameters are ignored; this page polls our own payment record.
  */
 
-const PHASE_MARK: Record<PaymentPhase, { Glyph: Icon; tone: string }> = {
+type Mark = PaymentPhase | "credited" | "attention"
+
+const PHASE_MARK: Record<Mark, { Glyph: Icon; tone: string }> = {
+  credited: { Glyph: Coins, tone: "text-primary" },
+  attention: { Glyph: Hourglass, tone: "text-on-surface-variant" },
   confirming: { Glyph: Hourglass, tone: "text-on-surface-variant" },
   paid: { Glyph: CheckCircle, tone: "text-primary" },
   failed: { Glyph: WarningCircle, tone: "text-error" },
@@ -27,7 +32,7 @@ const PHASE_MARK: Record<PaymentPhase, { Glyph: Icon; tone: string }> = {
 }
 
 /** The state in a glyph, so it reads before the heading does. Decorative: the heading says it. */
-function PhaseMark({ phase }: { phase: PaymentPhase }) {
+function PhaseMark({ phase }: { phase: Mark }) {
   const { Glyph, tone } = PHASE_MARK[phase]
   return <Glyph aria-hidden="true" weight="duotone" className={`size-9 ${tone}`} />
 }
@@ -42,16 +47,25 @@ export function CheckoutReturn() {
   const { paymentId = "" } = useParams<{ paymentId: string }>()
   const { session } = useAuth()
   const backTo = returnToFor(paymentId, defaultBillingPath(session?.role))
-  const plansTo = backTo === "/" || backTo === "/parent" ? backTo : `${backTo}/plans`
   const payment = usePaymentStatus(paymentId || null)
   const queryClient = useQueryClient()
   const phaseNow = payment.data ? paymentPhase(payment.data.status) : null
+  const purposeNow = payment.data?.purpose ?? null
   // The meter, credit balance and receipts on the screens behind this one are stale the moment
   // the payment lands, so refresh them once per paid payment.
   const settled = useRef<string | null>(null)
   useEffect(() => {
-    invalidateOnPaid(() => invalidateBilling(queryClient), settled, paymentId, phaseNow)
-  }, [paymentId, phaseNow, queryClient])
+    invalidateOnPaid(
+      () => {
+        invalidateBilling(queryClient)
+        // The seat count lives with the team, not in the billing caches.
+        if (purposeNow === "extra_seats") invalidateTeam(queryClient)
+      },
+      settled,
+      paymentId,
+      phaseNow,
+    )
+  }, [paymentId, phaseNow, purposeNow, queryClient])
 
   let body: ReactNode
   if (payment.isError) {
@@ -75,11 +89,14 @@ export function CheckoutReturn() {
   } else {
     const data = payment.data
     const phase = paymentPhase(data.status)
-    const copy = returnCopy(phase, data.purpose, payment.pollingStopped)
+    const copy = returnCopy(phase, data.purpose, payment.pollingStopped, data)
+    const result = phase === "paid" ? paidResult(data) : null
+    const mark: Mark = result === "credited" ? "credited" : result === "needs_attention" ? "attention" : phase
+    const retryTo = retryPath(data.purpose, backTo)
     body = (
       <>
         <div role="status" className="flex flex-col gap-3">
-          <PhaseMark phase={phase} />
+          <PhaseMark phase={mark} />
           <h1 id="return-heading" className="m-0 text-display-sm text-on-surface">{copy.heading}</h1>
           <p className="m-0 text-body-md text-on-surface-variant">{copy.body}</p>
         </div>
@@ -92,11 +109,11 @@ export function CheckoutReturn() {
             <Button variant="primary" onClick={() => void payment.refetch()}>Check again</Button>
           ) : null}
           {phase === "failed" ? (
-            <Link to={plansTo} className={buttonVariants({ variant: "primary" })}>Try again</Link>
+            <Link to={retryTo} className={buttonVariants({ variant: "primary" })}>Try again</Link>
           ) : null}
           {phase !== "confirming" || payment.pollingStopped ? (
             <Link to={backTo} className={buttonVariants({ variant: "secondary" })}>
-              {phase === "confirming" ? "Go to billing" : "Back to billing"}
+              {backLabel(data.purpose, phase === "confirming")}
             </Link>
           ) : null}
         </div>
