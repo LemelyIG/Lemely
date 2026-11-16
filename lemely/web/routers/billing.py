@@ -210,6 +210,7 @@ def _pending_terms_dto(change: PendingTermsChange, billed: TierTerms) -> Pending
         includedSeatsChanges=change.included_seats_changes,
         seatAllowanceChanges=change.seat_allowance_changes,
         endsInsteadOfMoving=change.ends_instead_of_moving,
+        seatsToRemove=change.seats_to_remove,
     )
 
 

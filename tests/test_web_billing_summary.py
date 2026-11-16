@@ -27,7 +27,7 @@ from lemely.web.deps import ACTING_TEACHER_HEADER, AuthContext, get_auth_context
 from lemely.web.deps_billing import get_billing_sessionmaker
 from lemely.web.routers.billing import get_billing_clock
 from lemely.web.usage import get_usage_meter
-from tests.subscription_fixtures import edit_tier_terms
+from tests.subscription_fixtures import edit_tier_terms, ensure_billing_settings
 from tests.team_db import add_assistant, add_seat, add_user, emptied_after, team_database
 from tests.usage_helpers import NOW, enforcing_meter, give
 
@@ -679,6 +679,7 @@ def test_the_summary_shows_the_billed_terms_not_the_live_tiers(sm: sessionmaker[
 
 
 def test_the_catalogue_still_shows_the_tiers_current_terms(sm: sessionmaker[Session]) -> None:
+    ensure_billing_settings(sm)  # the catalogue reads the credit validity
     student = add_user(sm, Role.student)
     tier = _tier(sm, price_minor=9_900)
     edit_tier_terms(sm, tier, price_minor=14_000)

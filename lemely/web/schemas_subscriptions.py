@@ -46,6 +46,9 @@ class PendingTermsChangeDTO(ApiModel):
     includedSeatsChanges: bool
     seatAllowanceChanges: bool
     endsInsteadOfMoving: bool
+    seatsToRemove: int | None
+    """Active students over the new plan's seats (those already leaving are not counted), the same
+    number the email and the renewal use; ``None`` on a plan that holds no seats."""
 
 
 class SubscriptionViewDTO(ApiModel):

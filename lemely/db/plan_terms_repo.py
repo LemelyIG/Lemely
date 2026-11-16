@@ -339,6 +339,23 @@ def _seats_held(session: Session, teacher_id: uuid.UUID) -> int:
     )
 
 
+def seats_to_remove(
+    session: Session, sub: Subscription, tier: PlanTier, new_terms: TierTerms
+) -> int | None:
+    """Active students over the capacity ``new_terms`` give: how many must go before the renewal.
+
+    The one definition, shared by the notice email, the renewal's shed and the billing summary:
+    active seats only (a seat already leaving does not count, so the number falls to zero once the
+    teacher has removed enough students), minus the new included seats plus the extra seats the
+    new terms still sell. ``None`` for a plan that holds no seats (not a teacher plan).
+    """
+    if tier.audience is not PlanAudience.teacher:
+        return None
+    seats = sub.pending_extra_seats if sub.pending_extra_seats is not None else sub.extra_seats or 0
+    capacity = new_terms.included_seats + (seats if new_terms.extra_seat_price_minor > 0 else 0)
+    return max(0, _seats_held(session, sub.user_id) - capacity)
+
+
 def queue_terms_change_notices(
     sm: sessionmaker[Session],
     *,
@@ -442,10 +459,7 @@ def _announce_one(
         or new_terms.included_seats != cur_terms.included_seats
         or new_terms.seat_allowance_units != cur_terms.seat_allowance_units
     )
-    seats_over = 0
-    if tier.audience is PlanAudience.teacher:
-        capacity = new_terms.included_seats + (seats if new_terms.extra_seat_price_minor > 0 else 0)
-        seats_over = max(0, _seats_held(session, sub.user_id) - capacity)
+    seats_over = seats_to_remove(session, sub, tier, new_terms) or 0
     assert tier.interval is not None  # noqa: S101 - a plan that renews has an interval
     applies_at = first_applies_at(sub.current_period_end or now, tier.interval.value, effective_at)
     sub.terms_notice_sent_at = now
@@ -643,6 +657,7 @@ class PendingTermsChange:
     included_seats_changes: bool
     seat_allowance_changes: bool
     ends_instead_of_moving: bool
+    seats_to_remove: int | None
 
 
 def pending_terms_change(
@@ -678,16 +693,30 @@ def pending_terms_change(
             not amount_updatable
             and renewal_amount(new_terms, seats) != renewal_amount(cur_terms, seats)
         ),
+        seats_to_remove=seats_to_remove(
+            session, sub, tier_for_terms(session, sub.plan_tier_id), new_terms
+        ),
     )
 
 
-def subscribers_to_move(session: Session, tier_id: uuid.UUID) -> int:
-    """Renewing subscribers of the tier not yet on its current terms: those a terms edit moves.
+def _noticeable_filters(S: type[Subscription]) -> list[sa.ColumnElement[bool]]:
+    """The pool a terms edit can notice and move: renewing, paying, not leaving, not changing plan.
 
-    Complimentary and manual rows do not renew, a cancelling subscriber is leaving, and a pending
-    plan change decides the next terms: none is noticed or moved (the same pool as the notice job,
-    before its pending-version filter).
+    Complimentary and manual rows do not renew, a pending checkout is not a plan yet, a cancelling
+    subscriber is leaving, and a pending plan change decides the next terms. The notice job, the
+    audit row's count and the admin catalogue's counts all start from this one list.
     """
+    return [
+        S.status.in_(PLAN_LIVE_STATUSES),
+        S.payer_user_id.is_not(None),
+        S.is_manually_activated.is_(False),
+        S.cancel_at_period_end.is_(False),
+        S.pending_plan_tier_id.is_(None),
+    ]
+
+
+def subscribers_to_move(session: Session, tier_id: uuid.UUID) -> int:
+    """Renewing subscribers of the tier not yet on its current terms: those a terms edit moves."""
     S = Subscription
     return int(
         session.scalar(
@@ -696,16 +725,32 @@ def subscribers_to_move(session: Session, tier_id: uuid.UUID) -> int:
             .join(PlanTier, PlanTier.id == S.plan_tier_id)
             .where(
                 S.plan_tier_id == tier_id,
-                S.status.in_(PLAN_LIVE_STATUSES),
-                S.payer_user_id.is_not(None),
-                S.is_manually_activated.is_(False),
-                S.cancel_at_period_end.is_(False),
-                S.pending_plan_tier_id.is_(None),
+                *_noticeable_filters(S),
                 S.terms_version < PlanTier.terms_version,
             )
         )
         or 0
     )
+
+
+def subscriber_counts(session: Session) -> dict[uuid.UUID, tuple[int, int]]:
+    """``(noticeable, to move)`` per tier, in one grouped query, from the notice job's pool.
+
+    ``noticeable`` is every subscriber a terms edit would email and move; ``to move`` is those not
+    yet on the tier's current terms, which is exactly :func:`subscribers_to_move`.
+    """
+    S = Subscription
+    rows = session.execute(
+        sa.select(
+            S.plan_tier_id,
+            sa.func.count(),
+            sa.func.count().filter(S.terms_version < PlanTier.terms_version),
+        )
+        .join(PlanTier, PlanTier.id == S.plan_tier_id)
+        .where(*_noticeable_filters(S))
+        .group_by(S.plan_tier_id)
+    )
+    return {tier_id: (int(live), int(moving)) for tier_id, live, moving in rows}
 
 
 class FixedPathEnd(enum.Enum):
@@ -839,6 +884,8 @@ __all__ = [
     "queue_terms_change_notices",
     "renewal_amount",
     "same_terms",
+    "seats_to_remove",
+    "subscriber_counts",
     "subscribers_to_move",
     "terms_for",
     "terms_in_force_for_next_period",

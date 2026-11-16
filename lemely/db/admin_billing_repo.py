@@ -44,7 +44,11 @@ from lemely.db.models.billing_ops import (
     RefundStatus,
 )
 from lemely.db.models.usage import EstimatorInputKind, UsageEstimator, UsageRate
-from lemely.db.plan_terms_repo import current_notice_days, subscribers_to_move
+from lemely.db.plan_terms_repo import (
+    current_notice_days,
+    subscriber_counts,
+    subscribers_to_move,
+)
 from lemely.db.subscription_repo import PlanNotPurchasable, PlanSyncFailed, current_grace_days
 from lemely.db.subscription_repo import sync_paymob_plan as link_paymob_plan
 from lemely.db.usage_catalogue_repo import (
@@ -378,7 +382,12 @@ def _free_allowance_view(audience: FreeAudience, pack: CreditPack) -> FreeAllowa
 
 @dataclass(frozen=True, slots=True)
 class TierCounts:
-    """How many subscribers a tier has, and how many still bill on an older terms version."""
+    """The subscribers a terms edit reaches, and how many of them still bill on older terms.
+
+    Both count the notice job's pool (``plan_terms_repo.subscriber_counts``): renewing, paying
+    subscribers only. Complimentary, manual, cancelling, plan-changing and pending-checkout rows
+    are never emailed or moved, so they are in neither number.
+    """
 
     live: int = 0
     pending_moves: int = 0
@@ -499,18 +508,11 @@ def _require_metered(action: str) -> None:
 
 
 def _tier_counts(session: Session) -> dict[uuid.UUID, TierCounts]:
-    """Live subscribers and not-yet-moved subscribers per tier, in one grouped query."""
-    rows = session.execute(
-        select(
-            Subscription.plan_tier_id,
-            sa.func.count(),
-            sa.func.count().filter(Subscription.terms_version < PlanTier.terms_version),
-        )
-        .join(PlanTier, PlanTier.id == Subscription.plan_tier_id)
-        .where(Subscription.status.in_(LIVE_SUBSCRIPTION_STATUSES))
-        .group_by(Subscription.plan_tier_id)
-    )
-    return {tier_id: TierCounts(live=live, pending_moves=moves) for tier_id, live, moves in rows}
+    """Noticeable subscribers and not-yet-moved ones per tier: the notice job's pool."""
+    return {
+        tier_id: TierCounts(live=live, pending_moves=moves)
+        for tier_id, (live, moves) in subscriber_counts(session).items()
+    }
 
 
 def _auto_topup_counts(session: Session) -> dict[uuid.UUID, int]:

@@ -1293,7 +1293,9 @@ def test_live_subscription_and_auto_topup_counts(
                 )
             )
     body = admin_client(sm, admin).get(f"{P}/catalogue").json()
-    assert body["planTiers"][0]["liveSubscriptionCount"] == 3
+    # The notice job's pool (active and past due, paying): a pending checkout and an expired row
+    # are never emailed or moved, so they are not counted.
+    assert body["planTiers"][0]["liveSubscriptionCount"] == 2
     assert body["creditPacks"][0]["autoTopupCount"] == 2
     assert body["priceChangeNoticeDays"] == 14
     assert body["subscriptionAmountUpdatable"] is True
