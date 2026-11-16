@@ -12,7 +12,7 @@ import time
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
-from lemely.db.auto_topup_repo import run_auto_topup_job
+from lemely.db.auto_topup_repo import auto_topup_post_settle_hook, run_auto_topup_job
 from lemely.db.merchant_charge_repo import (
     charges_configured,
     push_renewal_amount,
@@ -29,11 +29,13 @@ from lemely.web.subscription_deps import SubscriptionDeps
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from datetime import datetime
 
     from sqlalchemy.orm import Session, sessionmaker
 
+    from lemely.core.usage_types import Payer
+    from lemely.db.models.usage import UsageJob
     from lemely.web.schemas_billing import PublicCatalogueDTO
 
 
@@ -207,6 +209,18 @@ def register_billing_amount_pusher() -> None:
     register_amount_pusher(push_subscription_amount)
 
 
+def auto_topup_post_settle(
+    session: Session, job: UsageJob, payers: Sequence[Payer], now: datetime
+) -> None:
+    """The auto top-up post-settle hook, only where saved-card charges are configured (DV-13).
+
+    Without the MOTO integration id and the token key nothing can charge a queued top-up, so
+    none is queued: a row that waited for weeks would later be charged against a stale balance.
+    """
+    if charges_configured(get_settings().paymob):
+        auto_topup_post_settle_hook(session, job, payers, now)
+
+
 def get_auto_topup_job() -> Callable[[datetime], int] | None:
     """The ``billing.auto_topup`` job, or ``None`` unless saved-card charges are configured.
 
@@ -282,6 +296,7 @@ def reset_billing_singletons() -> None:
 
 __all__ = [
     "PublicCatalogueCache",
+    "auto_topup_post_settle",
     "get_auto_topup_job",
     "get_billing_reconcile_job",
     "get_billing_sessionmaker",

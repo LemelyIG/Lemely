@@ -265,11 +265,10 @@ def create_app() -> FastAPI:
     app.include_router(usage.router)
     # Paymob billing Phase 06: a settled metered job may queue an auto top-up, and a settled
     # upgrade or seat purchase pushes the new renewal amount (both idempotent across apps).
-    from lemely.db.auto_topup_repo import auto_topup_post_settle_hook
-    from lemely.web.deps_billing import register_billing_amount_pusher
+    from lemely.web.deps_billing import auto_topup_post_settle, register_billing_amount_pusher
     from lemely.web.usage import register_post_settle_hook
 
-    register_post_settle_hook(auto_topup_post_settle_hook)
+    register_post_settle_hook(auto_topup_post_settle)
     register_billing_amount_pusher()
     # Billing spec §5.7: a blocked metered action is a top-level 402 body, not `detail`.
     app.add_exception_handler(UsageBlocked, usage_blocked_handler)

@@ -28,7 +28,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
 from lemely.db.billing_repo import BillingService
-from lemely.db.merchant_charge_repo import MerchantChargeError
+from lemely.db.merchant_charge_repo import MerchantChargeError, register_amount_pusher
 from lemely.db.models.billing import (
     AutoTopupSettings,
     Payment,
@@ -142,6 +142,9 @@ class Harness:
         self.fake = _CheckoutClient()
         self.paymob = settings or paymob_settings()
         self.app = create_app()
+        # ``create_app`` registers the process pusher, which resolves the default database and
+        # client itself and so ignores the overrides below; these tests settle on their own.
+        register_amount_pusher(None)
         self.full = Settings().model_copy(update={"paymob": self.paymob})
         self.app.dependency_overrides[get_settings] = lambda: self.full
         self.app.dependency_overrides[get_billing_sessionmaker] = lambda: sm
@@ -1448,6 +1451,62 @@ def test_auto_top_up_without_a_phone_is_422_phone_required(
 
     assert res.status_code == 422
     assert res.json()["detail"]["code"] == "phone_required"
+
+
+def _without_card_token_key() -> PaymobSettings:
+    return paymob_settings(card_token_key=None)
+
+
+def test_enabling_auto_top_up_is_refused_where_charges_are_not_configured(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """M3: with no token key (or no MOTO id) nothing could run it, so it is a 503, not saved."""
+    sm = pg_sessionmaker
+    for settings in (_without_card_token_key(), paymob_settings(moto_integration_id=None)):
+        h = Harness(sm, settings=settings)
+        student = seed_user(sm, Role.student)
+        card = seed_saved_card(sm, student)
+        pack = seed_pack(sm, price_minor=10_000)
+
+        res = h.as_user(student, Role.student).put(
+            f"{BILLING}/auto-topup", json=_put_body(pack, card)
+        )
+
+        assert res.status_code == 503, res.text
+        assert _error(res) == "payments_unavailable"
+        with sm() as session:
+            assert (
+                session.scalar(
+                    sa.select(AutoTopupSettings).where(
+                        AutoTopupSettings.beneficiary_user_id == student
+                    )
+                )
+                is None
+            )
+
+
+def test_switching_auto_top_up_off_stays_possible_where_charges_are_not_configured(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    student = seed_user(sm, Role.student)
+    card = seed_saved_card(sm, student)
+    pack = seed_pack(sm, price_minor=10_000)
+    on = (
+        Harness(sm)
+        .as_user(student, Role.student)
+        .put(f"{BILLING}/auto-topup", json=_put_body(pack, card))
+    )
+    assert on.status_code == 200, on.text
+
+    off = (
+        Harness(sm, settings=_without_card_token_key())
+        .as_user(student, Role.student)
+        .put(f"{BILLING}/auto-topup", json=_put_body(pack, card, enabled=False))
+    )
+
+    assert off.status_code == 200, off.text
+    assert off.json()["enabled"] is False
 
 
 class _UniqueViolation(Exception):

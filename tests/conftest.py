@@ -183,6 +183,25 @@ def _reset_llm_price_overrides() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _reset_billing_process_wiring() -> Iterator[None]:
+    """No amount pusher or post-settle hook leaks between tests (paymob billing Phase 06 T10).
+
+    ``create_app`` registers both in process globals. A pusher left behind resolves the default
+    sessionmaker and Paymob client itself, so a later test that settles a payment would reach the
+    environment's database instead of its own throwaway one. The hook registry is restored to
+    what it held before the test, so a test that clears or extends it does not change the next.
+    """
+    from lemely.db.merchant_charge_repo import register_amount_pusher
+    from lemely.web import usage
+
+    hooks = list(usage._POST_SETTLE_HOOKS)
+    register_amount_pusher(None)
+    yield
+    register_amount_pusher(None)
+    usage._POST_SETTLE_HOOKS[:] = hooks
+
+
+@pytest.fixture(autouse=True)
 def _reset_structlog_config() -> Iterator[None]:
     """Undo any real ``configure_logging()`` call so ``capture_logs()`` stays reliable.
 

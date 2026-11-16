@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import itertools
+import json
 import os
 import subprocess
 import sys
@@ -21,15 +22,18 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
+import sqlalchemy as sa
 
 from lemely.db import auto_topup_repo, merchant_charge_repo
 from lemely.db.admin_health_repo import BILLING_JOB_NAMES
 from lemely.db.announcement_repo import AnnouncementService
-from lemely.db.billing_repo import BillingService, paid_handler_for
+from lemely.db.billing_repo import BillingService
 from lemely.db.class_repo import ClassService
 from lemely.db.merchant_charge_repo import MerchantChargeService
-from lemely.db.models.billing import Payment, PaymentPurpose, Subscription
+from lemely.db.models.billing import Payment, PaymentPurpose, PaymentStatus, Subscription
 from lemely.db.models.billing_ops import CreditConversionRate
+from lemely.db.models.enums import Role
+from lemely.db.models.usage import UsageGrant
 from lemely.db.notification_prefs_repo import NotificationPreferencesService
 from lemely.db.notification_repo import NotificationService
 from lemely.db.subscription_repo import SubscriptionService
@@ -39,12 +43,20 @@ from lemely.web.app import create_app
 from lemely.web.push import RecordingPushTransport
 from lemely.web.scheduled_notifications import Sweeper
 from lemely.web.subscription_deps import SubscriptionDeps
-from tests.merchant_charge_fixtures import seed_tier, student_with_plan, throwaway_database
+from tests.merchant_charge_fixtures import (
+    seed_pack,
+    seed_payment_row,
+    seed_tier,
+    seed_user,
+    student_with_plan,
+    throwaway_database,
+)
 from tests.paymob_fixtures import INTENTION_RESPONSE, PAYMOB_SETTINGS, transaction_obj
 from tests.subscription_fixtures import (
     T0,
     FakePaymobClient,
     charge,
+    ensure_billing_settings,
     paymob_settings,
     remote_subscription,
 )
@@ -73,16 +85,6 @@ def pg_sessionmaker() -> Iterator[sessionmaker[Session]]:
         with factory.begin() as session:
             session.add(CreditConversionRate(currency="EGP", units_per_minor=Decimal("0.01")))
         yield factory
-
-
-@pytest.fixture(autouse=True)
-def _clean_process_wiring() -> Iterator[None]:
-    """Each test starts with no amount pusher and the post-settle hooks it found."""
-    hooks = list(usage._POST_SETTLE_HOOKS)
-    merchant_charge_repo.register_amount_pusher(None)
-    yield
-    merchant_charge_repo.register_amount_pusher(None)
-    usage._POST_SETTLE_HOOKS[:] = hooks
 
 
 def _sweeper(
@@ -260,7 +262,30 @@ def test_create_app_registers_the_auto_topup_hook_once() -> None:
     usage.clear_post_settle_hooks()
     create_app()
     create_app()
-    assert usage._POST_SETTLE_HOOKS.count(auto_topup_repo.auto_topup_post_settle_hook) == 1
+    assert usage._POST_SETTLE_HOOKS.count(deps_billing.auto_topup_post_settle) == 1
+
+
+@pytest.mark.parametrize(
+    ("missing", "runs"),
+    [(None, True), ("moto_integration_id", False), ("card_token_key", False)],
+)
+def test_the_post_settle_hook_runs_only_where_charges_are_configured(
+    monkeypatch: pytest.MonkeyPatch, missing: str | None, runs: bool
+) -> None:
+    """M3: a top-up is queued only where something can charge it (MOTO id and token key)."""
+    paymob = PaymobSettings.model_validate(
+        {**PAYMOB_SETTINGS.model_dump(), **({} if missing is None else {missing: None})}
+    )
+    _use_paymob(monkeypatch, paymob)
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(
+        deps_billing, "auto_topup_post_settle_hook", lambda *args: calls.append(args)
+    )
+    args: Any = (SimpleNamespace(name="session"), SimpleNamespace(), [], NOW)
+
+    deps_billing.auto_topup_post_settle(*args)
+
+    assert calls == ([args] if runs else [])
 
 
 # ---------------------------------------------------------------------------
@@ -338,6 +363,18 @@ def test_building_the_sweeper_registers_the_amount_pusher(
         assert _pusher() is deps_billing.push_subscription_amount
     finally:
         deps.get_sweeper.cache_clear()
+
+
+def test_a_test_that_builds_the_app_leaves_the_process_wiring_behind() -> None:
+    """First half of the M1 pair: this registers the real pusher and hook in process globals."""
+    create_app()
+    assert _pusher() is deps_billing.push_subscription_amount
+
+
+def test_the_next_test_starts_with_no_pusher_and_the_hooks_it_began_with() -> None:
+    """Second half (conftest's autouse reset): nothing the previous test registered is left."""
+    assert _pusher() is None
+    assert deps_billing.auto_topup_post_settle not in usage._POST_SETTLE_HOOKS
 
 
 # ---------------------------------------------------------------------------
@@ -515,6 +552,76 @@ def test_a_settle_pushes_the_amount_when_the_process_registered_the_pusher(
     assert _sub(sm, scene).paymob_amount_minor == 20_000
 
 
-def test_a_live_auto_topup_callback_finds_its_handler() -> None:
-    """A paid ``auto_topup`` payment reaches ``handle_auto_topup_paid``, not "no paid handler"."""
-    assert paid_handler_for(PaymentPurpose.auto_topup) is auto_topup_repo.handle_auto_topup_paid
+_CALLBACK_PROBE = """
+import json, os
+import lemely.web.billing_jobs
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from datetime import datetime
+from lemely.db.billing_repo import BillingService
+from tests.merchant_charge_fixtures import moto_txn
+from tests.paymob_fixtures import PAYMOB_SETTINGS
+
+args = json.loads(os.environ["PROBE_ARGS"])
+factory = sessionmaker(create_engine(args["url"]))
+obj = moto_txn(
+    order_id=args["order_id"],
+    merchant_order_id=args["payment_id"],
+    amount_cents=args["amount"],
+    txn_id=args["txn_id"],
+)
+now = datetime.fromisoformat(args["now"])
+with factory.begin() as session:
+    BillingService(session, None, PAYMOB_SETTINGS, now=lambda: now).apply_transaction_callback(obj)
+"""
+
+
+def test_a_live_auto_topup_callback_finds_its_handler_in_a_fresh_interpreter(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A real ``auto_topup`` payment settles through ``apply_transaction_callback`` in a process
+    that imported only ``lemely.web.billing_jobs``: it grants the credits, not "no paid handler".
+
+    The probe never names ``auto_topup_repo``. (The ``lemely.web`` package import also reaches it,
+    through the routers and ``deps_billing``, so the import edge itself is pinned by the AST test
+    above; this one pins that the registered handler works end to end.)
+    """
+    sm = pg_sessionmaker
+    ensure_billing_settings(sm)
+    payer = seed_user(sm, Role.student)
+    pack = seed_pack(sm, price_minor=10_000)
+    order_id = next(_order_ids)
+    payment_id = seed_payment_row(
+        sm,
+        payer_id=payer,
+        purpose=PaymentPurpose.auto_topup,
+        amount_minor=10_000,
+        status=PaymentStatus.pending,
+        credit_pack_id=pack,
+        dedupe_key=f"auto_topup:{uuid.uuid4()}",
+        paymob_order_id=order_id,
+    )
+    with sm.begin() as session:
+        row = session.get_one(Payment, payment_id)
+        row.grant_units = 100
+    assert sm.kw["bind"] is not None
+    args = {
+        "url": sm.kw["bind"].url.render_as_string(hide_password=False),
+        "order_id": order_id,
+        "payment_id": str(payment_id),
+        "amount": 10_000,
+        "txn_id": next(_txn_ids),
+        "now": NOW.isoformat(),
+    }
+    env = {**os.environ, "PYTHONPATH": str(REPO), "PROBE_ARGS": json.dumps(args)}
+    # A fixed argv built from this interpreter and a constant script: nothing untrusted.
+    subprocess.run(  # noqa: S603
+        [sys.executable, "-c", _CALLBACK_PROBE], env=env, cwd=REPO, check=True, timeout=180
+    )
+
+    with sm() as session:
+        assert session.get_one(Payment, payment_id).status is PaymentStatus.paid
+        granted = session.scalar(
+            sa.select(sa.func.sum(UsageGrant.units)).where(UsageGrant.payment_id == payment_id)
+        )
+    assert granted == 100
