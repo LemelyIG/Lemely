@@ -58,13 +58,13 @@ describe("count, labels, requests", () => {
 
   it("builds a generate request for weakness and topic, and needs a topic", () => {
     expect(
-      buildNewDeckRequest({ mode: "weakness", subjectCode: "0580", subjectName: "Maths", topic: "E7 Vectors", count: 12, title: "" }),
+      buildNewDeckRequest({ mode: "weakness", subjectCode: "0580", subjectName: "Maths", topic: "E7 Vectors", count: 12, title: "", weakTopics: ["E7 Vectors"] }),
     ).toEqual({
       kind: "generate",
       body: { subjectCode: "0580", origin: "weakness", count: 12, topic: "E7 Vectors", title: null },
     })
     expect(
-      buildNewDeckRequest({ mode: "topic", subjectCode: "0580", subjectName: "Maths", topic: null, count: 12, title: "" }),
+      buildNewDeckRequest({ mode: "topic", subjectCode: "0580", subjectName: "Maths", topic: null, count: 12, title: "", weakTopics: [] }),
     ).toEqual({ kind: "invalid", reason: "Pick a topic first." })
   })
 
@@ -82,12 +82,18 @@ describe("count, labels, requests", () => {
     ).toBe("generate")
   })
 
+  it("refuses a weakness deck when the student has no weak topics", () => {
+    expect(
+      buildNewDeckRequest({ mode: "weakness", subjectCode: "0580", subjectName: "Maths", topic: "E7 Vectors", count: 12, title: "", weakTopics: [] }),
+    ).toEqual({ kind: "invalid", reason: "Pick one of your weak topics." })
+  })
+
   it("keeps a manual deck manual even with a topic (provenance)", () => {
     expect(manualDeckRequest("0580", "Maths", "  ", " E7 Vectors ")).toEqual({
       subjectCode: "0580", title: "Maths deck", description: null, origin: "manual", topic: "E7 Vectors",
     })
     expect(
-      buildNewDeckRequest({ mode: "manual", subjectCode: "0580", subjectName: "Maths", topic: null, count: 12, title: "Mine" }),
+      buildNewDeckRequest({ mode: "manual", subjectCode: "0580", subjectName: "Maths", topic: null, count: 12, title: "Mine", weakTopics: [] }),
     ).toEqual({ kind: "create", body: manualDeckRequest("0580", "Maths", "Mine", "") })
   })
 })

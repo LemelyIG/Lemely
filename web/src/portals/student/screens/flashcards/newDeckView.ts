@@ -98,8 +98,8 @@ export type NewDeckRequest =
   | { kind: "create"; body: CreateDeckRequest }
   | { kind: "invalid"; reason: string }
 
-/** `weakTopics` is the student's recorded weak topics for this subject. The screen always passes
- * it; in weakness mode a topic outside it is refused, so a weakness deck can only be about a
+/** `weakTopics` is required so the guard cannot be skipped by mistake: the student's recorded weak
+ * topics for this subject. In weakness mode a topic outside it is refused, so a weakness deck can only be about a
  * weakness the student really has. */
 export function buildNewDeckRequest(input: {
   mode: NewDeckMode
@@ -108,13 +108,13 @@ export function buildNewDeckRequest(input: {
   topic: string | null
   count: number
   title: string
-  weakTopics?: readonly string[]
+  weakTopics: readonly string[]
 }): NewDeckRequest {
   if (input.mode === "manual") {
     return { kind: "create", body: manualDeckRequest(input.subjectCode, input.subjectName, input.title, input.topic ?? "") }
   }
   if (!input.topic) return { kind: "invalid", reason: "Pick a topic first." }
-  if (input.mode === "weakness" && input.weakTopics && !input.weakTopics.includes(input.topic)) {
+  if (input.mode === "weakness" && !input.weakTopics.includes(input.topic)) {
     return { kind: "invalid", reason: "Pick one of your weak topics." }
   }
   return {

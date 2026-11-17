@@ -1,0 +1,24 @@
+/* L10 · keyframes only. Values from .impeccable/mocks/student-r2/fc.css (flip) and the motion
+ * table in the L10 plan. Each keyframe has a utility class below; under reduced motion all of them
+ * resolve to no animation, so a call site never has to remember the guard. */
+@keyframes fc-flip {
+  from { transform: rotateY(-80deg); opacity: 0.3; }
+}
+@keyframes fc-rise {
+  from { transform: translateY(12px) scale(0.94); opacity: 0.6; }
+}
+@keyframes fc-out-right {
+  to { transform: translateX(120%) rotate(18deg); opacity: 0; }
+}
+@keyframes fc-out-left {
+  to { transform: translateX(-120%) rotate(-18deg); opacity: 0; }
+}
+
+.fc-flip { animation: fc-flip 0.34s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.fc-rise { animation: fc-rise 0.3s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.fc-out-right { animation: fc-out-right 0.28s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+.fc-out-left { animation: fc-out-left 0.28s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fc-flip, .fc-rise, .fc-out-right, .fc-out-left { animation: none; }
+}
