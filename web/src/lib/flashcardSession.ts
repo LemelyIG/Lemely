@@ -23,6 +23,39 @@ export interface FlashcardSessionState {
   results: ReviewResultDTO[]
   failed: FailedGrade[]
   inFlight: number
+  /** Consecutive "knew it" grades (anything but Again) in this session. */
+  combo: number
+  bestCombo: number
+}
+
+export function startSession(): FlashcardSessionState {
+  return { results: [], failed: [], inFlight: 0, combo: 0, bestCombo: 0 }
+}
+
+/** A grade was pressed: count it in flight and move the combo. Called before the request. */
+export function registerGrade(state: FlashcardSessionState, grade: ReviewGrade): FlashcardSessionState {
+  const combo = grade === "again" ? 0 : state.combo + 1
+  return { ...state, inFlight: state.inFlight + 1, combo, bestCombo: Math.max(state.bestCombo, combo) }
+}
+
+/** "Retry" on the banner: every failed grade is re-sent at once. */
+export function beginRetry(state: FlashcardSessionState): {
+  state: FlashcardSessionState
+  retries: FailedGrade[]
+} {
+  return {
+    state: { ...state, failed: [], inFlight: state.inFlight + state.failed.length },
+    retries: state.failed,
+  }
+}
+
+export function knewCount(results: readonly ReviewResultDTO[]): number {
+  return results.filter((r) => r.grade !== "again").length
+}
+
+/** XP the server actually awarded (capped days award 0). Never an estimate. */
+export function xpEarned(results: readonly ReviewResultDTO[]): number {
+  return results.reduce((sum, r) => sum + r.xpAwarded, 0)
 }
 
 export type GradeOutcome =
@@ -45,6 +78,7 @@ export function applyGradeOutcome(
 
   if (outcome.kind === "settled") {
     return {
+      ...session,
       results: [...session.results, outcome.result],
       failed: session.failed.filter((f) => f.cardId !== outcome.result.card.id),
       inFlight,
@@ -52,6 +86,7 @@ export function applyGradeOutcome(
   }
 
   return {
+    ...session,
     results: session.results,
     failed: [
       ...session.failed.filter((f) => f.cardId !== outcome.cardId),

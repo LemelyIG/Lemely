@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest"
-import { applyGradeOutcome, type FlashcardSessionState } from "@/lib/flashcardSession"
+import {
+  applyGradeOutcome,
+  beginRetry,
+  knewCount,
+  registerGrade,
+  startSession,
+  xpEarned,
+  type FlashcardSessionState,
+} from "@/lib/flashcardSession"
 import type { CardDTO, ReviewResultDTO } from "@/lib/flashcardTypes"
 
 /*
@@ -42,7 +50,7 @@ function reviewResult(overrides: Partial<ReviewResultDTO> & { card: CardDTO }): 
 }
 
 function emptySession(overrides: Partial<FlashcardSessionState> = {}): FlashcardSessionState {
-  return { results: [], failed: [], inFlight: 0, ...overrides }
+  return { ...startSession(), ...overrides }
 }
 
 describe("applyGradeOutcome", () => {
@@ -92,5 +100,38 @@ describe("applyGradeOutcome", () => {
 
     expect(next.failed).toEqual([{ cardId: "other", front: "Unrelated", grade: "hard" }])
     expect(next.inFlight).toBe(1)
+  })
+})
+
+describe("combo and totals", () => {
+  it("builds a combo on passing grades, resets on Again, and remembers the best", () => {
+    let s = startSession()
+    for (const g of ["good", "easy", "hard"] as const) s = registerGrade(s, g)
+    expect([s.combo, s.bestCombo, s.inFlight]).toEqual([3, 3, 3])
+    s = registerGrade(s, "again")
+    expect([s.combo, s.bestCombo]).toEqual([0, 3])
+  })
+
+  it("retries every failed grade at once and counts them in flight", () => {
+    const s = {
+      ...startSession(),
+      failed: [
+        { cardId: "a", front: "A", grade: "good" as const },
+        { cardId: "b", front: "B", grade: "again" as const },
+      ],
+    }
+    const { state, retries } = beginRetry(s)
+    expect(retries.map((r) => r.cardId)).toEqual(["a", "b"])
+    expect([state.failed.length, state.inFlight]).toEqual([0, 2])
+  })
+
+  it("counts knew-it as every grade but Again, and sums the XP the server gave", () => {
+    const r = (grade: "again" | "good", xp: number) => ({
+      ...reviewResult({ card: card({ id: "c" + xp }) }),
+      grade,
+      xpAwarded: xp,
+    })
+    expect(knewCount([r("good", 2), r("again", 0), r("good", 3)])).toBe(2)
+    expect(xpEarned([r("good", 2), r("again", 0), r("good", 3)])).toBe(5)
   })
 })

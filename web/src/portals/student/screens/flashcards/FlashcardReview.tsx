@@ -10,7 +10,7 @@ import { EmptyState } from "@/components/ui/state-views"
 import { QueryState } from "@/components/ui/query-state"
 import { useDueSession, useReviewCard } from "@/lib/hooks/useFlashcardApi"
 import type { CardDTO, ReviewGrade } from "@/lib/flashcardTypes"
-import { applyGradeOutcome, type FailedGrade, type FlashcardSessionState } from "@/lib/flashcardSession"
+import { applyGradeOutcome, startSession, type FailedGrade, type FlashcardSessionState } from "@/lib/flashcardSession"
 import { haptic } from "@/lib/haptics"
 import { useDragGesture } from "@/lib/gestures/useDragGesture"
 import { flashcardSwipeAction, GRADE_SWIPE_THRESHOLD, REVEAL_SWIPE_THRESHOLD } from "@/lib/flashcardSwipe"
@@ -128,11 +128,7 @@ export function FlashcardReview() {
 
   const [index, setIndex] = useState(0)
   const [revealed, setRevealed] = useState(false)
-  const [session, setSession] = useState<FlashcardSessionState>({
-    results: [],
-    failed: [],
-    inFlight: 0,
-  })
+  const [session, setSession] = useState<FlashcardSessionState>(startSession)
 
   const current = sessionCards?.[index] ?? null
   const finished = sessionCards !== null && index >= sessionCards.length
