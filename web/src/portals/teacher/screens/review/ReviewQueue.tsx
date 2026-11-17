@@ -19,6 +19,7 @@ import { UndoBar } from "./UndoBar"
 import { mergeReviewPages } from "./reviewLabels"
 import { SKIP_LINE, bulkButton, focusAfterDecision, isClearItem, nextFocusAfter, overlayOpen, positionOf, queueScreenState, questionLabel, shownLine } from "./reviewQueueModel"
 import { useAnswerImages } from "./useAnswerImages"
+import { useFillViewport } from "./useFillViewport"
 import { usePendingDecisions } from "./usePendingDecisions"
 import "./review.css"
 
@@ -34,6 +35,7 @@ export function ReviewQueue() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { phone } = useNativeFrame()
+  const fill = useFillViewport<HTMLDivElement>(!phone)
   const filters = useMemo(() => filtersFromSearch(sp), [sp])
   const key = filterKey(filters)
   const qs = filtersToSearch(filters).toString()
@@ -261,14 +263,14 @@ export function ReviewQueue() {
   )
 
   return (
-    <div className="-mx-3.5 grid min-h-[calc(100dvh-56px)] min-w-0 grid-cols-1 shell-sm:grid-cols-[minmax(300px,360px)_minmax(0,1fr)] shell-lg:-mx-[72px] shell-lg:grid-cols-[minmax(340px,400px)_minmax(0,1fr)]">
+    <div ref={fill.ref} style={fill.style} className="-mx-3.5 grid min-h-[calc(100dvh-56px)] min-w-0 grid-cols-1 shell-sm:min-h-0 shell-sm:grid-cols-[minmax(300px,360px)_minmax(0,1fr)] shell-sm:grid-rows-[minmax(0,1fr)] shell-lg:-mx-[72px] shell-lg:grid-cols-[minmax(340px,400px)_minmax(0,1fr)]">
       {cleared ? (
         <div className="col-span-full grid place-items-center"><Cleared tally={decisions.state.tally} markHref={MARK_HREF} /></div>
       ) : (
         <>
           {column}
           {phone ? null : (
-            <div className="sticky top-0 grid max-h-[100dvh] content-start self-start overflow-auto px-6 py-5 [scrollbar-width:thin] shell-lg:px-9 shell-lg:py-6">
+            <div className="flex min-h-0 flex-col px-6 pt-5 shell-lg:px-9 shell-lg:pt-6">
               {state === "loading" ? <div className="lm-rq-skel h-[min(420px,60vh)] rounded-[18px] bg-surface-container-high" role="status" aria-label="Loading the answer" /> : null}
               {state !== "loading" && state !== "error" ? (detailError ?? (panelProps ? <AnswerPanel {...panelProps} /> : null)) : null}
             </div>

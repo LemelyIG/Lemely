@@ -68,7 +68,9 @@ export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts 
   const tone = ringTone(view.confidenceScore)
   const saveable = marking ? canSave(view.points, marking.state, view.maximumMarks, view.lemelyMarks) : false
   return (
-    <article aria-label={view.title} className="grid w-full max-w-[780px] gap-3.5">
+    <article aria-label={view.title} className="flex min-h-0 w-full max-w-[780px] flex-1 flex-col">
+      {/* The answer scrolls; the action bar below it does not, so Accept never leaves the screen. */}
+      <div data-answer-scroll className="-mx-1 grid min-h-0 flex-1 content-start gap-3.5 overflow-y-auto px-1 pb-3 [scrollbar-width:thin]">
       <header className="flex flex-wrap items-center gap-3 shell-sm:flex-nowrap">
         {onBack ? (
           <button type="button" onClick={onBack} aria-label="Back to the queue" className={`inline-flex min-h-11 items-center gap-1.5 rounded-[14px] bg-surface-container-lowest px-3 py-2 text-[14px] font-bold shadow-[inset_0_0_0_1.5px_var(--color-outline)] ${FOCUS}`}>{ICON_BACK}Queue</button>
@@ -184,7 +186,13 @@ export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts 
             <p className="flex items-start gap-2 text-[13px] text-on-surface-variant"><Flag weight="fill" className="mt-0.5 size-4 flex-none text-on-tertiary-container" aria-hidden />A signal to look at, not a verdict. Dismissing never changes the student's mark.</p>
           ) : null}
           <textarea rows={2} value={view.integrity ? dismissNote : marking.note} onChange={(e) => (view.integrity ? setDismissNote(e.target.value) : marking.onNote(e.target.value))} placeholder={view.integrity ? "Note for your records (optional)" : notePlaceholder(changed)} aria-label={view.integrity ? "Note for your records" : notePlaceholder(changed)} className="w-full resize-none rounded-[12px] bg-surface-container-lowest px-3 py-2.5 text-[14px] leading-[1.45] shadow-[inset_0_0_0_1px_var(--color-outline)] caret-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" />
-          <div className="sticky bottom-0 z-[1] flex gap-2 bg-surface pb-1 pt-2.5 shadow-[0_-12px_14px_-10px_var(--color-surface)] max-shell-sm:pb-[max(4px,env(safe-area-inset-bottom))]">
+        </>
+      ) : null}
+      </div>
+
+      {view.status === "open" && marking ? (
+        <footer data-answer-actions className="grid shrink-0 gap-1.5 border-t border-outline-variant bg-surface pt-3 pb-3 max-shell-sm:pb-[max(12px,env(safe-area-inset-bottom))]">
+          <div className="flex gap-2">
             {view.integrity ? (
               <button type="button" data-testid="primary-action" onClick={() => marking.onDismiss(dismissNote)} className={`min-h-11 flex-1 rounded-[14px] bg-primary px-[18px] py-[11px] text-[14px] font-bold text-on-primary transition-transform duration-150 active:scale-[.97] motion-reduce:transition-none ${FOCUS}`}>Dismiss flag</button>
             ) : (
@@ -194,7 +202,7 @@ export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts 
           {showShortcuts ? (
             <p className="hidden font-mono text-[12px] text-on-surface-variant shell-lg:block" aria-hidden="true">A accept · N next · J/K move · / search</p>
           ) : null}
-        </>
+        </footer>
       ) : null}
     </article>
   )
