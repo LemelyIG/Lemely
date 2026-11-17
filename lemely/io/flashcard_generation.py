@@ -23,6 +23,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import anthropic
+import httpx
+
 from lemely.core.flashcards import GeneratedFlashcardDeck
 from lemely.io.prompts.flashcard_generation import (
     VERSION,
@@ -32,6 +35,22 @@ from lemely.io.prompts.flashcard_generation import (
 
 if TYPE_CHECKING:
     from lemely.io.gemini import GeminiClient
+
+#: What a request that passed its HTTP timeout raises, whichever SDK made it.
+_TIMEOUT_ERRORS = (TimeoutError, httpx.TimeoutException, anthropic.APITimeoutError)
+#: The HTTP status the Gemini API answers with when its own deadline passes.
+_GATEWAY_TIMEOUT = 504
+
+
+def _is_timeout(exc: BaseException | None) -> bool:
+    """Whether ``exc`` or anything it was raised from is an SDK timeout."""
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        if isinstance(exc, _TIMEOUT_ERRORS) or getattr(exc, "code", None) == _GATEWAY_TIMEOUT:
+            return True
+        seen.add(id(exc))
+        exc = exc.__cause__ or exc.__context__
+    return False
 
 
 class FlashcardGenerator:
@@ -46,6 +65,7 @@ class FlashcardGenerator:
         subject_code: str,
         topic: str,
         count: int,
+        timeout_seconds: float | None = None,
     ) -> GeneratedFlashcardDeck:
         """Generate up to ``count`` flashcards for ``topic``.
 
@@ -54,6 +74,8 @@ class FlashcardGenerator:
             topic: The P4.2 ``"<code> <name>"`` syllabus topic to write cards
                 for — already resolved by the caller (never derived here).
             count: The upper bound on cards to generate.
+            timeout_seconds: A real HTTP timeout on the model request itself, so a hung
+                call ends rather than running on after the caller gave up.
 
         Returns:
             A :class:`~lemely.core.flashcards.GeneratedFlashcardDeck` with
@@ -61,16 +83,25 @@ class FlashcardGenerator:
             never pads the result back up to ``count`` (P4.6 honesty rule —
             the caller must report the true generated count, not the
             requested one).
+
+        Raises:
+            TimeoutError: The request passed ``timeout_seconds``.
         """
         extra_cache_key = f"{subject_code}:{topic}:{count}"
-        return self._client.generate_structured(
-            system_prompt=build_flashcard_gen_system_prompt(subject_code),
-            user_prompt=build_flashcard_gen_user_prompt(topic, count=count),
-            response_schema=GeneratedFlashcardDeck,
-            prompt_version=VERSION,
-            task_tag="flashcard_generation",
-            extra_cache_key=extra_cache_key,
-        )
+        try:
+            return self._client.generate_structured(
+                system_prompt=build_flashcard_gen_system_prompt(subject_code),
+                user_prompt=build_flashcard_gen_user_prompt(topic, count=count),
+                response_schema=GeneratedFlashcardDeck,
+                prompt_version=VERSION,
+                task_tag="flashcard_generation",
+                extra_cache_key=extra_cache_key,
+                timeout_seconds=timeout_seconds,
+            )
+        except Exception as exc:
+            if _is_timeout(exc):
+                raise TimeoutError from exc
+            raise
 
 
 __all__ = ["FlashcardGenerator"]

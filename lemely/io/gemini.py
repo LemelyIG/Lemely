@@ -327,6 +327,11 @@ _call_labels: contextvars.ContextVar[tuple[_Attempt | None, str | None]] = conte
 _call_leaf_kind: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "lemely_call_leaf_kind", default=None
 )
+#: The HTTP timeout, in seconds, of the structured call in progress; None leaves the
+#: SDK default. Not part of any cache key: it bounds a request, it does not change a reply.
+_call_timeout_seconds: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "lemely_call_timeout_seconds", default=None
+)
 #: The pixel-box version of the structured call in progress (a Claude request that asks
 #: for pixel boxes and has them converted); None outside one, and on every Gemini call.
 _call_box_convention: contextvars.ContextVar[str | None] = contextvars.ContextVar(
@@ -1703,10 +1708,14 @@ class GeminiClient:
         shared_prefix: SharedPrefix | None = None,
         leaf_kind: str | None = None,
         box_convention: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> _T:
         """I1: send per-page images instead of uploading a whole file.
 
-        See :meth:`_generate_structured` for the arguments. ``leaf_kind`` (B3) picks a
+        See :meth:`_generate_structured` for the arguments. ``timeout_seconds`` is a real
+        HTTP timeout on each request of the call (Gemini ``HttpOptions.timeout``, Claude's
+        per-request ``timeout``); a request that passes it fails, and is not retried.
+        ``leaf_kind`` (B3) picks a
         ``claude_effort_for["tag:kind"]`` effort on a claude- model; Gemini ignores
         it. It reaches the cache key only through the effort it selects.
         ``box_convention`` is the version of the pixel-box contract the caller put in a
@@ -1716,6 +1725,7 @@ class GeminiClient:
         """
         token = _call_leaf_kind.set(leaf_kind)
         box_token = _call_box_convention.set(box_convention)
+        timeout_token = _call_timeout_seconds.set(timeout_seconds)
         try:
             return self._generate_structured(
                 system_prompt=system_prompt,
@@ -1736,6 +1746,7 @@ class GeminiClient:
                 shared_prefix=shared_prefix,
             )
         finally:
+            _call_timeout_seconds.reset(timeout_token)
             _call_box_convention.reset(box_token)
             _call_leaf_kind.reset(token)
 
@@ -2457,6 +2468,7 @@ class GeminiClient:
             uploads=image_uploads,
             shared_prefix=None if on_claude else shared_prefix,
             box_convention=_call_box_convention.get() if on_claude else None,
+            timeout_seconds=_call_timeout_seconds.get(),
         )
 
     def _check_stop(self, reply: ProviderReply, req: LLMRequest) -> None:

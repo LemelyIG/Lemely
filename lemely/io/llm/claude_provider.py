@@ -319,6 +319,7 @@ class ClaudeProvider:
                 max_tokens=req.max_output_tokens,
                 cache_plan=req.cache_plan,
                 page_sizes=sizes,
+                timeout_seconds=req.timeout_seconds,
             )
         except ProviderTransientError as exc:
             raise TransientCallError(str(exc)) from exc

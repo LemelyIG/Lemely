@@ -518,6 +518,43 @@ class ImageInputTests(unittest.TestCase):
         call = self._complete([])
         self.assertEqual(call["messages"], [{"role": "user", "content": "user"}])
 
+    def test_a_call_timeout_is_passed_to_the_request(self) -> None:
+        fake = _FakeAnthropic(_message(_VALID_MARK))
+        AnthropicAdapter(fake).complete(
+            model=_HAIKU,
+            system_prompt="sys",
+            user_prompt="user",
+            response_schema=AIMarkResponse,
+            thinking="low",
+            cache_prefix=None,
+            timeout_seconds=7.5,
+        )
+        self.assertEqual(fake.messages.calls[0]["timeout"], 7.5)
+
+    def test_no_call_timeout_leaves_the_sdk_default(self) -> None:
+        call = self._complete([])
+        self.assertNotIn("timeout", call)
+
+    def test_a_timed_out_request_is_final_not_retried(self) -> None:
+        fake = _FakeAnthropic(_message(_VALID_MARK))
+        fake.messages.create = MagicMock(  # type: ignore[method-assign]
+            side_effect=anthropic.APITimeoutError(
+                request=httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+            )
+        )
+        with self.assertRaises(ProviderError) as ctx:
+            AnthropicAdapter(fake).complete(
+                model=_HAIKU,
+                system_prompt="sys",
+                user_prompt="user",
+                response_schema=AIMarkResponse,
+                thinking="low",
+                cache_prefix=None,
+                timeout_seconds=1.0,
+            )
+        self.assertNotIsInstance(ctx.exception, ProviderTransientError)
+        self.assertIsInstance(ctx.exception.__cause__, anthropic.APITimeoutError)
+
     def test_too_many_pages_are_refused_before_any_request(self) -> None:
         fake = _FakeAnthropic(_message(_VALID_MARK))
         images = [_image(8, 8)] * (anthropic_adapter.MAX_IMAGES_PER_REQUEST + 1)

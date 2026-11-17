@@ -9,11 +9,13 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from pydantic import ValidationError
 
 from lemely.core.flashcards import GeneratedFlashcard, GeneratedFlashcardDeck
 from lemely.io.flashcard_generation import FlashcardGenerator
+from lemely.runtime.errors import ExternalServiceError
 
 
 class TestGeneratedFlashcard:
@@ -94,3 +96,33 @@ class TestFlashcardGeneratorUnit:
         generator = FlashcardGenerator(mock_client)
         result = generator.generate(subject_code="0625", topic="1 Motion", count=5)
         assert len(result.cards) == 1
+
+
+class TestGenerationTimeout:
+    def test_the_bound_reaches_the_model_call(self) -> None:
+        mock_client = MagicMock()
+        mock_client.generate_structured.return_value = GeneratedFlashcardDeck(
+            subject_code="0625", topic="1 Motion", cards=[]
+        )
+        FlashcardGenerator(mock_client).generate(
+            subject_code="0625", topic="1 Motion", count=3, timeout_seconds=42.0
+        )
+        assert mock_client.generate_structured.call_args.kwargs["timeout_seconds"] == 42.0
+
+    def test_an_sdk_timeout_becomes_timeout_error(self) -> None:
+        mock_client = MagicMock()
+        failure = ExternalServiceError("The read operation timed out")
+        failure.__cause__ = httpx.ReadTimeout("The read operation timed out")
+        mock_client.generate_structured.side_effect = failure
+        with pytest.raises(TimeoutError):
+            FlashcardGenerator(mock_client).generate(
+                subject_code="0625", topic="1 Motion", count=3, timeout_seconds=1.0
+            )
+
+    def test_any_other_failure_is_not_a_timeout(self) -> None:
+        mock_client = MagicMock()
+        mock_client.generate_structured.side_effect = ExternalServiceError("400 bad request")
+        with pytest.raises(ExternalServiceError):
+            FlashcardGenerator(mock_client).generate(
+                subject_code="0625", topic="1 Motion", count=3, timeout_seconds=1.0
+            )

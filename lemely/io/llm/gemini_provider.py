@@ -114,6 +114,12 @@ class GeminiProvider:
                 # The cache carries the system instruction; the API refuses both.
                 del config_kwargs["system_instruction"]
                 config_kwargs["cached_content"] = cache_name
+        if req.timeout_seconds is not None:
+            # A real per-request HTTP timeout (milliseconds in the SDK), so a hung call
+            # ends here instead of running on after the caller gave up.
+            config_kwargs["http_options"] = types.HttpOptions(
+                timeout=max(1, round(req.timeout_seconds * 1000))
+            )
         try:
             response = client._client.models.generate_content(
                 model=model,

@@ -43,8 +43,6 @@ from __future__ import annotations
 
 import re
 import uuid
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -73,7 +71,6 @@ if TYPE_CHECKING:
     import sqlalchemy as sa
     from sqlalchemy.orm import Session, sessionmaker
 
-    from lemely.core.flashcards import GeneratedFlashcardDeck
     from lemely.io.flashcard_generation import FlashcardGenerator
 
 
@@ -487,7 +484,12 @@ class FlashcardService:
             self._mark_failed_quietly(deck_uuid, "unavailable")
             return
         try:
-            generated = self._generate_bounded(self._generator, subject_code, topic, count)
+            generated = self._generator.generate(
+                subject_code=subject_code,
+                topic=topic,
+                count=count,
+                timeout_seconds=self._generation_timeout,
+            )
         except TimeoutError:
             log.error("flashcard_generation_timeout", deck_id=str(deck_uuid))
             self._mark_failed_quietly(deck_uuid, "timeout")
@@ -530,26 +532,6 @@ class FlashcardService:
             requested=count,
             generated=len(generated.cards),
         )
-
-    def _generate_bounded(
-        self, generator: FlashcardGenerator, subject_code: str, topic: str, count: int
-    ) -> GeneratedFlashcardDeck:
-        """Run the model call, raising :class:`TimeoutError` once the bound passes.
-
-        The call runs in a throwaway thread so a hung request cannot hold this one past the
-        bound; a late answer is discarded (the deck is already ``failed``).
-        """
-        pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="flashcard-gen")
-        try:
-            future = pool.submit(
-                generator.generate, subject_code=subject_code, topic=topic, count=count
-            )
-            try:
-                return future.result(timeout=self._generation_timeout)
-            except FutureTimeoutError as exc:
-                raise TimeoutError from exc
-        finally:
-            pool.shutdown(wait=False, cancel_futures=True)
 
     def _mark_failed_quietly(self, deck_uuid: uuid.UUID, error: str) -> None:
         """Mark the deck failed; if that write fails too, log it (the stale timeout recovers)."""

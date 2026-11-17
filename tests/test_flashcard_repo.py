@@ -42,6 +42,7 @@ from lemely.core.flashcards import GeneratedFlashcard, GeneratedFlashcardDeck
 from lemely.core.spaced_repetition import AGAIN_REVIEW_DELAY, INITIAL_EASE_FACTOR
 from lemely.db.base import Base
 from lemely.db.flashcard_repo import (
+    GENERATION_TIMEOUT_SECONDS,
     KNOWN_INTERVAL_DAYS,
     FlashcardGenerationUnavailableError,
     FlashcardNotFoundError,
@@ -299,7 +300,9 @@ def test_generate_deck_reports_the_true_short_count_never_padded(
     assert result.requested_count == 5
     assert result.generated_count == 1
     assert result.deck.card_count == 1
-    generator.generate.assert_called_once_with(subject_code="0625", topic="1 Motion", count=5)
+    generator.generate.assert_called_once_with(
+        subject_code="0625", topic="1 Motion", count=5, timeout_seconds=GENERATION_TIMEOUT_SECONDS
+    )
 
 
 def test_generate_deck_cards_are_stored_as_ai_source(
@@ -361,7 +364,9 @@ def test_generate_deck_with_weakness_origin_resolves_the_top_topic(
         student, subject_code="0625", origin=DeckOrigin.weakness, count=3
     )
     assert result.deck.topic == "3 Waves"
-    generator.generate.assert_called_once_with(subject_code="0625", topic="3 Waves", count=3)
+    generator.generate.assert_called_once_with(
+        subject_code="0625", topic="3 Waves", count=3, timeout_seconds=GENERATION_TIMEOUT_SECONDS
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -816,7 +821,9 @@ def test_run_generation_writes_ai_cards_and_marks_the_deck_ready(
     assert (state.requested_count, state.generated_count) == (5, 2)  # never padded
     detail = service.get_deck(student, deck.id)
     assert [c.source for c in detail.cards] == [CardSource.ai, CardSource.ai]
-    generator.generate.assert_called_once_with(subject_code="0625", topic="1 Motion", count=5)
+    generator.generate.assert_called_once_with(
+        subject_code="0625", topic="1 Motion", count=5, timeout_seconds=GENERATION_TIMEOUT_SECONDS
+    )
 
 
 def test_a_model_error_marks_the_deck_failed_and_saves_no_cards(
@@ -1026,25 +1033,24 @@ def test_a_second_concurrent_retry_loses_the_claim(
         service.retry_generation(student, deck.id)
 
 
-def test_a_model_call_past_the_timeout_marks_the_deck_failed_timeout(
+def test_a_model_call_that_times_out_marks_the_deck_failed_timeout_and_leaves_no_thread(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     student = _seed_user(pg_sessionmaker)
-    release = threading.Event()
     generator = MagicMock()
-    generator.generate.side_effect = lambda **_kw: release.wait(5)
+    generator.generate.side_effect = TimeoutError  # what the generator raises on an SDK timeout
     service = FlashcardService(
-        pg_sessionmaker, generator, now=lambda: _FIXED_NOW, generation_timeout_seconds=0.05
+        pg_sessionmaker, generator, now=lambda: _FIXED_NOW, generation_timeout_seconds=7.5
     )
     deck = service.start_generation(
         student, subject_code="0625", origin=DeckOrigin.topic, topic="1 Motion", count=3
     )
+    threads_before = threading.active_count()
 
-    try:
-        service.run_generation(deck.id)  # returns at the bound, not when the model finishes
-    finally:
-        release.set()
+    service.run_generation(deck.id)
 
+    assert threading.active_count() == threads_before  # no orphaned worker
+    assert generator.generate.call_args.kwargs["timeout_seconds"] == 7.5
     state = service.generation_status(student, deck.id)
     assert (state.status, state.error, state.generated_count) == (
         DeckGenerationStatus.failed,

@@ -138,7 +138,8 @@ class LLMRequest:
     labels each page with its size, and has its reply converted to the 0-1000 convention
     (``lemely.io.llm.box_convention``). ``shared_prefix`` is a Gemini-only ``SharedPrefix``
     for its explicit cache; on Claude the prefix arrives split into ``system`` and
-    ``cache_prefix``.
+    ``cache_prefix``. ``timeout_seconds`` is the HTTP timeout of each request, or None for
+    the SDK default; it is not part of the cache key.
     """
 
     model: str
@@ -157,6 +158,7 @@ class LLMRequest:
     uploads: Any = None
     shared_prefix: Any = None
     box_convention: str | None = None
+    timeout_seconds: float | None = None
 
     def fingerprint(
         self, *, image_token_budget: int, image_floor_px: int, image_enhance: bool

@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 
 from pydantic import BaseModel, SecretStr
 
+from lemely.io import gemini as gemini_module
 from lemely.io.gemini import GeminiClient
 from lemely.io.llm.claude_provider import ClaudeProvider, usage_as_gemini_response
 from lemely.io.llm.errors import TransientCallError
@@ -68,6 +69,40 @@ class GeminiProviderTests(unittest.TestCase):
         )
         with self.assertRaises(TransientCallError):
             GeminiProvider(client).complete(req, log=MagicMock())
+
+    def test_a_call_timeout_is_sent_as_the_request_http_timeout_in_ms(self) -> None:
+        genai = fake_genai_client()
+        genai.models.generate_content.return_value = mock_response('{"value": "ok"}')
+        client = _client(genai)
+        token = gemini_module._call_timeout_seconds.set(7.5)
+        try:
+            req = client._build_request(
+                model="gemini-3.8-flash",
+                task_tag="flashcard_generation",
+                system_prompt="sys",
+                user_prompt="user",
+                response_schema=_Reply,
+            )
+        finally:
+            gemini_module._call_timeout_seconds.reset(token)
+        GeminiProvider(client).complete(req, log=MagicMock())
+        config = genai.models.generate_content.call_args.kwargs["config"]
+        self.assertEqual(config.http_options.timeout, 7500)
+
+    def test_no_call_timeout_sends_no_http_options(self) -> None:
+        genai = fake_genai_client()
+        genai.models.generate_content.return_value = mock_response('{"value": "ok"}')
+        client = _client(genai)
+        req = client._build_request(
+            model="gemini-3.8-flash",
+            task_tag="extraction",
+            system_prompt="sys",
+            user_prompt="user",
+            response_schema=_Reply,
+        )
+        GeminiProvider(client).complete(req, log=MagicMock())
+        config = genai.models.generate_content.call_args.kwargs["config"]
+        self.assertIsNone(config.http_options)
 
     def test_code_execution_reply_is_the_executed_output(self) -> None:
         genai = fake_genai_client()
