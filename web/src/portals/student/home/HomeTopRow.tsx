@@ -19,7 +19,7 @@ export function HomeTopRow({
   localDate: string
 }) {
   return (
-    <div className="flex flex-1 items-center gap-2 xl:flex-none xl:gap-2.5">
+    <div className="flex flex-1 items-center gap-2 @[1040px]/home:flex-none @[1040px]/home:gap-2.5">
       <Link
         to={pill.to}
         aria-label={`Streak: ${pill.label}. Open Me`}

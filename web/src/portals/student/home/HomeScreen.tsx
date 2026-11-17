@@ -24,21 +24,20 @@ export function HomeScreen({ home }: { home: StudentHome }) {
   }
 
   return (
-    <div className="flex flex-col gap-[22px] pb-24 max-md:-mx-4 max-md:px-5 max-md:pt-3.5 max-md:bg-[linear-gradient(180deg,color-mix(in_oklch,var(--md-primary-container)_45%,var(--md-surface))_0%,var(--md-surface)_46%)] md:pb-8">
-      <header className="flex items-center gap-5 xl:pt-2">
+    <div className="flex flex-col gap-[22px] pb-24 max-md:not-in-data-[platform=ios]:-mx-3.5 max-md:in-data-[platform=ios]:-mx-4 max-md:px-5 max-md:pt-3.5 max-md:bg-[linear-gradient(180deg,color-mix(in_oklch,var(--md-primary-container)_45%,var(--md-surface))_0%,var(--md-surface)_46%)] md:pb-8">
+      <header className="flex items-center gap-5 @[1040px]/home:pt-2">
         <PageHeading
           repeatsTitle={false}
-          className="sr-only xl:not-sr-only xl:flex-1 xl:font-display xl:text-[32px] xl:font-extrabold xl:leading-[1.1] xl:tracking-[-0.03em] xl:text-primary"
+          className="sr-only @[1040px]/home:not-sr-only @[1040px]/home:flex-1 @[1040px]/home:font-display @[1040px]/home:text-[32px] @[1040px]/home:font-extrabold @[1040px]/home:leading-[1.1] @[1040px]/home:tracking-[-0.03em] @[1040px]/home:text-primary"
         >
           {vm.heading}
         </PageHeading>
         <HomeTopRow pill={vm.streakPill} exam={vm.exam} examTo={vm.today.planTo} localDate={home.localDate} />
       </header>
 
-      <div className="flex flex-col gap-[22px] md:grid md:grid-cols-2 md:items-start md:gap-x-9 md:gap-y-6 xl:grid-cols-[minmax(0,.95fr)_minmax(0,1.1fr)_minmax(364px,.95fr)]">
+      <div className="flex flex-col gap-[22px] md:grid md:grid-cols-2 md:items-start md:gap-x-9 md:gap-y-6 @[1040px]/home:grid-cols-[minmax(0,.95fr)_minmax(0,1.1fr)_minmax(364px,.95fr)]">
         <section aria-label="Binny" className="flex flex-col gap-[18px] md:pt-2">
           <HomeStage stage={vm.stage} onNotNow={notNow} />
-          <MomentRows rows={vm.also.phone} className="md:hidden" />
           {vm.also.desktop.length > 0 ? (
             <MomentRows rows={vm.also.desktop} className="hidden border-t border-outline-variant pt-1 md:grid" />
           ) : null}
@@ -56,8 +55,10 @@ export function HomeScreen({ home }: { home: StudentHome }) {
           week={vm.week}
           planTo={vm.today.planTo}
           allPapersTo={vm.allPapersTo}
-          className="hidden md:col-span-2 md:grid md:grid-cols-2 md:gap-x-10 md:gap-y-6 md:border-t md:border-outline-variant md:pt-6 xl:col-span-1 xl:grid-cols-1 xl:gap-6 xl:border-s xl:border-t-0 xl:ps-8 xl:pt-4"
+          className="hidden md:col-span-2 md:grid md:grid-cols-2 md:gap-x-10 md:gap-y-6 md:border-t md:border-outline-variant md:pt-6 @[1040px]/home:col-span-1 @[1040px]/home:grid-cols-1 @[1040px]/home:gap-6 @[1040px]/home:border-s @[1040px]/home:border-t-0 @[1040px]/home:ps-8 @[1040px]/home:pt-4"
         />
+        {/* Mock H6: on the phone the also rows close the page, after the win-back list. */}
+        <MomentRows rows={vm.also.phone} className="md:hidden" />
       </div>
     </div>
   )
