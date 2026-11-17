@@ -223,3 +223,88 @@ describe("decksScreenView", () => {
     expect(view.header.sub).toBe("Physics · 1 deck · 10 cards")
   })
 })
+
+describe("fix round 1", () => {
+  it("scopes the hero to the filtered decks", () => {
+    const v = decksScreenView(
+      input({
+        decks: [
+          deck({ id: "m", subjectCode: "0580", dueCount: 3 }),
+          deck({ id: "p1", subjectCode: "0625", dueCount: 20 }),
+          deck({ id: "p2", subjectCode: "0625", dueCount: 4 }),
+        ],
+        due: due({ totalDue: 27 }),
+        filterSubject: "0580",
+      }),
+    )
+    if (v.kind !== "ready") throw new Error("not ready")
+    expect(v.hero.headline).toBe("3 cards due")
+    expect(v.hero.sub).toContain("1 deck")
+    expect(v.hero.reviewLabel).toBe("Review 3 cards")
+  })
+
+  it("shows nothing due when the filtered decks have none, despite global due", () => {
+    const v = decksScreenView(
+      input({
+        decks: [deck({ id: "m", subjectCode: "0580" }), deck({ id: "p", subjectCode: "0625", dueCount: 5 })],
+        due: due({ totalDue: 5 }),
+        filterSubject: "0580",
+      }),
+    )
+    if (v.kind !== "ready") throw new Error("not ready")
+    expect(v.hero.headline).toBe("Nothing due")
+    expect(v.hero.reviewLabel).toBeNull()
+  })
+
+  it("puts ready decks first, due-first, then writing and failed; firstDeckId skips non-ready", () => {
+    const v = decksScreenView(
+      input({
+        decks: [
+          deck({ id: "failed", generationStatus: "failed", cardCount: 0 }),
+          deck({ id: "writing", generationStatus: "writing", cardCount: 0, requestedCount: 8 }),
+          deck({ id: "calm", dueCount: 0 }),
+          deck({ id: "busy", dueCount: 6 }),
+        ],
+        due: due({ totalDue: 6 }),
+      }),
+    )
+    if (v.kind !== "ready") throw new Error("not ready")
+    expect(v.groups[0].decks.map((d) => d.id)).toEqual(["busy", "calm", "failed", "writing"])
+    expect(v.firstDeckId).toBe("busy")
+  })
+
+  it("has no firstDeckId when no deck is ready", () => {
+    const v = decksScreenView(
+      input({ decks: [deck({ id: "w", generationStatus: "writing", cardCount: 0 })], due: due() }),
+    )
+    if (v.kind !== "ready") throw new Error("not ready")
+    expect(v.firstDeckId).toBeNull()
+  })
+
+  it("uses the singular for one mark", () => {
+    const weak: WeakTopicDTO[] = [{ subjectCode: "0580", topic: "4.3 Vectors", marksLost: 1 } as WeakTopicDTO]
+    const empty = decksScreenView(input({ decks: [], weakTopics: weak }))
+    if (empty.kind !== "empty") throw new Error("not empty")
+    expect(empty.weakHint).toBe("Vectors cost you 1 mark")
+    const sparse = decksScreenView(
+      input({ decks: [deck({ id: "a", topic: "Other", cardCount: 3 })], weakTopics: weak }),
+    )
+    if (sparse.kind !== "ready") throw new Error("not ready")
+    expect(sparse.sparse?.tip?.body).toBe("Vectors cost you 1 mark.")
+  })
+
+  it("shows no sparse tip while the only deck is still writing", () => {
+    const weak: WeakTopicDTO[] = [{ subjectCode: "0580", topic: "Vectors", marksLost: 5 } as WeakTopicDTO]
+    const v = decksScreenView(
+      input({ decks: [deck({ id: "w", generationStatus: "writing", cardCount: 0 })], weakTopics: weak }),
+    )
+    if (v.kind !== "ready") throw new Error("not ready")
+    expect(v.sparse).toBeNull()
+  })
+
+  it("flags failed rows as retryable", () => {
+    expect(deckRowView(deck({ id: "f", generationStatus: "failed" })).canRetry).toBe(true)
+    expect(deckRowView(deck({ id: "r" })).canRetry).toBe(false)
+    expect(deckRowView(deck({ id: "w", generationStatus: "writing" })).canRetry).toBe(false)
+  })
+})

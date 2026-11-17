@@ -75,6 +75,8 @@ export interface DeckRowView {
   mastery: MasteryView
   due: number
   status: DeckSummaryDTO["generationStatus"]
+  /** Failed decks offer a Retry; the screen renders it from this flag. */
+  canRetry: boolean
   statusLine: string | null
 }
 
@@ -96,6 +98,7 @@ export function deckRowView(deck: DeckSummaryDTO): DeckRowView {
     mastery: masteryView(deck),
     due: deck.dueCount,
     status: deck.generationStatus,
+    canRetry: deck.generationStatus === "failed",
     statusLine,
   }
 }
@@ -176,13 +179,17 @@ function hero(input: DecksScreenInput, decks: DeckSummaryDTO[]): HeroView {
     return { mood: "happy", headline: "Your cards", sub: "Couldn't check what's due", reviewLabel: null }
   }
   const due = input.due!
-  if (due.totalDue > 0) {
+  // A subject filter scopes the hero to the visible decks; unfiltered keeps the session total.
+  const totalDue = input.filterSubject
+    ? decks.reduce((s, d) => s + (d.generationStatus === "ready" ? d.dueCount : 0), 0)
+    : due.totalDue
+  if (totalDue > 0) {
     const decksDue = decks.filter((d) => d.dueCount > 0).length
     return {
       mood: "happy",
-      headline: `${plural(due.totalDue, "card")} due`,
-      sub: `About ${plural(estimateMinutes(due.totalDue), "minute")} · ${plural(decksDue, "deck")}`,
-      reviewLabel: `Review ${plural(due.totalDue, "card")}`,
+      headline: `${plural(totalDue, "card")} due`,
+      sub: `About ${plural(estimateMinutes(totalDue), "minute")} · ${plural(decksDue, "deck")}`,
+      reviewLabel: `Review ${plural(totalDue, "card")}`,
     }
   }
   return {
@@ -208,13 +215,13 @@ export function decksScreenView(input: DecksScreenInput): DecksScreenView {
     return {
       kind: "empty",
       mood: "open",
-      weakHint: weak ? `${topicName(weak.topic)} cost you ${weak.marksLost} marks` : null,
+      weakHint: weak ? `${topicName(weak.topic)} cost you ${plural(weak.marksLost, "mark")}` : null,
     }
   }
 
   const bySubject = new Map<string, DeckSummaryDTO[]>()
   for (const d of decks) bySubject.set(d.subjectCode, [...(bySubject.get(d.subjectCode) ?? []), d])
-  const statusRank = (d: DeckSummaryDTO) => (d.generationStatus === "ready" ? 1 : 0)
+  const statusRank = (d: DeckSummaryDTO) => (d.generationStatus === "ready" ? 0 : 1)
   const groups: SubjectGroupView[] = [...bySubject.entries()]
     .map(([code, list]) => ({
       subjectCode: code,
@@ -236,7 +243,7 @@ export function decksScreenView(input: DecksScreenInput): DecksScreenView {
   const counts = `${plural(decks.length, "deck")} · ${plural(totalCards, "card")}`
   const sub = input.filterSubject ? `${input.subjectName(input.filterSubject)} · ${counts}` : counts
 
-  const isSparse = decks.length === 1 && totalCards <= SPARSE_MAX_CARDS
+  const isSparse = decks.length === 1 && decks[0].generationStatus === "ready" && totalCards <= SPARSE_MAX_CARDS
   let sparse: SparseView | null = null
   if (isSparse) {
     const covered = new Set(decks.map((d) => `${d.subjectCode}|${d.topic ?? ""}`))
@@ -245,7 +252,7 @@ export function decksScreenView(input: DecksScreenInput): DecksScreenView {
       tip: next
         ? {
             title: "One more deck?",
-            body: `${topicName(next.topic)} cost you ${next.marksLost} marks.`,
+            body: `${topicName(next.topic)} cost you ${plural(next.marksLost, "mark")}.`,
             subjectCode: next.subjectCode,
             topic: next.topic,
           }
@@ -259,6 +266,6 @@ export function decksScreenView(input: DecksScreenInput): DecksScreenView {
     hero: hero(input, decks),
     groups,
     sparse,
-    firstDeckId: groups[0]?.decks[0]?.id ?? null,
+    firstDeckId: groups.flatMap((g) => g.decks).find((d) => d.status === "ready")?.id ?? null,
   }
 }
