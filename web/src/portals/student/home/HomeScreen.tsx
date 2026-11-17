@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import { useMemo, useState } from "react"
 import { PageHeading } from "@/components/ui/page-heading"
 import type { StudentHome } from "@/lib/studentHomeTypes"

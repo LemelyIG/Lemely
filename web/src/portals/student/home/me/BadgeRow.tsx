@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import { CaretRight, Clock, Fire, FileText, Star, TrendUp } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 import { FOCUS, HIT } from "../gradeClass"

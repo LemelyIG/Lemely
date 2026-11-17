@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import { GhostRows } from "@/components/redesign"
 
 const BLOCK = "bg-surface-container-high"

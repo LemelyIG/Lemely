@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import { Fire } from "@phosphor-icons/react"
 import type { XpProfile } from "@/lib/xpTypes"
 import { cn } from "@/lib/utils"

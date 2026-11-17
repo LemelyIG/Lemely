@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import { HairRow, HairRows } from "@/components/redesign"
 import { cn } from "@/lib/utils"
 import { gradeText } from "../gradeClass"

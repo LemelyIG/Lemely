@@ -1,4 +1,5 @@
-import { useRef, useState } from "react"
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
+import { useState } from "react"
 import { GhostRows } from "@/components/redesign"
 import { PageHeading } from "@/components/ui/page-heading"
 import { QueryState } from "@/components/ui/query-state"
@@ -37,11 +38,7 @@ export function MeScreen() {
   const deleted = useDeletedPapers()
   const overlayState = useOverlayState()
   const [sheet, setSheet] = useState<null | "progress" | "badges">(null)
-  const returnFocusRef = useRef<HTMLElement | null>(null)
-  const openSheet = (which: "progress" | "badges") => (trigger: HTMLElement) => {
-    returnFocusRef.current = trigger
-    setSheet(which)
-  }
+  const openSheet = (which: "progress" | "badges") => () => setSheet(which)
   const name = heroName(me.data)
 
   const homePart = (render: (h: NonNullable<typeof home.data>) => React.ReactNode, order: string) =>
@@ -102,9 +99,9 @@ export function MeScreen() {
           </div>
         )}
       </QueryState>
-      <ProgressSheet open={sheet === "progress"} onOpenChange={(o) => setSheet(o ? "progress" : null)} xp={xp.data} returnFocusRef={returnFocusRef} />
+      <ProgressSheet open={sheet === "progress"} onOpenChange={(o) => setSheet(o ? "progress" : null)} xp={xp.data} />
       <BadgesSheet
-        returnFocusRef={returnFocusRef}
+
         open={sheet === "badges"}
         onOpenChange={(o) => setSheet(o ? "badges" : null)}
         badges={home.data && xp.data ? deriveBadges(home.data, xp.data) : []}

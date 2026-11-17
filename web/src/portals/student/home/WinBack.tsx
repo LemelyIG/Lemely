@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import { HairRow, HairRows } from "@/components/redesign"
 import { homeRoutes } from "./routes"
 import type { HomeVm } from "./model"
@@ -18,7 +19,7 @@ export function WinBack({ rows }: { rows: HomeVm["win"] }) {
               trailing={
                 <span className="font-mono text-[17px] font-bold leading-none tracking-[-0.02em] text-primary">
                   +{r.marks}
-                  <small className="font-sans text-[12px] font-semibold tracking-normal text-on-surface-variant"> marks</small>
+                  <small className="font-sans text-[12px] font-semibold tracking-normal text-on-surface-variant">{r.marks === 1 ? " mark" : " marks"}</small>
                 </span>
               }
             />

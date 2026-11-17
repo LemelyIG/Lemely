@@ -282,8 +282,8 @@ function fallbackStages(home: StudentHome): StageVm[] {
         "morning",
         "open",
         near
-          ? `${near}${top.topic} first, +${top.marks} marks.`
-          : `${top.topic} cost you ${top.marks} marks last time. Ten minutes fixes most of it.`,
+          ? `${near}${top.topic} first, +${plural(top.marks, "mark")}.`
+          : `${top.topic} cost you ${plural(top.marks, "mark")} last time. Ten minutes fixes most of it.`,
         { label: "Start 10 minutes", to: homeRoutes.practiceTopic(top.subjectCode, top.topic) },
         true,
         greeting,

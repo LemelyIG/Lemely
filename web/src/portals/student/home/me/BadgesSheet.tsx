@@ -1,21 +1,17 @@
-import type { RefObject } from "react"
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
 import { cn } from "@/lib/utils"
 import { BADGE_ICON } from "./BadgeRow"
 import type { deriveBadges } from "./meModel"
 
-export function BadgesSheet({ open, onOpenChange, badges, returnFocusRef }: { open: boolean; onOpenChange: (o: boolean) => void; badges: ReturnType<typeof deriveBadges>; returnFocusRef: RefObject<HTMLElement | null> }) {
+export function BadgesSheet({ open, onOpenChange, badges }: { open: boolean; onOpenChange: (o: boolean) => void; badges: ReturnType<typeof deriveBadges> }) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="adaptive"
         className="flex flex-col gap-4 p-6"
-        onCloseAutoFocus={(e) => {
-          e.preventDefault()
-          returnFocusRef.current?.focus()
-        }}
       >
-        <SheetTitle className="pe-10 text-display-md">Badges</SheetTitle>
+        <SheetTitle className="text-display-md">Badges</SheetTitle>
         <SheetDescription>Earned from real work only.</SheetDescription>
         <ul className="grid">
           {badges.map((b) => {

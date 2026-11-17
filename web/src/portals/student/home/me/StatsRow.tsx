@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import { Link } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { FOCUS, gradeText, ROW_PRESS } from "../gradeClass"

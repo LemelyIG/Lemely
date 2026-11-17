@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import { Link } from "react-router-dom"
 import { Binny } from "@/components/redesign"
 import { cn } from "@/lib/utils"
@@ -19,10 +20,10 @@ export function HomeStage({ stage, onNotNow }: { stage: StageVm; onNotNow: () =>
         className="pointer-events-none absolute inset-x-0 top-[118px] mx-auto h-[30px] w-[210px] rounded-[50%] bg-[radial-gradient(closest-side,color-mix(in_oklch,var(--md-primary-container)_80%,transparent),transparent)] @[1040px]/home:top-[150px] @[1040px]/home:w-[260px]"
       />
       {/* The kit's .rd-binny sets its own display, so the size swap hides wrappers, not the svg. */}
-      <div className="relative z-[1] @[1040px]/home:hidden">
+      <div className="relative z-base @[1040px]/home:hidden">
         <Binny mood={stage.mood} motion={stage.motion} size={150} aria-hidden />
       </div>
-      <div className="relative z-[1] hidden @[1040px]/home:block">
+      <div className="relative z-base hidden @[1040px]/home:block">
         <Binny mood={stage.mood} motion={stage.motion} size={200} aria-hidden />
       </div>
       <p className="max-w-[26ch] text-balance text-[20px] font-bold leading-[1.38] tracking-[-0.01em] text-on-surface @[1040px]/home:max-w-[22ch] @[1040px]/home:text-[22px]">

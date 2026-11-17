@@ -166,6 +166,11 @@ describe("stage", () => {
     expect(s.greeting).toBeNull()
   })
 
+  it("reads one mark as singular", () => {
+    const one = makeHome({ nextExamOn: null, winBack: [{ ...makeHome({}).winBack[0], marks: 1 }] })
+    expect(pickStage(one, NONE).line).toBe("Vectors cost you 1 mark last time. Ten minutes fixes most of it.")
+  })
+
   it("skips dismissed moments and never dismisses the last fallback", () => {
     const home = makeHome({ moments: [result], nextExamOn: null })
     expect(pickStage(home, new Set(["result:5"])).kind).toBe("morning")
