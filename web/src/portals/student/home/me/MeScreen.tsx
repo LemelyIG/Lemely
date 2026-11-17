@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { GhostRows } from "@/components/redesign"
 import { PageHeading } from "@/components/ui/page-heading"
 import { QueryState } from "@/components/ui/query-state"
@@ -23,7 +23,7 @@ import { StatsRow } from "./StatsRow"
 import { StreakStrip } from "./StreakStrip"
 import { YourSubjects } from "./YourSubjects"
 
-const COL = "contents md:flex md:flex-col md:gap-[18px]"
+const COL = "contents md:flex md:min-w-0 md:flex-col md:gap-[18px]"
 
 export function MeScreen() {
   const xp = useXpProfile()
@@ -37,6 +37,11 @@ export function MeScreen() {
   const deleted = useDeletedPapers()
   const overlayState = useOverlayState()
   const [sheet, setSheet] = useState<null | "progress" | "badges">(null)
+  const returnFocusRef = useRef<HTMLElement | null>(null)
+  const openSheet = (which: "progress" | "badges") => (trigger: HTMLElement) => {
+    returnFocusRef.current = trigger
+    setSheet(which)
+  }
   const name = displayName(me.data)
 
   const homePart = (render: (h: NonNullable<typeof home.data>) => React.ReactNode, order: string) =>
@@ -72,9 +77,9 @@ export function MeScreen() {
           <div className="flex flex-col gap-[22px] md:grid md:grid-cols-2 md:items-start md:gap-12">
             <div className={COL}>
               <MeHero className="order-1 md:order-none" name={name} xp={profile} avatarUrl={me.data?.avatarUrl ?? null} />
-              <StreakStrip className="order-2 md:order-none" xp={profile} onOpen={() => setSheet("progress")} />
+              <StreakStrip className="order-2 md:order-none" xp={profile} onOpen={openSheet("progress")} />
               {homePart((h) => <StatsRow stats={statsVm(h)} />, "order-3 md:order-none")}
-              {homePart((h) => <BadgeRow badges={deriveBadges(h, profile)} onAll={() => setSheet("badges")} />, "order-5 md:order-none")}
+              {homePart((h) => <BadgeRow badges={deriveBadges(h, profile)} onAll={openSheet("badges")} />, "order-5 md:order-none")}
               {homePart((h) => <YourSubjects rows={subjectsVm(h)} />, "order-6 md:order-none")}
             </div>
             <div className={COL}>
@@ -97,8 +102,9 @@ export function MeScreen() {
           </div>
         )}
       </QueryState>
-      <ProgressSheet open={sheet === "progress"} onOpenChange={(o) => setSheet(o ? "progress" : null)} xp={xp.data} />
+      <ProgressSheet open={sheet === "progress"} onOpenChange={(o) => setSheet(o ? "progress" : null)} xp={xp.data} returnFocusRef={returnFocusRef} />
       <BadgesSheet
+        returnFocusRef={returnFocusRef}
         open={sheet === "badges"}
         onOpenChange={(o) => setSheet(o ? "badges" : null)}
         badges={home.data && xp.data ? deriveBadges(home.data, xp.data) : []}

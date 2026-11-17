@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils"
 import { FOCUS, ROW_PRESS } from "../gradeClass"
 import { streakLine, streakStrip } from "./meModel"
 
-export function StreakStrip({ xp, onOpen, className }: { xp: XpProfile; onOpen: () => void; className?: string }) {
+export function StreakStrip({ xp, onOpen, className }: { xp: XpProfile; onOpen: (trigger: HTMLElement) => void; className?: string }) {
   const strip = streakStrip(xp)
   const line = streakLine(xp)
   const active = strip.filter((d) => d.on).length
@@ -14,7 +14,7 @@ export function StreakStrip({ xp, onOpen, className }: { xp: XpProfile; onOpen: 
   return (
     <button
       type="button"
-      onClick={onOpen}
+      onClick={(e) => onOpen(e.currentTarget)}
       aria-label={`${line.main}${line.best ? `, ${line.best}` : ""}. ${summary}. Open your progress`}
       className={cn("grid gap-2 text-start text-on-surface", ROW_PRESS, FOCUS, className)}
     >

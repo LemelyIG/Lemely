@@ -1,4 +1,4 @@
-import { useMemo } from "react"
+import { useMemo, type RefObject } from "react"
 import { Snowflake } from "@phosphor-icons/react"
 import { Celebrate, CountUp, MilestoneSticker } from "@/components/ui/celebration"
 import { Chip } from "@/components/ui/chip"
@@ -12,7 +12,7 @@ function formatDay(day: string): string {
   return new Date(`${day}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short" })
 }
 
-export function ProgressSheet({ open, onOpenChange, xp }: { open: boolean; onOpenChange: (open: boolean) => void; xp: XpProfile | undefined }) {
+export function ProgressSheet({ open, onOpenChange, xp, returnFocusRef }: { open: boolean; onOpenChange: (open: boolean) => void; xp: XpProfile | undefined; returnFocusRef: RefObject<HTMLElement | null> }) {
   const days = useMemo(() => (xp ? fillCalendar(xp) : []), [xp])
   const data = useMemo(() => days.map((d) => ({ label: formatDay(d.day), value: d.xp })), [days])
   if (!xp) return null
@@ -22,8 +22,15 @@ export function ProgressSheet({ open, onOpenChange, xp }: { open: boolean; onOpe
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="adaptive" className="flex flex-col gap-6">
-        <SheetTitle className="text-display-md">Your progress</SheetTitle>
+      <SheetContent
+        side="adaptive"
+        className="flex flex-col gap-6 p-6"
+        onCloseAutoFocus={(e) => {
+          e.preventDefault()
+          returnFocusRef.current?.focus()
+        }}
+      >
+        <SheetTitle className="pe-10 text-display-md">Your progress</SheetTitle>
         <SheetDescription>Everything here measures work done, never how well you did it.</SheetDescription>
 
         <div className="flex flex-wrap items-baseline justify-between gap-3">
@@ -33,15 +40,15 @@ export function ProgressSheet({ open, onOpenChange, xp }: { open: boolean; onOpe
               <CountUp value={xp.totalXp} />
             </Celebrate>
           </div>
-          <MilestoneSticker streakDays={current} />
+          <MilestoneSticker streakDays={current} className="text-[12px]" />
         </div>
 
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
-            <Chip tone="neutral">Longest {longest}</Chip>
+            <Chip tone="neutral" className="text-[12px]">Longest {longest}</Chip>
             {freezesAvailable > 0 ? (
-              <Chip tone="accent">
-                <Snowflake size={11} weight="bold" aria-hidden="true" />
+              <Chip tone="accent" className="text-[12px]">
+                <Snowflake size={12} weight="bold" aria-hidden="true" />
                 {freezesAvailable} freeze{freezesAvailable === 1 ? "" : "s"} saved
               </Chip>
             ) : null}
@@ -73,7 +80,8 @@ export function ProgressSheet({ open, onOpenChange, xp }: { open: boolean; onOpe
           <BarChart
             data={data}
             height={180}
-            tickEvery={7}
+            tickEvery={9}
+            tickFontSize={12}
             axisLeftLegend="XP"
             formatValue={(v) => String(Math.round(v))}
             tooltipDetail={(point) => (point.value === 0 ? "No XP earned" : null)}

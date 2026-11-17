@@ -34,7 +34,7 @@ export function MeHero({ name, xp, avatarUrl, className }: { name: string; xp: X
         </Celebrate>
       </Link>
       <div className="min-w-0 flex-1">
-        <h2 className="truncate font-display text-[32px] font-extrabold leading-[1.05] tracking-[-0.03em] text-primary md:text-[40px]">{name}</h2>
+        <h2 className="line-clamp-2 break-words font-display text-[32px] font-extrabold leading-[1.05] tracking-[-0.03em] text-primary md:text-[34px]">{name}</h2>
         <span className="text-[13px] text-on-surface-variant">{levelLine(xp)}</span>
       </div>
       <div className="-me-1 flex-none self-center">

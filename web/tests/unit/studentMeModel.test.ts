@@ -97,7 +97,7 @@ describe("Me view model", () => {
     ])
     expect(peopleVm({ classes: undefined, rank: null, friends: 0, parents: 0 }).map((d) => d.sub)).toEqual([
       null,
-      "Join a class to rank",
+      "Join a class",
       "Add a friend",
       "Invite a parent",
     ])

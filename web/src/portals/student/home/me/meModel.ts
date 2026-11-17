@@ -131,7 +131,7 @@ export function peopleVm(input: {
   const sub = <T,>(v: T | undefined, f: (v: T) => string) => (v === undefined ? null : f(v))
   return [
     { id: "classes", label: "Classes", sub: sub(input.classes, (n) => `${n} ${n === 1 ? "class" : "classes"}`), to: homeRoutes.classes },
-    { id: "standings", label: "Standings", sub: input.rank === undefined ? null : input.rank === null ? "Join a class to rank" : ordinal(input.rank), to: homeRoutes.standings },
+    { id: "standings", label: "Standings", sub: input.rank === undefined ? null : input.rank === null ? "Join a class" : ordinal(input.rank), to: homeRoutes.standings },
     { id: "friends", label: "Friends", sub: sub(input.friends, (n) => (n === 0 ? "Add a friend" : plural(n, "friend"))), to: homeRoutes.friends },
     { id: "parents", label: "Parents", sub: sub(input.parents, (n) => (n === 0 ? "Invite a parent" : `${n} linked`)), to: homeRoutes.parents },
   ] as const
