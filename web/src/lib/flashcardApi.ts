@@ -89,7 +89,11 @@ export const flashcardApi = {
     request<CardDTO>(`/student/flashcards/cards/${cardId}`, json("PATCH", body)),
   deleteCard: (cardId: string) => request<void>(`/student/flashcards/cards/${cardId}`, json("DELETE")),
   dueSession: (scope: DueScope) => request<DueSessionDTO>(dueUrl(scope)),
-  reviewCard: (cardId: string, grade: ReviewGrade) =>
-    request<ReviewResultDTO>(`/student/flashcards/cards/${cardId}/review`, json("POST", { grade })),
+  /** `clientReviewId` is the per-rating idempotency key: the server replays a repeat of it. */
+  reviewCard: (cardId: string, grade: ReviewGrade, clientReviewId?: string) =>
+    request<ReviewResultDTO>(
+      `/student/flashcards/cards/${cardId}/review`,
+      json("POST", { grade, ...(clientReviewId ? { clientReviewId } : {}) }),
+    ),
   weakTopics: (subjectCode?: string | null) => request<WeakTopicDTO[]>(weakTopicsUrl(subjectCode)),
 }

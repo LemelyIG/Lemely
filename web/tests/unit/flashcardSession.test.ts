@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   applyGradeOutcome,
   beginRetry,
+  newClientReviewId,
   knewCount,
   registerGrade,
   startSession,
@@ -53,6 +54,18 @@ function emptySession(overrides: Partial<FlashcardSessionState> = {}): Flashcard
   return { ...startSession(), ...overrides }
 }
 
+const ID_A = "11111111-1111-4111-8111-111111111111"
+const ID_B = "22222222-2222-4222-8222-222222222222"
+
+describe("newClientReviewId", () => {
+  it("mints a fresh UUID per rating", () => {
+    const a = newClientReviewId()
+    const b = newClientReviewId()
+    expect(a).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    expect(a).not.toBe(b)
+  })
+})
+
 describe("applyGradeOutcome", () => {
   it("a settled outcome appends to results and decrements inFlight", () => {
     const result = reviewResult({ card: card({ id: "c1" }) })
@@ -69,16 +82,19 @@ describe("applyGradeOutcome", () => {
       cardId: "c1",
       front: "What is 2+2?",
       grade: "again",
+      clientReviewId: ID_A,
     })
 
     expect(next.results).toEqual([])
-    expect(next.failed).toEqual([{ cardId: "c1", front: "What is 2+2?", grade: "again" }])
+    expect(next.failed).toEqual([
+      { cardId: "c1", front: "What is 2+2?", grade: "again", clientReviewId: ID_A },
+    ])
     expect(next.inFlight).toBe(0)
   })
 
   it("a retry of a failed card removes it from failed on settle", () => {
     const failedSession = emptySession({
-      failed: [{ cardId: "c1", front: "What is 2+2?", grade: "again" }],
+      failed: [{ cardId: "c1", front: "What is 2+2?", grade: "again", clientReviewId: ID_A }],
       inFlight: 1,
     })
     const result = reviewResult({ card: card({ id: "c1" }), grade: "again" })
@@ -91,14 +107,16 @@ describe("applyGradeOutcome", () => {
 
   it("a settled outcome for one card leaves an unrelated failed card alone", () => {
     const failedSession = emptySession({
-      failed: [{ cardId: "other", front: "Unrelated", grade: "hard" }],
+      failed: [{ cardId: "other", front: "Unrelated", grade: "hard", clientReviewId: ID_B }],
       inFlight: 2,
     })
     const result = reviewResult({ card: card({ id: "c1" }) })
 
     const next = applyGradeOutcome(failedSession, { kind: "settled", result })
 
-    expect(next.failed).toEqual([{ cardId: "other", front: "Unrelated", grade: "hard" }])
+    expect(next.failed).toEqual([
+      { cardId: "other", front: "Unrelated", grade: "hard", clientReviewId: ID_B },
+    ])
     expect(next.inFlight).toBe(1)
   })
 })
@@ -116,12 +134,14 @@ describe("combo and totals", () => {
     const s = {
       ...startSession(),
       failed: [
-        { cardId: "a", front: "A", grade: "good" as const },
-        { cardId: "b", front: "B", grade: "again" as const },
+        { cardId: "a", front: "A", grade: "good" as const, clientReviewId: ID_A },
+        { cardId: "b", front: "B", grade: "again" as const, clientReviewId: ID_B },
       ],
     }
     const { state, retries } = beginRetry(s)
     expect(retries.map((r) => r.cardId)).toEqual(["a", "b"])
+    // Retry re-sends the key minted for the original rating, so the server can replay it.
+    expect(retries.map((r) => r.clientReviewId)).toEqual([ID_A, ID_B])
     expect([state.failed.length, state.inFlight]).toEqual([0, 2])
   })
 

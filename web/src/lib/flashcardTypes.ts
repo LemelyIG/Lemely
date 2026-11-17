@@ -67,6 +67,8 @@ export interface EditCardRequest {
 /** Body for `POST /api/student/flashcards/cards/{cardId}/review`. */
 export interface ReviewCardRequest {
   grade: ReviewGrade
+  /** Idempotency key, a UUID minted once per rating. Omitted by old clients. */
+  clientReviewId?: string
 }
 
 /**

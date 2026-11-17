@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 
 from lemely.core.spaced_repetition import AGAIN_REVIEW_DELAY, CardSchedule, initial_schedule
 from lemely.core.spaced_repetition import ReviewGrade as CoreReviewGrade
@@ -1005,6 +1006,7 @@ class FlashcardService:
         grade: ReviewGrade,
         *,
         now: datetime | None = None,
+        client_review_id: uuid.UUID | None = None,
     ) -> ReviewOutcome:
         """Apply one SM-2 review via :func:`lemely.core.spaced_repetition.review`.
 
@@ -1025,17 +1027,48 @@ class FlashcardService:
                 boundary (see both enums' docstrings).
             now: Injected clock override for tests; defaults to this
                 service's constructor-supplied clock.
+            client_review_id: Optional idempotency key, minted once per rating by the client.
+                When this student already recorded a review under the key, that review is
+                replayed (same ``review_id``, same before/after intervals) and the card is
+                neither rescheduled nor logged again. ``None`` records a new review every call.
 
         Raises:
             FlashcardNotFoundError: no card exists with ``card_id`` (404).
             FlashcardOwnershipError: it exists but is not the caller's (403).
+            FlashcardValidationError: the key was already used for a different card.
         """
         student_uuid = _as_uuid(student_id)
         card_uuid = _as_uuid(card_id)
+        try:
+            return self._record_review_once(student_uuid, card_uuid, grade, now, client_review_id)
+        except IntegrityError:
+            # Two requests with the same key raced past the replay check; the unique
+            # constraint let one win. The loser replays the winner's row.
+            if client_review_id is None:
+                raise
+            return self._record_review_once(student_uuid, card_uuid, grade, now, client_review_id)
+
+    def _record_review_once(
+        self,
+        student_uuid: uuid.UUID,
+        card_uuid: uuid.UUID,
+        grade: ReviewGrade,
+        now: datetime | None,
+        client_review_id: uuid.UUID | None,
+    ) -> ReviewOutcome:
         moment = now if now is not None else self._now()
         core_grade = CoreReviewGrade(grade.value)
         with self._sessionmaker() as session, session.begin():
             card = self._owned_card(session, student_uuid, card_uuid)
+            if client_review_id is not None:
+                prior = session.scalars(
+                    select(FlashcardReview).where(
+                        FlashcardReview.user_id == student_uuid,
+                        FlashcardReview.client_review_id == client_review_id,
+                    )
+                ).first()
+                if prior is not None:
+                    return self._replay_review(session, card, prior)
             # Ownership of ``card`` is already proven by ``_owned_card`` (it
             # loads and checks the same deck internally); this is a second,
             # cheap fetch purely for ``subject_code`` and never re-validates
@@ -1073,6 +1106,7 @@ class FlashcardService:
                 interval_before_days=schedule_before.interval_days,
                 interval_after_days=schedule_after.interval_days,
                 ease_after=schedule_after.ease_factor,
+                client_review_id=client_review_id,
             )
             session.add(review_row)
             session.flush()
@@ -1085,6 +1119,24 @@ class FlashcardService:
                 interval_after_days=schedule_after.interval_days,
                 subject_code=deck.subject_code,
             )
+
+    def _replay_review(
+        self, session: Session, card: Flashcard, prior: FlashcardReview
+    ) -> ReviewOutcome:
+        """The stored outcome of a review this student already recorded under the same key."""
+        if prior.card_id != card.id:
+            raise FlashcardValidationError("clientReviewId was already used for another card")
+        deck = session.get(FlashcardDeck, card.deck_id)
+        if deck is None:
+            raise FlashcardNotFoundError(f"Unknown deck for card: {card.id}")
+        return ReviewOutcome(
+            card=self._to_card_view(card),
+            review_id=prior.id,
+            grade=prior.grade,
+            interval_before_days=prior.interval_before_days,
+            interval_after_days=prior.interval_after_days,
+            subject_code=deck.subject_code,
+        )
 
     # -- Internals ----------------------------------------------------------------
 

@@ -497,9 +497,18 @@ def review_card(
     act (unlike the other three seams, a card can be reviewed again and again
     on purpose), so the per-source daily cap (D5.1 §3), not dedupe, is what
     stops this from being farmed.
+
+    A body ``clientReviewId`` makes the call idempotent: a repeat with the same key replays the
+    stored review (same row id, so the XP dedupe key above holds too) and neither reschedules the
+    card nor awards twice. The replay's ``xpAwarded`` is 0, as the award is already recorded.
     """
     try:
-        outcome = service.record_review(auth.user_id, card_id, _parse_grade(body.grade))
+        outcome = service.record_review(
+            auth.user_id,
+            card_id,
+            _parse_grade(body.grade),
+            client_review_id=body.clientReviewId,
+        )
     except FlashcardError as exc:
         _raise_for(exc)
     except ValueError as exc:

@@ -16,6 +16,8 @@ mirroring the absent parameter on
 
 from __future__ import annotations
 
+import uuid  # noqa: TC003 - pydantic resolves the annotation at runtime
+
 from pydantic import Field
 
 from lemely.web.schemas import ApiModel
@@ -89,9 +91,14 @@ class ReviewCardRequestDTO(ApiModel):
     ``grade`` is one of ``"again"``, ``"hard"``, ``"good"``, ``"easy"`` — the
     four-button vocabulary chunk A's scheduler maps onto SM-2 qualities
     0/3/4/5 (no invented quality 1 or 2).
+
+    ``clientReviewId`` is an optional idempotency key (a UUID the client mints once per rating).
+    A repeat with the same key replays the stored result instead of grading again. Old clients
+    omit it and behave as before.
     """
 
     grade: str
+    clientReviewId: uuid.UUID | None = None
 
 
 class RenameDeckRequestDTO(ApiModel):

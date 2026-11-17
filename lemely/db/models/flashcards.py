@@ -232,6 +232,9 @@ class FlashcardReview(TimestampMixin, Base):
     __tablename__ = "flashcard_reviews"
     __table_args__ = (
         sa.Index("ix_flashcard_reviews_user_id_reviewed_at", "user_id", "reviewed_at"),
+        sa.UniqueConstraint(
+            "user_id", "client_review_id", name="uq_flashcard_reviews_user_client_review"
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -257,6 +260,10 @@ class FlashcardReview(TimestampMixin, Base):
     interval_before_days: Mapped[int] = mapped_column(sa.Integer, nullable=False)
     interval_after_days: Mapped[int] = mapped_column(sa.Integer, nullable=False)
     ease_after: Mapped[float] = mapped_column(sa.Float, nullable=False)
+    client_review_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    """Idempotency key the client mints once per rating (redesign L10). A repeat POST carrying
+    the same key replays this row instead of grading again. ``NULL`` for an old client that
+    sends none; Postgres lets many ``NULL`` rows share the per-user unique constraint."""
 
     card: Mapped[Flashcard] = relationship("Flashcard", back_populates="reviews")
 

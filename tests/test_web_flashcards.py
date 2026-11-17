@@ -30,8 +30,10 @@ from lemely.core.flashcards import GeneratedFlashcard, GeneratedFlashcardDeck
 from lemely.db.base import Base
 from lemely.db.flashcard_repo import FlashcardService
 from lemely.db.models import User
+from lemely.db.models.academic import Subject
 from lemely.db.models.attempts import Attempt, WeaknessRecord
 from lemely.db.models.enums import AttemptOrigin, Role
+from lemely.db.xp_repo import XpService
 from lemely.runtime.config import DatabaseSettings
 from lemely.web import create_app
 from lemely.web.deps import AuthContext, get_auth_context, get_flashcard_service, get_xp_service
@@ -846,3 +848,114 @@ def test_review_reports_the_xp_it_awarded(
         f"/api/student/flashcards/cards/{card_id}/review", json={"grade": "again"}
     ).json()
     assert second["xpAwarded"] == 0  # the review still succeeded
+
+
+# ---------------------------------------------------------------------------
+# Review idempotency (clientReviewId).
+# ---------------------------------------------------------------------------
+
+
+def _one_card(client: TestClient) -> str:
+    deck_id = _deck_with_cards(client, 1)
+    return str(client.get(f"/api/student/flashcards/decks/{deck_id}").json()["cards"][0]["id"])
+
+
+def _review_count(sm: sessionmaker[Session]) -> int:
+    with sm() as session:
+        return int(session.execute(sa.text("SELECT count(*) FROM flashcard_reviews")).scalar_one())
+
+
+def _xp_count(sm: sessionmaker[Session]) -> int:
+    with sm() as session:
+        return int(session.execute(sa.text("SELECT count(*) FROM xp_events")).scalar_one())
+
+
+def test_repeat_review_with_the_same_key_changes_nothing(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    with pg_sessionmaker.begin() as session:
+        session.add(Subject(code="0625", name="Physics"))
+    _use_service(client, flashcard_service)
+    _auth_as(client, student)
+    client.app.dependency_overrides[get_xp_service] = lambda: XpService(pg_sessionmaker)  # type: ignore[union-attr]
+    card_id = _one_card(client)
+    key = str(uuid.uuid4())
+    url = f"/api/student/flashcards/cards/{card_id}/review"
+
+    first = client.post(url, json={"grade": "good", "clientReviewId": key})
+    xp_after_first = _xp_count(pg_sessionmaker)
+    second = client.post(url, json={"grade": "good", "clientReviewId": key})
+
+    assert (first.status_code, second.status_code) == (200, 200)
+    assert second.json()["reviewId"] == first.json()["reviewId"]
+    assert second.json()["card"] == first.json()["card"]
+    assert second.json()["intervalAfterDays"] == first.json()["intervalAfterDays"]
+    assert second.json()["card"]["repetitions"] == 1  # not rescheduled twice
+    assert _review_count(pg_sessionmaker) == 1
+    assert xp_after_first == 1
+    assert _xp_count(pg_sessionmaker) == xp_after_first
+
+
+def test_a_different_key_grades_again(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _use_service(client, flashcard_service)
+    _auth_as(client, student)
+    card_id = _one_card(client)
+    url = f"/api/student/flashcards/cards/{card_id}/review"
+
+    first = client.post(url, json={"grade": "good", "clientReviewId": str(uuid.uuid4())})
+    second = client.post(url, json={"grade": "good", "clientReviewId": str(uuid.uuid4())})
+
+    assert second.json()["reviewId"] != first.json()["reviewId"]
+    assert second.json()["card"]["repetitions"] == 2
+    assert _review_count(pg_sessionmaker) == 2
+
+
+def test_review_without_a_key_behaves_as_before(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _use_service(client, flashcard_service)
+    _auth_as(client, student)
+    card_id = _one_card(client)
+    url = f"/api/student/flashcards/cards/{card_id}/review"
+
+    client.post(url, json={"grade": "good"})
+    client.post(url, json={"grade": "good"})
+
+    assert _review_count(pg_sessionmaker) == 2
+
+
+def test_a_malformed_key_is_422(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _use_service(client, flashcard_service)
+    _auth_as(client, student)
+    card_id = _one_card(client)
+    response = client.post(
+        f"/api/student/flashcards/cards/{card_id}/review",
+        json={"grade": "good", "clientReviewId": "not-a-uuid"},
+    )
+    assert response.status_code == 422
+    assert _review_count(pg_sessionmaker) == 0
+
+
+def test_the_same_key_from_another_student_is_not_a_replay(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    key = str(uuid.uuid4())
+    for _ in range(2):
+        student = _seed_user(pg_sessionmaker)
+        _use_service(client, flashcard_service)
+        _auth_as(client, student)
+        card_id = _one_card(client)
+        response = client.post(
+            f"/api/student/flashcards/cards/{card_id}/review",
+            json={"grade": "good", "clientReviewId": key},
+        )
+        assert response.status_code == 200
+    assert _review_count(pg_sessionmaker) == 2

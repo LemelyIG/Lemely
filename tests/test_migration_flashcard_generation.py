@@ -33,6 +33,9 @@ REVISION = "0055_flashcard_generation"
 DOWN_REVISION = "0054_waitlist_email_confirmation"
 TABLE = "flashcard_decks"
 NEW_COLUMNS = {"generation_status", "requested_count", "generation_started_at", "generation_error"}
+REVIEW_TABLE = "flashcard_reviews"
+REVIEW_KEY_COLUMN = "client_review_id"
+REVIEW_UNIQUE = "uq_flashcard_reviews_user_client_review"
 
 _COLUMNS_SQL = sa.text(
     "SELECT column_name, data_type, character_maximum_length, is_nullable, column_default "
@@ -56,6 +59,36 @@ def _insert_old_style_deck(session: Session, user_id: uuid.UUID) -> None:
         ),
         {"u": user_id},
     )
+
+
+def _insert_review(
+    session: Session, user_id: uuid.UUID, card_id: uuid.UUID, key: str | None
+) -> None:
+    session.execute(
+        sa.text(
+            "INSERT INTO flashcard_reviews (card_id, user_id, grade, reviewed_at, "
+            "interval_before_days, interval_after_days, ease_after, client_review_id) "
+            "VALUES (:c, :u, 'good', now(), 0, 1, 2.5, :k)"
+        ),
+        {"c": card_id, "u": user_id, "k": key},
+    )
+
+
+def _card(session: Session, user_id: uuid.UUID) -> uuid.UUID:
+    deck_id = session.execute(
+        sa.text(
+            "INSERT INTO flashcard_decks (user_id, subject_code, title, origin) "
+            "VALUES (:u, '0580', 'D', 'manual') RETURNING id"
+        ),
+        {"u": user_id},
+    ).scalar_one()
+    return session.execute(
+        sa.text(
+            "INSERT INTO flashcards (deck_id, front, back, position, source) "
+            "VALUES (:d, 'q', 'a', 0, 'manual') RETURNING id"
+        ),
+        {"d": deck_id},
+    ).scalar_one()
 
 
 def test_revision_chains_from_0054() -> None:
@@ -103,6 +136,34 @@ def test_check_constraint_refuses_an_unknown_status(
         session.rollback()
 
 
+def test_client_review_id_is_nullable_and_unique_per_user(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    with migrated_sessionmaker() as session:
+        col = session.execute(
+            sa.text(
+                "SELECT data_type, is_nullable FROM information_schema.columns "
+                "WHERE table_name = :t AND column_name = :c"
+            ),
+            {"t": REVIEW_TABLE, "c": REVIEW_KEY_COLUMN},
+        ).one()
+        assert tuple(col) == ("uuid", "YES")
+        user_id = _user(session)
+        other_id = _user(session)
+        card_id = _card(session, user_id)
+        other_card = _card(session, other_id)
+        key = str(uuid.uuid4())
+        _insert_review(session, user_id, card_id, None)
+        _insert_review(session, user_id, card_id, None)  # NULL keys never collide
+        _insert_review(session, user_id, card_id, key)
+        _insert_review(session, other_id, other_card, key)  # same key, another user: fine
+        session.flush()
+        with pytest.raises(IntegrityError):
+            _insert_review(session, user_id, card_id, key)
+            session.flush()
+        session.rollback()
+
+
 def test_upgrade_downgrade_upgrade_round_trip(
     migrated_sessionmaker_with_downgrade: tuple[sessionmaker[Session], Callable[[str], None]],
 ) -> None:
@@ -117,6 +178,15 @@ def test_upgrade_downgrade_upgrade_round_trip(
         assert current_revision(session) == DOWN_REVISION
         cols = {row[0] for row in session.execute(_COLUMNS_SQL, {"t": TABLE})}
         assert cols.isdisjoint(NEW_COLUMNS)
+        review_cols = {row[0] for row in session.execute(_COLUMNS_SQL, {"t": REVIEW_TABLE})}
+        assert REVIEW_KEY_COLUMN not in review_cols
+        assert (
+            session.execute(
+                sa.text("SELECT count(*) FROM pg_constraint WHERE conname = :n"),
+                {"n": REVIEW_UNIQUE},
+            ).scalar_one()
+            == 0
+        )
         assert session.execute(sa.text(f"SELECT count(*) FROM {TABLE}")).scalar_one() == 1  # noqa: S608 - constant
 
     upgrade_head()

@@ -10,7 +10,7 @@ import { EmptyState } from "@/components/ui/state-views"
 import { QueryState } from "@/components/ui/query-state"
 import { useDueSession, useReviewCard } from "@/lib/hooks/useFlashcardApi"
 import type { CardDTO, ReviewGrade } from "@/lib/flashcardTypes"
-import { applyGradeOutcome, startSession, type FailedGrade, type FlashcardSessionState } from "@/lib/flashcardSession"
+import { applyGradeOutcome, newClientReviewId, startSession, type FailedGrade, type FlashcardSessionState } from "@/lib/flashcardSession"
 import { haptic } from "@/lib/haptics"
 import { useDragGesture } from "@/lib/gestures/useDragGesture"
 import { flashcardSwipeAction, GRADE_SWIPE_THRESHOLD, REVEAL_SWIPE_THRESHOLD } from "@/lib/flashcardSwipe"
@@ -171,15 +171,22 @@ export function FlashcardReview() {
     setIndex((i) => i + 1)
     setRevealed(false)
     setSession((prev) => ({ ...prev, inFlight: prev.inFlight + 1 }))
+    const clientReviewId = newClientReviewId()
     reviewCard.mutate(
-      { cardId: card.id, grade: g },
+      { cardId: card.id, grade: g, clientReviewId },
       {
         onSuccess: (result) => {
           setSession((prev) => applyGradeOutcome(prev, { kind: "settled", result }))
         },
         onError: () => {
           setSession((prev) =>
-            applyGradeOutcome(prev, { kind: "failed", cardId: card.id, front: card.front, grade: g }),
+            applyGradeOutcome(prev, {
+              kind: "failed",
+              cardId: card.id,
+              front: card.front,
+              grade: g,
+              clientReviewId,
+            }),
           )
         },
       },
@@ -194,7 +201,7 @@ export function FlashcardReview() {
       inFlight: prev.inFlight + 1,
     }))
     reviewCard.mutate(
-      { cardId: entry.cardId, grade: entry.grade },
+      { cardId: entry.cardId, grade: entry.grade, clientReviewId: entry.clientReviewId },
       {
         onSuccess: (result) => {
           setSession((prev) => applyGradeOutcome(prev, { kind: "settled", result }))
@@ -206,6 +213,7 @@ export function FlashcardReview() {
               cardId: entry.cardId,
               front: entry.front,
               grade: entry.grade,
+              clientReviewId: entry.clientReviewId,
             }),
           )
         },

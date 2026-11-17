@@ -17,6 +17,13 @@ export interface FailedGrade {
   cardId: string
   front: string
   grade: ReviewGrade
+  /** The idempotency key minted with this rating; a Retry re-sends it so the server replays. */
+  clientReviewId: string
+}
+
+/** One idempotency key per rating. Minted when the grade is pressed, kept on a failure. */
+export function newClientReviewId(): string {
+  return crypto.randomUUID()
 }
 
 export interface FlashcardSessionState {
@@ -60,7 +67,7 @@ export function xpEarned(results: readonly ReviewResultDTO[]): number {
 
 export type GradeOutcome =
   | { kind: "settled"; result: ReviewResultDTO }
-  | { kind: "failed"; cardId: string; front: string; grade: ReviewGrade }
+  | { kind: "failed"; cardId: string; front: string; grade: ReviewGrade; clientReviewId: string }
 
 /**
  * Fold one settled or failed grade into the session state.
@@ -90,7 +97,12 @@ export function applyGradeOutcome(
     results: session.results,
     failed: [
       ...session.failed.filter((f) => f.cardId !== outcome.cardId),
-      { cardId: outcome.cardId, front: outcome.front, grade: outcome.grade },
+      {
+        cardId: outcome.cardId,
+        front: outcome.front,
+        grade: outcome.grade,
+        clientReviewId: outcome.clientReviewId,
+      },
     ],
     inFlight,
   }
