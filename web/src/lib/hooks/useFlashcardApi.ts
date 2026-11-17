@@ -187,19 +187,25 @@ export function useDeleteCard(deckId: string): UseMutationResult<void, Error, st
 }
 
 /**
- * Grade one card. Grading is optimistic (the review screen moves on before this settles), so a
- * transient failure retries quietly with capped backoff before it reaches "ratings not saved".
+ * Options for grading one card. Grading is optimistic (the review screen moves on before this
+ * settles), but it must never retry: POST /cards/{id}/review is not idempotent, every call records
+ * a new review row, reschedules the card and can award XP, so a retry after a lost response would
+ * double-grade it. A failure goes straight to "ratings not saved".
  */
+export function reviewCardMutationOptions(queryClient: QueryClient) {
+  return {
+    mutationFn: ({ cardId, grade }: { cardId: string; grade: ReviewGrade }) =>
+      flashcardApi.reviewCard(cardId, grade),
+    retry: 0,
+    onSuccess: () => invalidateDeckLists(queryClient),
+  }
+}
+
 export function useReviewCard(): UseMutationResult<
   ReviewResultDTO,
   Error,
   { cardId: string; grade: ReviewGrade }
 > {
   const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: ({ cardId, grade }) => flashcardApi.reviewCard(cardId, grade),
-    retry: 3,
-    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
-    onSuccess: () => invalidateDeckLists(queryClient),
-  })
+  return useMutation(reviewCardMutationOptions(queryClient))
 }
