@@ -21,7 +21,7 @@ describe("answerViewFromReviewItem", () => {
   it("builds the header, page label and scheme wording", () => {
     const v = answerViewFromReviewItem(detail())
     expect(v.title).toBe("Layla Hassan · Q4(b)")
-    expect(v.subtitle).toBe("10B · 0580/42 · m/j 2025 · 64% sure")
+    expect(v.subtitle).toBe("10B · 0580/42 · m/j 2025")
     expect(v.pageLabel).toBe("Page 6 · 0580/42")
     expect(v.studentHref).toBe("/teacher/students/s1")
     expect(v.scheme).toEqual({ expected: "y = 1/3 or -5/3", topic: "Quadratics" })

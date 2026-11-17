@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useId, useRef, useState, type KeyboardEvent } from "react"
 import { Link } from "react-router-dom"
 import { Flag } from "@phosphor-icons/react"
 import { KeyRing } from "@/components/redesign"
@@ -52,6 +52,16 @@ const FRAME = "m-0 grid gap-1.5 rounded-2xl bg-surface-container-lowest p-3.5 sh
 export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts }: AnswerPanelProps) {
   const [mode, setMode] = useState<"crop" | "page">("crop")
   const [dismissNote, setDismissNote] = useState("")
+  const uid = useId()
+  const tabRefs = useRef<Record<"crop" | "page", HTMLButtonElement | null>>({ crop: null, page: null })
+  const pick = (m: "crop" | "page") => { setMode(m); if (m === "page") images.requestPage() }
+  const onTabKey = (e: KeyboardEvent<HTMLButtonElement>) => {
+    const to = e.key === "ArrowRight" || e.key === "ArrowLeft" ? (mode === "crop" ? "page" : "crop") : e.key === "Home" ? "crop" : e.key === "End" ? "page" : null
+    if (!to) return
+    e.preventDefault()
+    pick(to)
+    tabRefs.current[to]?.focus()
+  }
   const total = marking ? totalOf(view.points, marking.state, view.maximumMarks) : (view.lemelyMarks ?? 0)
   const changed = view.lemelyMarks != null && total !== view.lemelyMarks
   const showPage = mode === "page" && view.hasScan
@@ -66,10 +76,10 @@ export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts 
         <div className="order-3 flex min-w-0 flex-[1_1_100%] items-center gap-3 shell-sm:order-none shell-sm:flex-1">
           <KeyRing
             value={ringValue(view.confidenceScore)}
-            size={64}
+            size={96}
             tone={tone === "gold" ? "gold" : tone === "neutral" ? "neutral" : "warn"}
             label={ringLabel(view.confidenceScore)}
-            center={<span className="font-mono text-[18px] font-semibold tabular-nums tracking-[-0.02em]">{ringText(view.confidenceScore)}{view.confidenceScore != null ? <small className="text-[12px] opacity-70">%</small> : null}</span>}
+            center={<span className="font-display text-[34px] font-extrabold leading-none tabular-nums tracking-[-0.03em]">{ringText(view.confidenceScore)}{view.confidenceScore != null ? <small className="text-[14px] font-bold opacity-70">%</small> : null}</span>}
           />
           <div className="min-w-0">
             <h2 className="text-[21px] font-bold leading-[1.25] tracking-[-0.01em]">
@@ -90,13 +100,14 @@ export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts 
       {view.hasScan ? (
         <div role="tablist" aria-label="Answer view" className="inline-flex justify-self-start rounded-[12px] bg-surface-container p-[3px]">
           {(["crop", "page"] as const).map((m) => (
-            <button key={m} type="button" role="tab" aria-selected={mode === m} onClick={() => { setMode(m); if (m === "page") images.requestPage() }} className={`min-h-9 rounded-[9px] px-3.5 py-1.5 text-[13px] font-bold text-on-surface-variant pointer-coarse:min-h-11 aria-selected:bg-surface-container-lowest aria-selected:text-primary aria-selected:shadow-[0_0_0_1px_var(--color-outline-variant)] ${FOCUS}`}>
+            <button key={m} ref={(el) => { tabRefs.current[m] = el }} id={`${uid}-tab-${m}`} aria-controls={`${uid}-panel`} tabIndex={mode === m ? 0 : -1} onKeyDown={onTabKey} type="button" role="tab" aria-selected={mode === m} onClick={() => pick(m)} className={`min-h-9 rounded-[9px] px-3.5 py-1.5 text-[13px] font-bold text-on-surface-variant pointer-coarse:min-h-11 aria-selected:bg-surface-container-lowest aria-selected:text-primary aria-selected:shadow-[0_0_0_1px_var(--color-outline-variant)] ${FOCUS}`}>
               {m === "crop" ? "Answer" : "Whole page"}
             </button>
           ))}
         </div>
       ) : null}
 
+      <div role={view.hasScan ? "tabpanel" : undefined} id={`${uid}-panel`} aria-labelledby={view.hasScan ? `${uid}-tab-${showPage ? "page" : "crop"}` : undefined} className="grid gap-3.5">
       {showPage ? (
         <figure className={`${FRAME} min-h-[300px]`}>
           {view.pageLabel ? <figcaption className={LABEL}>{view.pageLabel}</figcaption> : null}
@@ -114,11 +125,14 @@ export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts 
           <figcaption className="text-[12.5px] text-on-surface-variant">From the student's scan</figcaption>
         </figure>
       ) : (
-        <figure className="lm-rq-ruled relative m-0 min-h-[210px] overflow-hidden rounded-2xl bg-surface-container-lowest px-[18px] py-3.5 shadow-[inset_0_0_0_1px_var(--color-outline)]">
-          <p className="m-0 whitespace-pre-wrap text-[22px] leading-[36px] text-on-surface shell-sm:text-[28px] shell-sm:leading-[42px]">{view.transcription ?? "No transcription recorded for this question."}</p>
+        <figure className="relative m-0 min-h-[210px] overflow-hidden rounded-2xl bg-surface-container-lowest px-[18px] py-3.5 shadow-[inset_0_0_0_1px_var(--color-outline)]">
+          <div className="lm-rq-ruled text-[22px] leading-[36px] shell-sm:text-[28px] shell-sm:leading-[42px]">
+            <p className="m-0 whitespace-pre-wrap text-on-surface">{view.transcription ?? "No transcription recorded for this question."}</p>
+          </div>
           <figcaption className="mt-2 text-[12.5px] text-on-surface-variant">Lemely's reading of the answer</figcaption>
         </figure>
       )}
+      </div>
 
       <section className="grid gap-0.5 rounded-[14px] bg-surface-container-low px-3.5 py-2.5">
         <span className={LABEL}>Student said</span>

@@ -38,11 +38,15 @@
 @media (pointer: coarse) {
   .lm-rq-chips button { min-block-size: 0; min-inline-size: 0; }
 }
+/* The rule sits on the last pixel of each line box (1lh tracks the figure's own line-height), so it
+   runs under the text and never through it. Padding-top is the same as the text's first line box. */
 .lm-rq-ruled {
   background-image: repeating-linear-gradient(
-    transparent 0 33px,
-    var(--color-primary-container) 33px 34px
+    transparent 0 calc(1lh - 1px),
+    var(--color-primary-container) calc(1lh - 1px) 1lh
   );
+  background-origin: content-box;
+  background-clip: content-box;
 }
 .lm-rq-toast {
   transition: opacity 0.25s var(--ease-out), transform 0.25s var(--ease-out);

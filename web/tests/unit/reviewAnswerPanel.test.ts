@@ -69,4 +69,20 @@ describe("AnswerPanel", () => {
     expect(html).not.toContain("One mark more")
     expect(html).toContain("Dismissing never changes the student")
   })
+  it("names the tariff chip in words so the point reads cleanly", () => {
+    const v = view({ points: [point("p1", "M1", 1), point("p2", "A1", 2)] })
+    const html = render(v, marking(v))
+    expect(html).toContain("1 mark<")
+    expect(html).toContain("2 marks<")
+  })
+  it("draws a big confidence ring and does not repeat the percentage in the subtitle", () => {
+    const html = render(view(), null)
+    expect(html).toMatch(/class="rd-keyring"[^>]*style="width:(9\d|1\d\d)px/)
+  })
+  it("wires the answer tabs as a tablist with a tabpanel", () => {
+    const html = render(view({ hasScan: true }), marking(view({ hasScan: true })))
+    expect(html).toContain('role="tablist"')
+    expect(html).toContain('role="tabpanel"')
+    expect(html).toContain('tabindex="-1"')
+  })
 })

@@ -52,4 +52,18 @@ describe("review screens source", () => {
     expect(css).not.toMatch(/max-height/)
     expect(css).toMatch(/grid-template-rows/)
   })
+  it("keeps ruled lines between text lines, tied to the line height", () => {
+    const css = readFileSync(join(DIR, "review.css"), "utf8")
+    expect(css).toMatch(/1lh/)
+  })
+  it("owns the screen: flushes pending decisions on pagehide and unmount, and binds the keys", () => {
+    const hook = readFileSync(join(DIR, "usePendingDecisions.ts"), "utf8")
+    expect(hook).toMatch(/addEventListener\("pagehide"/)
+    const screen = readFileSync(join(DIR, "ReviewQueue.tsx"), "utf8")
+    expect(screen).toMatch(/usePendingDecisions\(/)
+    expect(screen).toMatch(/addEventListener\("keydown"/)
+    const routes = readFileSync(join(DIR, "../../index.tsx"), "utf8")
+    expect(routes).not.toMatch(/screens\/Review"\)/)
+    expect(routes).toMatch(/screens\/review\/ReviewQueue/)
+  })
 })

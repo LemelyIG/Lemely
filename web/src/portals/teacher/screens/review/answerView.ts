@@ -1,7 +1,7 @@
 import type { ReviewItemDetail } from "@/lib/teacherTypes"
 import { clampNote, markPointsFrom, type MarkPoint } from "./markModel"
 import { isConsolePaperItem, isIntegrityReason } from "./reviewLabels"
-import { paperCode, paperLine, questionLabel, ringLabel } from "./reviewQueueModel"
+import { paperCode, paperLine, questionLabel } from "./reviewQueueModel"
 
 /**
  * Everything the answer panel shows, as plain data. The review queue builds it
@@ -50,7 +50,7 @@ export function answerViewFromReviewItem(d: ReviewItemDetail): AnswerView {
   return {
     key: d.itemId,
     title: `${d.studentDisplayName} · ${questionLabel(d)}`,
-    subtitle: [who, paperLine(d), ringLabel(d.confidenceScore)].filter(Boolean).join(" · "),
+    subtitle: [who, paperLine(d)].filter(Boolean).join(" · "),
     studentHref: !console && d.studentId ? `/teacher/students/${d.studentId}` : null,
     pageLabel: d.hasSourceBox && d.sourcePage != null ? `Page ${d.sourcePage} · ${paperCode(d) ?? "scan"}` : null,
     hasScan: d.hasSourceBox,

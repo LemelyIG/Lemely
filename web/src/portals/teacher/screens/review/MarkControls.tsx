@@ -62,7 +62,7 @@ export function MarkControls({ points, state, max, lemely, disabled, disabledRea
                     ) : null}
                     {p.note ? <span data-testid="point-note" className="line-clamp-2 text-[12.5px] text-on-surface-variant" title={p.note}>{p.note}</span> : null}
                   </span>
-                  <span className="ms-auto flex-none rounded-[8px] bg-surface-container-lowest px-[7px] py-px font-mono text-[12px] font-semibold">{p.tariff}</span>
+                  <span className="ms-auto flex-none rounded-[8px] bg-surface-container-lowest px-[7px] py-px font-mono text-[12px] font-semibold">{p.tariff} {p.tariff === 1 ? "mark" : "marks"}</span>
                 </button>
               </div>
             )
