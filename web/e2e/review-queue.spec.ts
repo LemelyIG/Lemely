@@ -94,6 +94,9 @@ test("closing the tab (pagehide) flushes a pending decision before the undo wind
   const { reviewItem } = readSeed()
   await login(page)
   const posts = await interceptResolve(page)
+  // Registered before any navigation so the unload-time request cannot be missed.
+  const seen: { method: string; url: string }[] = []
+  page.on("request", (r) => seen.push({ method: r.method(), url: r.url() }))
 
   await page.goto("/teacher/review")
   await page.locator(`[data-review-row="${reviewItem.itemId}"]`).click()
@@ -102,12 +105,17 @@ test("closing the tab (pagehide) flushes a pending decision before the undo wind
   await page.waitForTimeout(1_000)
   expect(posts).toEqual([])
 
-  // A full document navigation fires `pagehide`; the keepalive request is what carries the decision out.
-  const sent = page.waitForRequest((r) => /\/review\/[^/]+\/resolve$/.test(r.url()), { timeout: 4_000 })
-  const decidedAt = Date.now()
+  // A full document navigation fires `pagehide`; the keepalive request carries the decision out.
+  // OBSERVATION ONLY: Chromium does not guarantee `page.route` can fulfil a keepalive fetch
+  // issued during unload, so this asserts the request was issued (method and URL) and never
+  // depends on a response. The hard assertion that the flush happens, and happens early, is
+  // the in-app-navigation (unmount) test above.
   await page.goto("/teacher/classes")
-  await sent
-  expect(Date.now() - decidedAt).toBeLessThan(4_000)
+  await expect
+    .poll(() => seen.filter((r) => r.method === "POST" && /\/api\/teacher\/review\/[^/]+\/resolve$/.test(r.url)).length, {
+      timeout: 4_000,
+    })
+    .toBeGreaterThanOrEqual(1)
 })
 
 test("on a phone an answer opens full screen and Queue goes back", async ({ page }, info) => {
