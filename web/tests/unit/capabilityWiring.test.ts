@@ -18,10 +18,10 @@ function readSource(relativePath: string): string {
 }
 
 describe("useFlashcardApi.ts — useReviewCard retries", () => {
-  it("configures retry: 3 with an exponential-backoff delay", () => {
+  it("configures retry: 0 on the review mutation (not idempotent without a key, a retry could double-grade)", () => {
     const source = readSource("src/lib/hooks/useFlashcardApi.ts")
-    expect(source).toContain("retry: 3")
-    expect(source).toContain("retryDelay:")
+    expect(source).toContain("retry: 0")
+    expect(source).not.toContain("retry: 3")
   })
 })
 
