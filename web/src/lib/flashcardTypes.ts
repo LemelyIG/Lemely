@@ -38,7 +38,9 @@ export interface CreateDeckRequest {
 
 /** Body for `POST /api/student/flashcards/decks/generate`. `origin` must be
  * `"topic"` or `"weakness"` — a manual deck has no AI content to generate
- * for. `count` is bounded 1-50 on the wire (a billed Gemini request). */
+ * for. `topic` is required for `"topic"` and optional for `"weakness"`, where
+ * it must be a recorded weak topic. `count` is bounded 1-50 on the wire (a
+ * billed Gemini request). */
 export interface GenerateDeckRequest {
   subjectCode: string
   origin: "topic" | "weakness"
@@ -87,6 +89,7 @@ export interface CardDTO {
   lapses: number
   dueAt: string
   lastReviewedAt: string | null
+  nextIntervalDays: NextIntervals
 }
 
 /** One deck's list-view row (S-22). `topic` is the P4.2 `"<code> <name>"`
@@ -102,6 +105,12 @@ export interface DeckSummaryDTO {
   cardCount: number
   dueCount: number
   createdAt: string
+  newCount: number
+  learningCount: number
+  knownCount: number
+  marksLost: number | null
+  generationStatus: DeckGenerationStatus
+  requestedCount: number | null
 }
 
 /** A deck plus every one of its cards, in position order. */
@@ -112,6 +121,13 @@ export interface DeckDetailDTO {
   title: string
   description: string | null
   origin: DeckOrigin
+  dueCount: number
+  newCount: number
+  learningCount: number
+  knownCount: number
+  marksLost: number | null
+  generationStatus: DeckGenerationStatus
+  requestedCount: number | null
   cards: CardDTO[]
 }
 
@@ -139,6 +155,8 @@ export interface DueSessionDTO {
   cards: CardDTO[]
   totalDue: number
   nextDueAt: string | null
+  upcoming: string[]
+  againDelayMinutes: number
 }
 
 /**
@@ -153,4 +171,40 @@ export interface ReviewResultDTO {
   grade: ReviewGrade
   intervalBeforeDays: number
   intervalAfterDays: number
+  xpAwarded: number
+}
+
+/** Where an AI deck's card writing stands. Every manual deck is `"ready"`. */
+export type DeckGenerationStatus = "writing" | "ready" | "failed"
+
+/** Interval in days each grade would give the card right now. `again` is 0: the
+ * same-session step of `DueSessionDTO.againDelayMinutes`. */
+export interface NextIntervals {
+  again: number
+  hard: number
+  good: number
+  easy: number
+}
+
+/** Body for `PATCH /api/student/flashcards/decks/{deckId}`. */
+export interface RenameDeckRequest {
+  title: string
+}
+
+/** `GET /api/student/flashcards/decks/{deckId}/generation`. `generatedCount` is the real
+ * row count, never padded to `requestedCount`. */
+export interface GenerationStatusDTO {
+  deckId: string
+  status: DeckGenerationStatus
+  requestedCount: number | null
+  generatedCount: number
+  error: string | null
+}
+
+/** One recorded weak topic (new-deck sheet chips). `accuracyPct` is 0-100. */
+export interface WeakTopicDTO {
+  subjectCode: string
+  topic: string
+  marksLost: number
+  accuracyPct: number
 }

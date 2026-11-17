@@ -34,6 +34,7 @@ function card(overrides: Partial<CardDTO> & { id: string }): CardDTO {
     lapses: 0,
     dueAt: "2026-08-09T00:00:00Z",
     lastReviewedAt: null,
+    nextIntervalDays: { again: 0, hard: 1, good: 1, easy: 1 },
     ...overrides,
   }
 }
@@ -48,6 +49,12 @@ function deck(overrides: Partial<DeckSummaryDTO> & { id: string }): DeckSummaryD
     cardCount: 0,
     dueCount: 0,
     createdAt: "2026-08-09T00:00:00Z",
+    newCount: 0,
+    learningCount: 0,
+    knownCount: 0,
+    marksLost: null,
+    generationStatus: "ready",
+    requestedCount: null,
     ...overrides,
   }
 }
@@ -61,6 +68,8 @@ describe("dueStateView — totalDue is the whole backlog, never cards.length; 'n
       cards: [card({ id: "c1" })],
       totalDue: 40, // the backlog is 40; `cards` was capped by `limit` to 1
       nextDueAt: null,
+      upcoming: [],
+      againDelayMinutes: 10,
     }
     const view = dueStateView(session)
     expect(view.kind).toBe("due")
@@ -71,7 +80,13 @@ describe("dueStateView — totalDue is the whole backlog, never cards.length; 'n
   })
 
   it("inverse: an empty cards list yields 'none', carrying nextDueAt rather than a bare void", () => {
-    const session: DueSessionDTO = { cards: [], totalDue: 0, nextDueAt: "2026-08-10T08:00:00Z" }
+    const session: DueSessionDTO = {
+      cards: [],
+      totalDue: 0,
+      nextDueAt: "2026-08-10T08:00:00Z",
+      upcoming: [],
+      againDelayMinutes: 10,
+    }
     const view = dueStateView(session)
     expect(view.kind).toBe("none")
     if (view.kind === "none") expect(view.nextDueAt).toBe("2026-08-10T08:00:00Z")
@@ -236,6 +251,7 @@ function reviewResult(overrides: Partial<ReviewResultDTO> & { card: CardDTO }): 
     grade: "good",
     intervalBeforeDays: 0,
     intervalAfterDays: 1,
+    xpAwarded: 0,
     ...overrides,
   }
 }

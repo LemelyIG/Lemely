@@ -416,7 +416,7 @@ export function FlashcardDecks() {
   const subjectName = useSubjectName(subjectCode)
 
   const decksQuery = useFlashcardDecks(subjectCode)
-  const dueQuery = useDueSession(subjectCode)
+  const dueQuery = useDueSession({ subjectCode })
   const createDeck = useCreateDeck()
   const generateDeck = useGenerateDeck()
   const deleteDeck = useDeleteDeck()

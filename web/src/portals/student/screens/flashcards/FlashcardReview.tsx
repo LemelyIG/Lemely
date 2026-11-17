@@ -107,7 +107,7 @@ export function FlashcardReview() {
   const { subjectCode = "" } = useParams<{ subjectCode: string }>()
   const subjectName = useSubjectName(subjectCode)
 
-  const dueQuery = useDueSession(subjectCode)
+  const dueQuery = useDueSession({ subjectCode })
   const reviewCard = useReviewCard()
 
   // Snapshot the session's cards once, the moment they arrive — a `ref`

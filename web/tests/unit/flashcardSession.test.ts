@@ -25,6 +25,7 @@ function card(overrides: Partial<CardDTO> & { id: string }): CardDTO {
     lapses: 0,
     dueAt: "2026-08-09T00:00:00Z",
     lastReviewedAt: null,
+    nextIntervalDays: { again: 0, hard: 1, good: 1, easy: 1 },
     ...overrides,
   }
 }
@@ -35,6 +36,7 @@ function reviewResult(overrides: Partial<ReviewResultDTO> & { card: CardDTO }): 
     grade: "good",
     intervalBeforeDays: 1,
     intervalAfterDays: 3,
+    xpAwarded: 0,
     ...overrides,
   }
 }
