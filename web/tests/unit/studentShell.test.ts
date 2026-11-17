@@ -50,8 +50,8 @@ describe("student shell destinations (design A)", () => {
     },
   )
 
-  it("keeps today's four bottom tabs", () => {
-    expect(STUDENT_BOTTOM_TABS.map((t) => t.label)).toEqual(["Overview", "Correct", "Classes", "Profile"])
+  it("uses the mock's tab bar: Home, Practice, Scan, Plan, Me", () => {
+    expect(STUDENT_BOTTOM_TABS.map((t) => t.label)).toEqual(["Home", "Practice", "Scan a paper", "Plan", "Me"])
   })
 
   it("uses design A's empty bell copy, with no em dash", () => {

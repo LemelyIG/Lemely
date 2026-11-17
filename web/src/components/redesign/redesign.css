@@ -1,0 +1,353 @@
+/*
+ * F1 redesign kit (docs/superpowers/plans/2026-11-15-redesign-f1-ui-kit.md).
+ * Mock-faithful sizes from .impeccable/mocks/student-r2/{t,pr,ph,pa}.css, mapped
+ * onto the Abyss tokens in index.css. A component stylesheet, not index.css: the
+ * kit's px type sizes are banned as `text-[Npx]` in TSX (design-tokens.test.ts),
+ * and this file adds no design token. Every class is `rd-`. Every animation sits
+ * inside the prefers-reduced-motion: no-preference block (redesignCss.test.ts).
+ */
+
+/* ── Binny (mock h.js BIN, t.css .bn) ───────────────────────────────────── */
+.rd-binny {
+  display: block;
+  flex: none;
+  overflow: visible;
+  --rd-bn-body: var(--md-primary);
+  --rd-bn-face: var(--md-on-primary);
+  --rd-bn-pupil: var(--md-on-surface);
+  --rd-bn-paper: var(--md-surface-container-lowest);
+  --rd-bn-paper-line: var(--md-outline);
+}
+/* Dark: the primary ramp flips (light blue body, navy face), so the body and face
+   tokens already read; only the paper needs a lighter fill and a stronger edge. */
+:root[data-theme="dark"] .rd-binny {
+  --rd-bn-body: var(--md-primary);
+  --rd-bn-face: var(--md-on-primary);
+  --rd-bn-pupil: var(--md-on-surface);
+  --rd-bn-paper: var(--md-surface-container-highest);
+  --rd-bn-paper-line: var(--md-on-surface-variant);
+}
+.rd-binny .rd-bn-pupil { fill: var(--rd-bn-pupil); }
+.rd-binny .rd-bn-body { transform-origin: 100px 200px; }
+.rd-binny .rd-bn-ear { transform-box: fill-box; transform-origin: 50% 100%; }
+.rd-binny .rd-bn-eyes { transform-box: fill-box; transform-origin: 50% 50%; }
+.rd-binny[data-mood="sad"] .rd-bn-ear-l { transform: rotate(-22deg); }
+.rd-binny[data-mood="sad"] .rd-bn-ear-r { transform: rotate(22deg); }
+.rd-binny-zone { display: inline-flex; justify-content: center; padding-inline: var(--rd-roam, 48px); }
+
+/* ── BinnyLine (t.css .say2 / .bub2) ────────────────────────────────────── */
+.rd-say { display: flex; align-items: center; gap: 6px; }
+.rd-bubble {
+  position: relative;
+  margin: 0;
+  padding: 9px 14px;
+  border-radius: 16px;
+  background: var(--md-surface-container-lowest);
+  color: var(--md-primary);
+  font: 700 17px/1.2 var(--font-sans);
+  box-shadow: 0 3px 10px -3px color-mix(in oklch, var(--md-shadow) 25%, transparent);
+}
+.rd-bubble::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: -6px;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  background: inherit;
+  rotate: 45deg;
+  translate: 0 -50%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .rd-binny:not([data-motion="none"]) .rd-bn-eyes { animation: rd-blink 4.6s infinite; }
+  .rd-binny:not([data-motion="none"]):not([data-mood="sad"]) .rd-bn-ear-l { animation: rd-ear-l 5s ease-in-out infinite; }
+  .rd-binny:not([data-motion="none"]):not([data-mood="sad"]) .rd-bn-ear-r { animation: rd-ear-r 5s ease-in-out 0.2s infinite; }
+  .rd-binny[data-mood="thinking"]:not([data-motion="none"]) .rd-bn-pupil { animation: rd-look 3s ease-in-out infinite; }
+  .rd-binny:is([data-motion="idle"], [data-motion="roam"]) .rd-bn-body { animation: rd-bob 3.2s ease-in-out infinite; }
+  .rd-binny[data-motion="idle"][data-mood="sad"] .rd-bn-body { animation: rd-sway 4s ease-in-out infinite; }
+  .rd-binny[data-motion="idle"][data-mood="wink"] .rd-bn-body { animation: rd-tilt 2.4s ease-in-out infinite; }
+  .rd-binny[data-motion="hop"] .rd-bn-body { animation: rd-hop 1.1s cubic-bezier(0.3, 0.7, 0.4, 1) infinite; }
+  .rd-binny[data-motion="pop"] { animation: rd-popin 0.6s cubic-bezier(0.16, 1, 0.3, 1) both; }
+  .rd-binny[data-motion="pop"] .rd-bn-body { animation: rd-bob 3.2s ease-in-out 0.6s infinite; }
+  .rd-binny[data-motion="roam"] { animation: rd-roam 4.4s ease-in-out infinite; }
+}
+@keyframes rd-bob { 50% { transform: translateY(-4px); } }
+@keyframes rd-blink { 0%, 94%, 100% { transform: scaleY(1); } 97% { transform: scaleY(0.1); } }
+@keyframes rd-ear-l { 0%, 80%, 100% { transform: rotate(0); } 88% { transform: rotate(-10deg); } }
+@keyframes rd-ear-r { 0%, 80%, 100% { transform: rotate(0); } 88% { transform: rotate(10deg); } }
+@keyframes rd-look { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(-5px); } }
+@keyframes rd-sway { 50% { transform: rotate(-3deg) translateY(2px); } }
+@keyframes rd-tilt { 50% { transform: rotate(5deg); } }
+@keyframes rd-hop {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  20% { transform: translateY(0) scale(1.06, 0.94); }
+  50% { transform: translateY(-14px) scale(0.97, 1.03); }
+  80% { transform: translateY(0) scale(1.04, 0.96); }
+}
+@keyframes rd-popin {
+  0% { transform: translateY(14px) scale(0.4); opacity: 0; }
+  60% { transform: scale(1.12); }
+  100% { transform: none; opacity: 1; }
+}
+@keyframes rd-roam {
+  0%, 50%, 100% { translate: 0 0; }
+  12.5% { translate: calc(var(--rd-roam, 48px) * -0.5) -18px; }
+  25% { translate: calc(var(--rd-roam, 48px) * -1) 0; }
+  37.5% { translate: calc(var(--rd-roam, 48px) * -0.5) -18px; }
+  62.5% { translate: calc(var(--rd-roam, 48px) * 0.5) -18px; }
+  75% { translate: var(--rd-roam, 48px) 0; }
+  87.5% { translate: calc(var(--rd-roam, 48px) * 0.5) -18px; }
+}
+
+/* ── GoldRing, KeyRing (h4.js ring4, t.css .gring2, h5.js ringLv) ───────── */
+.rd-goldring, .rd-keyring { position: relative; display: inline-grid; place-items: center; flex: none; }
+.rd-goldring svg, .rd-keyring svg { position: absolute; inset: 0; }
+.rd-ring-track { stroke: var(--md-surface-container-highest); }
+.rd-ring-gold { stroke: var(--md-tertiary); }
+.rd-ring-partial { stroke: color-mix(in oklch, var(--md-on-surface-variant) 70%, var(--md-surface-container-highest)); }
+.rd-ring-tone-tide { stroke: var(--md-primary); }
+.rd-ring-tone-gold { stroke: var(--md-tertiary); }
+.rd-ring-tone-ok { stroke: var(--md-success); }
+.rd-ring-tone-warn { stroke: var(--md-error); }
+.rd-ring-center { position: relative; font: 700 14px/1 var(--font-mono); color: var(--md-on-surface); }
+.rd-keyring .rd-ring-center { font: 800 28px/1 var(--font-display); color: var(--md-primary); }
+.rd-keyring[data-tone="warn"] .rd-ring-center { color: var(--md-error); }
+.rd-keyring[data-tone="neutral"] .rd-ring-center { color: var(--md-on-surface-variant); }
+
+/* ── StepsPath (t.css .gp2 / .gp2t / .gp2l / .stp, final overrides) ────── */
+.rd-steps { display: grid; gap: 8px; }
+.rd-steps-track {
+  display: grid;
+  grid-template-columns: repeat(var(--n, 5), minmax(0, 1fr));
+  align-items: end;
+  gap: 8px;
+  height: 108px;
+  margin-top: 4px;
+  border-bottom: 2px solid color-mix(in oklch, var(--md-on-surface-variant) 70%, transparent);
+}
+.rd-step {
+  --c: var(--md-outline);
+  justify-self: center;
+  width: min(100%, 64px);
+  height: var(--h, 34%);
+  min-height: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 0 0;
+  border: 0;
+  border-radius: 14px 14px 4px 4px;
+  background: color-mix(in oklch, var(--c) 22%, var(--md-surface-container-lowest));
+  transform-origin: bottom;
+  font: inherit;
+  transition: filter 0.2s;
+}
+.rd-step b { font: 800 22px/1 var(--font-display); color: color-mix(in oklch, var(--c), black 40%); }
+.rd-step[data-current] { background: var(--c); }
+.rd-step[data-current] b { color: white; font-size: 28px; }
+.rd-step[data-goal] {
+  background: color-mix(in oklch, var(--grade-a-star) 12%, var(--md-surface-container-lowest));
+  box-shadow: inset 0 0 0 2px color-mix(in oklch, var(--grade-a-star) 40%, var(--md-surface-container-lowest));
+}
+.rd-step[data-goal] b { color: var(--grade-a-star); }
+.rd-step[data-goal] span { font: 600 12px var(--font-sans); white-space: nowrap; color: var(--grade-a-star); }
+.rd-step[data-ghost] { background: transparent; box-shadow: inset 0 0 0 2px color-mix(in oklch, var(--md-on-surface-variant) 70%, transparent); }
+:root[data-theme="dark"] .rd-step:not([data-ghost], [data-goal]) { box-shadow: inset 0 0 0 2px color-mix(in oklch, var(--c) 55%, white); }
+:root[data-theme="dark"] .rd-step:not([data-current], [data-ghost], [data-goal]) b { color: color-mix(in oklch, var(--c) 35%, var(--md-on-surface)); }
+:root[data-theme="dark"] .rd-step[data-goal] b,
+:root[data-theme="dark"] .rd-step[data-goal] span,
+:root[data-theme="dark"] .rd-steps-labels [data-goal],
+:root[data-theme="dark"] .rd-steps-labels [data-goal] b { color: color-mix(in oklch, var(--grade-a-star) 40%, var(--md-on-surface)); }
+:root[data-theme="dark"] .rd-step[data-goal] { box-shadow: inset 0 0 0 2px color-mix(in oklch, var(--grade-a-star) 55%, white); }
+button.rd-step { cursor: pointer; }
+.rd-step:focus-visible { outline: 2.5px solid var(--md-primary); outline-offset: 2px; }
+.rd-steps-labels {
+  display: grid;
+  grid-template-columns: repeat(var(--n, 5), minmax(0, 1fr));
+  text-align: center;
+  font: 500 12px var(--font-sans);
+  color: var(--md-on-surface-variant);
+}
+.rd-steps-labels > span { display: grid; gap: 1px; }
+.rd-steps-labels b { font: 600 12.5px var(--font-mono); color: var(--md-on-surface); }
+.rd-steps-labels [data-current] b { font-weight: 800; }
+.rd-steps-labels [data-goal], .rd-steps-labels [data-goal] b { color: var(--grade-a-star); font-weight: 600; }
+.rd-steps-labels [data-ghost] { align-self: end; color: var(--md-on-surface-variant); }
+@media (prefers-reduced-motion: no-preference) {
+  .rd-step:not([data-ghost]) { animation: rd-grow 0.7s var(--ease-out) calc(var(--i, 0) * 60ms) both; }
+  .rd-steps[data-empty] .rd-step[data-goal] { animation: none; }
+  .rd-step { transition: translate 0.2s var(--ease-out), filter 0.2s; }
+  button.rd-step:hover { translate: 0 -3px; filter: saturate(1.15); }
+}
+@keyframes rd-grow { from { transform: scaleY(0.4); } }
+
+/* ── Rows (t.css .h2row/.sjh2/.lnk/.wrow/.rp/.at, pa.css .rkr) ─────────── */
+.rd-dot { display: inline-block; flex: none; border-radius: 50%; margin-inline-end: 6px; vertical-align: 1px; }
+.rd-h2row-right { flex: none; }
+.rd-h2row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.rd-h2 { margin: 0; font: 800 18px/1.25 var(--font-sans); color: var(--md-on-surface); }
+/* Schibsted at 700/800 sets a ~0.2em space that reads as "towin" next to a heavy w; the mock's static font reads wider. Heavy sans text gets a little word spacing, and no negative tracking. */
+.rd-h2, .rd-at > b, .rd-tile-title, .rd-bubble { word-spacing: 0.1em; }
+.rd-h2link { display: inline-flex; align-items: center; gap: 8px; color: inherit; text-decoration: none; min-height: 44px; }
+.rd-lnk {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0;
+  border: 0; background: none; cursor: pointer; text-decoration: none;
+  font: 700 14px var(--font-sans); color: var(--md-primary);
+}
+.rd-lnk:hover { text-decoration: underline; text-underline-offset: 3px; }
+.rd-h2link:hover { color: var(--md-primary); }
+.rd-lnk:active, .rd-h2link:active { transform: scale(0.97); }
+.rd-lnk:active { color: color-mix(in oklch, var(--md-primary) 80%, var(--md-on-surface)); }
+.rd-h2link:active { color: color-mix(in oklch, var(--md-primary) 80%, var(--md-on-surface)); }
+.rd-lnk:focus-visible, .rd-h2link:focus-visible { outline: 2.5px solid var(--md-primary); outline-offset: 2px; border-radius: 10px; }
+.rd-hairrows { list-style: none; margin: 0; padding: 0; display: grid; }
+.rd-hairrow-item + .rd-hairrow-item { border-top: 1px solid var(--md-outline-variant); }
+.rd-hairrow, .rd-rank {
+  width: 100%; margin: 0; border: 0; background: none; text-align: start; text-decoration: none;
+  font: inherit; color: var(--md-on-surface);
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+.rd-hairrow { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 11px 2px; }
+a.rd-hairrow, button.rd-hairrow, button.rd-rank { cursor: pointer; }
+a.rd-hairrow:hover, button.rd-hairrow:hover, button.rd-rank:hover {
+  background: linear-gradient(90deg, transparent, var(--md-surface-container-low) 12%, var(--md-surface-container-low) 88%, transparent);
+}
+a.rd-hairrow:active, button.rd-hairrow:active, button.rd-rank:active { transform: scale(0.985); }
+/* Press feedback stays under reduced motion as an instant change; the eased movement is motion-only. */
+@media (prefers-reduced-motion: no-preference) {
+  .rd-hairrow, .rd-rank { transition: background-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out); }
+}
+.rd-hairrow:focus-visible, .rd-rank:focus-visible { outline: 2.5px solid var(--md-primary); outline-offset: 2px; border-radius: 14px; }
+a.rd-hairrow:hover .rd-at > b, button.rd-hairrow:hover .rd-at > b, button.rd-rank:hover .rd-at > b { color: var(--md-primary); }
+@media (forced-colors: active) { .rd-selected { outline: 2px solid Highlight; } }
+.rd-hr-lead { flex: none; width: 36px; display: grid; place-items: center; }
+.rd-hr-trail { flex: none; }
+.rd-at { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.rd-at > b { font: 700 15px/1.3 var(--font-sans); overflow-wrap: anywhere; }
+.rd-at > span { font: 400 13px/1.35 var(--font-sans); color: var(--md-on-surface-variant); }
+.rd-chev { flex: none; color: var(--md-on-surface-variant); }
+.rd-rank { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto 60px; align-items: center; gap: 8px; min-height: 60px; padding: 10px 0; }
+/* Selected must follow and outrank the base padding and the (0,2,1) hover fill. */
+.rd-hairrow.rd-selected, .rd-rank.rd-selected,
+a.rd-hairrow.rd-selected:hover, button.rd-hairrow.rd-selected:hover, button.rd-rank.rd-selected:hover { background: var(--md-primary-container); border-radius: 14px; padding-inline: 8px; }
+.rd-rank-bar { grid-template-columns: 20px minmax(0, 1fr) 84px 60px; }
+.rd-rank-n { font: 700 14px var(--font-mono); color: var(--md-on-surface-variant); text-align: center; }
+.rd-rank-m { position: relative; display: grid; justify-items: end; }
+.rd-rank-m b { font: 800 17px/1 var(--font-mono); color: var(--md-on-error-container); }
+.rd-rank-m small { margin-top: 2px; font: 600 12px var(--font-sans); color: var(--md-on-surface-variant); }
+.rd-rank-bar .rd-rank-m { min-width: 52px; }
+.rd-rank-bar .rd-rank-m::before {
+  content: ""; position: absolute; inset-inline-end: 0; bottom: -8px; height: 4px; width: var(--w, 0%);
+  border-radius: 2px; background: color-mix(in oklch, var(--md-on-error-container) 75%, var(--md-surface));
+}
+.rd-trend { display: inline-flex; align-items: center; gap: 4px; justify-self: end; font: 600 12.5px var(--font-sans); }
+.rd-trend-better { color: var(--md-success-text); }
+.rd-trend-worse { color: var(--md-on-error-container); }
+.rd-trend-same { color: var(--md-on-surface-variant); }
+.rd-tag {
+  margin-inline-start: 6px; padding: 3px 6px; border-radius: 6px; vertical-align: 2px; white-space: nowrap;
+  font: 700 12px/1 var(--font-sans); font-style: normal; color: var(--md-primary); background: var(--md-primary-container);
+}
+
+/* ── Topic chips (t.css .tmap/.tm/.tleg) ─────────────────────────────── */
+/* State is carried by glyph + label (text >= 4.5:1); fills are tonal. The edge is >= 3:1 so a chip reads as a control. */
+.rd-chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.rd-chip {
+  --rd-chip-edge: color-mix(in oklch, var(--md-on-surface-variant) 85%, var(--md-surface));
+  position: relative; display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px;
+  border: 0; border-radius: 12px; font: 600 13.5px var(--font-sans);
+}
+.rd-chip b { font: 700 12px var(--font-mono); }
+.rd-chip svg { flex: none; }
+.rd-chip[data-state="secure"] { background: var(--md-primary-container); color: var(--md-primary); }
+.rd-chip[data-state="getting"] { background: var(--md-surface-container-low); color: var(--md-on-surface); box-shadow: inset 0 0 0 1px var(--md-outline-variant); }
+.rd-chip[data-state="work"] { background: var(--md-error-container); color: var(--md-on-error-container); }
+/* Follows the state rules: the fold chip is outlined, not filled, and keeps the secure ink. */
+.rd-chip.rd-chip-more { background: transparent; box-shadow: inset 0 0 0 1.5px var(--rd-chip-edge); }
+button.rd-chip { cursor: pointer; }
+button.rd-chip:active { transform: scale(0.97); }
+.rd-chips li:focus-visible { outline: 2.5px solid var(--md-primary); outline-offset: 2px; border-radius: 14px; }
+.rd-chip:focus-visible { outline: 2.5px solid var(--md-primary); outline-offset: 2px; }
+.rd-chip-legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 8px 0 0; font: 500 12px var(--font-sans); color: var(--md-on-surface-variant); }
+.rd-chip-legend span { display: inline-flex; align-items: center; gap: 6px; }
+@media (prefers-reduced-motion: no-preference) {
+  button.rd-chip:hover { translate: 0 -2px; }
+  .rd-chip { transition: translate 0.2s var(--ease-out); }
+}
+
+/* ── Tile (ph.css .pgrid.tint .ptile, .ptile.big) ─────────────────────── */
+.rd-tile {
+  position: relative; overflow: hidden; display: grid; align-content: start; gap: 4px;
+  min-height: 124px; padding: 14px; border: 0; border-radius: 20px; text-align: start; text-decoration: none;
+  font: inherit; color: var(--md-on-surface); background: var(--rd-tile-bg);
+  transition: filter var(--dur-fast) var(--ease-out);
+}
+.rd-tile[data-tone="tide"] { --rd-tile-bg: var(--md-primary-container); --rd-tile-ink: var(--md-primary); }
+.rd-tile[data-tone="sea"] { --rd-tile-bg: var(--md-secondary-container); --rd-tile-ink: var(--md-on-secondary-container); }
+.rd-tile[data-tone="mint"] { --rd-tile-bg: var(--md-success-container); --rd-tile-ink: var(--md-success-text); }
+.rd-tile[data-tone="coral"] { --rd-tile-bg: var(--md-error-container); --rd-tile-ink: var(--md-on-error-container); }
+.rd-tile[data-tone="gold"] { --rd-tile-bg: color-mix(in oklch, var(--md-tertiary-container) 45%, var(--md-surface-container-lowest)); --rd-tile-ink: var(--md-on-tertiary-container); }
+:root[data-theme="dark"] .rd-tile[data-tone="sea"] { --rd-tile-bg: color-mix(in oklab, var(--md-secondary) 10%, var(--md-primary-container)); --rd-tile-ink: var(--md-on-surface); }
+:root[data-theme="dark"] .rd-tile[data-tone="gold"] { --rd-tile-bg: color-mix(in oklab, var(--md-tertiary) 14%, var(--md-tertiary-container)); --rd-tile-ink: var(--md-on-surface); }
+/* The gold mixes into the gold container, not the blue surface: an oklch mix of hue 80 and hue 245 swings through green (teal tile), and an oklab mix with the surface goes grey. Status text on dark sea is 4.68:1, on dark gold 5.06:1; ink is 8.4:1 and 9.1:1. */
+/* Plan decision 6: Flashcards' violet (hue 300) has no Abyss token and tokens are frozen, so this is the one
+   literal colour in the kit, scoped to this tone, one light and one dark value. */
+.rd-tile[data-tone="violet"] { --rd-tile-bg: oklch(0.95 0.03 300); --rd-tile-ink: oklch(0.42 0.1 300); }
+:root[data-theme="dark"] .rd-tile[data-tone="violet"] { --rd-tile-bg: oklch(0.32 0.05 300); --rd-tile-ink: oklch(0.88 0.06 300); }
+.rd-tile-title { position: relative; z-index: 1; font: 700 17px/1.2 var(--font-sans); }
+.rd-tile-status { position: relative; z-index: 1; font: 500 13px/1.3 var(--font-sans); color: var(--md-on-surface-variant); }
+.rd-tile-status b { font: 800 15px var(--font-mono); color: var(--md-primary); }
+.rd-tile-art { position: absolute; inset-inline-end: -8px; bottom: -10px; width: 72px; height: 72px; display: grid; place-items: center; opacity: 0.35; color: var(--rd-tile-ink); }
+.rd-tile-big { grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 0; padding: 12px 14px 12px 8px; }
+.rd-tile-ic { width: 40px; height: 40px; border-radius: 13px; display: grid; place-items: center; background: var(--md-surface-container-lowest); color: var(--rd-tile-ink); }
+.rd-tile-big .rd-at > b { font-size: 18px; }
+.rd-tile-big .rd-at > span { font-size: 13.5px; font-weight: 500; }
+/* States come last so they beat the base and the big variant at equal specificity. Hover and press are scoped
+   to a and button, so the disabled div can never pick them up. */
+a.rd-tile, button.rd-tile { cursor: pointer; }
+a.rd-tile:hover, button.rd-tile:hover { filter: brightness(0.98); }
+a.rd-tile:active, button.rd-tile:active { transform: scale(0.97); }
+@media (prefers-reduced-motion: reduce) { .rd-tile { transition: none; } }
+@media (prefers-reduced-motion: no-preference) {
+  .rd-tile { transition: transform var(--dur-fast) var(--ease-out), filter var(--dur-fast) var(--ease-out); }
+}
+.rd-tile:focus-visible { outline: 2.5px solid var(--md-primary); outline-offset: 2px; }
+.rd-tile[aria-disabled="true"] { opacity: 0.5; filter: saturate(0.6); cursor: not-allowed; }
+/* ── Walkthrough and ghost rows (t.css .walk2/.wn2, .sk2c) ────────────── */
+.rd-walk { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.rd-walk li { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 12px; align-items: center; padding: 10px 0; }
+.rd-walk li + li { border-top: 1px solid var(--md-outline-variant); }
+.rd-walk-n { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--md-primary-container); color: var(--md-primary); font: 700 14px var(--font-mono); }
+.rd-ghostrows { display: grid; }
+.rd-ghostrow { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 11px 2px; }
+.rd-ghostrow + .rd-ghostrow { border-top: 1px solid var(--md-outline-variant); }
+/* ── Combo, level, countdown (pr.css .combo, t.css .lvl2/.lb/.pill4) ──── */
+.rd-combo {
+  display: inline-flex; align-items: center; gap: 3px; padding: 3px 9px 3px 6px; border-radius: 10px; white-space: nowrap;
+  font: 800 13px var(--font-mono); color: var(--md-on-tertiary-container); background: var(--md-tertiary-container);
+}
+/* The flame takes the chip's ink: --md-tertiary on --md-tertiary-container is 1.56:1 in light. */
+.rd-combo svg { color: currentColor; flex: none; }
+.rd-level { display: grid; gap: 4px; }
+.rd-level > b { font: 700 14px var(--font-sans); color: var(--md-on-surface); }
+.rd-level > small { font: 600 12px var(--font-mono); color: var(--md-on-surface-variant); }
+.rd-level-bar { display: block; height: 8px; border-radius: 4px; background: var(--md-surface-container-high); overflow: hidden; }
+/* Gold deepened toward its own ink so the fill holds 3:1 on the track in light (plain --md-tertiary is 1.59:1). */
+.rd-level-bar i { display: block; height: 100%; border-radius: 4px; background: color-mix(in oklch, var(--md-tertiary) 60%, var(--md-on-tertiary-container)); }
+.rd-pill {
+  position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 6px 11px;
+  border-radius: 12px; white-space: nowrap; text-decoration: none; font: 600 12.5px var(--font-sans);
+  color: var(--md-on-surface-variant); background: color-mix(in oklch, var(--md-surface-container-lowest) 70%, transparent);
+}
+.rd-pill[data-tone="near"] { color: var(--md-on-primary-container); background: var(--md-primary-container); }
+a.rd-pill::before { content: ""; position: absolute; inset: -8px -3px; }
+a.rd-pill:active { transform: scale(0.97); }
+a.rd-pill:focus-visible { outline: 2.5px solid var(--md-primary); outline-offset: 2px; }
+.rd-pill .rd-chev { opacity: 0.55; margin-inline-start: -2px; }
+@media (prefers-reduced-motion: no-preference) {
+  .rd-combo[data-bump] { animation: rd-bump 0.5s var(--ease-out); }
+}
+@keyframes rd-bump { 0% { transform: scale(0.4); } 60% { transform: scale(1.15); } }
