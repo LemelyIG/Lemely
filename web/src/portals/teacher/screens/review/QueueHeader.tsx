@@ -15,7 +15,7 @@ export function QueueHeader({ left, done }: { left: number; done: number }) {
         <span key={bumpKey} className="lm-rq-bump inline-block font-display text-[44px] font-extrabold leading-none tracking-[-0.04em] text-primary tabular-nums shell-sm:text-[48px] shell-lg:text-[56px]" aria-hidden="true">
           {left}
         </span>
-        <h1 className="text-[24px] font-extrabold leading-[1.15] tracking-[-0.02em] shell-lg:text-[32px]">
+        <h1 tabIndex={-1} data-review-heading className="outline-none text-[24px] font-extrabold leading-[1.15] tracking-[-0.02em] shell-lg:text-[32px]">
           <span className="sr-only">{left} </span>
           {headerTitle(left, done)}
         </h1>

@@ -305,6 +305,23 @@ export function nextFocusAfter(ids: string[], decidedId: string): string | null 
   if (at === -1) return ids[0] ?? null
   return ids[at + 1] ?? ids[at - 1] ?? null
 }
+
+/** True while a menu or sheet is open, so the list shortcuts stay quiet behind it. */
+export function overlayOpen(root: Pick<ParentNode, "querySelector">): boolean {
+  return root.querySelector('[role="menu"], [role="dialog"]') !== null
+}
+
+/**
+ * Put focus where the teacher is working after a decision: the next row, or the queue heading when
+ * nothing is left. Returns false when the wanted row is not in the DOM yet, so the caller retries.
+ */
+export function focusAfterDecision(root: Pick<ParentNode, "querySelector">, nextId: string | null): boolean {
+  const row = nextId ? root.querySelector<HTMLElement>(`[data-review-row="${nextId.replace(/["\\]/g, "\\$&")}"]`) : null
+  const el = row ?? (nextId ? null : root.querySelector<HTMLElement>("[data-review-heading]"))
+  if (!el) return false
+  el.focus()
+  return true
+}
 export function positionOf(ids: string[], id: string | null): { pos: number; total: number } {
   return { pos: id ? ids.indexOf(id) + 1 : 0, total: ids.length }
 }

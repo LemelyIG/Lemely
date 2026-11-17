@@ -15,6 +15,8 @@ import {
   isClearItem,
   marksLost,
   nextFocusAfter,
+  overlayOpen,
+  focusAfterDecision,
   paperLine,
   plainWhy,
   positionOf,
@@ -282,5 +284,26 @@ describe("focus", () => {
   it("reports a 1-based position", () => {
     expect(positionOf(["a", "b", "c"], "b")).toEqual({ pos: 2, total: 3 })
     expect(positionOf(["a"], "x")).toEqual({ pos: 0, total: 1 })
+  })
+})
+
+describe("shortcuts and focus helpers", () => {
+  const rootWith = (found: Record<string, { focus: () => void }>) => ({
+    querySelector: ((sel: string) => found[sel] ?? null) as ParentNode["querySelector"],
+  })
+  it("detects an open menu or sheet", () => {
+    expect(overlayOpen(rootWith({ '[role="menu"], [role="dialog"]': { focus() {} } }))).toBe(true)
+    expect(overlayOpen(rootWith({}))).toBe(false)
+  })
+  it("focuses the next row, else the heading, and reports a row not yet rendered", () => {
+    const calls: string[] = []
+    const root = rootWith({
+      '[data-review-row="b"]': { focus: () => calls.push("row") },
+      "[data-review-heading]": { focus: () => calls.push("heading") },
+    })
+    expect(focusAfterDecision(root, "b")).toBe(true)
+    expect(focusAfterDecision(root, null)).toBe(true)
+    expect(focusAfterDecision(root, "zz")).toBe(false)
+    expect(calls).toEqual(["row", "heading"])
   })
 })

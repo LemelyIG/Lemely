@@ -54,5 +54,5 @@
 @media (prefers-reduced-motion: reduce) {
   .lm-rq-bump, .lm-rq-bump-lg, .lm-rq-skel { animation: none; }
   .lm-rq-li, .lm-rq-row, .lm-rq-toast { transition: none; }
-  .lm-rq-toast { transform: translateX(-50%) !important; }
+  .lm-rq-toast { transform: none !important; }
 }

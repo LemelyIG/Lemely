@@ -44,7 +44,7 @@ export function QueueColumn(p: QueueColumnProps) {
   const set = (f: ReviewQueueFilters) => p.onFilters(f)
   const showChrome = p.state === "queue" || p.state === "sparse" || p.state === "no-match"
   return (
-    <section aria-label="Review queue" className="grid min-w-0 content-start gap-3 bg-surface-container-low p-4 shell-sm:border-e shell-sm:border-outline-variant shell-sm:p-[18px] shell-lg:p-[22px] shell-lg:pe-4">
+    <section aria-label="Review queue" data-review-column className="grid min-w-0 content-start gap-3 bg-surface-container-low p-4 shell-sm:border-e shell-sm:border-outline-variant shell-sm:p-[18px] shell-lg:p-[22px] shell-lg:pe-4">
       {p.state === "loading" ? <QueueLoading /> : null}
       {p.state === "error" ? <QueueError message={p.errorMessage} onRetry={p.onRetry} /> : null}
       {p.state === "first-run" ? <FirstRun markHref={p.markHref} phone={p.phone} /> : null}

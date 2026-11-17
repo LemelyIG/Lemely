@@ -519,14 +519,15 @@ export const teacherRoute: RouteObject = {
       handle: { title: "Recently deleted", skeleton: "list" },
     },
     {
+      // One element for the list and the open answer. Two sibling routes would remount the screen on the
+      // first decision (list to answer), dropping the undo toast and flushing the pending decision at once.
       path: "review",
       element: <ReviewQueue />,
       handle: { title: "Review queue", skeleton: "list" },
-    },
-    {
-      path: "review/:itemId",
-      element: <ReviewQueue />,
-      handle: { title: "Review a mark", skeleton: "list", immersive: true },
+      children: [
+        { index: true, element: <></> },
+        { path: ":itemId", element: <></>, handle: { title: "Review a mark", skeleton: "list", immersive: true } },
+      ],
     },
     {
       path: "classes",

@@ -66,4 +66,12 @@ describe("review screens source", () => {
     expect(routes).not.toMatch(/screens\/Review"\)/)
     expect(routes).toMatch(/screens\/review\/ReviewQueue/)
   })
+  it("anchors the undo toast in the queue column on desktop so Accept stays clear", () => {
+    const bar = readFileSync(join(DIR, "UndoBar.tsx"), "utf8")
+    expect(bar).toMatch(/placement/)
+    const screen = readFileSync(join(DIR, "ReviewQueue.tsx"), "utf8")
+    expect(screen).toMatch(/placement=/)
+    expect(screen).toMatch(/overlayOpen\(document\)/)
+    expect(screen).toMatch(/focusAfterDecision\(/)
+  })
 })

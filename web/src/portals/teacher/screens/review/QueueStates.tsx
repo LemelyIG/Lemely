@@ -94,7 +94,7 @@ export function NothingWaiting() {
   return (
     <div className="grid justify-items-center gap-3 px-6 py-16 text-center">
       <TeacherBinny mood="happy" size={48} />
-      <h2 className="text-[24px] font-extrabold tracking-[-0.02em]">Nothing to review.</h2>
+      <h2 tabIndex={-1} data-review-heading className="text-[24px] font-extrabold tracking-[-0.02em] outline-none">Nothing to review.</h2>
       <p className="text-on-surface-variant">Every mark is confident or already decided.</p>
     </div>
   )
@@ -106,7 +106,7 @@ export function Cleared({ tally, markHref }: { tally: Tally; markHref: string })
       <div className="lm-rq-bump-lg font-display text-[120px] font-extrabold leading-none tracking-[-0.05em] text-primary tabular-nums">{tally.decided}</div>
       <div className="mt-1.5 flex items-center gap-3">
         <TeacherBinny mood="happy" size={40} />
-        <h2 className="text-[32px] font-extrabold leading-[1.15] tracking-[-0.02em]">Queue clear.</h2>
+        <h2 tabIndex={-1} data-review-heading className="text-[32px] font-extrabold leading-[1.15] tracking-[-0.02em] outline-none">Queue clear.</h2>
       </div>
       <p className="mb-5 mt-2 text-[16px] leading-[1.5] text-on-surface-variant">{clearedSummary(tally)}</p>
       <Link to={markHref} className={PRIMARY_BTN}>Mark another class set</Link>

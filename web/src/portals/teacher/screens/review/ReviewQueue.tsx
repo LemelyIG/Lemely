@@ -17,7 +17,7 @@ import { QueueColumn } from "./QueueColumn"
 import { Cleared } from "./QueueStates"
 import { UndoBar } from "./UndoBar"
 import { mergeReviewPages } from "./reviewLabels"
-import { SKIP_LINE, bulkButton, isClearItem, nextFocusAfter, positionOf, queueScreenState, questionLabel, shownLine } from "./reviewQueueModel"
+import { SKIP_LINE, bulkButton, focusAfterDecision, isClearItem, nextFocusAfter, overlayOpen, positionOf, queueScreenState, questionLabel, shownLine } from "./reviewQueueModel"
 import { useAnswerImages } from "./useAnswerImages"
 import { usePendingDecisions } from "./usePendingDecisions"
 import "./review.css"
@@ -104,6 +104,11 @@ export function ReviewQueue() {
     setSp(filtersToSearch(f), { replace: true })
   }, [setSp])
 
+  // After a decision, focus follows the work: the next row, or the heading when none is left. Held in a
+  // ref and applied once the route and list have re-rendered (phone: back on the list; desktop: moved on).
+  const refocus = useRef<{ from: string; next: string | null } | null>(null)
+  const [, setRefocusTick] = useState(0)
+  const requestFocus = (from: string, next: string | null) => { refocus.current = { from, next }; setRefocusTick((n) => n + 1) }
   const bulk = useBulkApproveReview()
   const clearIds = open.filter(isClearItem).map((r) => r.itemId)
 
@@ -125,6 +130,7 @@ export function ReviewQueue() {
     // Phone returns to the list (plan decision 14). Replace, so Back never reopens a decided answer.
     if (phone) go(null, { replace: true })
     else go(next, { replace: true })
+    requestFocus(view.key, next)
   }
 
   function runBulk() {
@@ -140,7 +146,10 @@ export function ReviewQueue() {
         }) : null)
         setSelecting(false)
         setPicked(new Set())
-        if (focusId && res.approved.includes(focusId)) go(null, { replace: true })
+        if (focusId && res.approved.includes(focusId)) {
+          go(null, { replace: true })
+          requestFocus(focusId, nextFocusAfter(openIds.filter((i) => !res.approved.includes(i)), focusId))
+        }
       },
     })
   }
@@ -151,6 +160,15 @@ export function ReviewQueue() {
     document.querySelector(`[data-review-row="${CSS.escape(focusId)}"]`)?.scrollIntoView({ block: "nearest" })
   }, [focusId])
 
+  useEffect(() => {
+    const r = refocus.current
+    if (!r) return
+    const settled = phone ? !itemId : focusId !== r.from
+    if (!settled) return
+    const target = r.next && openIds.includes(r.next) ? r.next : null
+    if (focusAfterDecision(document, target)) refocus.current = null
+  })
+
   // Keyboard. No dependency list on purpose: it re-binds each render so the closure is never stale.
   const searchRef = useRef<HTMLInputElement | null>(null)
   useEffect(() => {
@@ -158,6 +176,7 @@ export function ReviewQueue() {
       const t = e.target as HTMLElement | null
       if (t && (["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName) || t.isContentEditable)) return
       if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (overlayOpen(document)) return
       if (e.key === "/") { e.preventDefault(); searchRef.current?.focus(); return }
       if (e.key === "Escape" && phone && itemId) { e.preventDefault(); go(null, { replace: false }); return }
       const at = focusId ? openIds.indexOf(focusId) : -1
@@ -201,7 +220,7 @@ export function ReviewQueue() {
     return (
       <>
         {detailError ?? (panelProps ? <AnswerPage {...panelProps} onBack={() => go(null, { replace: false })} /> : <div className="lm-rq-skel m-4 h-[60vh] rounded-[18px] bg-surface-container-high" role="status" aria-label="Loading the answer" />)}
-        <UndoBar notice={decisions.state.notice} onUndo={decisions.undo} onClose={decisions.clearNotice} />
+        <UndoBar notice={decisions.state.notice} onUndo={decisions.undo} onClose={decisions.clearNotice} placement="viewport" />
       </>
     )
   }
@@ -256,7 +275,7 @@ export function ReviewQueue() {
           )}
         </>
       )}
-      <UndoBar notice={decisions.state.notice} onUndo={decisions.undo} onClose={decisions.clearNotice} />
+      <UndoBar notice={decisions.state.notice} onUndo={decisions.undo} onClose={decisions.clearNotice} placement={cleared || phone ? "viewport" : "column"} />
     </div>
   )
 }
