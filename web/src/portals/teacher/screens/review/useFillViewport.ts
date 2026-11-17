@@ -1,16 +1,45 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from "react"
 
+export interface FitInput {
+  top: number
+  parentPad: number
+  barH: number
+  keepPadding: boolean
+}
+export interface Fit {
+  top: number
+  /** Space to leave free at the bottom of the viewport: the fixed tab bar, and on phone at least the padding. */
+  clearance: number
+  pad: number
+}
+
+const px = (n: number) => (Number.isFinite(n) && n > 0 ? Math.round(n) : 0)
+
+/** Pure measurement maths. A visible tab bar is cleared at every width; `keepPadding` also keeps the padding. */
+export function computeFit({ top, parentPad, barH, keepPadding }: FitInput): Fit {
+  const pad = px(parentPad)
+  const bar = px(barH)
+  return { top: px(top), clearance: keepPadding ? Math.max(pad, bar) : bar, pad }
+}
+
+/**
+ * Height stops `clearance` above the viewport bottom. The margin settles the main padding against that, so the
+ * document is exactly one viewport tall: it reclaims the padding when nothing is cleared (negative) and adds back
+ * the difference when the bar is taller than the padding.
+ */
+export function fitStyle(fit: Fit): CSSProperties {
+  return { height: `calc(100dvh - ${fit.top + fit.clearance}px)`, marginBottom: fit.clearance - fit.pad }
+}
+
 /**
  * Bounds an element to the rest of the viewport, so a screen can own its scrolling (the shell's `main` never
- * scrolls, which is why a `sticky` footer inside it never engages). The element's own top edge and the shell
- * `main`'s bottom padding are measured, not assumed, because a banner or a breadcrumb row moves the first and
- * the padding changes with the breakpoint. The negative bottom margin gives the padding back so the element
- * reaches the bottom edge and the document is exactly one viewport tall. `keepPadding` (phone) stops above the
- * padding instead, because there it clears the fixed tab bar.
+ * scrolls, which is why a `sticky` footer inside it never engages). The element's top edge, the shell `main`'s
+ * bottom padding and the fixed tab bar are measured, not assumed, and re-measured whenever the chrome around the
+ * element changes: a window resize, a banner mounting inside `main`, the large title collapsing.
  */
 export function useFillViewport<T extends HTMLElement>(active: boolean, keepPadding = false): { ref: RefObject<T | null>; style: CSSProperties | undefined } {
   const ref = useRef<T | null>(null)
-  const [fit, setFit] = useState<{ top: number; pad: number } | null>(null)
+  const [fit, setFit] = useState<Fit | null>(null)
   useLayoutEffect(() => {
     const el = ref.current
     if (!active || !el) return
@@ -22,28 +51,52 @@ export function useFillViewport<T extends HTMLElement>(active: boolean, keepPadd
       return top
     }
     const measure = () => {
-      const top = Math.round(offsetTop())
-      // keepPadding: clear whichever is taller, the padding or the visible tab bar (it is also a fixed overlay).
-      const bar = keepPadding ? document.querySelector<HTMLElement>(".lm-native-tabbar") : null
-      const barH = bar && bar.getClientRects().length ? Math.round(bar.getBoundingClientRect().height) : 0
-      const pad0 = parent ? Math.round(parseFloat(getComputedStyle(parent).paddingBottom) || 0) : 0
-      const pad = keepPadding ? Math.max(pad0, barH) : pad0
-      setFit((prev) => (prev && prev.top === top && prev.pad === pad ? prev : { top, pad }))
+      const bar = document.querySelector<HTMLElement>(".lm-native-tabbar")
+      const barH = bar && bar.getClientRects().length ? bar.getBoundingClientRect().height : 0
+      const parentPad = parent ? parseFloat(getComputedStyle(parent).paddingBottom) : 0
+      const next = computeFit({ top: offsetTop(), parentPad, barH, keepPadding })
+      setFit((prev) => (prev && prev.top === next.top && prev.clearance === next.clearance && prev.pad === next.pad ? prev : next))
+    }
+    let raf = 0
+    const schedule = () => {
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        measure()
+      })
     }
     measure()
-    window.addEventListener("resize", measure)
-    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure)
+    window.addEventListener("resize", schedule)
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule)
+    const watched = new Set<Element>()
+    const watch = (n: Element | null) => {
+      if (n && !watched.has(n)) {
+        watched.add(n)
+        ro?.observe(n)
+      }
+    }
     // Anything above the element can move its top edge: its earlier siblings, and those of each ancestor.
     for (let node: HTMLElement | null = el; node && node !== document.body; node = node.parentElement) {
-      for (let sib = node.previousElementSibling; sib; sib = sib.previousElementSibling) ro?.observe(sib)
+      for (let sib = node.previousElementSibling; sib; sib = sib.previousElementSibling) watch(sib)
     }
-    if (parent) ro?.observe(parent)
+    watch(parent)
+    watch(document.querySelector(".lm-native-tabbar"))
+    watch(document.querySelector("header"))
+    // A banner mounting inside `main` is a new sibling above the screen: observe it and re-measure.
+    const mo = typeof MutationObserver === "undefined" || !parent ? null : new MutationObserver(() => {
+      for (let node: HTMLElement | null = el; node && node !== parent; node = node.parentElement) {
+        for (let sib = node.previousElementSibling; sib; sib = sib.previousElementSibling) watch(sib)
+      }
+      schedule()
+    })
+    mo?.observe(parent as Node, { childList: true, subtree: true })
     return () => {
-      window.removeEventListener("resize", measure)
+      if (raf) cancelAnimationFrame(raf)
+      window.removeEventListener("resize", schedule)
       ro?.disconnect()
+      mo?.disconnect()
     }
   }, [active, keepPadding])
   if (!active || !fit) return { ref, style: undefined }
-  // keepPadding: the padding is clearance for a fixed bottom bar, so stop above it instead of reclaiming it.
-  return { ref, style: keepPadding ? { height: `calc(100dvh - ${fit.top + fit.pad}px)` } : { height: `calc(100dvh - ${fit.top}px)`, marginBottom: -fit.pad } }
+  return { ref, style: fitStyle(fit) }
 }
