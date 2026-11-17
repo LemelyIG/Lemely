@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
 import { lazy } from "react"
-import { Navigate, useLocation } from "react-router-dom"
+import { Navigate, useLocation, useParams } from "react-router-dom"
 import { PortalNotFound } from "@/portals/misc/NotFound"
 import { useStudentProfile } from "@/lib/hooks/useMeApi"
 import { prefetchOnIntent } from "@/lib/prefetchOnIntent"
@@ -9,6 +9,12 @@ import { STUDENT_SETTINGS_TABS } from "@/portals/settings/settingsTabs"
 import { StudentShell, STUDENT_SETTINGS_BASE } from "./shell"
 
 export { STUDENT_BOTTOM_TABS } from "./shell"
+
+/** Old `/student/flashcards/review/:subjectCode` links (N3) land on the scoped review. */
+function LegacyReviewRedirect() {
+  const { subjectCode = "" } = useParams<{ subjectCode: string }>()
+  return <Navigate to={`/student/flashcards/review?subject=${encodeURIComponent(subjectCode)}`} replace />
+}
 
 /*
  * Student portal (terracotta). `StudentShell` (`./shell.tsx`) puts every
@@ -92,11 +98,14 @@ const PracticeResult = lazy(() =>
 const PracticePrint = lazy(() =>
   import("./screens/practice/PracticePrint").then((m) => ({ default: m.PracticePrint })),
 )
-const FlashcardDecks = lazy(() =>
-  import("./screens/flashcards/FlashcardDecks").then((m) => ({ default: m.FlashcardDecks })),
+const FlashcardsScreen = lazy(() =>
+  import("./screens/flashcards/FlashcardsScreen").then((m) => ({ default: m.FlashcardsScreen })),
 )
-const FlashcardReview = lazy(() =>
-  import("./screens/flashcards/FlashcardReview").then((m) => ({ default: m.FlashcardReview })),
+const DeckScreen = lazy(() =>
+  import("./screens/flashcards/DeckScreen").then((m) => ({ default: m.DeckScreen })),
+)
+const ReviewScreen = lazy(() =>
+  import("./screens/flashcards/ReviewScreen").then((m) => ({ default: m.ReviewScreen })),
 )
 // The Landing screen left this portal in P4.9 (see the redirect below). Its
 // lazy import went with it: a chunk nothing in this subtree renders is a
@@ -424,16 +433,15 @@ export const studentRoute: RouteObject = {
       element: <PracticePrint />,
       handle: { title: "Print practice set", skeleton: "page-header" },
     },
+    { path: "flashcards", element: <FlashcardsScreen />, handle: { title: "Flashcards", skeleton: "list" } },
+    { path: "flashcards/deck/:deckId", element: <DeckScreen />, handle: { title: "Deck", skeleton: "list" } },
     {
-      path: "flashcards/:subjectCode",
-      element: <FlashcardDecks />,
-      handle: { title: "Flashcards", skeleton: "list" },
+      path: "flashcards/review",
+      element: <ReviewScreen />,
+      handle: { title: "Flashcard review", skeleton: "page-header", immersive: true },
     },
-    {
-      path: "flashcards/review/:subjectCode",
-      element: <FlashcardReview />,
-      handle: { title: "Flashcard review", skeleton: "page-header" },
-    },
+    { path: "flashcards/review/:subjectCode", element: <LegacyReviewRedirect /> },
+    { path: "flashcards/:subjectCode", element: <FlashcardsScreen />, handle: { title: "Flashcards", skeleton: "list" } },
     /*
      * P4.9 moved the marketing page out of this portal and onto a public
      * route. The path stays mounted, as a redirect, for three reasons that

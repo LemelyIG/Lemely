@@ -170,8 +170,7 @@ describe("resolveCrumbTrail — the student portal's back affordance", () => {
 
   /*
    * Only "Home" is linkable. The other leading labels this map produces are
-   * grouping names with no route of their own — `/student/practice` and
-   * `/student/flashcards` are not mounted paths, and `Marking` never was —
+   * grouping names with no route of their own — `/student/practice` is not a mounted path, and `Marking` never was —
    * so linking them would manufacture the dead ends a back affordance exists
    * to remove.
    */
@@ -182,7 +181,10 @@ describe("resolveCrumbTrail — the student portal's back affordance", () => {
       "/student/board",
       "/student/subject/0625",
       "/student/practice/0625",
+      "/student/flashcards",
       "/student/flashcards/0625",
+      "/student/flashcards/deck/abc",
+      "/student/flashcards/review",
       "/student/plan/0625",
       "/student/plan/0625/session/abc-123",
       "/student/result/abc-123",

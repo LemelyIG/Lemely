@@ -7,23 +7,30 @@ import { OriginTag } from "./OriginTag"
 
 /**
  * fc.css `.dkr`: grid [1fr auto 18px], gap 12, padding 12px 0, hairline above; selected = `.dkr.on`
- * (primary-container, r14, inline padding 12). Long-press opens the deck menu (live K15).
+ * (primary-container, r14, inline padding 12), desktop only: on a phone the row opens a screen, so nothing is selected. Long-press opens the deck menu (live K15).
  */
 export function DeckRow({
-  row, selected = false, onOpen, onLongPress,
-}: { row: DeckRowView; selected?: boolean; onOpen: () => void; onLongPress: () => void }) {
+  row, selected = false, onOpen, onLongPress, onRetry, retrying = false,
+}: {
+  row: DeckRowView
+  selected?: boolean
+  onOpen: () => void
+  onLongPress: () => void
+  onRetry?: () => void
+  retrying?: boolean
+}) {
   const longPress = useLongPress({ onLongPress })
   return (
-    <li className="[&+li>button]:shadow-[0_-1px_0_var(--color-outline-variant)]">
+    <li className="flex items-center gap-1 [&+li]:shadow-[0_-1px_0_var(--color-outline-variant)]">
       <button
         type="button"
         onClick={onOpen}
         aria-current={selected ? "true" : undefined}
         {...longPress}
         className={[
-          "group grid w-full grid-cols-[minmax(0,1fr)_auto_18px] items-center gap-3 py-3 text-start text-on-surface",
+          "group grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_18px] items-center gap-3 py-3 text-start text-on-surface",
           "focus-visible:rounded-[14px] focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary",
-          selected ? "rounded-[14px] bg-primary-container px-3 !shadow-none" : "",
+          selected ? "lg:rounded-[14px] lg:bg-primary-container lg:px-3" : "",
         ].join(" ")}
       >
         <span className="grid gap-1">
@@ -42,6 +49,16 @@ export function DeckRow({
         {row.status === "ready" ? <DueCount due={row.due} /> : <span />}
         <CaretRight size={18} aria-hidden className="text-on-surface-variant" />
       </button>
+      {row.canRetry && onRetry ? (
+        <button
+          type="button"
+          onClick={onRetry}
+          aria-disabled={retrying || undefined}
+          className="min-h-11 flex-none rounded-[14px] px-3.5 text-[14px] font-bold text-primary focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
+        >
+          {retrying ? "Retrying…" : "Retry"}
+        </button>
+      ) : null}
     </li>
   )
 }

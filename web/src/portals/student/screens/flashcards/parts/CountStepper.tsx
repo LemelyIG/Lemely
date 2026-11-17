@@ -10,15 +10,15 @@ export function CountStepper({
     <div className="flex items-center justify-between text-[14px] font-semibold text-on-surface">
       <span id={labelId}>{label}</span>
       <div className="flex items-center gap-3" role="group" aria-labelledby={labelId}>
-        <button type="button" aria-label="Fewer" disabled={value <= min} onClick={() => onChange(value - 1)}
-          className="grid size-11 place-items-center rounded-[14px] bg-primary-container text-primary disabled:opacity-40">
+        <button type="button" aria-label="Fewer" aria-disabled={value <= min || undefined} onClick={() => value > min && onChange(value - 1)}
+          className="grid size-11 place-items-center rounded-[14px] bg-primary-container text-primary aria-disabled:opacity-40 focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary">
           <Minus size={18} weight="bold" aria-hidden />
         </button>
         <output aria-live="polite" className="min-w-[2ch] text-center font-display text-[26px] font-extrabold leading-none text-primary">
           {value}
         </output>
-        <button type="button" aria-label="More" disabled={value >= max} onClick={() => onChange(value + 1)}
-          className="grid size-11 place-items-center rounded-[14px] bg-primary-container text-primary disabled:opacity-40">
+        <button type="button" aria-label="More" aria-disabled={value >= max || undefined} onClick={() => value < max && onChange(value + 1)}
+          className="grid size-11 place-items-center rounded-[14px] bg-primary-container text-primary aria-disabled:opacity-40 focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary">
           <Plus size={18} weight="bold" aria-hidden />
         </button>
       </div>

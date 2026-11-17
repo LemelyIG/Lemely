@@ -90,7 +90,7 @@ export function currentSubjectCode(pathname: string): string | null {
   const exactArms = [
     /^\/student\/subject\/([^/]+)$/,
     /^\/student\/practice\/([^/]+)$/,
-    /^\/student\/flashcards\/([^/]+)$/,
+    /^\/student\/flashcards\/(?!review$|deck$)([^/]+)$/,
   ]
   for (const arm of exactArms) {
     const match = pathname.match(arm)
@@ -108,7 +108,7 @@ export function currentSubjectCode(pathname: string): string | null {
  * parameter in it is resolved by a pattern arm in `resolveCrumb` instead.
  *
  * P3.1 removed four keys from this map: `/student/subject`,
- * `/student/practice`, `/student/flashcards` and `/student/result`. All four
+ * `/student/practice`, `/student/flashcards` and `/student/result`. All four (`/student/flashcards` has since become a real mounted route and is back in the map)
  * were dead lookups. Every one of those routes is parameterised
  * (`subject/:code`, `practice/:subjectCode`, `flashcards/:subjectCode`,
  * `result/:paperId`), so no pathname the router can produce ever equals the
@@ -132,6 +132,8 @@ export const crumbs: Record<string, string> = {
   "/student/board": "Home / Standings",
   "/student/friends": "Home / Friends",
   "/student/profile": "Home / Your profile",
+  "/student/flashcards": "Home / Flashcards",
+  "/student/flashcards/review": "Home / Flashcards / Review",
   // Absent until P3.1, and silently so: with no nav entry the only way onto
   // this route was a push deep link, and a wrong-but-valid breadcrumb ("Home")
   // trips no typecheck and no axe rule — the exact failure mode `resolveCrumb`
@@ -195,6 +197,9 @@ export function resolveCrumb(pathname: string): string {
   if (pathname.match(/^\/student\/practice\/set\//)) return "Home / Practice / Set"
   if (pathname.match(/^\/student\/practice\/result\//)) return "Home / Practice / Result"
   if (pathname.match(/^\/student\/practice\/print\//)) return "Home / Practice / Print"
+
+  const flashcardDeckMatch = pathname.match(/^\/student\/flashcards\/deck\/([^/]+)$/)
+  if (flashcardDeckMatch) return "Home / Flashcards / Deck"
 
   const flashcardReviewMatch = pathname.match(/^\/student\/flashcards\/review\/([^/]+)$/)
   if (flashcardReviewMatch) return `Home / Flashcards / Review ${flashcardReviewMatch[1]}`

@@ -5,7 +5,7 @@ export function DueCount({ due }: { due: number }) {
   if (due === 0) {
     return (
       <span className="grid min-w-11 justify-items-center text-success-text">
-        <Check size={16} weight="bold" aria-label="Nothing due" />
+        <Check size={16} weight="bold" role="img" aria-label="Nothing due" />
       </span>
     )
   }
