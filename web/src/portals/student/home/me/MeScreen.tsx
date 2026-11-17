@@ -14,7 +14,7 @@ import { AccountRows } from "./AccountRows"
 import { BadgeRow } from "./BadgeRow"
 import { BadgesSheet } from "./BadgesSheet"
 import { MeHero } from "./MeHero"
-import { accountRows, activityVm, deriveBadges, displayName, peopleVm, statsVm, subjectsVm } from "./meModel"
+import { accountRows, activityVm, deriveBadges, heroName, peopleVm, statsVm, subjectsVm } from "./meModel"
 import { MeSkeleton } from "./MeSkeleton"
 import { PeopleDoors } from "./PeopleDoors"
 import { ProgressSheet } from "./ProgressSheet"
@@ -42,7 +42,7 @@ export function MeScreen() {
     returnFocusRef.current = trigger
     setSheet(which)
   }
-  const name = displayName(me.data)
+  const name = heroName(me.data)
 
   const homePart = (render: (h: NonNullable<typeof home.data>) => React.ReactNode, order: string) =>
     home.data ? (

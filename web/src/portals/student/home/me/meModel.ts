@@ -7,7 +7,7 @@
 import type { Profile } from "@/lib/meTypes"
 import type { StudentHome } from "@/lib/studentHomeTypes"
 import type { XpDay, XpProfile, XpSource } from "@/lib/xpTypes"
-import { gradeGapLabel, plural, relativeDay, shortSubject } from "../model"
+import { firstName, gradeGapLabel, plural, relativeDay, shortSubject } from "../model"
 import { homeRoutes, practiceTarget } from "../routes"
 
 const GRADE_ORDER = ["U", "G", "F", "E", "D", "C", "B", "A", "A*"]
@@ -62,6 +62,11 @@ export function sourceLabel(source: XpSource | string): string {
 
 export function displayName(profile: Pick<Profile, "displayName" | "email"> | undefined): string {
   return profile?.displayName ?? profile?.email.split("@")[0] ?? "You"
+}
+
+/* The hero shows the first name only, so a long full name never wraps at 390. */
+export function heroName(profile: Pick<Profile, "displayName" | "email"> | undefined): string {
+  return firstName(displayName(profile))
 }
 
 export function levelLine(xp: XpProfile): string {

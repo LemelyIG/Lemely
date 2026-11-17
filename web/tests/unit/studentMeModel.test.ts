@@ -4,6 +4,7 @@ import {
   activityVm,
   deriveBadges,
   displayName,
+  heroName,
   levelLine,
   ordinal,
   peopleVm,
@@ -38,6 +39,12 @@ describe("Me view model", () => {
     expect(displayName({ displayName: "Mariam Adel", email: "m@x.com" })).toBe("Mariam Adel")
     expect(displayName({ displayName: null, email: "mariam@x.com" })).toBe("mariam")
     expect(displayName(undefined)).toBe("You")
+  })
+
+  it("shows only the first name in the hero so it never wraps at 390", () => {
+    expect(heroName({ displayName: "Mariam Adel Hassan", email: "m@x.com" })).toBe("Mariam")
+    expect(heroName({ displayName: null, email: "mariam@x.com" })).toBe("mariam")
+    expect(heroName(undefined)).toBe("You")
   })
 
   it("level line reads the server's curve, never computes one", () => {
