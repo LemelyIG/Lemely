@@ -1,0 +1,187 @@
+import { useState } from "react"
+import { Link } from "react-router-dom"
+import { Flag } from "@phosphor-icons/react"
+import { KeyRing } from "@/components/redesign"
+import { relativeTime } from "@/lib/utils"
+import type { AnswerView } from "./answerView"
+import { MarkControls } from "./MarkControls"
+import { canSave, notePlaceholder, primaryActionLabel, totalOf, type MarkState } from "./markModel"
+import { ringLabel, ringText, ringTone, ringValue } from "./reviewQueueModel"
+import "./review.css"
+import type { AnswerImages } from "./useAnswerImages"
+
+export type { AnswerImages } from "./useAnswerImages"
+
+export interface AnswerNav {
+  pos: number
+  total: number
+  onPrev: () => void
+  onNext: () => void
+}
+
+export interface AnswerMarking {
+  state: MarkState
+  onChange: (s: MarkState) => void
+  note: string
+  onNote: (s: string) => void
+  /** Accept or Save, at the current total. */
+  onAccept: () => void
+  /** Integrity flags only. */
+  onDismiss: (note: string) => void
+}
+
+export interface AnswerPanelProps {
+  view: AnswerView
+  images: AnswerImages
+  nav?: AnswerNav
+  /** Phone only. */
+  onBack?: () => void
+  /** Null is read-only: a closed item, or L8. */
+  marking: AnswerMarking | null
+  showShortcuts?: boolean
+}
+
+const ICON_BACK = <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M11 4 6 9l5 5" /></svg>
+const ICON_NEXT = <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m7 4 5 5-5 5" /></svg>
+
+const FOCUS = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+const NAV_BTN = `grid size-11 place-items-center rounded-[12px] bg-primary-container text-primary disabled:opacity-35 ${FOCUS}`
+const LABEL = "font-mono text-[12px] font-semibold uppercase tracking-[0.08em] text-on-surface-variant"
+const FRAME = "m-0 grid gap-1.5 rounded-2xl bg-surface-container-lowest p-3.5 shadow-[inset_0_0_0_1px_var(--color-outline)]"
+
+export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts }: AnswerPanelProps) {
+  const [mode, setMode] = useState<"crop" | "page">("crop")
+  const [dismissNote, setDismissNote] = useState("")
+  const total = marking ? totalOf(view.points, marking.state, view.maximumMarks) : (view.lemelyMarks ?? 0)
+  const changed = view.lemelyMarks != null && total !== view.lemelyMarks
+  const showPage = mode === "page" && view.hasScan
+  const tone = ringTone(view.confidenceScore)
+  const saveable = marking ? canSave(view.points, marking.state, view.maximumMarks, view.lemelyMarks) : false
+  return (
+    <article aria-label={view.title} className="grid w-full max-w-[780px] gap-3.5">
+      <header className="flex flex-wrap items-center gap-3 shell-sm:flex-nowrap">
+        {onBack ? (
+          <button type="button" onClick={onBack} aria-label="Back to the queue" className={`inline-flex min-h-11 items-center gap-1.5 rounded-[14px] bg-surface-container-lowest px-3 py-2 text-[14px] font-bold shadow-[inset_0_0_0_1.5px_var(--color-outline)] ${FOCUS}`}>{ICON_BACK}Queue</button>
+        ) : null}
+        <div className="order-3 flex min-w-0 flex-[1_1_100%] items-center gap-3 shell-sm:order-none shell-sm:flex-1">
+          <KeyRing
+            value={ringValue(view.confidenceScore)}
+            size={64}
+            tone={tone === "gold" ? "gold" : tone === "neutral" ? "neutral" : "warn"}
+            label={ringLabel(view.confidenceScore)}
+            center={<span className="font-mono text-[18px] font-semibold tabular-nums tracking-[-0.02em]">{ringText(view.confidenceScore)}{view.confidenceScore != null ? <small className="text-[12px] opacity-70">%</small> : null}</span>}
+          />
+          <div className="min-w-0">
+            <h2 className="text-[21px] font-bold leading-[1.25] tracking-[-0.01em]">
+              {view.studentHref ? <Link to={view.studentHref} className="hover:underline">{view.title}</Link> : view.title}
+            </h2>
+            <div className="mt-0.5 font-mono text-[12.5px] font-semibold leading-[1.3] text-on-surface-variant">{view.subtitle}</div>
+          </div>
+        </div>
+        {nav ? (
+          <div className="ms-auto flex items-center gap-1.5">
+            <button type="button" aria-label="Previous answer" disabled={nav.pos <= 1} onClick={nav.onPrev} className={NAV_BTN}>{ICON_BACK}</button>
+            <span className="min-w-16 text-center font-mono text-[13px] text-on-surface-variant tabular-nums">{nav.pos || "–"} of {nav.total}</span>
+            <button type="button" aria-label="Next answer" disabled={nav.pos >= nav.total} onClick={nav.onNext} className={NAV_BTN}>{ICON_NEXT}</button>
+          </div>
+        ) : null}
+      </header>
+
+      {view.hasScan ? (
+        <div role="tablist" aria-label="Answer view" className="inline-flex justify-self-start rounded-[12px] bg-surface-container p-[3px]">
+          {(["crop", "page"] as const).map((m) => (
+            <button key={m} type="button" role="tab" aria-selected={mode === m} onClick={() => { setMode(m); if (m === "page") images.requestPage() }} className={`min-h-9 rounded-[9px] px-3.5 py-1.5 text-[13px] font-bold text-on-surface-variant pointer-coarse:min-h-11 aria-selected:bg-surface-container-lowest aria-selected:text-primary aria-selected:shadow-[0_0_0_1px_var(--color-outline-variant)] ${FOCUS}`}>
+              {m === "crop" ? "Answer" : "Whole page"}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {showPage ? (
+        <figure className={`${FRAME} min-h-[300px]`}>
+          {view.pageLabel ? <figcaption className={LABEL}>{view.pageLabel}</figcaption> : null}
+          {images.pageUrl ? (
+            <img src={images.pageUrl} alt="The whole page this answer is on" onError={images.onPageError} decoding="async" className="max-h-[70vh] w-full rounded-[10px] object-contain" />
+          ) : images.pageRequested ? (
+            <div className="lm-rq-skel h-[300px] rounded-[10px] bg-surface-container-high" role="status" aria-label="Loading the page" />
+          ) : (
+            <p className="text-on-surface-variant">Couldn't show the page.</p>
+          )}
+        </figure>
+      ) : images.cropUrl ? (
+        <figure className={FRAME}>
+          <img src={images.cropUrl} alt="The region of the student's scan this question's answer was read from" onError={images.onCropError} decoding="async" className="max-h-[420px] w-auto max-w-full rounded-[10px] object-contain" />
+          <figcaption className="text-[12.5px] text-on-surface-variant">From the student's scan</figcaption>
+        </figure>
+      ) : (
+        <figure className="lm-rq-ruled relative m-0 min-h-[210px] overflow-hidden rounded-2xl bg-surface-container-lowest px-[18px] py-3.5 shadow-[inset_0_0_0_1px_var(--color-outline)]">
+          <p className="m-0 whitespace-pre-wrap text-[22px] leading-[36px] text-on-surface shell-sm:text-[28px] shell-sm:leading-[42px]">{view.transcription ?? "No transcription recorded for this question."}</p>
+          <figcaption className="mt-2 text-[12.5px] text-on-surface-variant">Lemely's reading of the answer</figcaption>
+        </figure>
+      )}
+
+      <section className="grid gap-0.5 rounded-[14px] bg-surface-container-low px-3.5 py-2.5">
+        <span className={LABEL}>Student said</span>
+        {view.selfReview.length === 0 ? (
+          <div className="text-[14px] leading-[1.45] text-on-surface-variant">No self-review yet.</div>
+        ) : (
+          view.selfReview.map((s) => (
+            <div key={s.code} className="text-[14px] leading-[1.45]">
+              <b className="font-mono text-[12.5px]">{s.code}</b> {s.claim}{s.evidence ? <> · “{s.evidence}”</> : null}
+              <span className="text-on-surface-variant"> · {s.judge}</span>
+            </div>
+          ))
+        )}
+      </section>
+
+      {view.status === "open" && marking && !view.integrity ? (
+        <MarkControls points={view.points} state={marking.state} max={view.maximumMarks} lemely={view.lemelyMarks} disabled={!view.canAdjust} disabledReason={view.cannotAdjustReason} clampNote={view.clampNote} matchedPointIds={view.matchedPointIds} onChange={marking.onChange} />
+      ) : view.clampNote ? (
+        <p className="text-[13px] text-on-surface-variant">{view.clampNote}</p>
+      ) : null}
+
+      {view.scheme.expected || view.scheme.topic ? (
+        <details className="rounded-[14px] bg-surface-container-low px-3.5 py-2.5">
+          <summary className={`cursor-pointer text-[14px] font-bold text-primary ${FOCUS}`}>Mark scheme wording</summary>
+          {view.scheme.expected ? <p className="mt-2 max-w-[68ch] whitespace-pre-wrap text-[14px] leading-[1.5] text-on-surface-variant">{view.scheme.expected}</p> : null}
+          {view.scheme.topic ? <p className="mt-1 text-[13px] text-on-surface-variant">Topic: {view.scheme.topic}</p> : null}
+        </details>
+      ) : null}
+
+      {view.notes.reason || view.notes.feedback ? (
+        <details className="rounded-[14px] bg-surface-container-low px-3.5 py-2.5">
+          <summary className={`cursor-pointer text-[14px] font-bold text-primary ${FOCUS}`}>Lemely's notes</summary>
+          {view.notes.feedback ? <p className="mt-2 max-w-[68ch] text-[14px] leading-[1.5] text-on-surface-variant">{view.notes.feedback}</p> : null}
+          {view.notes.reason ? <p className="mt-1 max-w-[68ch] font-mono text-[12.5px] text-on-surface-variant">{view.notes.reason}</p> : null}
+        </details>
+      ) : null}
+
+      {view.status !== "open" ? (
+        <section role="status" className="grid gap-1.5 rounded-[14px] bg-surface-container px-3.5 py-2.5 text-[14px]">
+          <b>{view.status === "dismissed" ? "Dismissed" : "Resolved"}</b>
+          {view.correction ? <span>Changed to <span className="font-mono">{view.correction.marks}/{view.maximumMarks ?? "–"}</span>{view.correction.note ? ` · “${view.correction.note}”` : ""}{view.correction.at ? ` · ${relativeTime(view.correction.at)}` : ""}</span> : null}
+          {view.resolutionNote ? <span className="text-on-surface-variant">Note: “{view.resolutionNote}”</span> : null}
+        </section>
+      ) : null}
+
+      {view.status === "open" && marking ? (
+        <>
+          {view.integrity ? (
+            <p className="flex items-start gap-2 text-[13px] text-on-surface-variant"><Flag weight="fill" className="mt-0.5 size-4 flex-none text-on-tertiary-container" aria-hidden />A signal to look at, not a verdict. Dismissing never changes the student's mark.</p>
+          ) : null}
+          <textarea rows={2} value={view.integrity ? dismissNote : marking.note} onChange={(e) => (view.integrity ? setDismissNote(e.target.value) : marking.onNote(e.target.value))} placeholder={view.integrity ? "Note for your records (optional)" : notePlaceholder(changed)} aria-label={view.integrity ? "Note for your records" : notePlaceholder(changed)} className="w-full resize-none rounded-[12px] bg-surface-container-lowest px-3 py-2.5 text-[14px] leading-[1.45] shadow-[inset_0_0_0_1px_var(--color-outline)] caret-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" />
+          <div className="sticky bottom-0 z-[1] flex gap-2 bg-surface pb-1 pt-2.5 shadow-[0_-12px_14px_-10px_var(--color-surface)] max-shell-sm:pb-[max(4px,env(safe-area-inset-bottom))]">
+            {view.integrity ? (
+              <button type="button" data-testid="primary-action" onClick={() => marking.onDismiss(dismissNote)} className={`min-h-11 flex-1 rounded-[14px] bg-primary px-[18px] py-[11px] text-[14px] font-bold text-on-primary transition-transform duration-150 active:scale-[.97] motion-reduce:transition-none ${FOCUS}`}>Dismiss flag</button>
+            ) : (
+              <button type="button" data-testid="primary-action" disabled={!saveable} onClick={marking.onAccept} className={`min-h-11 flex-1 rounded-[14px] bg-primary px-[18px] py-[11px] text-[14px] font-bold text-on-primary transition-transform duration-150 active:scale-[.97] disabled:opacity-40 motion-reduce:transition-none ${FOCUS}`}>{primaryActionLabel(total, view.maximumMarks, view.lemelyMarks)}</button>
+            )}
+          </div>
+          {showShortcuts ? (
+            <p className="hidden font-mono text-[12px] text-on-surface-variant shell-lg:block" aria-hidden="true">A accept · N next · J/K move · / search</p>
+          ) : null}
+        </>
+      ) : null}
+    </article>
+  )
+}

@@ -23,6 +23,8 @@ export interface AnswerView {
   matchedPointIds: string[]
   maximumMarks: number | null
   lemelyMarks: number | null
+  /** 0..1, for the big confidence ring. Null draws the track only. */
+  confidenceScore: number | null
   /** Set whenever Lemely's mark was above the maximum and is shown clamped. */
   clampNote: string | null
   status: "open" | "resolved" | "dismissed"
@@ -67,6 +69,7 @@ export function answerViewFromReviewItem(d: ReviewItemDetail): AnswerView {
     matchedPointIds: d.matchedPointIds,
     maximumMarks: d.maximumMarks,
     lemelyMarks: d.aiAwardedMarks,
+    confidenceScore: d.confidenceScore,
     clampNote: clampNote(d.aiAwardedMarks, d.maximumMarks),
     status: d.status === "resolved" || d.status === "dismissed" ? d.status : "open",
     integrity: isIntegrityReason(d.reason),
