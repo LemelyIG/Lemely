@@ -45,7 +45,7 @@ test("the corrected-paper student sees their real dashboard data and the parents
   await expect(floor).toBeVisible()
   const subjectDoor = floor.getByRole("link").first()
   await expect(subjectDoor).toHaveAttribute("href", "/student/subject/0625")
-  await expect(subjectDoor).toContainText(/pts to|Top grade/)
+  await expect(subjectDoor).toContainText(/marks? to |On the way to |Top grade/)
 
   await page.goto("/student/parents")
   await expect(page.getByRole("heading", { name: "Your parents" })).toBeVisible({

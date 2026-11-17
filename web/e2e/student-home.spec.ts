@@ -51,4 +51,6 @@ test("Not now moves Binny on to the next suggestion", async ({ page }) => {
   await expect(main.getByText("35 out of 40. That's an A. Q3 is the one to fix.")).toBeVisible({ timeout: 15_000 })
   await main.getByRole("button", { name: "Not now" }).click()
   await expect(main.getByText(/35 out of 40/)).toHaveCount(0)
+  // Falls to the next fallback stage: the win-back line if the seed has one, else the default scan line.
+  await expect(main.getByText(/Nothing to win back yet\. Scan your next paper\.|cost you \d+ marks last time/)).toBeVisible()
 })
