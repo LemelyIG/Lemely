@@ -33,6 +33,11 @@ describe("intervals and grade buttons", () => {
     expect(intervalLabel(15, 10)).toBe("2 weeks")
     expect(intervalLabel(40, 10)).toBe("1 month")
     expect(intervalLabel(400, 10)).toBe("1 year")
+    // "10 min" belongs to Again alone; any other grade is at least a day, and fractions round.
+    expect(intervalLabel(0, 10, "hard")).toBe("1 day")
+    expect(intervalLabel(0, 10, "again")).toBe("10 min")
+    expect(intervalLabel(2.6, 10, "good")).toBe("3 days")
+    expect(intervalLabel(0.4, 10, "easy")).toBe("1 day")
   })
 
   it("lists Again, Hard, Good, Easy with keys 1-4 and real intervals", () => {
@@ -79,10 +84,12 @@ describe("comingBackRows", () => {
       "2026-11-19T08:00:00",
       "2026-11-21T08:00:00", "2026-11-21T09:00:00", "2026-11-21T10:00:00",
     ]
-    expect(comingBackRows(upcoming, NOW)).toEqual([
+    expect(comingBackRows(upcoming, NOW, 1)).toEqual([
       { title: "1 card later today", sub: "The ones you marked Again" },
       { title: "2 cards tomorrow", sub: null },
     ])
+    // No Again this session: the sub would be untrue, so it is dropped.
+    expect(comingBackRows(upcoming, NOW)[0]).toEqual({ title: "1 card later today", sub: null })
     expect(comingBackRows(upcoming.slice(1), NOW)).toEqual([
       { title: "2 cards tomorrow", sub: null },
       { title: "Next big review Saturday", sub: "3 cards" },

@@ -13,7 +13,6 @@
 import type {
   CardDTO,
   CardSource,
-  CreateDeckRequest,
   DeckSummaryDTO,
   DueSessionDTO,
   GenerateDeckResponseDTO,
@@ -21,41 +20,8 @@ import type {
   ReviewResultDTO,
 } from "@/lib/flashcardTypes"
 
-// ── S-22: a hand-made deck's provenance survives having a topic ──────────
-
-/**
- * Build the `POST /decks` body for the "write my own" mode.
- *
- * **`origin` stays `"manual"` whether or not the student typed a topic.**
- * The backend accepts a topic freely on the manual origin (`create_deck`:
- * "`origin=manual`: `topic` is whatever the caller passes"), so nothing in
- * the contract requires promoting a topic-bearing manual deck to
- * `origin: "topic"` — and doing so is a provenance lie. `DeckSummaryDTO.
- * origin` is what tells the screen whether a deck was hand-made, picked by
- * topic, or generated against a recorded weakness; `"topic"` renders as
- * "Topic-generated", which claims a model wrote a deck the student built by
- * hand. Same honesty rule as `source` on a card (rule 1), one level up: the
- * label describes who *made* the thing, and typing a topic into a form is
- * not a model generating cards.
- *
- * A blank title falls back to a subject-named default rather than being sent
- * empty; a blank topic is `null`, never `""` — an empty string would read
- * back as a topic the student chose.
- */
-export function manualDeckRequest(
-  subjectCode: string,
-  subjectName: string,
-  title: string,
-  topic: string,
-): CreateDeckRequest {
-  return {
-    subjectCode,
-    title: title.trim() || `${subjectName} deck`,
-    description: null,
-    origin: "manual",
-    topic: topic.trim() || null,
-  }
-}
+// manualDeckRequest moved to newDeckView.ts (L10); re-exported so older imports keep working.
+export { manualDeckRequest } from "./newDeckView"
 
 // ── S-22: "nothing due today" says *when*, never renders a bare void ────
 

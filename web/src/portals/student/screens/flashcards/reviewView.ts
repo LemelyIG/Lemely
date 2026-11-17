@@ -8,8 +8,10 @@ const GRADE_LABEL: Record<ReviewGrade, string> = { again: "Again", hard: "Hard",
 
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`
 
-export function intervalLabel(days: number, againDelayMinutes: number): string {
-  if (days <= 0) return `${againDelayMinutes} min`
+/** "10 min" is only ever Again's wait. Any other grade is at least a day, and fractions round. */
+export function intervalLabel(days: number, againDelayMinutes: number, grade: ReviewGrade = "again"): string {
+  if (grade === "again" && days < 1) return `${againDelayMinutes} min`
+  days = Math.max(1, Math.round(days))
   if (days < 7) return plural(days, "day")
   if (days < 30) return plural(Math.floor(days / 7), "week")
   if (days < 365) return plural(Math.max(1, Math.round(days / 30)), "month")
@@ -28,7 +30,7 @@ export function gradeButtons(card: CardDTO, againDelayMinutes: number): GradeBut
   return GRADE_ORDER.map((grade, i) => ({
     grade,
     label: GRADE_LABEL[grade],
-    interval: intervalLabel(card.nextIntervalDays[grade], againDelayMinutes),
+    interval: intervalLabel(card.nextIntervalDays[grade], againDelayMinutes, grade),
     key: String(i + 1) as GradeButtonView["key"],
     tone: grade,
   }))
@@ -65,7 +67,7 @@ function dayIndex(d: Date, now: Date): number {
 
 /** From the server forecast only. Later today first (the Again cards), then tomorrow, then the
  * biggest later day. At most two rows. */
-export function comingBackRows(upcoming: readonly string[], now: Date): ComingBackRow[] {
+export function comingBackRows(upcoming: readonly string[], now: Date, againCount = 0): ComingBackRow[] {
   const byDay = new Map<number, number>()
   for (const iso of upcoming) {
     const d = dayIndex(new Date(iso), now)
@@ -73,7 +75,7 @@ export function comingBackRows(upcoming: readonly string[], now: Date): ComingBa
   }
   const rows: ComingBackRow[] = []
   const today = byDay.get(0) ?? 0
-  if (today > 0) rows.push({ title: `${plural(today, "card")} later today`, sub: "The ones you marked Again" })
+  if (today > 0) rows.push({ title: `${plural(today, "card")} later today`, sub: againCount > 0 ? "The ones you marked Again" : null })
   const tomorrow = byDay.get(1) ?? 0
   if (tomorrow > 0) rows.push({ title: `${plural(tomorrow, "card")} tomorrow`, sub: null })
   const later = [...byDay.entries()].filter(([d]) => d >= 2).sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]
@@ -126,7 +128,7 @@ export function doneView(input: DoneInput): DoneView {
     xp: xpEarned(session.results),
     stillDueLine: input.stillDue > 0 ? `${input.stillDue} more still due` : null,
     savingLine: session.inFlight > 0 ? `${plural(session.inFlight, "rating")} still saving` : null,
-    comingBack: comingBackRows(input.upcoming, input.now),
+    comingBack: comingBackRows(input.upcoming, input.now, session.results.filter((r) => r.grade === "again").length),
     practiceLink: input.practice
       ? {
           label: `Practise ${input.practice.topicName} · +${input.practice.marksLost} marks`,
