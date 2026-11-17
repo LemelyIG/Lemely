@@ -119,8 +119,9 @@ function SheetContent({
       <SheetOverlay />
       <SheetPrimitive.Content
         data-slot="sheet-content"
+        data-close-button={showCloseButton ? "true" : undefined}
         className={cn(
-          "fixed z-modal flex flex-col gap-4 bg-surface p-4 shadow-panel transition ease-out-soft data-[state=closed]:animate-out data-[state=closed]:duration-300 data-[state=open]:animate-in data-[state=open]:duration-500",
+          "group/sheet fixed z-modal flex flex-col gap-4 bg-surface p-4 shadow-panel transition ease-out-soft data-[state=closed]:animate-out data-[state=closed]:duration-300 data-[state=open]:animate-in data-[state=open]:duration-500",
           side === "right" &&
             "inset-y-0 end-0 h-full w-3/4 border-s data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right sm:max-w-sm",
           side === "left" &&
@@ -153,7 +154,7 @@ function SheetHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="sheet-header"
-      className={cn("flex flex-col gap-1.5 p-4", className)}
+      className={cn("flex flex-col gap-1.5 group-data-[close-button=true]/sheet:pe-13", className)}
       {...props}
     />
   )
@@ -163,7 +164,7 @@ function SheetFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="sheet-footer"
-      className={cn("mt-auto flex flex-col gap-2 p-4", className)}
+      className={cn("mt-auto flex flex-col gap-2", className)}
       {...props}
     />
   )
@@ -176,7 +177,10 @@ function SheetTitle({
   return (
     <SheetPrimitive.Title
       data-slot="sheet-title"
-      className={cn("font-semibold text-on-surface", className)}
+      className={cn(
+        "font-semibold text-on-surface group-data-[close-button=true]/sheet:pe-13 in-data-[slot=sheet-header]:pe-0",
+        className
+      )}
       {...props}
     />
   )
