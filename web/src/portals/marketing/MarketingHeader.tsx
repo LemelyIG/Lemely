@@ -146,7 +146,7 @@ export function MarketingHeader() {
                   <X aria-hidden="true" size={22} />
                 </button>
               </SheetClose>
-              <SheetHeader>
+              <SheetHeader className="p-4">
                 <SheetTitle>Explore Lemely</SheetTitle>
                 <SheetDescription>Every mark, explained.</SheetDescription>
               </SheetHeader>
