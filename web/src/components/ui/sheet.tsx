@@ -3,6 +3,7 @@ import * as React from "react"
 import { cn } from "@/lib/utils"
 import { BottomSheetSurface } from "@/components/ui/bottom-sheet"
 import { useNativeFrame } from "@/lib/useNativeFrame"
+import { focusReturnTarget } from "@/lib/restoreFocus"
 import { X as XIcon } from "@phosphor-icons/react"
 import { Dialog as SheetPrimitive } from "radix-ui"
 
@@ -64,6 +65,32 @@ function SheetContent({
 }) {
   const { native } = useNativeFrame()
   const closeRef = React.useRef<HTMLButtonElement>(null)
+  // A sheet opened without a Trigger drops focus to body on close. Record the opener on open and
+  // put focus back on close; a Trigger-opened sheet and a caller's own handler keep their behavior.
+  const openerRef = React.useRef<HTMLElement | null>(null)
+  const { onOpenAutoFocus, onCloseAutoFocus, ...rest } = props
+  props = {
+    ...rest,
+    onOpenAutoFocus: (event) => {
+      const active = document.activeElement
+      openerRef.current = active instanceof HTMLElement ? active : null
+      onOpenAutoFocus?.(event)
+    },
+    onCloseAutoFocus: (event) => {
+      onCloseAutoFocus?.(event)
+      if (event.defaultPrevented) return
+      const target = focusReturnTarget(
+        openerRef.current,
+        (event.target as HTMLElement | null)?.id,
+        document.body,
+      )
+      openerRef.current = null
+      if (target) {
+        event.preventDefault()
+        target.focus()
+      }
+    },
+  }
   if (native && (side === "bottom" || side === "adaptive")) {
     // Native frame: the grabber sheet. Radix keeps the focus trap, Escape and the label;
     // a drag past the threshold clicks the hidden Close so focus returns to the trigger.
@@ -92,8 +119,9 @@ function SheetContent({
       <SheetOverlay />
       <SheetPrimitive.Content
         data-slot="sheet-content"
+        data-close-button={showCloseButton ? "true" : undefined}
         className={cn(
-          "fixed z-modal flex flex-col gap-4 bg-surface shadow-panel transition ease-out-soft data-[state=closed]:animate-out data-[state=closed]:duration-300 data-[state=open]:animate-in data-[state=open]:duration-500",
+          "group/sheet fixed z-modal flex flex-col gap-4 bg-surface p-4 shadow-panel transition ease-out-soft data-[state=closed]:animate-out data-[state=closed]:duration-300 data-[state=open]:animate-in data-[state=open]:duration-500",
           side === "right" &&
             "inset-y-0 end-0 h-full w-3/4 border-s data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right sm:max-w-sm",
           side === "left" &&
@@ -112,7 +140,7 @@ function SheetContent({
         {nativeHeader}
         {children}
         {showCloseButton && (
-          <SheetPrimitive.Close className="absolute top-4 end-4 rounded-xs opacity-70 ring-offset-surface transition-opacity hover:opacity-100 active:opacity-100 focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-on-surface-variant">
+          <SheetPrimitive.Close className="absolute top-2 end-2 flex size-11 items-center justify-center rounded-xs opacity-70 ring-offset-surface transition-opacity hover:opacity-100 active:opacity-100 focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-on-surface-variant">
             <XIcon className="size-4" />
             <span className="sr-only">Close</span>
           </SheetPrimitive.Close>
@@ -126,7 +154,7 @@ function SheetHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="sheet-header"
-      className={cn("flex flex-col gap-1.5 p-4", className)}
+      className={cn("flex flex-col gap-1.5 group-data-[close-button=true]/sheet:pe-13", className)}
       {...props}
     />
   )
@@ -136,7 +164,7 @@ function SheetFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="sheet-footer"
-      className={cn("mt-auto flex flex-col gap-2 p-4", className)}
+      className={cn("mt-auto flex flex-col gap-2", className)}
       {...props}
     />
   )
@@ -149,7 +177,10 @@ function SheetTitle({
   return (
     <SheetPrimitive.Title
       data-slot="sheet-title"
-      className={cn("font-semibold text-on-surface", className)}
+      className={cn(
+        "font-semibold text-on-surface group-data-[close-button=true]/sheet:pe-13 in-data-[slot=sheet-header]:pe-0",
+        className
+      )}
       {...props}
     />
   )
