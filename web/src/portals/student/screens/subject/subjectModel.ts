@@ -151,7 +151,7 @@ export function sparseTip(code: string): TipView {
   return { mood: "happy", line: "Great start. Next paper?", action: scanAction(code), secondary: null }
 }
 export function firstRunTip(code: string, subjectName: string): TipView {
-  return { mood: "open", line: "Find your first step",
+  return { mood: "open", line: "Let’s find your first step",
     action: { label: `Scan a ${subjectName} paper`, detail: null, to: links.scan(code) },
     secondary: { label: "Upload a PDF instead", detail: null, to: links.upload(code) } }
 }
@@ -159,7 +159,7 @@ export function FIRST_RUN_STEPS(subjectName: string): { title: string; body: str
   return [
     { title: `Scan a ${subjectName} paper`, body: "Any past paper you have tried. Phone camera or PDF." },
     { title: "Lemely marks it", body: "Every question, with method marks. About two minutes." },
-    { title: "Your path appears", body: "Each paper adds a step towards the A* line." },
+    { title: "Your path appears", body: "Each paper adds a step towards your goal." },
   ]
 }
 export const GHOST_PATH_HEIGHTS = [30, 45, 52, 70] as const
@@ -175,7 +175,7 @@ export function winRows(code: string, topics: TopicTile[], decks: DeckSummaryDTO
   const ranked = rankedWins(topics)
   const picked = mode === "full" ? ranked.slice(1, 4) : ranked.slice(0, 2)
   return { heading: mode === "full" ? "More marks to win" : "Marks to win", rows: picked.map(t => {
-    const deck = decks.find(d => d.topic === t.name)
+    const deck = decks.find(d => d.subjectCode === code && d.topic === t.name)
     return { topic: t.name, name: topicName(t.name), marks: t.marksToWin, practiceTo: links.practice(code, t.name),
       flashcardsTo: deck ? links.flashcards(code, deck.id) : null }
   }) }
@@ -196,7 +196,7 @@ export function topicsHint(mode: "full" | "sparse", shown: number, total: number
   if (total !== null && shown < total) return `${shown} of ${total} topics so far. Each paper fills in more.`
   return "Each paper fills in more topics."
 }
-export interface PathView { tabs: PaperTab[]; selected: number; goalGrade: string; steps: StepsView; trend: TrendView }
+export interface PathView { tabs: PaperTab[]; selected: number; goalGrade: string | null; steps: StepsView; trend: TrendView }
 export interface SubjectView {
   mode: "full" | "sparse"; path: PathView; tip: TipView; win: WinView; chips: TopicChipView[]
   topicsHint: string | null; papers: PaperRowView[]
@@ -205,16 +205,18 @@ export interface SubjectViewInput {
   data: Subject; catalogue: CatalogueSubject | undefined; decks: DeckSummaryDTO[]; examDate: string | null
   now: Date; requestedPaper: string | null; mode: "full" | "sparse"
 }
-export function buildSubjectView(input: SubjectViewInput): SubjectView {
+/** Null when no paper has an attempt: that is the first-run screen, which has no path to build. */
+export function buildSubjectView(input: SubjectViewInput): SubjectView | null {
   const { data, catalogue, decks, examDate, now, requestedPaper, mode } = input
   const code = data.header.code
   const papers = data.papersBreakdown.filter(p => p.attempts.length > 0)
-  const selected = resolvePaper(papers, requestedPaper) ?? papers[0].paperNumber
+  if (papers.length === 0) return null
+  const selected = resolvePaper(papers, requestedPaper)
   const paper = papers.find(p => p.paperNumber === selected) ?? papers[0]
   const steps = stepsFor(paper, { ghosts: mode === "sparse" ? SPARSE_GHOSTS : 0 })
   const examInDays = examDate ? daysUntil(examDate, now) : null
   const chips = topicChips(data.topicMap)
-  return { mode, path: { tabs: paperTabs(papers), selected: paper.paperNumber, goalGrade: steps.goal?.grade ?? "A*",
+  return { mode, path: { tabs: paperTabs(papers), selected: paper.paperNumber, goalGrade: steps.goal?.grade ?? null,
     steps, trend: trendFor(paper, data.header.forecast, data.paperHistory.length) },
   tip: mode === "full" ? fullTip(code, steps.goal, data.topicMap, examInDays) : sparseTip(code),
   win: winRows(code, data.topicMap, decks, mode), chips,

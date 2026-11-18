@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   FIRST_RUN_STEPS,
+  NEAR_EXAM_DAYS,
   barHeight,
   buildSubjectView,
   defaultPaper,
@@ -30,6 +31,7 @@ import {
   trendFor,
   visiblePapers,
   winRows,
+  type SubjectView,
 } from "@/portals/student/screens/subject/subjectModel"
 import { MATHS, MATHS_ONE, MATHS_TOPICS, NOW } from "@/portals/student/screens/subject/fixtures"
 import type { StudentExamCalendar } from "@/lib/announcementTypes"
@@ -359,6 +361,11 @@ describe("Binny's tip", () => {
     expect(fullTipLine(goal7, 31)).toBe("7 marks to A*")
     expect(fullTipLine({ ...goal7, gap: 0 }, 5)).toBe("On the A* line")
   })
+  it("switches to the countdown at exactly NEAR_EXAM_DAYS and not a day earlier than that", () => {
+    expect(NEAR_EXAM_DAYS).toBe(30)
+    expect(fullTipLine(goal7, NEAR_EXAM_DAYS)).toBe("30 days, 7 marks")
+    expect(fullTipLine(goal7, NEAR_EXAM_DAYS + 1)).toBe("7 marks to A*")
+  })
   it("points to the biggest win, or scanning when none exists", () => {
     expect(fullTip("0580", goal7, MATHS_TOPICS, null)).toEqual({
       mood: "happy", line: "7 marks to A*",
@@ -368,8 +375,11 @@ describe("Binny's tip", () => {
   })
   it("offers scanning for sparse and first-run states with short lines", () => {
     expect(sparseTip("0580")).toEqual({ mood: "happy", line: "Great start. Next paper?", action: { label: "Scan your next paper", detail: null, to: "/student/correct?subject=0580" }, secondary: null })
-    expect(firstRunTip("0580", "Mathematics")).toEqual({ mood: "open", line: "Find your first step", action: { label: "Scan a Mathematics paper", detail: null, to: "/student/correct?subject=0580" }, secondary: { label: "Upload a PDF instead", detail: null, to: "/student/correct?subject=0580&source=file" } })
+    expect(firstRunTip("0580", "Mathematics")).toEqual({ mood: "open", line: "Let’s find your first step", action: { label: "Scan a Mathematics paper", detail: null, to: "/student/correct?subject=0580" }, secondary: { label: "Upload a PDF instead", detail: null, to: "/student/correct?subject=0580&source=file" } })
     expect(FIRST_RUN_STEPS("Mathematics").map(s => s.title)).toEqual(["Scan a Mathematics paper", "Lemely marks it", "Your path appears"])
+  })
+  it("names no goal grade in the first-run walkthrough, since none is known yet", () => {
+    for (const step of FIRST_RUN_STEPS("Mathematics")) expect(`${step.title} ${step.body}`).not.toMatch(/A\*/)
   })
 })
 
@@ -387,6 +397,17 @@ describe("marks to win and topics", () => {
     ] })
     expect(winRows("0580", MATHS_TOPICS, [], "sparse").rows.map(r => r.name)).toEqual(["Vectors", "Algebra"])
   })
+  it("links only a deck from this subject, never a same-named topic deck from another", () => {
+    const other: DeckSummaryDTO = { ...deck("C2 Algebra", "other-subject"), subjectCode: "0625" }
+    expect(winRows("0580", MATHS_TOPICS, [other], "full").rows[0].flashcardsTo).toBeNull()
+    expect(winRows("0580", MATHS_TOPICS, [other, deck("C2 Algebra", "mine")], "full").rows[0].flashcardsTo).toBe("/student/flashcards/0580?deck=mine")
+  })
+  it("returns no rows, not empty ones, when full mode has only the tip's own win", () => {
+    const one = MATHS_TOPICS.filter(t => t.name === "C7 Vectors")
+    expect(rankedWins(one)).toHaveLength(1)
+    expect(winRows("0580", one, [], "full").rows).toEqual([])
+    expect(winRows("0580", one, [], "sparse").rows.map(r => r.name)).toEqual(["Vectors"])
+  })
   it("bands and sorts topics and explains sparse and empty lists", () => {
     expect([59, 60, 74, 75].map(topicState)).toEqual(["work", "getting", "getting", "secure"])
     const chips = topicChips(MATHS_TOPICS)
@@ -403,8 +424,18 @@ describe("marks to win and topics", () => {
 
 describe("buildSubjectView", () => {
   const base = { catalogue: undefined, decks: [], examDate: null, now: NOW, requestedPaper: null }
+  const must = (view: SubjectView | null): SubjectView => {
+    expect(view).not.toBeNull()
+    return view as SubjectView
+  }
+  // Paper 2 ends 3 marks lower, so its gap to the line (10) differs from Paper 4's (7).
+  const wideGap = {
+    ...MATHS,
+    papersBreakdown: MATHS.papersBreakdown.map(p =>
+      p.paperNumber === 2 ? { ...p, attempts: p.attempts.map((a, i, all) => (i === all.length - 1 ? { ...a, awarded: 50 } : a)) } : p),
+  }
   it("assembles the full screen and respects the selected paper and exam date", () => {
-    const view = buildSubjectView({ ...base, data: MATHS, mode: "full" })
+    const view = must(buildSubjectView({ ...base, data: MATHS, mode: "full" }))
     expect(view.path.selected).toBe(4)
     expect(view.path.goalGrade).toBe("A*")
     expect(view.path.tabs.map(t => t.name)).toEqual(["Paper 4", "Paper 2"])
@@ -414,14 +445,34 @@ describe("buildSubjectView", () => {
     expect(view.chips).toHaveLength(10)
     expect(view.topicsHint).toBeNull()
     expect(view.papers).toHaveLength(7)
-    const switched = buildSubjectView({ ...base, data: MATHS, mode: "full", requestedPaper: "2", examDate: "2024-12-02" })
+    const switched = must(buildSubjectView({ ...base, data: MATHS, mode: "full", requestedPaper: "2", examDate: "2024-12-02" }))
     expect(switched.path.selected).toBe(2)
     expect(switched.path.steps.goal?.marks).toBe(60)
     expect(switched.tip.line).toBe("12 days, 7 marks")
   })
+  it("reads the tip's gap from the selected paper, so switching changes it", () => {
+    expect(must(buildSubjectView({ ...base, data: wideGap, mode: "full" })).tip.line).toBe("7 marks to A*")
+    const switched = must(buildSubjectView({ ...base, data: wideGap, mode: "full", requestedPaper: "2" }))
+    expect(switched.path.selected).toBe(2)
+    expect(switched.path.steps.goal?.gap).toBe(10)
+    expect(switched.tip.line).toBe("10 marks to A*")
+    expect(must(buildSubjectView({ ...base, data: wideGap, mode: "full", requestedPaper: "2", examDate: "2024-12-02" })).tip.line).toBe("12 days, 10 marks")
+  })
+  it("carries no goal grade when the selected paper has no goal, and invents none", () => {
+    const noGoal = { ...MATHS, papersBreakdown: MATHS.papersBreakdown.map(p => ({ ...p, goal: null })) }
+    const view = must(buildSubjectView({ ...base, data: noGoal, mode: "full" }))
+    expect(view.path.goalGrade).toBeNull()
+    expect(view.path.steps.goal).toBeNull()
+    expect(view.tip.line).toBe("Next paper?")
+  })
+  it("builds no view when no paper has an attempt, leaving first run to the caller", () => {
+    expect(buildSubjectView({ ...base, data: { ...MATHS, papersBreakdown: [] }, mode: "full" })).toBeNull()
+    const bare = { ...MATHS, papersBreakdown: MATHS.papersBreakdown.map(p => ({ ...p, attempts: [] })) }
+    expect(buildSubjectView({ ...base, data: bare, mode: "sparse" })).toBeNull()
+  })
   it("assembles the sparse screen", () => {
     const catalogue = { code: "0580", name: "Mathematics", board: "caie", qualificationLevel: "igcse", papers: [], topics: Array.from({ length: 10 }, (_, i) => `C${i} T`) }
-    const view = buildSubjectView({ ...base, data: MATHS_ONE, mode: "sparse", catalogue })
+    const view = must(buildSubjectView({ ...base, data: MATHS_ONE, mode: "sparse", catalogue }))
     expect(view.path.tabs).toHaveLength(1)
     expect(view.path.steps.ghosts).toBe(3)
     expect(view.path.trend).toEqual({ kind: "single", text: "One step so far. Two more papers show your trend." })
