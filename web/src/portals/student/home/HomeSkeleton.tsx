@@ -28,7 +28,7 @@ export function HomeSkeleton() {
               <span key={i} className={`mx-auto h-11 w-9 rounded-row ${BLOCK}`} />
             ))}
           </div>
-          <GhostRows rows={3} />
+          <GhostRows rows={3} announce={false} />
         </div>
         <div
           aria-hidden="true"

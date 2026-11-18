@@ -1,7 +1,7 @@
-/* Hallmark · pre-emit critique: P4 H4 E3 S4 R4 V4 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import { CaretRight, Clock, Fire, FileText, Star, TrendUp } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
-import { FOCUS, HIT } from "../gradeClass"
+import { FOCUS, HIT, LINK_FEEDBACK, PRESS } from "../gradeClass"
 import type { BadgeId, deriveBadges } from "./meModel"
 
 export const BADGE_ICON: Record<BadgeId, typeof Star> = {
@@ -15,18 +15,19 @@ export const BADGE_ICON: Record<BadgeId, typeof Star> = {
 export function BadgeRow({ badges, onAll }: { badges: ReturnType<typeof deriveBadges>; onAll: (trigger: HTMLElement) => void }) {
   return (
     <section aria-labelledby="me-badges" className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">
-      {/* Opens a sheet, not a route, so SectionLink (a Link) does not fit; same look. */}
+      {/* Opens a sheet, not a route, so SectionLink (a Link) does not fit; same look and feedback. The only control that opens it. */}
+      {/* Bleeds by the shell gutter (px-3.5), so the scroller reaches the edge without leaving the page. */}
       <h2 id="me-badges" className="m-0">
         <button
           type="button"
           onClick={(e) => onAll(e.currentTarget)}
-          className={cn("inline-flex min-h-11 items-center gap-1 rounded-row font-display text-[17px] font-extrabold tracking-[-0.01em] text-on-surface", HIT, FOCUS)}
+          className={cn("group inline-flex min-h-11 items-center gap-1 rounded-row font-display text-[17px] font-extrabold tracking-[-0.01em] text-on-surface", HIT, PRESS, LINK_FEEDBACK, FOCUS)}
         >
           Badges
-          <CaretRight size={16} weight="bold" className="text-on-surface-variant" aria-hidden="true" />
+          <CaretRight size={16} weight="bold" className="text-on-surface-variant group-hover:text-primary" aria-hidden="true" />
         </button>
       </h2>
-      <ul className="relative -mx-[18px] flex gap-2.5 overflow-x-auto px-[18px] [scrollbar-width:none] md:-mx-1 md:-my-1 md:justify-between md:gap-1 md:px-1 md:py-1">
+      <ul className="relative -mx-3.5 flex gap-2.5 overflow-x-auto px-3.5 [scrollbar-width:none] md:-mx-1 md:-my-1 md:justify-between md:gap-1 md:px-1 md:py-1">
         {badges.map((b) => {
           const Icon = BADGE_ICON[b.id]
           return (
@@ -41,12 +42,6 @@ export function BadgeRow({ badges, onAll }: { badges: ReturnType<typeof deriveBa
             </li>
           )
         })}
-        <li className="grid w-[76px] flex-none justify-items-center gap-1.5 text-center md:w-[70px]">
-          <button type="button" onClick={(e) => onAll(e.currentTarget)} className={cn("grid size-[52px] place-items-center rounded-full text-primary ring-[1.5px] ring-inset ring-outline", FOCUS)} aria-label="All badges">
-            <CaretRight size={14} weight="bold" aria-hidden="true" />
-          </button>
-          <small className="text-[12px] font-semibold leading-[1.2] text-on-surface-variant">All badges</small>
-        </li>
       </ul>
     </section>
   )

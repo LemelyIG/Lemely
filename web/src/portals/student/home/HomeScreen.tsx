@@ -40,7 +40,7 @@ export function HomeScreen({ home }: { home: StudentHome }) {
         <section aria-label="Binny" className="flex flex-col gap-[18px] md:pt-2">
           <HomeStage stage={vm.stage} onNotNow={notNow} />
           {vm.also.desktop.length > 0 ? (
-            <MomentRows rows={vm.also.desktop} className="hidden border-t border-outline-variant pt-1 md:grid" />
+            <MomentRows rows={vm.also.desktop} label="For you" className="hidden border-t border-outline-variant pt-1 md:grid" />
           ) : null}
         </section>
 
@@ -59,7 +59,7 @@ export function HomeScreen({ home }: { home: StudentHome }) {
           className="hidden md:col-span-2 md:grid md:grid-cols-2 md:gap-x-10 md:gap-y-6 md:border-t md:border-outline-variant md:pt-6 @[1040px]/home:col-span-1 @[1040px]/home:grid-cols-1 @[1040px]/home:gap-6 @[1040px]/home:border-s @[1040px]/home:border-t-0 @[1040px]/home:ps-8 @[1040px]/home:pt-4"
         />
         {/* Mock H6: on the phone the also rows close the page, after the win-back list. */}
-        <MomentRows rows={vm.also.phone} className="md:hidden" />
+        <MomentRows rows={vm.also.phone} label="For you" className="md:hidden" />
       </div>
     </div>
   )

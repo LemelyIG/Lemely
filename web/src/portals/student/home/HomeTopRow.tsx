@@ -1,10 +1,16 @@
-/* Hallmark · pre-emit critique: P4 H4 E3 S4 R4 V3 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
 import { Link } from "react-router-dom"
 import { CaretRight, Fire } from "@phosphor-icons/react"
 import { CountdownPill } from "@/components/redesign"
 import { cn } from "@/lib/utils"
 import { FOCUS, HIT, PRESS } from "./gradeClass"
-import { parseDay, type HomeVm } from "./model"
+import { parseDay, plural, type HomeVm } from "./model"
+
+/** The link's name replaces its visible text, so it carries the day count the pill shows. */
+function examLabel(days: number): string {
+  if (!Number.isFinite(days) || days < 0) return "Exam countdown"
+  return days === 0 ? "Exam today" : `Exam in ${plural(days, "day")}`
+}
 
 const PILL = "inline-flex min-h-8 items-center gap-1.5 rounded-chip px-[11px] py-1.5 text-[13px] font-semibold"
 
@@ -39,7 +45,7 @@ export function HomeTopRow({
       {exam ? (
         <Link
           to={examTo}
-          aria-label="Exam countdown. Open your study plan"
+          aria-label={`${examLabel(exam.days)}. Open your study plan`}
           className={cn("inline-flex items-center gap-1 rounded-chip", HIT, PRESS, FOCUS)}
         >
           <CountdownPill examDate={exam.date} now={parseDay(localDate)} />

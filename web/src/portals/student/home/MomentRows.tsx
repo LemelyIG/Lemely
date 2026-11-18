@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E3 S4 R4 V3 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
 import { ChalkboardTeacher, Camera, FileText, TrendUp } from "@phosphor-icons/react"
 import { HairRow, HairRows } from "@/components/redesign"
 import { cn } from "@/lib/utils"
@@ -23,11 +23,12 @@ function Leading({ leading }: { leading: RowLeading }) {
   )
 }
 
-export function MomentRows({ rows, className }: { rows: RowVm[]; className?: string }) {
+/** `label` names the list for assistive tech; each use says what the rows are ("For you", "From your class"). */
+export function MomentRows({ rows, label, className }: { rows: RowVm[]; label: string; className?: string }) {
   if (rows.length === 0) return null
   return (
     <div className={cn("grid", className)}>
-      <HairRows aria-label="For you">
+      <HairRows aria-label={label}>
         {rows.map((r) => (
           <HairRow key={r.key} to={r.to} leading={<Leading leading={r.leading} />} title={r.title} sub={r.sub} />
         ))}

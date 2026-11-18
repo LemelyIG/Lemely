@@ -23,5 +23,11 @@ export const ROW_PRESS =
   "motion-safe:transition-transform motion-safe:duration-150 motion-safe:ease-out motion-safe:active:scale-[0.985]"
 export const FOCUS =
   "outline-none focus-visible:outline-solid focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
+/**
+ * Heading-link feedback, the kit's .rd-h2link in utilities: Tide on hover, a deeper Tide when pressed. The press
+ * scale is PRESS (motion-safe); the colour change is instant, so reduced motion keeps the feedback.
+ */
+export const LINK_FEEDBACK =
+  "hover:text-primary active:text-[color-mix(in_oklch,var(--md-primary)_80%,var(--md-on-surface))]"
 /** Grows the tap area to 44px tall without changing the visible shape. */
 export const HIT = "relative after:absolute after:inset-x-0 after:-inset-y-1.5 after:content-['']"

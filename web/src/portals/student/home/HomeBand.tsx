@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E3 S4 R4 V3 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
 import { Fragment } from "react"
 import { GhostRows, HairRow, HairRows } from "@/components/redesign"
 import { cn } from "@/lib/utils"
@@ -55,7 +55,7 @@ export function HomeBand({
           </HairRows>
         ) : (
           <>
-            <GhostRows rows={2} withLeading />
+            <GhostRows rows={2} withLeading announce={false} />
             <p className="text-[13px] text-on-surface-variant">Your marked papers land here.</p>
           </>
         )}
@@ -64,7 +64,7 @@ export function HomeBand({
       <div className="grid content-start gap-1.5">
         <SectionLink id="home-class" title="From your class" to={homeRoutes.classes} />
         {band.classRows.length > 0 ? (
-          <MomentRows rows={band.classRows} />
+          <MomentRows rows={band.classRows} label="From your class" />
         ) : (
           <p className="py-2 text-[13px] text-on-surface-variant">Nothing from your class yet.</p>
         )}
