@@ -2,6 +2,7 @@
 /* L4 · Practice tab root (mock C, practice-hub-final.html). Thin: every decision is in hubModel. */
 import { BinnyLine } from "@/components/redesign"
 import { PageHeading } from "@/components/ui/page-heading"
+import { ErrorState } from "@/components/ui/state-views"
 // import { SetBuilderSheet } from "./builder/SetBuilderSheet" — enabled in Task 9
 import { HomeworkRow } from "./hub/HomeworkRow"
 import { practiceHubView } from "./hub/hubModel"
@@ -59,14 +60,21 @@ export function PracticeHub() {
           middle={
             view.state === "error" ? (
               <HubError onRetry={hub.refetchAll} retrying={hub.refetching} />
-            ) : view.state === "firstTime" && view.binny ? (
-              <FirstRun line={view.binny.line} />
-            ) : null
+            ) : (
+              <>
+                {hub.refreshError ? (
+                  <div role="alert">
+                    <ErrorState compact heading="Couldn’t refresh practice" body="Showing your last loaded information." action={{ label: "Try again", onClick: hub.refetchAll }} />
+                  </div>
+                ) : null}
+                {view.state === "firstTime" && view.binny ? <FirstRun line={view.binny.line} /> : null}
+              </>
+            )
           }
           win={
             view.winBack.length > 0 || view.showScanTip ? (
               <>
-                <WinBackList rows={view.winBack} allTopicsTo={view.allTopicsTo} subjectOrder={order} />
+                <WinBackList rows={view.winBack} more={view.winBackMore} subjectOrder={order} />
                 {view.showScanTip ? <ScanTip /> : null}
               </>
             ) : null

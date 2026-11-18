@@ -2,6 +2,7 @@
 import { Link } from "react-router-dom"
 import { ChevronIcon, HomeworkIcon } from "../practiceIcons"
 import type { HomeworkView } from "./hubModel"
+import { MonoNumbers } from "./MonoNumbers"
 
 /** `.hwr`: the only tinted row on the hub, shown on top only when homework is set. */
 export function HomeworkRow({ homework }: { homework: HomeworkView }) {
@@ -15,7 +16,7 @@ export function HomeworkRow({ homework }: { homework: HomeworkView }) {
       </span>
       <span className="grid min-w-0 gap-0.5">
         <b className="truncate text-[15px] font-bold group-hover:text-primary">{homework.title}</b>
-        <span className="truncate text-[13px] text-on-surface-variant">{homework.sub}</span>
+        <span className="truncate text-[13px] text-on-surface-variant"><MonoNumbers text={homework.sub} /></span>
       </span>
       <ChevronIcon className="text-on-surface-variant" />
     </Link>

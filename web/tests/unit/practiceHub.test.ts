@@ -11,6 +11,7 @@ import type { HubInput } from "@/portals/student/screens/practice/hub/hubModel"
 const hub = vi.hoisted(() => ({
   input: null as unknown as HubInput,
   refetching: false,
+  refreshError: false,
   wide: false,
 }))
 
@@ -20,6 +21,7 @@ vi.mock("@/portals/student/screens/practice/hub/usePracticeHubData", () => ({
     builderSubjects: hub.input.subjects.map(({ code, name }) => ({ code, name })),
     refetchAll: () => {},
     refetching: hub.refetching,
+    refreshError: hub.refreshError,
   }),
 }))
 vi.mock("@/portals/student/screens/practice/hub/useWide", () => ({ useWide: () => hub.wide }))
@@ -74,6 +76,7 @@ const HOMEWORK: StudentQuizListItem = {
 function input(over: Partial<HubInput> = {}): HubInput {
   return {
     overviewStatus: "success",
+    profileStatus: "success",
     subjects: [
       { code: "0580", name: "Maths", papers: 3 },
       { code: "0625", name: "Physics", papers: 2 },
@@ -102,6 +105,7 @@ const count = (haystack: string, needle: string) => haystack.split(needle).lengt
 beforeEach(() => {
   hub.input = input()
   hub.refetching = false
+  hub.refreshError = false
   hub.wide = false
 })
 
@@ -163,10 +167,45 @@ describe("PracticeHub", () => {
     expect(out.indexOf("Homework · Vectors set")).toBeLessThan(out.indexOf("Ways to practise"))
   })
 
+  it("offers a keyboard-accessible disclosure for overflow topics", () => {
+    hub.input = input({ topics: [
+      { code: "0580", status: "success", data: topics("0580", [["A", 4], ["B", 3], ["C", 2]]) },
+      { code: "0625", status: "success", data: topics("0625", [["D", 1]]) },
+    ] })
+    expect(render()).toMatch(/<button type="button" class="rd-lnk" aria-expanded="false"[^>]*>All topics<\/button>/)
+  })
+
+  it("homework counts are set in Mono and the line still reads whole", () => {
+    hub.input = input({ homework: [HOMEWORK] })
+    const out = render()
+    expect(out).toMatch(/<span class="font-mono">8<\/span> questions/)
+    const text = out.replace(/<[^>]+>/g, "")
+    expect(text).toContain("Ms Adel · 8 questions · due Friday")
+  })
+
+  it("recent run counts are set in Mono and the line still reads whole", () => {
+    const out = render()
+    expect(out).toMatch(/Question <span class="font-mono">4<\/span> of <span class="font-mono">9<\/span> · saved/)
+    expect(out).toMatch(/<span class="font-mono">7<\/span> of <span class="font-mono">9<\/span> back/)
+    expect(out.replace(/<[^>]+>/g, "")).toContain("Question 4 of 9 · saved")
+  })
+
+  it("placement tile is not gold: nothing was earned", () => {
+    expect(render()).not.toContain('data-tone="gold"')
+  })
+
   it("recent: See all is a disclosure when there are more than four", () => {
     hub.input = input({ runs: Array.from({ length: 6 }, (_, i) => run({ assignmentId: `r${i}`, lastActivityAt: iso(2026, 10, 14 - i) })) })
     const out = render()
     expect(out).toMatch(/<button type="button" class="rd-lnk" aria-expanded="false"[^>]*>See all<\/button>/)
+  })
+
+  it("offers a retry while keeping cached content after refresh fails", () => {
+    hub.refreshError = true
+    const out = render()
+    expect(out).toContain("Win marks back")
+    expect(out).toContain('role="alert"')
+    expect(out).toContain("Try again")
   })
 
   it("error (CE): the tiles still work, an alert explains and offers a retry", () => {

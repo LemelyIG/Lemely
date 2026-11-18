@@ -22,6 +22,7 @@ export function usePracticeHubData(): {
   builderSubjects: { code: string; name: string }[]
   refetchAll: () => void
   refetching: boolean
+  refreshError: boolean
 } {
   const overview = useOverview()
   const profile = useStudentProfile()
@@ -46,10 +47,11 @@ export function usePracticeHubData(): {
   const now = useMemo(() => new Date(), [])
 
   const input: HubInput = {
-    overviewStatus: overview.status,
+    overviewStatus: overview.data === undefined ? overview.status : "success",
+    profileStatus: profile.data === undefined ? profile.status : "success",
     subjects,
     topics: codes.map((code, i) => ({ code, status: topicQueries[i].status, data: topicQueries[i].data })),
-    runsStatus: runs.status,
+    runsStatus: runs.data === undefined ? runs.status : "success",
     runs: runs.data?.runs ?? [],
     homework: quizzes.data?.quizzes ?? [],
     dueTotal: due.data?.totalDue ?? null,
@@ -64,12 +66,14 @@ export function usePracticeHubData(): {
 
   return {
     input,
+    refreshError: [overview, profile, runs, ...topicQueries].some((q) => q.isError && q.data !== undefined),
     builderSubjects: subjects.map(({ code, name }) => ({ code, name })),
     refetchAll: () => {
       void overview.refetch()
+      void profile.refetch()
       void runs.refetch()
       for (const q of topicQueries) void q.refetch()
     },
-    refetching: overview.isFetching || runs.isFetching || topicQueries.some((q) => q.isFetching),
+    refetching: overview.isFetching || profile.isFetching || runs.isFetching || topicQueries.some((q) => q.isFetching),
   }
 }

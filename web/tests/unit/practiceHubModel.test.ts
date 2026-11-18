@@ -1,3 +1,4 @@
+import { QueryClient, QueryObserver } from "@tanstack/react-query"
 import { describe, expect, it } from "vitest"
 import type { PracticeRun, StudentQuizListItem } from "@/lib/practiceHubTypes"
 import type { PracticeTopics } from "@/lib/practiceTypes"
@@ -70,6 +71,7 @@ function homework(over: Partial<StudentQuizListItem>): StudentQuizListItem {
 function input(over: Partial<HubInput> = {}): HubInput {
   return {
     overviewStatus: "success",
+    profileStatus: "success",
     subjects: SUBJECTS,
     topics: [
       { code: "0580", status: "success", data: topics("0580", [["Vectors", 9], ["Algebra", 0], ["2.1 Quadratic inequalities", 6]]) },
@@ -108,6 +110,35 @@ describe("dayLabel / dueLabel", () => {
 })
 
 describe("hubState", () => {
+  it("keeps cached topics visible after a real failed refetch", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const cached = topics("0580", [["Vectors", 9]])
+    let fail = false
+    const observer = new QueryObserver(client, {
+      queryKey: ["topics", "0580"],
+      queryFn: async () => {
+        if (fail) throw new Error("offline")
+        return cached
+      },
+    })
+    const unsubscribe = observer.subscribe(() => {})
+    await observer.refetch()
+    fail = true
+    const result = await observer.refetch()
+    expect(result.status).toBe("error")
+    expect(result.data).toEqual(cached)
+    const view = practiceHubView(input({ topics: [{ code: "0580", status: result.status, data: result.data }] }))
+    expect(view.state).toBe("normal")
+    expect(view.winBack.map((row) => row.label)).toEqual(["Vectors"])
+    unsubscribe()
+    client.clear()
+  })
+
+  it("waits for the profile and reports an unavailable profile", () => {
+    expect(hubState(input({ profileStatus: "pending" }))).toBe("loading")
+    expect(hubState(input({ profileStatus: "error" }))).toBe("error")
+  })
+
   it("is loading while any source is pending", () => {
     expect(hubState(input({ runsStatus: "pending" }))).toBe("loading")
     expect(hubState(input({ topics: [{ code: "0580", status: "pending" }] }))).toBe("loading")
@@ -242,7 +273,7 @@ describe("hubTiles", () => {
       ["set", "Practice set", "Build your own", "tide"],
       ["cards", "Flashcards", "26 due today", "violet"],
       ["paper", "Past papers", "Print or do timed", "mint"],
-      ["test", "Placement test", "Find your level\u00a0· 10\u00a0min", "gold"],
+      ["test", "Placement test", "Find your level\u00a0· 10\u00a0min", "sea"],
     ])
   })
 
@@ -295,7 +326,7 @@ describe("practiceHubView", () => {
     expect(view.subtitle).toBe("3 topics to win back")
     expect(view.binny).toEqual({ mood: "happy", line: "Vectors first. +9 marks." })
     expect(view.primarySubject).toBe("0580")
-    expect(view.allTopicsTo).toBeNull()
+    expect(view.winBackMore).toEqual([])
   })
 
   it("Binny's line never uses an exclamation mark (check:copy gate)", () => {
@@ -304,12 +335,13 @@ describe("practiceHubView", () => {
     }
   })
 
-  it("shows at most three win-back rows and links All topics when there are more", () => {
-    const view = practiceHubView(
-      input({ topics: [{ code: "0580", status: "success", data: topics("0580", [["A", 4], ["B", 3], ["C", 2], ["D", 1]]) }] }),
-    )
+  it("keeps overflow rows from every subject for disclosure", () => {
+    const view = practiceHubView(input({ topics: [
+      { code: "0580", status: "success", data: topics("0580", [["A", 4], ["B", 3], ["C", 2]]) },
+      { code: "0625", status: "success", data: topics("0625", [["D", 1]]) },
+    ] }))
     expect(view.winBack).toHaveLength(3)
-    expect(view.allTopicsTo).toBe("/student/subject/0580")
+    expect(view.winBackMore.map((row) => row.subjectCode)).toEqual(["0625"])
     expect(view.subtitle).toBe("4 topics to win back")
   })
 

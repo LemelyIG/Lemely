@@ -20,6 +20,7 @@ export interface HubSubject {
 
 export interface HubInput {
   overviewStatus: HubQueryStatus
+  profileStatus: HubQueryStatus
   subjects: readonly HubSubject[]
   topics: readonly { code: string; status: HubQueryStatus; data?: PracticeTopics }[]
   runsStatus: HubQueryStatus
@@ -35,7 +36,7 @@ export interface HubInput {
 }
 
 export type TileKey = "set" | "cards" | "paper" | "test"
-export type HubTileTone = "tide" | "violet" | "mint" | "gold"
+export type HubTileTone = "tide" | "violet" | "mint" | "sea"
 
 export interface TileView {
   key: TileKey
@@ -83,7 +84,7 @@ export interface HubView {
   homework: HomeworkView | null
   tiles: TileView[]
   winBack: WinBackRow[]
-  allTopicsTo: string | null
+  winBackMore: WinBackRow[]
   recent: RecentRow[]
   recentMore: RecentRow[]
   showScanTip: boolean
@@ -129,10 +130,10 @@ export function dueLabel(item: Pick<StudentQuizListItem, "dueAt" | "isOverdue">,
 
 export function hubState(input: HubInput): HubState {
   const anyError =
-    input.overviewStatus === "error" || input.runsStatus === "error" || input.topics.some((t) => t.status === "error")
+    input.overviewStatus === "error" || input.profileStatus === "error" || input.runsStatus === "error" || input.topics.some((t) => t.status === "error" && t.data === undefined)
   if (anyError) return "error"
   const anyPending =
-    input.overviewStatus === "pending" || input.runsStatus === "pending" || input.topics.some((t) => t.status === "pending")
+    input.overviewStatus === "pending" || input.profileStatus === "pending" || input.runsStatus === "pending" || input.topics.some((t) => t.status === "pending")
   if (anyPending) return "loading"
   const papers = paperCount(input.subjects)
   if (papers === 0 && input.runs.length === 0) return "firstTime"
@@ -267,7 +268,7 @@ export function hubTiles(input: {
         : noneAvailable
           ? "Not ready yet"
           : "Find your level",
-      tone: "gold",
+      tone: "sea",
       to: testTo,
       disabled: testTo === null,
       count: null,
@@ -311,8 +312,7 @@ export function practiceHubView(input: HubInput): HubView {
       placement: input.placement,
     }),
     winBack: showsContent ? allWinBack.slice(0, WIN_BACK_SHOWN) : [],
-    allTopicsTo:
-      showsContent && allWinBack.length > WIN_BACK_SHOWN ? `/student/subject/${allWinBack[0].subjectCode}` : null,
+    winBackMore: showsContent ? allWinBack.slice(WIN_BACK_SHOWN) : [],
     recent: showsContent ? recentAll.slice(0, RECENT_SHOWN) : [],
     recentMore: showsContent ? recentAll.slice(RECENT_SHOWN) : [],
     showScanTip: state === "sparse" || (state === "normal" && papers === 0),

@@ -4,6 +4,7 @@ import { H2Row, HairRow, HairRows } from "@/components/redesign"
 import { subjectDotColor } from "../practiceCopy"
 import { ClockIcon, ResumeIcon, SubjectDot, TickIcon } from "../practiceIcons"
 import type { RecentRow } from "./hubModel"
+import { MonoNumbers } from "./MonoNumbers"
 
 const LEADING = {
   resume: { className: "bg-primary text-on-primary", icon: <ResumeIcon /> },
@@ -53,7 +54,7 @@ export function RecentRuns({
             sub={
               <>
                 <SubjectDot color={subjectDotColor(r.subjectCode, subjectOrder)} />
-                {r.sub}
+                <MonoNumbers text={r.sub} />
               </>
             }
             trailing={

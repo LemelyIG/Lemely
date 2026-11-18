@@ -1,4 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
+import { useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { H2Row, HairRow, HairRows } from "@/components/redesign"
 import { buttonVariants } from "@/components/ui/button"
@@ -14,21 +15,27 @@ import type { WinBackRow } from "./hubModel"
  */
 export function WinBackList({
   rows,
-  allTopicsTo,
+  more,
   subjectOrder,
 }: {
   rows: readonly WinBackRow[]
-  allTopicsTo: string | null
+  more: readonly WinBackRow[]
   subjectOrder: readonly string[]
 }) {
   const navigate = useNavigate()
+  const [expanded, setExpanded] = useState(false)
   if (rows.length === 0) return null
+  const shown = expanded ? [...rows, ...more] : rows
   return (
     // min-h-11 on the heading row: H2Row is only 44px tall when it has a link, and Recent beside it on desktop always lines up.
     <section aria-label="Win marks back" className="grid gap-1 [&_.rd-h2row]:min-h-11">
-      <H2Row title="Win marks back" link={allTopicsTo ? { label: "All topics", to: allTopicsTo } : undefined} />
+      <H2Row title="Win marks back" right={more.length > 0 ? (
+        <button type="button" className="rd-lnk" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
+          {expanded ? "Show less" : "All topics"}
+        </button>
+      ) : undefined} />
       <HairRows aria-label="Topics to win back">
-        {rows.map((r) => (
+        {shown.map((r) => (
           <HairRow
             key={`${r.subjectCode}:${r.topic}`}
             title={r.label}
