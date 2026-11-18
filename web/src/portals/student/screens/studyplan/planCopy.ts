@@ -45,9 +45,15 @@ export function parseDay(iso: string): Date {
   return new Date(`${iso}T00:00:00`)
 }
 
+/* A fixed table, not `toLocaleDateString`: a small-ICU runtime or a stripped
+ * browser locale answers with its own names, and the copy is English only. */
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const
+
 function weekday(iso: string, style: "short" | "long"): string {
   const d = parseDay(iso)
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-GB", { weekday: style })
+  if (Number.isNaN(d.getTime())) return iso
+  const name = WEEKDAYS[d.getDay()]
+  return style === "long" ? name : name.slice(0, 3)
 }
 
 export const weekdayShort = (iso: string) => weekday(iso, "short")

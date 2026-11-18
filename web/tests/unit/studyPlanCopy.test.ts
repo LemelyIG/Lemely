@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import type { StudentExamCalendar } from "@/lib/announcementTypes"
 import {
   activityLabel,
@@ -56,6 +56,23 @@ describe("dates", () => {
     expect(weekdayShort("2026-08-06")).toBe("Thu")
     expect(weekdayLong("2026-08-06")).toBe("Thursday")
     expect(weekdayShort("not-a-date")).toBe("not-a-date")
+  })
+  it("does not depend on the runtime's ICU data for weekday names", () => {
+    // A Node built with small-icu, or a locale-stripped browser, answers with its own names or digits.
+    const spy = vi.spyOn(Date.prototype, "toLocaleDateString").mockReturnValue("???")
+    try {
+      expect(weekdayShort("2026-08-03")).toBe("Mon")
+      expect(weekdayLong("2026-08-09")).toBe("Sunday")
+      expect(spy).not.toHaveBeenCalled()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+  it("names all seven days in order, and keeps an unreadable date verbatim", () => {
+    const week = ["2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07", "2026-08-08", "2026-08-09"]
+    expect(week.map(weekdayShort)).toEqual(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
+    expect(week.map(weekdayLong)).toEqual(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
+    expect(weekdayLong("2026-02-30x")).toBe("2026-02-30x")
   })
   it("adds days across a month end", () => {
     expect(addDays("2026-08-31", 1)).toBe("2026-09-01")

@@ -211,6 +211,24 @@ describe("edges", () => {
     expect(freeToday.body.today.sub).toBe("Nothing planned today")
     expect(freeToday.body.firstOpenId).toBe("b")
   })
+  it("counts only the goals planned today in the ring label", () => {
+    const one = asPlan(planScreen(input(O([SUB("0625", P("0625", [S("a", "2026-08-06"), S("b", "2026-08-07")]))]))))
+    expect(one.body.ringLabel).toBe("Today: 0 of 1 goal done")
+    const met = asPlan(planScreen(input(O([SUB("0625", P("0625", [S("a", "2026-08-06", { completedAt: DONE }), S("b", "2026-08-07")]))]))))
+    expect(met.body.ringLabel).toBe("Today: 1 of 1 goal done")
+    const two = asPlan(planScreen(input(O([SUB("0625", P("0625", [S("a", "2026-08-06"), S("c", "2026-08-06", { activityType: "flashcards" }), S("b", "2026-08-07")]))]))))
+    expect(two.body.ringLabel).toBe("Today: 0 of 2 goals done")
+    const none = asPlan(planScreen(input(O([SUB("0625", P("0625", [S("b", "2026-08-07")]))]))))
+    expect(none.body.ringLabel).toBe("Today: nothing planned")
+  })
+  it("points Binny at missed sessions when nothing is due today", () => {
+    const behind = asPlan(planScreen(input(O([SUB("0625", P("0625", [S("m1", "2026-08-04"), S("m2", "2026-08-05"), S("b", "2026-08-07")]))]))))
+    expect(behind.body.binnyLine).toBe("2 to catch up.")
+    const caughtUp = asPlan(planScreen(input(O([SUB("0625", P("0625", [S("b", "2026-08-07")]))]))))
+    expect(caughtUp.body.binnyLine).toBe("Nothing due today.")
+    const doneToday = asPlan(planScreen(input(O([SUB("0625", P("0625", [S("m1", "2026-08-04"), S("a", "2026-08-06", { completedAt: DONE }), S("b", "2026-08-07")]))]))))
+    expect(doneToday.body.binnyLine).toBe("Done for today.")
+  })
   it("lists subjects without a usable plan as pending rows", () => {
     const s = asPlan(planScreen(input(O([SUB("0580", null), SUB("0625", P("0625", [S("a", "2026-08-06")])), SUB("0606", P("0606", [], { available: false, reason: "no_signal" }))]))))
     expect(s.body.pending).toEqual([

@@ -149,15 +149,26 @@ function buildSession(
   }
 }
 
+/** The sessions behind each ring segment: practice, flashcards, and a paper this week. */
+function ringGroups(sessions: SessionVM[], today: string): [SessionVM[], SessionVM[], SessionVM[]] {
+  const todays = sessions.filter((v) => v.date === today && !v.anyDay)
+  return [
+    todays.filter((v) => v.activity === "practice" || v.activity === "review"),
+    todays.filter((v) => v.activity === "flashcards"),
+    sessions.filter((v) => v.activity === "past_paper"),
+  ]
+}
+
 export function ringParts(sessions: SessionVM[], today: string): [number, number, number] {
   const part = (list: SessionVM[]) =>
     list.length === 0 ? 0 : list.filter((v) => v.status === "done").length / list.length
-  const todays = sessions.filter((v) => v.date === today && !v.anyDay)
-  return [
-    part(todays.filter((v) => v.activity === "practice" || v.activity === "review")),
-    part(todays.filter((v) => v.activity === "flashcards")),
-    part(sessions.filter((v) => v.activity === "past_paper")),
-  ]
+  const [a, b, c] = ringGroups(sessions, today)
+  return [part(a), part(b), part(c)]
+}
+
+function ringGoals(sessions: SessionVM[], today: string): [boolean, boolean, boolean] {
+  const [a, b, c] = ringGroups(sessions, today)
+  return [a.length > 0, b.length > 0, c.length > 0]
 }
 
 function earliest(dates: (string | null)[]): string | null {
@@ -274,7 +285,10 @@ function buildBody(
   const later = all.filter((v) => v.status === "later")
   const done = all.filter((v) => v.status === "done")
   const ring = ringParts(all, today)
-  const goalsDone = ring.filter((p) => p === 1).length
+  // A goal with nothing planned today is not a goal the student can miss, so it is left out of the count.
+  const planned = ringGoals(all, today)
+  const goalsPlanned = planned.filter(Boolean).length
+  const goalsDone = ring.filter((p, i) => planned[i] && p === 1).length
 
   const days: DayCell[] = []
   for (let d = overview.weekStart; d <= overview.weekEnd; d = addDays(d, 1)) {
@@ -304,7 +318,10 @@ function buildBody(
 
   return {
     ring,
-    ringLabel: `Today: ${goalsDone} of 3 goals done`,
+    ringLabel:
+      goalsPlanned === 0
+        ? "Today: nothing planned"
+        : `Today: ${goalsDone} of ${goalsPlanned} ${plural(goalsPlanned, "goal", "goals")} done`,
     today: {
       date: today,
       heading: `Today · ${weekdayLong(today)}`,
@@ -339,6 +356,8 @@ function buildBody(
         ? `${spokenMinutes(minutesOf(openToday))} today.`
         : anyToday.length > 0
           ? "Done for today."
-          : "Nothing due today.",
+          : missed.length > 0
+            ? `${missed.length} to catch up.`
+            : "Nothing due today.",
   }
 }
