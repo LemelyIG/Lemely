@@ -230,7 +230,7 @@ export function StateView({
                   type="button"
                   onClick={action.onClick}
                   className={cn(
-                    "self-start text-label text-on-primary-container underline decoration-1 underline-offset-2 transition-[color,transform] active:scale-[0.98]",
+                    "inline-flex min-h-11 items-center self-start text-label text-on-primary-container underline decoration-1 underline-offset-2 transition-[color,transform] active:scale-[0.98]",
                     "hover:text-primary-hover",
                   )}
                 >
@@ -242,7 +242,7 @@ export function StateView({
                   type="button"
                   onClick={secondaryAction.onClick}
                   className={cn(
-                    "self-start text-label text-on-surface-variant underline decoration-1 underline-offset-2 transition-[color,transform] active:scale-[0.98]",
+                    "inline-flex min-h-11 items-center self-start text-label text-on-surface-variant underline decoration-1 underline-offset-2 transition-[color,transform] active:scale-[0.98]",
                     "hover:text-on-surface",
                   )}
                 >
@@ -288,7 +288,7 @@ export function StateView({
       )}
       <div className="flex flex-col gap-2">
         {marginalia ? <p className="text-body-sm text-on-surface-variant">{marginalia}</p> : null}
-        {resolvedKicker ? <p className="text-data-sm text-on-surface-variant">{resolvedKicker}</p> : null}
+        {resolvedKicker ? <p className="text-data-sm text-xs! text-on-surface-variant">{resolvedKicker}</p> : null}
         {/* A `div`, not `<h1>`: unlike `FullPageState` (always the whole
          * page), this renders inline inside an already-headinged screen —
          * `QueryState`'s error branch inside a dashboard section, say — where
@@ -304,12 +304,12 @@ export function StateView({
         // Wrapping is the honest fix; truncating would hide what the button does.
         <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
           {action ? (
-            <Button variant="accent" size="sm" onClick={action.onClick}>
+            <Button variant="accent" size="sm" className="min-h-11" onClick={action.onClick}>
               {action.label}
             </Button>
           ) : null}
           {secondaryAction ? (
-            <Button variant="ghost" size="sm" onClick={secondaryAction.onClick}>
+            <Button variant="ghost" size="sm" className="min-h-11" onClick={secondaryAction.onClick}>
               {secondaryAction.label}
             </Button>
           ) : null}
