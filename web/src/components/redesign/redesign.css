@@ -8,6 +8,7 @@
  */
 
 /* ── Binny (mock h.js BIN, t.css .bn) ───────────────────────────────────── */
+.rd-binny[hidden] { display: none; }
 .rd-binny {
   display: block;
   flex: none;
