@@ -239,6 +239,30 @@ describe("market reference hint", () => {
     expect(marketComparison("", ref)).toBeNull()
   })
 
+  it("agrees with its own number at the 10% edge: nothing prints as 10%", () => {
+    const fifty = { ...ref, rate: "50" }
+    expect(marketComparison("55", fifty)).toBeNull() // exactly 10%
+    expect(marketComparison("55.2", fifty)).toBeNull() // 10.4% would print as "10%"
+    expect(marketComparison("55.3", fifty)).toBe("Yours is 11% higher.") // 10.6%
+    expect(marketComparison("44.8", fifty)).toBeNull() // 10.4% lower
+    expect(marketComparison("44.7", fifty)).toBe("Yours is 11% lower.") // 10.6% lower
+  })
+
+  it("names the UTC day whatever zone the reader's machine is in", () => {
+    const before = process.env.TZ
+    try {
+      for (const zone of ["America/Los_Angeles", "Pacific/Honolulu", "Pacific/Kiritimati"]) {
+        process.env.TZ = zone
+        // 2026-11-17T00:00Z is still 16 Nov on the US coast: dropping the UTC zone prints "16 Nov".
+        expect(new Date("2026-11-17T00:00:00Z").getDate()).toBe(zone === "Pacific/Kiritimati" ? 17 : 16)
+        expect(marketLine(ref, "en-GB")).toBe("Market rate: 1 USD = 53.74 EGP · 17 Nov")
+      }
+    } finally {
+      if (before === undefined) delete process.env.TZ
+      else process.env.TZ = before
+    }
+  })
+
   it("never reaches a form value or a save body", () => {
     const withRef = settingsValues(fx.billingSettings)
     expect(Object.keys(withRef)).not.toContain("marketReference")

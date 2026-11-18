@@ -197,7 +197,10 @@ describe("market reference hint", () => {
   it("is only a hint: no button to use it, and a save sends exactly the edited field", async () => {
     const user = userEvent.setup()
     render(wrap(h(BillingRules, { saved })))
-    expect(screen.queryByRole("button", { name: /market/i })).toBeNull()
+    // The hint is a line and a link: any button inside it, whatever its name, fails here.
+    const hint = screen.getByText(/^Market rate: /).parentElement as HTMLElement
+    expect(within(hint).queryAllByRole("button")).toHaveLength(0)
+    expect(within(hint).queryAllByRole("link")).toHaveLength(1)
     await user.click(screen.getByRole("button", { name: "Edit billing rules" }))
     const margin = screen.getByLabelText("Margin rate (EGP per USD)") as HTMLInputElement
     expect(margin.value).toBe("50")
@@ -216,6 +219,16 @@ describe("market reference hint", () => {
     expect(screen.getByText(/^Market rate: 1 USD = 20\.00 EGP · /)).toBeTruthy()
     expect(screen.queryByText(/Yours is/)).toBeNull()
     expect(link()).toHaveLength(1)
+  })
+
+  it("credit conversion: the market line sits straight under the value, before who changed it", () => {
+    render(wrap(h(CreditConversion, { saved })))
+    const value = screen.getByText("1 EGP = 1,250 units")
+    const market = screen.getByText(/^Market rate: /)
+    const changed = screen.getByText(/^Changed /)
+    const follows = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(follows(value, market)).toBe(true)
+    expect(follows(market, changed)).toBe(true)
   })
 
   it("credit conversion: nothing when the reading is null or the settings could not be read", () => {

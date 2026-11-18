@@ -101,8 +101,9 @@ export function marketComparison(yours: string | null, ref: MarketReference): st
   const own = yours === null || yours.trim() === "" ? NaN : Number(yours)
   if (!(market > 0) || !(own > 0)) return null
   const diff = (own - market) / market
-  if (Math.abs(diff) <= 0.1) return null
+  // The threshold reads the percent that is printed, so "more than 10%" never prints "10%".
   const pct = Math.round(Math.abs(diff) * 100)
+  if (pct <= 10) return null
   return `Yours is ${pct}% ${diff > 0 ? "higher" : "lower"}.`
 }
 

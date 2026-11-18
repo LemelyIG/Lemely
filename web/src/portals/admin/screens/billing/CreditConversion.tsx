@@ -66,9 +66,9 @@ export function CreditConversion({ saved }: { saved: (what: string) => () => voi
                   <span className="text-body-sm text-on-surface-variant">
                     <span className="text-data-sm">{unitsPerMinorText(r.unitsPerMinor)}</span> units per piaster
                   </span>
-                  <ChangedBy at={r.updatedAt} by={r.updatedBy} />
-                  {/* Units per piaster is not an FX rate, so there is nothing honest to compare it with: the reading only. */}
+                  {/* Units per piaster is not an FX rate, so there is nothing honest to compare it with: the reading only. It sits straight under the value; who changed it comes after. */}
                   {r.currency === DEFAULT_CURRENCY ? <MarketNote reference={market} /> : null}
+                  <ChangedBy at={r.updatedAt} by={r.updatedBy} />
                 </div>
                 <div className="flex gap-2">
                   <Button size="sm" variant="secondary" onClick={() => setDialog({ kind: "set", currency: r.currency, rate: r })} aria-label={`Set ${r.currency} rate`}>
