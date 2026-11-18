@@ -43,7 +43,11 @@ export function SubjectFilter({
       role="tablist"
       aria-label="Subject"
       onKeyDown={onKeyDown}
-      className={cn("flex gap-1.5 overflow-x-auto py-0.5 [scrollbar-width:none]", inline ? "min-w-0" : "-mx-4 flex-none px-4")}
+      className={cn(
+        // The padding is the room the focus ring needs inside the clip; the negative margins give back what it adds, so the layout is the one it was.
+        "-my-1 flex gap-1.5 overflow-x-auto py-1.5 scroll-px-1.5 [scrollbar-width:none]",
+        inline ? "-mx-1.5 min-w-0 px-1.5" : "-mx-4 flex-none px-4",
+      )}
     >
       {filters.map((f) => (
         <button

@@ -149,14 +149,20 @@ function buildSession(
   }
 }
 
-/** The sessions behind each ring segment: practice, flashcards, and a paper this week. */
-function ringGroups(sessions: SessionVM[], today: string): [SessionVM[], SessionVM[], SessionVM[]] {
+/** Today's goals by kind: practice or review, flashcards, a paper. A paper for any other day is the week's, never today's. */
+function todayGoalGroups(sessions: SessionVM[], today: string): SessionVM[][] {
   const todays = sessions.filter((v) => v.date === today && !v.anyDay)
   return [
     todays.filter((v) => v.activity === "practice" || v.activity === "review"),
     todays.filter((v) => v.activity === "flashcards"),
-    sessions.filter((v) => v.activity === "past_paper"),
+    todays.filter((v) => v.activity === "past_paper"),
   ]
+}
+
+/** The ring's three segments: today's practice and flashcards, then the week's papers. */
+function ringGroups(sessions: SessionVM[], today: string): [SessionVM[], SessionVM[], SessionVM[]] {
+  const [practice, flashcards] = todayGoalGroups(sessions, today)
+  return [practice, flashcards, sessions.filter((v) => v.activity === "past_paper")]
 }
 
 export function ringParts(sessions: SessionVM[], today: string): [number, number, number] {
@@ -164,11 +170,6 @@ export function ringParts(sessions: SessionVM[], today: string): [number, number
     list.length === 0 ? 0 : list.filter((v) => v.status === "done").length / list.length
   const [a, b, c] = ringGroups(sessions, today)
   return [part(a), part(b), part(c)]
-}
-
-function ringGoals(sessions: SessionVM[], today: string): [boolean, boolean, boolean] {
-  const [a, b, c] = ringGroups(sessions, today)
-  return [a.length > 0, b.length > 0, c.length > 0]
 }
 
 function earliest(dates: (string | null)[]): string | null {
@@ -285,10 +286,13 @@ function buildBody(
   const later = all.filter((v) => v.status === "later")
   const done = all.filter((v) => v.status === "done")
   const ring = ringParts(all, today)
-  // A goal with nothing planned today is not a goal the student can miss, so it is left out of the count.
-  const planned = ringGoals(all, today)
-  const goalsPlanned = planned.filter(Boolean).length
-  const goalsDone = ring.filter((p, i) => planned[i] && p === 1).length
+  // Today's count covers today's goals only. A goal with nothing planned today is not one the student can miss.
+  const goals = todayGoalGroups(all, today).filter((g) => g.length > 0)
+  const goalsPlanned = goals.length
+  const goalsDone = goals.filter((g) => g.every((v) => v.status === "done")).length
+  // The week's papers get their own line, so a paper on another day never reads as a goal for today.
+  const weekPapers = all.filter((v) => v.activity === "past_paper")
+  const papersDone = weekPapers.filter((v) => v.status === "done").length
 
   const days: DayCell[] = []
   for (let d = overview.weekStart; d <= overview.weekEnd; d = addDays(d, 1)) {
@@ -318,10 +322,16 @@ function buildBody(
 
   return {
     ring,
-    ringLabel:
+    ringLabel: [
       goalsPlanned === 0
         ? "Today: nothing planned"
         : `Today: ${goalsDone} of ${goalsPlanned} ${plural(goalsPlanned, "goal", "goals")} done`,
+      weekPapers.length > 0
+        ? `This week: ${papersDone} of ${weekPapers.length} ${plural(weekPapers.length, "paper", "papers")} done`
+        : null,
+    ]
+      .filter((part): part is string => part !== null)
+      .join(". "),
     today: {
       date: today,
       heading: `Today · ${weekdayLong(today)}`,

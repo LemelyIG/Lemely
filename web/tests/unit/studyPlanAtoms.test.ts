@@ -126,6 +126,33 @@ describe("SubjectFilter", () => {
     expect(out.match(/class="rd-dot"/g)).toHaveLength(2)
     expect(out).toContain("background:var(--md-primary)")
   })
+  /*
+   * A scroller clips at its padding edge on both axes, so a focus ring drawn
+   * outside a chip needs that much padding on every side or it is cut off.
+   * Tailwind's spacing step is 4px.
+   */
+  it("leaves room inside the scroller for the whole focus ring, on every side", () => {
+    const px = (cls: string, name: string) => {
+      const m = cls.match(new RegExp(`(?:^| )${name}-(\\d+(?:\\.\\d+)?)(?= |$)`))
+      return m ? Number(m[1]) * 4 : 0
+    }
+    for (const inline of [false, true]) {
+      const out = html(createElement(SubjectFilter, { filters: chips, onFilter: noop, inline }))
+      const list = out.match(/<div role="tablist"[^>]*class="([^"]*)"/)?.[1] ?? ""
+      const tab = out.match(/<button[^>]*class="([^"]*)"/)?.[1] ?? ""
+      expect(list).toContain("overflow-x-auto")
+      // outline-offset-N is N literal pixels, not a spacing step.
+      const ring = Number(tab.match(/focus-visible:outline-\[([\d.]+)px\]/)?.[1]) + Number(tab.match(/focus-visible:outline-offset-(\d+)/)?.[1])
+      expect(ring).toBe(4.5)
+      expect(px(list, "py"), `block padding, inline=${inline}`).toBeGreaterThanOrEqual(ring)
+      expect(px(list, "px"), `inline padding, inline=${inline}`).toBeGreaterThanOrEqual(ring)
+      // A chip scrolled into view by focus stops short of the clip edge by the same room.
+      expect(px(list, "scroll-px"), `scroll padding, inline=${inline}`).toBeGreaterThanOrEqual(ring)
+      // The room is paid back by negative margins, so the header lays out as it did: 2px of block padding, none inline.
+      expect(px(list, "py") - px(list, "-my"), `net block extent, inline=${inline}`).toBe(2)
+      expect(px(list, "px") - px(list, "-mx"), `net inline extent, inline=${inline}`).toBe(0)
+    }
+  })
 })
 
 describe("PlanHeader", () => {

@@ -130,7 +130,8 @@ describe("the all-subjects week (WA)", () => {
     expect(b.today.sub).toBe("2 sessions · 15 min")
     expect(b.today.sessions.map((s) => s.title)).toEqual(["Vectors", "Waves"])
     expect(b.ring).toEqual([0, 0, 0])
-    expect(b.ringLabel).toBe("Today: 0 of 3 goals done")
+    // Vectors and Waves are today's two goals. The any-day paper is the week's, so it is counted apart.
+    expect(b.ringLabel).toBe("Today: 0 of 2 goals done. This week: 0 of 1 paper done")
   })
   it("writes each row's reason and start action", () => {
     const [vectors, waves] = b.today.sessions
@@ -220,6 +221,30 @@ describe("edges", () => {
     expect(two.body.ringLabel).toBe("Today: 0 of 2 goals done")
     const none = asPlan(planScreen(input(O([SUB("0625", P("0625", [S("b", "2026-08-07")]))]))))
     expect(none.body.ringLabel).toBe("Today: nothing planned")
+  })
+  it("never counts a paper for a later day, or for any day, as a goal for today", () => {
+    const paper = (date: string, extra: Partial<StudyPlanSessionDTO> = {}) => S("p", date, { activityType: "past_paper", durationMinutes: 45, ...extra })
+    const label = (sessions: StudyPlanSessionDTO[]) => asPlan(planScreen(input(O([SUB("0625", P("0625", sessions))])))).body.ringLabel
+
+    // Tomorrow's paper alone: nothing is due today, and the paper is the week's.
+    expect(label([paper("2026-08-07")])).toBe("Today: nothing planned. This week: 0 of 1 paper done")
+    expect(label([paper("2026-08-07", { anyDay: true })])).toBe("Today: nothing planned. This week: 0 of 1 paper done")
+    // It adds nothing to today's count, open or done.
+    expect(label([S("a", "2026-08-06"), paper("2026-08-07")])).toBe("Today: 0 of 1 goal done. This week: 0 of 1 paper done")
+    expect(label([S("a", "2026-08-06"), paper("2026-08-04", { completedAt: DONE })])).toBe("Today: 0 of 1 goal done. This week: 1 of 1 paper done")
+    // Papers across the week are counted together, on their own line.
+    expect(label([S("a", "2026-08-06", { completedAt: DONE }), paper("2026-08-04", { completedAt: DONE }), S("q", "2026-08-08", { activityType: "past_paper" })]))
+      .toBe("Today: 1 of 1 goal done. This week: 1 of 2 papers done")
+  })
+  it("counts a paper pinned to today as a goal for today, and in the week's papers", () => {
+    const s = asPlan(planScreen(input(O([SUB("0625", P("0625", [S("p", "2026-08-06", { activityType: "past_paper" }), S("b", "2026-08-07")]))]))))
+    expect(s.body.today.sessions.map((v) => v.id)).toEqual(["p"])
+    expect(s.body.ringLabel).toBe("Today: 0 of 1 goal done. This week: 0 of 1 paper done")
+  })
+  it("keeps the ring's third part as the week's papers", () => {
+    const s = asPlan(planScreen(input(O([SUB("0625", P("0625", [S("p", "2026-08-04", { activityType: "past_paper", completedAt: DONE }), S("b", "2026-08-07")]))]))))
+    expect(s.body.ring).toEqual([0, 0, 1])
+    expect(s.body.ringLabel).toBe("Today: nothing planned. This week: 1 of 1 paper done")
   })
   it("points Binny at missed sessions when nothing is due today", () => {
     const behind = asPlan(planScreen(input(O([SUB("0625", P("0625", [S("m1", "2026-08-04"), S("m2", "2026-08-05"), S("b", "2026-08-07")]))]))))
