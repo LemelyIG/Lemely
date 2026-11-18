@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
@@ -206,9 +207,11 @@ export function ReviewQueue() {
     showShortcuts: true,
   } : null
 
+  // The phone answer page shows this error alone, so its heading is the page's h1.
+  const ErrorHeading = phone ? "h1" : "h2"
   const detailError = detail.isError ? (
     <div role="alert" className="grid justify-items-start gap-2.5 py-7">
-      <h2 className="text-[24px] font-extrabold tracking-[-0.02em]">Couldn't load this answer.</h2>
+      <ErrorHeading className="text-[24px] font-extrabold tracking-[-0.02em]">Couldn't load this answer.</ErrorHeading>
       <p className="text-on-surface-variant">{teacherLoadFailureMessage(detail.error)}</p>
       <div className="flex gap-2">
         <button type="button" onClick={() => void detail.refetch()} className={`${BTN} bg-primary text-on-primary`}>Try again</button>
@@ -228,6 +231,8 @@ export function ReviewQueue() {
   }
 
   const cleared = state === "cleared"
+  // First run has no answer to show, so on desktop it takes the full width (states-r1 RQ1).
+  const wide = cleared || (state === "first-run" && !phone)
   const column = (
     <QueueColumn
       state={state}
@@ -266,6 +271,8 @@ export function ReviewQueue() {
     <div ref={fill.ref} style={fill.style} className="-mx-3.5 grid min-h-[calc(100dvh-56px)] min-w-0 grid-cols-1 shell-sm:min-h-0 shell-sm:grid-cols-[minmax(300px,360px)_minmax(0,1fr)] shell-sm:grid-rows-[minmax(0,1fr)] shell-lg:-mx-[72px] shell-lg:grid-cols-[minmax(340px,400px)_minmax(0,1fr)]">
       {cleared ? (
         <div className="col-span-full grid place-items-center"><Cleared tally={decisions.state.tally} markHref={MARK_HREF} /></div>
+      ) : wide ? (
+        <div className="col-span-full grid min-h-0 [&>[data-review-column]]:border-e-0">{column}</div>
       ) : (
         <>
           {column}

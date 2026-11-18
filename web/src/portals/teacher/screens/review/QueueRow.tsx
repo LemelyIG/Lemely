@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { KeyRing } from "@/components/redesign"
 import type { ReviewQueueItem } from "@/lib/teacherTypes"
 import "./review.css"
@@ -44,7 +45,7 @@ export function QueueRow({ item, focused, gone, selecting, picked, onOpen, onPic
         />
         <span className="grid min-w-0 gap-[3px]">
           <span className="flex min-w-0 flex-wrap items-baseline gap-x-1.5"><b className="max-w-full truncate text-[15px] font-bold leading-[1.25] tracking-[-0.005em]">{item.studentDisplayName}</b><span className="text-[13px] text-on-surface-variant">{rowSubtitle(item)}</span></span>
-          <span className="flex items-center gap-[7px] text-[14px] leading-[1.35]"><i className={`size-2 flex-none rounded-full ${DOT[tone]}`} aria-hidden="true" />{plainWhy(item)}</span>
+          <span className="flex items-start gap-[7px] text-[14px] leading-[1.35]"><i className={`mt-[5px] size-2 flex-none rounded-full ${DOT[tone]}`} aria-hidden="true" />{plainWhy(item)}</span>
         </span>
         <span className="font-display text-[28px] font-extrabold leading-none tracking-[-0.03em] tabular-nums" aria-label={`Lemely gave ${item.aiAwardedMarks ?? "none"} of ${item.maximumMarks ?? "unknown"}`}>
           {item.aiAwardedMarks ?? "–"}/{item.maximumMarks ?? "–"}

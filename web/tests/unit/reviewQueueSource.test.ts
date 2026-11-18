@@ -69,9 +69,32 @@ describe("review screens source", () => {
   it("anchors the undo toast in the queue column on desktop so Accept stays clear", () => {
     const bar = readFileSync(join(DIR, "UndoBar.tsx"), "utf8")
     expect(bar).toMatch(/placement/)
+    // Viewport placement centres on the main column, not on the window with the rail in it.
+    expect(bar).toMatch(/shell-lg:left-\[calc\(var\(--shell-sidebar-width\)\+16px\)\]/)
     const screen = readFileSync(join(DIR, "ReviewQueue.tsx"), "utf8")
     expect(screen).toMatch(/placement=/)
     expect(screen).toMatch(/overlayOpen\(document\)/)
     expect(screen).toMatch(/focusAfterDecision\(/)
+  })
+  it("lets the desktop first run span both columns, with no empty answer panel", () => {
+    const screen = readFileSync(join(DIR, "ReviewQueue.tsx"), "utf8")
+    expect(screen).toMatch(/const wide = cleared \|\| \(state === "first-run" && !phone\)/)
+    expect(screen).toMatch(/col-span-full[^\n]*\{column\}/)
+  })
+  it("numbers the first-run steps, as the approved mock does", () => {
+    const states = readFileSync(join(DIR, "QueueStates.tsx"), "utf8")
+    const firstRun = states.slice(states.indexOf("export function FirstRun"), states.indexOf("export function NothingWaiting"))
+    expect(firstRun).not.toMatch(/icon:/)
+  })
+  it("gives every whole-screen state its own h1", () => {
+    const states = readFileSync(join(DIR, "QueueStates.tsx"), "utf8")
+    for (const fn of ["QueueLoading", "QueueError", "FirstRun", "NothingWaiting", "Cleared"]) {
+      const start = states.indexOf(`export function ${fn}`)
+      const body = states.slice(start, states.indexOf("\nexport function", start + 1))
+      expect(body, fn).toMatch(/<h1\b/)
+    }
+    const screen = readFileSync(join(DIR, "ReviewQueue.tsx"), "utf8")
+    // The phone answer page shows the detail error alone, so its heading is the page's h1.
+    expect(screen).toMatch(/const ErrorHeading = phone \? "h1" : "h2"/)
   })
 })

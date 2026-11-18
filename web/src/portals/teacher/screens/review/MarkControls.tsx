@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P5 H4 E4 S5 R4 V4 */
 import type { MarkPoint, MarkState } from "./markModel"
 import { canStep, deltaLine, isBlocked, orBefore, poolHeader, stepDown, stepUp, toggleTick, totalOf } from "./markModel"
 import { Tick } from "./Tick"

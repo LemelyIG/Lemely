@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S3 R5 V3 */
 import { useEffect, useRef, useState } from "react"
 import type { ReviewSort } from "@/lib/teacherTypes"
 import "./review.css"

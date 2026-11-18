@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 */
 import { useLayoutEffect, useState, type CSSProperties } from "react"
 import { createPortal } from "react-dom"
 import type { DecisionNotice } from "./pendingDecisions"
@@ -34,7 +35,7 @@ export function UndoBar({ notice, onUndo, onClose, placement }: { notice: Decisi
   const on = notice !== null
   const box = useColumnBox(placement === "column")
   const place = placement === "viewport" || !box
-    ? "inset-x-4 mx-auto w-fit max-w-[calc(100vw-32px)] max-sidebar:bottom-[calc(var(--bottom-nav-height)+16px)]"
+    ? "inset-x-4 mx-auto w-fit max-w-[calc(100vw-32px)] max-sidebar:bottom-[calc(var(--bottom-nav-height)+16px)] shell-lg:left-[calc(var(--shell-sidebar-width)+16px)]"
     : ""
   return createPortal(
     <div

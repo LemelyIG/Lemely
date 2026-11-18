@@ -1,4 +1,4 @@
-import { CheckCircle, Flag, Stack } from "@phosphor-icons/react"
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import { Link } from "react-router-dom"
 import { Binny, GhostRows, Walkthrough, type BinnyMood } from "@/components/redesign"
 import "./review.css"
@@ -18,6 +18,7 @@ export function TeacherBinny({ mood, size = 56 }: { mood: BinnyMood; size?: numb
 export function QueueLoading() {
   return (
     <div className="grid gap-2" aria-busy="true" aria-label="Loading the review queue">
+      <h1 className="sr-only">Review</h1>
       {[0, 1, 2, 3].map((i) => (
         <div key={i} className="lm-rq-skel h-[76px] rounded-[14px] bg-surface-container-high" />
       ))}
@@ -28,7 +29,7 @@ export function QueueLoading() {
 export function QueueError({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <div role="alert" className="grid justify-items-start gap-2.5 px-1 py-7">
-      <h2 className="text-[24px] font-extrabold leading-[1.2] tracking-[-0.02em]">Couldn't load the review queue.</h2>
+      <h1 className="text-[24px] font-extrabold leading-[1.2] tracking-[-0.02em]">Couldn't load the review queue.</h1>
       <p className="text-on-surface-variant">{message}</p>
       <button type="button" onClick={onRetry} className={PRIMARY_BTN}>Try again</button>
     </div>
@@ -55,16 +56,17 @@ export function SparseNote({ markHref }: { markHref: string }) {
 }
 
 export function FirstRun({ markHref, phone }: { markHref: string; phone: boolean }) {
+  // Numbered, not iconed: the order is the point (states-r1 RQ1/RQ3).
   const steps = phone
     ? [
-        { icon: Stack, title: "Mark a class set", body: "Names are read off the covers." },
-        { icon: Flag, title: "Lemely flags unsure answers", body: "Usually two or three a paper." },
-        { icon: CheckCircle, title: "You decide", body: "Under a minute each." },
+        { title: "Mark a class set", body: "Names are read off the covers." },
+        { title: "Lemely flags unsure answers", body: "Usually two or three a paper." },
+        { title: "You decide", body: "Under a minute each." },
       ]
     : [
-        { icon: Stack, title: "Mark a class set", body: "Drop the PDFs on Papers. Names are read off the covers." },
-        { icon: Flag, title: "Lemely flags the unsure answers", body: "Most papers come back with two or three." },
-        { icon: CheckCircle, title: "You decide here", body: "Tick or change the mark. Usually under a minute each." },
+        { title: "Mark a class set", body: "Drop the PDFs on Papers. Names are read off the covers." },
+        { title: "Lemely flags the unsure answers", body: "Most papers come back with two or three." },
+        { title: "You decide here", body: "Tick or change the mark. Usually under a minute each." },
       ]
   return (
     <div className="grid gap-6">
@@ -72,7 +74,7 @@ export function FirstRun({ markHref, phone }: { markHref: string; phone: boolean
         <div className="flex items-center gap-4">
           <TeacherBinny mood="open" size={phone ? 48 : 56} />
           <div>
-            <h2 className="font-display text-[28px] font-extrabold leading-[1.15] tracking-[-0.03em] text-primary">Nothing to review yet</h2>
+            <h1 className="font-display text-[28px] font-extrabold leading-[1.15] tracking-[-0.03em] text-primary">Nothing to review yet</h1>
             {phone ? null : <p className="mt-1 max-w-[46ch] text-on-surface-variant">When Lemely isn't sure about a mark, the answer comes here for you to decide.</p>}
           </div>
         </div>
@@ -94,7 +96,7 @@ export function NothingWaiting() {
   return (
     <div className="grid justify-items-center gap-3 px-6 py-16 text-center">
       <TeacherBinny mood="happy" size={48} />
-      <h2 tabIndex={-1} data-review-heading className="text-[24px] font-extrabold tracking-[-0.02em] outline-none">Nothing to review.</h2>
+      <h1 tabIndex={-1} data-review-heading className="text-[24px] font-extrabold tracking-[-0.02em] outline-none">Nothing to review.</h1>
       <p className="text-on-surface-variant">Every mark is confident or already decided.</p>
     </div>
   )
@@ -106,7 +108,7 @@ export function Cleared({ tally, markHref }: { tally: Tally; markHref: string })
       <div className="lm-rq-bump-lg font-display text-[120px] font-extrabold leading-none tracking-[-0.05em] text-primary tabular-nums">{tally.decided}</div>
       <div className="mt-1.5 flex items-center gap-3">
         <TeacherBinny mood="happy" size={40} />
-        <h2 tabIndex={-1} data-review-heading className="text-[32px] font-extrabold leading-[1.15] tracking-[-0.02em] outline-none">Queue clear.</h2>
+        <h1 tabIndex={-1} data-review-heading className="text-[32px] font-extrabold leading-[1.15] tracking-[-0.02em] outline-none">Queue clear.</h1>
       </div>
       <p className="mb-5 mt-2 text-[16px] leading-[1.5] text-on-surface-variant">{clearedSummary(tally)}</p>
       <Link to={markHref} className={PRIMARY_BTN}>Mark another class set</Link>

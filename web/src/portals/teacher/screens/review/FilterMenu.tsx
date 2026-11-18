@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 */
 import { useEffect, useRef, useState } from "react"
 import type { ReviewQueueFilters } from "@/lib/reviewQueueQuery"
 import "./review.css"

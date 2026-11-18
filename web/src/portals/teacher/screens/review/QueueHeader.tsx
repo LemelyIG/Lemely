@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 */
 import { useEffect, useRef, useState } from "react"
 import "./review.css"
 import { headerTitle, progressOf } from "./reviewQueueModel"

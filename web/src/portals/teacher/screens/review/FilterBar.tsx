@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
 import { useEffect, useRef, useState } from "react"
 import type { ReviewQueueFilters } from "@/lib/reviewQueueQuery"
 import type { ReviewSort } from "@/lib/teacherTypes"
@@ -56,7 +57,7 @@ export function FilterBar(p: FilterBarProps) {
           {chips.map((c) => (
             <span key={`${c.category}|${c.value}`} className="inline-flex items-center gap-1.5 rounded-pill bg-primary-container py-[3px] pe-1 ps-2.5 text-[12.5px] font-semibold text-primary">
               {c.label}
-              <button type="button" aria-label={`Remove ${c.label}`} onClick={() => p.onRemove(c.category, c.value)} className="relative inline-grid size-[18px] place-items-center rounded-pill bg-surface-container-lowest after:absolute after:-inset-[3px] after:content-[''] pointer-coarse:after:-inset-[13px]">×</button>
+              <button type="button" aria-label={`Remove ${c.label}`} onClick={() => p.onRemove(c.category, c.value)} className="relative inline-grid size-[18px] place-items-center rounded-pill bg-surface-container-lowest focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary after:absolute after:-inset-[3px] after:content-[''] pointer-coarse:after:-inset-[13px]">×</button>
             </span>
           ))}
           <button ref={triggerRef} type="button" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((o) => !o)} className="relative rounded-pill border-[1.5px] border-dashed border-outline px-3 py-[3px] text-[12.5px] font-semibold text-on-surface-variant hover:border-primary hover:text-primary focus-visible:outline-2 focus-visible:outline-primary after:absolute after:-inset-y-[3px] after:inset-x-0 after:content-[''] pointer-coarse:after:-inset-y-[10px]">+ Filter</button>

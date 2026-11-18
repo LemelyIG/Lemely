@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useId, useRef, useState, type KeyboardEvent } from "react"
 import { Link } from "react-router-dom"
 import { Flag } from "@phosphor-icons/react"
@@ -66,16 +67,18 @@ export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts 
   const changed = view.lemelyMarks != null && total !== view.lemelyMarks
   const showPage = mode === "page" && view.hasScan
   const tone = ringTone(view.confidenceScore)
+  // The phone answer page has no queue column, so the answer's title is the page's h1.
+  const Title = onBack ? "h1" : "h2"
   const saveable = marking ? canSave(view.points, marking.state, view.maximumMarks, view.lemelyMarks) : false
   return (
     <article aria-label={view.title} className="flex min-h-0 w-full max-w-[780px] flex-1 flex-col">
       {/* The answer scrolls; the action bar below it does not, so Accept never leaves the screen. */}
       <div data-answer-scroll className="-mx-1 grid min-h-0 flex-1 content-start gap-3.5 overflow-y-auto px-1 pb-3 [scrollbar-width:thin]">
-      <header className="flex flex-wrap items-center gap-3 shell-sm:flex-nowrap">
+      <header className="flex flex-wrap items-center gap-3 shell-lg:flex-nowrap">
         {onBack ? (
           <button type="button" onClick={onBack} aria-label="Back to the queue" className={`inline-flex min-h-11 items-center gap-1.5 rounded-[14px] bg-surface-container-lowest px-3 py-2 text-[14px] font-bold shadow-[inset_0_0_0_1.5px_var(--color-outline)] ${FOCUS}`}>{ICON_BACK}Queue</button>
         ) : null}
-        <div className="order-3 flex min-w-0 flex-[1_1_100%] items-center gap-3 shell-sm:order-none shell-sm:flex-1">
+        <div className="order-3 flex min-w-0 flex-[1_1_100%] items-center gap-3 shell-lg:order-none shell-lg:flex-1">
           <KeyRing
             value={ringValue(view.confidenceScore)}
             size={96}
@@ -84,9 +87,9 @@ export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts 
             center={<span className="font-display text-[34px] font-extrabold leading-none tabular-nums tracking-[-0.03em]">{ringText(view.confidenceScore)}{view.confidenceScore != null ? <small className="text-[14px] font-bold opacity-70">%</small> : null}</span>}
           />
           <div className="min-w-0">
-            <h2 className="text-[21px] font-bold leading-[1.25] tracking-[-0.01em]">
-              {view.studentHref ? <Link to={view.studentHref} className="hover:underline">{view.title}</Link> : view.title}
-            </h2>
+            <Title className="text-[21px] font-bold leading-[1.25] tracking-[-0.01em]">
+              {view.studentHref ? <Link to={view.studentHref} className="relative hover:underline pointer-coarse:after:absolute pointer-coarse:after:-inset-y-[9px] pointer-coarse:after:inset-x-0 pointer-coarse:after:content-['']">{view.title}</Link> : view.title}
+            </Title>
             <div className="mt-0.5 font-mono text-[12.5px] font-semibold leading-[1.3] text-on-surface-variant">{view.subtitle}</div>
           </div>
         </div>
