@@ -124,4 +124,100 @@ export function nextExamDate(calendar: StudentExamCalendar | undefined, code: st
   return calendar?.entries.filter(e => e.subjectCode === code && e.availability === "dated")
     .flatMap(e => e.dates.map(d => d.examDate)).filter(d => daysUntil(d, now) >= 0).sort()[0] ?? null
 }
+export interface TipAction { label: string; detail: string | null; to: string }
+export interface TipView { mood: BinnyMood; line: string; action: TipAction; secondary: TipAction | null }
+
+export function rankedWins(topics: TopicTile[]): TopicTile[] {
+  return topics.filter(t => t.marksToWin > 0)
+    .sort((a, b) => b.marksToWin - a.marksToWin || a.accuracy - b.accuracy || a.name.localeCompare(b.name))
+}
+export function fullTipLine(goal: GoalStep | null, examInDays: number | null): string {
+  if (!goal) return "Next paper?"
+  const { gap, grade } = goal
+  if (gap > 0 && examInDays !== null && examInDays >= 0 && examInDays <= NEAR_EXAM_DAYS) {
+    return examInDays === 0 ? "Exam today" : `${plural(examInDays, "day")}, ${plural(gap, "mark")}`
+  }
+  if (gap > 0) return `${plural(gap, "mark")} to ${grade}`
+  return gap === 0 ? `On the ${grade} line` : `Above the ${grade} line`
+}
+const scanAction = (code: string): TipAction => ({ label: "Scan your next paper", detail: null, to: links.scan(code) })
+export function fullTip(code: string, goal: GoalStep | null, topics: TopicTile[], examInDays: number | null): TipView {
+  const top = rankedWins(topics)[0]
+  return { mood: "happy", line: fullTipLine(goal, examInDays), action: top
+    ? { label: `Practise ${topicName(top.name)}`, detail: `+${plural(top.marksToWin, "mark")}`, to: links.practice(code, top.name) }
+    : scanAction(code), secondary: null }
+}
+export function sparseTip(code: string): TipView {
+  return { mood: "happy", line: "Great start. Next paper?", action: scanAction(code), secondary: null }
+}
+export function firstRunTip(code: string, subjectName: string): TipView {
+  return { mood: "open", line: "Find your first step",
+    action: { label: `Scan a ${subjectName} paper`, detail: null, to: links.scan(code) },
+    secondary: { label: "Upload a PDF instead", detail: null, to: links.upload(code) } }
+}
+export function FIRST_RUN_STEPS(subjectName: string): { title: string; body: string }[] {
+  return [
+    { title: `Scan a ${subjectName} paper`, body: "Any past paper you have tried. Phone camera or PDF." },
+    { title: "Lemely marks it", body: "Every question, with method marks. About two minutes." },
+    { title: "Your path appears", body: "Each paper adds a step towards the A* line." },
+  ]
+}
+export const GHOST_PATH_HEIGHTS = [30, 45, 52, 70] as const
+export const GHOST_CHIPS: { state: TopicState; width: number }[] = [
+  { state: "work", width: 96 }, { state: "getting", width: 120 }, { state: "secure", width: 88 },
+  { state: "getting", width: 140 }, { state: "secure", width: 104 }, { state: "work", width: 92 },
+  { state: "secure", width: 128 }, { state: "getting", width: 110 },
+]
+
+export interface WinRowView { topic: string; name: string; marks: number; practiceTo: string; flashcardsTo: string | null }
+export interface WinView { heading: string; rows: WinRowView[] }
+export function winRows(code: string, topics: TopicTile[], decks: DeckSummaryDTO[], mode: "full" | "sparse"): WinView {
+  const ranked = rankedWins(topics)
+  const picked = mode === "full" ? ranked.slice(1, 4) : ranked.slice(0, 2)
+  return { heading: mode === "full" ? "More marks to win" : "Marks to win", rows: picked.map(t => {
+    const deck = decks.find(d => d.topic === t.name)
+    return { topic: t.name, name: topicName(t.name), marks: t.marksToWin, practiceTo: links.practice(code, t.name),
+      flashcardsTo: deck ? links.flashcards(code, deck.id) : null }
+  }) }
+}
+export const SECURE_AT = 75
+export const GETTING_AT = 60
+export function topicState(accuracy: number): TopicState {
+  return accuracy >= SECURE_AT ? "secure" : accuracy >= GETTING_AT ? "getting" : "work"
+}
+export interface TopicChipView { topic: string; label: string; state: TopicState; pct: number }
+export function topicChips(topics: TopicTile[]): TopicChipView[] {
+  return [...topics].sort((a, b) => a.accuracy - b.accuracy || a.name.localeCompare(b.name))
+    .map(t => ({ topic: t.name, label: topicName(t.name), state: topicState(t.accuracy), pct: t.accuracy }))
+}
+export function topicsHint(mode: "full" | "sparse", shown: number, total: number | null): string | null {
+  if (shown === 0) return "Topics show up once a paper loses a mark."
+  if (mode === "full") return null
+  if (total !== null && shown < total) return `${shown} of ${total} topics so far. Each paper fills in more.`
+  return "Each paper fills in more topics."
+}
+export interface PathView { tabs: PaperTab[]; selected: number; goalGrade: string; steps: StepsView; trend: TrendView }
+export interface SubjectView {
+  mode: "full" | "sparse"; path: PathView; tip: TipView; win: WinView; chips: TopicChipView[]
+  topicsHint: string | null; papers: PaperRowView[]
+}
+export interface SubjectViewInput {
+  data: Subject; catalogue: CatalogueSubject | undefined; decks: DeckSummaryDTO[]; examDate: string | null
+  now: Date; requestedPaper: string | null; mode: "full" | "sparse"
+}
+export function buildSubjectView(input: SubjectViewInput): SubjectView {
+  const { data, catalogue, decks, examDate, now, requestedPaper, mode } = input
+  const code = data.header.code
+  const papers = data.papersBreakdown.filter(p => p.attempts.length > 0)
+  const selected = resolvePaper(papers, requestedPaper) ?? papers[0].paperNumber
+  const paper = papers.find(p => p.paperNumber === selected) ?? papers[0]
+  const steps = stepsFor(paper, { ghosts: mode === "sparse" ? SPARSE_GHOSTS : 0 })
+  const examInDays = examDate ? daysUntil(examDate, now) : null
+  const chips = topicChips(data.topicMap)
+  return { mode, path: { tabs: paperTabs(papers), selected: paper.paperNumber, goalGrade: steps.goal?.grade ?? "A*",
+    steps, trend: trendFor(paper, data.header.forecast, data.paperHistory.length) },
+  tip: mode === "full" ? fullTip(code, steps.goal, data.topicMap, examInDays) : sparseTip(code),
+  win: winRows(code, data.topicMap, decks, mode), chips,
+  topicsHint: topicsHint(mode, chips.length, catalogue ? catalogue.topics.length : null), papers: paperRows(data.paperHistory, now) }
+}
 export type { BinnyMood, DeckSummaryDTO, Subject, TopicState, TopicTile }
