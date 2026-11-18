@@ -242,7 +242,7 @@ describe("hubTiles", () => {
       ["set", "Practice set", "Build your own", "tide"],
       ["cards", "Flashcards", "26 due today", "violet"],
       ["paper", "Past papers", "Print or do timed", "mint"],
-      ["test", "Placement test", "Find your level · 10 min", "gold"],
+      ["test", "Placement test", "Find your level\u00a0· 10\u00a0min", "gold"],
     ])
   })
 
@@ -259,6 +259,10 @@ describe("hubTiles", () => {
   it("flashcards: caught up when nothing is due, neutral when unknown", () => {
     expect(hubTiles({ ...base, dueTotal: 0 })[1].status).toBe("All caught up")
     expect(hubTiles({ ...base, dueTotal: null, deckCount: null })[1].status).toBe("Review your cards")
+  })
+
+  it("flashcards: never claims caught up while the deck count is unknown", () => {
+    expect(hubTiles({ ...base, dueTotal: 0, deckCount: null })[1].status).toBe("Review your cards")
   })
 
   it("placement: not ready and disabled when no subject has a test", () => {
@@ -330,6 +334,21 @@ describe("practiceHubView", () => {
     const view = practiceHubView(input({ topics: [{ code: "0580", status: "success", data: topics("0580", [["Vectors", 0]]) }] }))
     expect(view.subtitle).toBeNull()
     expect(view.binny?.line).toBe("All caught up. Try a set.")
+    expect(view.showScanTip).toBe(false)
+  })
+
+  it("one mark to win back reads singular", () => {
+    const view = practiceHubView(input({ topics: [{ code: "0580", status: "success", data: topics("0580", [["Vectors", 1]]) }] }))
+    expect(view.binny?.line).toBe("Vectors first. +1 mark.")
+  })
+
+  it("sets done but no paper scanned: asks for a paper instead of claiming caught up", () => {
+    const view = practiceHubView(
+      input({ subjects: [{ code: "0580", name: "Maths", papers: 0 }], topics: [{ code: "0580", status: "success", data: topics("0580", []) }] }),
+    )
+    expect(view.state).toBe("normal")
+    expect(view.binny).toEqual({ mood: "happy", line: "Scan a paper next." })
+    expect(view.showScanTip).toBe(true)
   })
 
   it("error: tiles still present, no Binny line, no subtitle", () => {

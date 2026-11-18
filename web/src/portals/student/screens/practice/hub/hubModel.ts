@@ -134,7 +134,7 @@ export function hubState(input: HubInput): HubState {
   const anyPending =
     input.overviewStatus === "pending" || input.runsStatus === "pending" || input.topics.some((t) => t.status === "pending")
   if (anyPending) return "loading"
-  const papers = input.subjects.reduce((sum, s) => sum + s.papers, 0)
+  const papers = paperCount(input.subjects)
   if (papers === 0 && input.runs.length === 0) return "firstTime"
   if (papers === 1) return "sparse"
   return "normal"
@@ -216,7 +216,8 @@ export function pickHomework(list: readonly StudentQuizListItem[], now: Date): H
 function cardsStatus(due: number | null, decks: number | null): string {
   if (due !== null && due > 0) return `${due} due today`
   if (decks === 0) return "Make your first deck"
-  if (due === 0) return "All caught up"
+  // Caught up only means something once we know there are decks to be caught up on.
+  if (due === 0 && decks !== null) return "All caught up"
   return "Review your cards"
 }
 
@@ -260,7 +261,8 @@ export function hubTiles(input: {
       title: "Placement test",
       status: available
         ? available.minutes
-          ? `Find your level · ${available.minutes} min`
+          ? // No-break spaces keep "10 min" whole and the dot off the start of a wrapped line.
+            `Find your level\u00a0· ${available.minutes}\u00a0min`
           : "Find your level"
         : noneAvailable
           ? "Not ready yet"
@@ -273,15 +275,20 @@ export function hubTiles(input: {
   ]
 }
 
-function binnyFor(state: HubState, top: WinBackRow | undefined): HubView["binny"] {
+function binnyFor(state: HubState, top: WinBackRow | undefined, papers: number): HubView["binny"] {
   if (state === "firstTime") return { mood: "open", line: "Scan a paper and I'll find your marks to win back." }
   if (state === "sparse") return { mood: "happy", line: "Good start. Try one set." }
   if (state === "normal") {
-    return top
-      ? { mood: "happy", line: `${top.label} first. +${top.marks} marks.` }
-      : { mood: "happy", line: "All caught up. Try a set." }
+    if (top) return { mood: "happy", line: `${top.label} first. +${plural(top.marks, "mark")}.` }
+    // Sets done but nothing scanned: there was nothing to catch up on, so ask for a paper.
+    if (papers === 0) return { mood: "happy", line: "Scan a paper next." }
+    return { mood: "happy", line: "All caught up. Try a set." }
   }
   return null
+}
+
+function paperCount(subjects: readonly HubSubject[]): number {
+  return subjects.reduce((sum, s) => sum + s.papers, 0)
 }
 
 export function practiceHubView(input: HubInput): HubView {
@@ -290,10 +297,11 @@ export function practiceHubView(input: HubInput): HubView {
   const primarySubject = allWinBack[0]?.subjectCode ?? input.subjects[0]?.code ?? null
   const recentAll = recentRows(input.runs, input.subjects, input.now)
   const showsContent = state === "normal" || state === "sparse"
+  const papers = paperCount(input.subjects)
   return {
     state,
     subtitle: showsContent && allWinBack.length > 0 ? `${plural(allWinBack.length, "topic")} to win back` : null,
-    binny: binnyFor(state, allWinBack[0]),
+    binny: binnyFor(state, allWinBack[0], papers),
     homework: state === "loading" ? null : pickHomework(input.homework, input.now),
     tiles: hubTiles({
       firstTime: state === "firstTime",
@@ -307,7 +315,7 @@ export function practiceHubView(input: HubInput): HubView {
       showsContent && allWinBack.length > WIN_BACK_SHOWN ? `/student/subject/${allWinBack[0].subjectCode}` : null,
     recent: showsContent ? recentAll.slice(0, RECENT_SHOWN) : [],
     recentMore: showsContent ? recentAll.slice(RECENT_SHOWN) : [],
-    showScanTip: state === "sparse",
+    showScanTip: state === "sparse" || (state === "normal" && papers === 0),
     primarySubject,
   }
 }
