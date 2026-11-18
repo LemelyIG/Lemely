@@ -5,7 +5,7 @@ import type { StudentExamCalendar } from "@/lib/announcementTypes"
 import type { DeckSummaryDTO } from "@/lib/flashcardTypes"
 import { gradeTone } from "@/lib/grade"
 import type { CatalogueSubject } from "@/lib/referenceTypes"
-import type { PaperBreakdown, PaperHistoryRow, Subject, TopicTile, GoalLine } from "@/lib/studentTypes"
+import type { PaperBreakdown, PaperHistoryRow, Subject, TopicTile } from "@/lib/studentTypes"
 
 export type SubjectScreenState = "loading" | "error" | "first-run" | "sparse" | "full"
 export interface QueryFacts {
@@ -58,29 +58,23 @@ export interface GoalStep {
   grade: string; marks: number; outOf: number; gap: number; gapLabel: string; sourceLabel: string; ariaLabel: string
 }
 export interface StepsView { bars: StepBar[]; ghosts: number; goal: GoalStep | null; groupLabel: string }
-function boundaryGoal(paper: PaperBreakdown): GoalLine | null {
-  if (paper.goal) return paper.goal
-  const match = /^(.+?)\s+line\s+(\d+)\/(\d+)$/i.exec(paper.boundary.trim())
-  if (!match || Number(match[3]) <= 0) return null
-  return { grade: match[1], marks: Number(match[2]), outOf: Number(match[3]), source: "global_default", sourceLabel: "" }
-}
 export function stepsFor(paper: PaperBreakdown, { ghosts = 0 }: { ghosts?: number } = {}): StepsView {
   const shown = paper.attempts.slice(-STEP_WINDOW)
   const latest = paper.attempts.at(-1)
-  const boundary = boundaryGoal(paper)
+  const goalLine = paper.goal
   const bars = shown.map((a, i): StepBar => {
     const month = monthLabel(a.recordedAt)
-    const line = boundary ? boundary.marks / boundary.outOf * a.maximum : a.maximum
+    const line = goalLine ? goalLine.marks / goalLine.outOf * a.maximum : a.maximum
     return { id: a.id, grade: a.grade, marks: a.awarded, outOf: a.maximum, month,
       heightPct: barHeight(a.awarded, a.maximum, line), current: i === shown.length - 1,
       colorVar: gradeColorVar(a.grade), ariaLabel: `${a.grade}, ${a.awarded} out of ${a.maximum}${month ? `, ${month}` : ""}. Open this paper`, resultTo: links.result(a.id) }
   })
   let goal: GoalStep | null = null
-  if (boundary && latest) {
-    const gap = boundary.marks - latest.awarded
-    goal = { grade: boundary.grade, marks: boundary.marks, outOf: boundary.outOf, gap,
-      gapLabel: gap > 0 ? `${gap} to go` : "Reached", sourceLabel: boundary.sourceLabel,
-      ariaLabel: `${boundary.grade} line, ${boundary.marks} out of ${boundary.outOf}. ${gap > 0 ? `${plural(gap, "mark")} to go` : "Reached"}` }
+  if (goalLine && latest) {
+    const gap = goalLine.marks - latest.awarded
+    goal = { grade: goalLine.grade, marks: goalLine.marks, outOf: goalLine.outOf, gap,
+      gapLabel: gap > 0 ? `${gap} to go` : "Reached", sourceLabel: goalLine.sourceLabel,
+      ariaLabel: `${goalLine.grade} line, ${goalLine.marks} out of ${goalLine.outOf}. ${gap > 0 ? `${plural(gap, "mark")} to go` : "Reached"}` }
   }
   const summary = bars.map(b => `${b.grade}, ${b.marks} out of ${b.outOf}${b.month ? ` in ${b.month}` : ""}`).join("; ")
   const goalText = goal ? ` The ${goal.grade} line is ${goal.marks}, ${goal.gap > 0 ? `${plural(goal.gap, "mark")} to go` : "reached"}.` : ""

@@ -151,13 +151,10 @@ describe("stepsFor", () => {
     )
   })
   it("has no goal block when the paper has no boundary", () => {
-    expect(stepsFor({ ...p4, goal: null, boundary: "" }).goal).toBeNull()
-  })
-  it("uses the boundary string when the structured goal is absent", () => {
-    expect(stepsFor({ ...p4, goal: null }).goal).toMatchObject({ grade: "A*", marks: 68, outOf: 80, gap: 7 })
+    expect(stepsFor({ ...p4, goal: null }).goal).toBeNull()
   })
   it("scales bars to full marks and drops the line sentence when there is no boundary", () => {
-    const steps = stepsFor({ ...p4, goal: null, boundary: "" })
+    const steps = stepsFor({ ...p4, goal: null })
     // 40% of 80 is 32, so 61/80 sits (61-32)/(80-32) of the way up.
     expect(steps.bars.map((b) => b.heightPct)).toEqual([27, 33, 38, 60])
     expect(steps.groupLabel).not.toContain("line")
