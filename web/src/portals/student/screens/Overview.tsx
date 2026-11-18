@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
+/* Hallmark · pre-emit critique: P4 H3 E4 S4 R5 V3 */
 import { QueryState } from "@/components/ui/query-state"
 import { useStudentHome } from "@/lib/hooks/useStudentHomeApi"
 import { useOnlineStatus } from "@/lib/online"

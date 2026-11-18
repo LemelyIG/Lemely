@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R3 V4 */
 import { useMemo } from "react"
 import { Snowflake } from "@phosphor-icons/react"
 import { Celebrate, CountUp, MilestoneSticker } from "@/components/ui/celebration"

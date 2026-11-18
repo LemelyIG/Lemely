@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
 import { Camera, ChartBar, Target } from "@phosphor-icons/react"
 import { Walkthrough } from "@/components/redesign"
 import { cn } from "@/lib/utils"

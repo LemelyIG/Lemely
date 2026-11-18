@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
+/* Hallmark · pre-emit critique: P3 H3 E4 S3 R5 V3 */
 import { MeScreen } from "../home/me/MeScreen"
 
 /* The Me screen (redesign lane L1, mock student-r2/home4.html ME2/DME). Route entry only. */

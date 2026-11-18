@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
+/* Hallmark · pre-emit critique: P5 H5 E3 S5 R4 V4 */
 import { Link } from "react-router-dom"
 import { Binny } from "@/components/redesign"
 import { cn } from "@/lib/utils"

@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
+/* Hallmark · pre-emit critique: P5 H4 E4 S5 R4 V4 */
 import { HairRow, HairRows } from "@/components/redesign"
 import { homeRoutes } from "./routes"
 import type { HomeVm } from "./model"

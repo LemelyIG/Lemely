@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
+/* Hallmark · pre-emit critique: P4 H4 E3 S4 R4 V3 */
 import { Link } from "react-router-dom"
 import { CaretRight, Fire } from "@phosphor-icons/react"
 import { CountdownPill } from "@/components/redesign"

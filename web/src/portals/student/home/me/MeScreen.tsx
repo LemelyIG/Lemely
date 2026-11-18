@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
+/* Hallmark · pre-emit critique: P4 H4 E3 S4 R4 V4 */
 import { useState } from "react"
 import { GhostRows } from "@/components/redesign"
 import { PageHeading } from "@/components/ui/page-heading"
