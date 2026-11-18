@@ -108,8 +108,8 @@ export function currentSubjectCode(pathname: string): string | null {
  * parameter in it is resolved by a pattern arm in `resolveCrumb` instead.
  *
  * P3.1 removed four keys from this map: `/student/subject`,
- * `/student/practice`, `/student/flashcards` and `/student/result`. All four (`/student/flashcards` has since become a real mounted route and is back in the map)
- * were dead lookups. Every one of those routes is parameterised
+ * `/student/practice`, `/student/flashcards` and `/student/result`. All four
+ * were dead lookups at the time. Every one of those routes was parameterised
  * (`subject/:code`, `practice/:subjectCode`, `flashcards/:subjectCode`,
  * `result/:paperId`), so no pathname the router can produce ever equals the
  * bare key, and `resolveCrumb` was already answering all four from its pattern
@@ -118,6 +118,9 @@ export function currentSubjectCode(pathname: string): string | null {
  * siblings kept theirs. Behaviour is unchanged — unreachable entries cannot
  * change what anything renders — but a map with dead keys in it is a map the
  * next person edits the wrong half of.
+ *
+ * `/student/flashcards` has since become a real mounted route (the decks shelf, L10), so its key
+ * is back in the map.
  *
  * Found by `tests/unit/navigation.test.ts`, which asserts that every key here
  * matches a route the router actually mounts.

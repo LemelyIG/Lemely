@@ -269,3 +269,21 @@ export function decksScreenView(input: DecksScreenInput): DecksScreenView {
     firstDeckId: groups.flatMap((g) => g.decks).find((d) => d.status === "ready")?.id ?? null,
   }
 }
+
+/**
+ * The deck the side panel shows. A pick (history state or a `?deck=` deep link) counts only while
+ * that deck is still on the shelf; a deleted or unknown id falls back to the first ready deck.
+ */
+export function resolveSelectedDeck(view: DecksScreenView, picked: string | null): string | null {
+  if (view.kind !== "ready") return null
+  if (picked && view.groups.some((g) => g.decks.some((d) => d.id === picked))) return picked
+  return view.firstDeckId
+}
+
+/** `location.search` minus `deck`, so clearing a selection cannot re-seed it from the deep link. */
+export function searchWithoutDeck(search: string): string {
+  const params = new URLSearchParams(search)
+  params.delete("deck")
+  const rest = params.toString()
+  return rest ? `?${rest}` : ""
+}

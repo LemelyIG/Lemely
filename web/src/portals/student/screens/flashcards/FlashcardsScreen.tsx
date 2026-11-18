@@ -1,18 +1,21 @@
+/* Hallmark · pre-emit critique: P4 H4 E3 S4 R4 V4 */
 import { Plus } from "@phosphor-icons/react"
 import { useMemo, useState } from "react"
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
-import { Binny, HairRows } from "@/components/redesign"
+import { Binny, HairRows, SubjectDot } from "@/components/redesign"
+import { QueryState } from "@/components/ui/query-state"
+import { useToast } from "@/components/ui/toast"
 import { useDueSession, useFlashcardDecks, useRetryGeneration, useWeakTopics } from "@/lib/hooks/useFlashcardApi"
 import { useReference } from "@/lib/hooks/useReferenceApi"
 import { useOverview } from "@/lib/hooks/useStudentApi"
 import { subjectNameFor } from "@/lib/reference"
-import { DecksError, DecksLoading, EmptyShelf, SparseExtras } from "./DecksStates"
+import { DecksLoading, EmptyShelf, SparseExtras } from "./DecksStates"
 import { DeckMenu } from "./DeckMenu"
 import { DeckPanel } from "./DeckBody"
 import { NewDeckSheet, type NewDeckSeed } from "./NewDeckSheet"
-import { decksScreenView } from "./flashcardsView"
+import { decksScreenView, resolveSelectedDeck, searchWithoutDeck } from "./flashcardsView"
 import { DeckRow } from "./parts/DeckRow"
-import { isWide } from "./isWide"
+import { isWide, useIsWide } from "./isWide"
 import "./flashcards.css"
 
 const FOCUS = "focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
@@ -33,6 +36,8 @@ export function FlashcardsScreen() {
   const overview = useOverview()
   const reference = useReference()
   const retry = useRetryGeneration()
+  const { toast } = useToast()
+  const wide = useIsWide()
 
   const [sheet, setSheet] = useState<NewDeckSeed | null>(null)
   const [menuDeckId, setMenuDeckId] = useState<string | null>(null)
@@ -54,12 +59,21 @@ export function FlashcardsScreen() {
   })
 
   const picked = (location.state as { deck?: string } | null)?.deck ?? params.get("deck")
-  const selectedId = view.kind === "ready" ? picked ?? view.firstDeckId : null
-  const reviewTo = filterSubject ? `/student/flashcards/review?subject=${filterSubject}` : "/student/flashcards/review"
+  const selectedId = resolveSelectedDeck(view, picked)
+  const reviewTo = filterSubject
+    ? `/student/flashcards/review?subject=${encodeURIComponent(filterSubject)}`
+    : "/student/flashcards/review"
   const defaultSubject = filterSubject ?? weak.data?.[0]?.subjectCode ?? subjectOrder[0] ?? ""
 
+  // Clearing drops `?deck=` too, or the deep link would re-seed a deck that no longer exists.
   function selectInPlace(id: string | null) {
-    navigate(`${location.pathname}${location.search}`, { replace: true, state: id ? { deck: id } : null })
+    const search = id ? location.search : searchWithoutDeck(location.search)
+    navigate(`${location.pathname}${search}`, { replace: true, state: id ? { deck: id } : null })
+  }
+  function retryDeck(id: string) {
+    retry.mutate(id, {
+      onError: () => toast({ variant: "error", title: "Couldn’t retry that deck", description: "Try again in a moment." }),
+    })
   }
   function openDeck(id: string) {
     if (isWide()) selectInPlace(id)
@@ -87,54 +101,65 @@ export function FlashcardsScreen() {
       </header>
 
       <div className="flex flex-col gap-6 px-[18px] pb-24 pt-2 lg:px-10">
-        {view.kind === "loading" ? <DecksLoading /> : null}
-        {view.kind === "error" ? <DecksError onRetry={() => void decks.refetch()} /> : null}
-        {view.kind === "empty" ? (
-          <EmptyShelf weakHint={view.weakHint} onPick={(mode) => setSheet({ mode, subjectCode: defaultSubject, topic: null })} />
-        ) : null}
-        {view.kind === "ready" ? (
-          <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-6 xl:grid-cols-[minmax(0,1fr)_340px] xl:gap-10">
-            <div className="flex flex-col gap-6">
-              <section className="flex items-center gap-3">
-                <Binny mood={view.hero.mood} size={64} motion="idle" />
-                <div className="grid gap-0.5">
-                  <b className="font-display text-[28px] font-extrabold leading-[1.1] tracking-[-0.02em] text-primary">{view.hero.headline}</b>
-                  <span className="text-[14px] font-medium text-on-surface-variant">{view.hero.sub}</span>
-                </div>
-              </section>
-              {view.hero.reviewLabel ? (
-                <button type="button" onClick={() => navigate(reviewTo)} className={`w-full lg:hidden ${PRIMARY_BTN}`}>
-                  {view.hero.reviewLabel}
-                </button>
+        <QueryState
+          query={decks}
+          skeleton={<DecksLoading />}
+          error={{
+            heading: "We couldn’t load your decks",
+            secondaryAction: { label: "Back to Home", onClick: () => navigate("/student") },
+          }}
+        >
+          {() => (
+            <>
+              {view.kind === "empty" ? (
+                <EmptyShelf weakHint={view.weakHint} onPick={(mode) => setSheet({ mode, subjectCode: defaultSubject, topic: null })} />
               ) : null}
-              {view.groups.map((g) => (
-                <section key={g.subjectCode} className="grid">
-                  <h2 className="flex items-center gap-2 font-sans text-[18px] font-extrabold tracking-[-0.01em] text-on-surface">
-                    <i aria-hidden className="size-2 flex-none rounded-full" style={{ background: g.dot }} />
-                    {g.subjectName}
-                  </h2>
-                  <HairRows aria-label={`${g.subjectName} decks`}>
-                    {g.decks.map((row) => (
-                      <DeckRow key={row.id} row={row} selected={row.id === selectedId}
-                        onOpen={() => openDeck(row.id)} onLongPress={() => setMenuDeckId(row.id)}
-                        onRetry={() => retry.mutate(row.id)}
-                        retrying={retry.isPending && retry.variables === row.id} />
+              {view.kind === "ready" ? (
+                <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-6 xl:grid-cols-[minmax(0,1fr)_340px] xl:gap-10">
+                  <div className="flex flex-col gap-6">
+                    <section className="flex items-center gap-3">
+                      <Binny mood={view.hero.mood} size={64} motion="idle" />
+                      <div className="grid gap-0.5">
+                        <b className="font-display text-[28px] font-extrabold leading-[1.1] tracking-[-0.02em] text-primary">{view.hero.headline}</b>
+                        <span className="text-[14px] font-medium text-on-surface-variant">{view.hero.sub}</span>
+                      </div>
+                    </section>
+                    {view.hero.reviewLabel ? (
+                      <button type="button" onClick={() => navigate(reviewTo)} className={`w-full lg:hidden ${PRIMARY_BTN}`}>
+                        {view.hero.reviewLabel}
+                      </button>
+                    ) : null}
+                    {view.groups.map((g) => (
+                      <section key={g.subjectCode} className="grid">
+                        <h2 className="flex items-center font-sans text-[18px] font-extrabold tracking-[-0.01em] text-on-surface">
+                          <SubjectDot subject={g.subjectCode} />
+                          {g.subjectName}
+                        </h2>
+                        <HairRows aria-label={`${g.subjectName} decks`}>
+                          {g.decks.map((row) => (
+                            <DeckRow key={row.id} row={row} selected={wide && row.id === selectedId}
+                              onOpen={() => openDeck(row.id)} onLongPress={() => setMenuDeckId(row.id)}
+                              onRetry={() => retryDeck(row.id)}
+                              retrying={retry.isPending && retry.variables === row.id} />
+                          ))}
+                        </HairRows>
+                      </section>
                     ))}
-                  </HairRows>
-                </section>
-              ))}
-              {view.sparse ? (
-                <SparseExtras tip={view.sparse.tip}
-                  onMakeTip={() => view.sparse?.tip && setSheet({ mode: "weakness", subjectCode: view.sparse.tip.subjectCode, topic: view.sparse.tip.topic })} />
+                    {view.sparse ? (
+                      <SparseExtras tip={view.sparse.tip}
+                        onMakeTip={() => view.sparse?.tip && setSheet({ mode: "weakness", subjectCode: view.sparse.tip.subjectCode, topic: view.sparse.tip.topic })} />
+                    ) : null}
+                  </div>
+                  {selectedId ? (
+                    <aside className="hidden min-h-0 lg:flex" aria-label="Deck">
+                      <DeckPanel deckId={selectedId} onDeleted={() => selectInPlace(null)} />
+                    </aside>
+                  ) : null}
+                </div>
               ) : null}
-            </div>
-            {selectedId ? (
-              <aside className="hidden min-h-0 lg:flex" aria-label="Deck">
-                <DeckPanel deckId={selectedId} onDeleted={() => selectInPlace(null)} />
-              </aside>
-            ) : null}
-          </div>
-        ) : null}
+            </>
+          )}
+        </QueryState>
       </div>
 
       <NewDeckSheet seed={sheet} onClose={() => setSheet(null)}
