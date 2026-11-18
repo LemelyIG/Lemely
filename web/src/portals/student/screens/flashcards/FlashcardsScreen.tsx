@@ -5,11 +5,12 @@ import { useLocation, useNavigate, useParams, useSearchParams } from "react-rout
 import { Binny, HairRows, SubjectDot } from "@/components/redesign"
 import { QueryState } from "@/components/ui/query-state"
 import { useToast } from "@/components/ui/toast"
-import { useDueSession, useFlashcardDecks, useRetryGeneration, useWeakTopics } from "@/lib/hooks/useFlashcardApi"
+import { useDueSession, useFlashcardDecks, useRetryGeneration, useRetryingDeckIds, useWeakTopics } from "@/lib/hooks/useFlashcardApi"
 import { useReference } from "@/lib/hooks/useReferenceApi"
 import { useOverview } from "@/lib/hooks/useStudentApi"
+import { isOfflineFailure } from "@/lib/offlineFailure"
 import { subjectNameFor } from "@/lib/reference"
-import { DecksLoading, EmptyShelf, SparseExtras } from "./DecksStates"
+import { DecksError, DecksLoading, DecksRefreshNotice, EmptyShelf, SparseExtras } from "./DecksStates"
 import { DeckMenu } from "./DeckMenu"
 import { DeckPanel } from "./DeckBody"
 import { NewDeckSheet, type NewDeckSeed } from "./NewDeckSheet"
@@ -35,9 +36,25 @@ export function FlashcardsScreen() {
   const weak = useWeakTopics()
   const overview = useOverview()
   const reference = useReference()
-  const retry = useRetryGeneration()
   const { toast } = useToast()
+  // Hook-level onError: every deck's failed retry toasts, not only the latest one's.
+  const retry = useRetryGeneration(() =>
+    toast({ variant: "error", title: "Couldn’t retry that deck", description: "Try again in a moment." }),
+  )
+  const retrying = useRetryingDeckIds()
   const wide = useIsWide()
+
+  // A failed refetch keeps the cached shelf (TanStack v5 leaves `data` set under status "error").
+  // The full error state is for a first load with nothing to show; over a shelf it is an inline notice.
+  const refetchFailed = decks.status === "error" && decks.data !== undefined
+  const firstLoadFailed = decks.status === "error" && decks.data === undefined
+  const shelfQuery = {
+    status: refetchFailed ? ("success" as const) : decks.status,
+    data: decks.data,
+    error: decks.error,
+    refetch: decks.refetch,
+    fetchStatus: decks.fetchStatus,
+  }
 
   const [sheet, setSheet] = useState<NewDeckSeed | null>(null)
   const [menuDeckId, setMenuDeckId] = useState<string | null>(null)
@@ -71,9 +88,7 @@ export function FlashcardsScreen() {
     navigate(`${location.pathname}${search}`, { replace: true, state: id ? { deck: id } : null })
   }
   function retryDeck(id: string) {
-    retry.mutate(id, {
-      onError: () => toast({ variant: "error", title: "Couldn’t retry that deck", description: "Try again in a moment." }),
-    })
+    if (!retrying.has(id)) retry.mutate(id)
   }
   function openDeck(id: string) {
     if (isWide()) selectInPlace(id)
@@ -101,8 +116,12 @@ export function FlashcardsScreen() {
       </header>
 
       <div className="flex flex-col gap-6 px-[18px] pb-24 pt-2 lg:px-10">
+        {refetchFailed ? <DecksRefreshNotice onRetry={() => void decks.refetch()} /> : null}
+        {firstLoadFailed && !isOfflineFailure(decks.error) ? (
+          <DecksError onRetry={() => void decks.refetch()} />
+        ) : (
         <QueryState
-          query={decks}
+          query={shelfQuery}
           skeleton={<DecksLoading />}
           error={{
             heading: "We couldn’t load your decks",
@@ -140,7 +159,7 @@ export function FlashcardsScreen() {
                             <DeckRow key={row.id} row={row} selected={wide && row.id === selectedId}
                               onOpen={() => openDeck(row.id)} onLongPress={() => setMenuDeckId(row.id)}
                               onRetry={() => retryDeck(row.id)}
-                              retrying={retry.isPending && retry.variables === row.id} />
+                              retrying={retrying.has(row.id)} />
                           ))}
                         </HairRows>
                       </section>
@@ -150,7 +169,7 @@ export function FlashcardsScreen() {
                         onMakeTip={() => view.sparse?.tip && setSheet({ mode: "weakness", subjectCode: view.sparse.tip.subjectCode, topic: view.sparse.tip.topic })} />
                     ) : null}
                   </div>
-                  {selectedId ? (
+                  {wide && selectedId ? (
                     <aside className="hidden min-h-0 lg:flex" aria-label="Deck">
                       <DeckPanel deckId={selectedId} onDeleted={() => selectInPlace(null)} />
                     </aside>
@@ -160,6 +179,7 @@ export function FlashcardsScreen() {
             </>
           )}
         </QueryState>
+        )}
       </div>
 
       <NewDeckSheet seed={sheet} onClose={() => setSheet(null)}

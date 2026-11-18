@@ -1,6 +1,7 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useMemo, useRef } from "react"
 import {
   useMutation,
+  useMutationState,
   useQuery,
   useQueryClient,
   type QueryClient,
@@ -140,17 +141,49 @@ export function useGenerateDeck(): UseMutationResult<GenerateDeckResponseDTO, Er
   })
 }
 
-/** Retries a failed deck. Returns the final state (200), which seeds the generation query. */
-export function useRetryGeneration(): UseMutationResult<GenerationStatusDTO, Error, string> {
+const RETRY_GENERATION_KEY = ["flashcards", "retry-generation"] as const
+
+/** One request per deck: a second retry of a deck already in flight joins it instead of sending again. */
+const retriesInFlight = new Map<string, Promise<GenerationStatusDTO>>()
+function retryOnce(deckId: string): Promise<GenerationStatusDTO> {
+  const live = retriesInFlight.get(deckId)
+  if (live) return live
+  const request = flashcardApi.retryGeneration(deckId).finally(() => retriesInFlight.delete(deckId))
+  retriesInFlight.set(deckId, request)
+  return request
+}
+
+/**
+ * Retries a failed deck. Returns the final state (200), which seeds the generation query.
+ * `onError` is a hook-level callback, so it fires for every deck's failure; a callback passed to
+ * `mutate()` only fires for the latest call when several decks are retried in a row.
+ */
+export function useRetryGeneration(
+  onError?: (error: Error, deckId: string) => void,
+): UseMutationResult<GenerationStatusDTO, Error, string> {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (deckId) => flashcardApi.retryGeneration(deckId),
+    mutationKey: RETRY_GENERATION_KEY,
+    mutationFn: retryOnce,
+    onError: (error, deckId) => onError?.(error, deckId),
     onSuccess: (state, deckId) => {
       queryClient.setQueryData(flashcardKeys.generation(deckId), state)
       void queryClient.invalidateQueries({ queryKey: flashcardKeys.deck(deckId) })
       invalidateDeckLists(queryClient)
     },
   })
+}
+
+/**
+ * Decks with a retry in flight. Read from the mutation cache rather than from one `useMutation`
+ * result, which only ever describes its latest call: retry A, then B, and A is still pending.
+ */
+export function useRetryingDeckIds(): ReadonlySet<string> {
+  const ids = useMutationState({
+    filters: { mutationKey: RETRY_GENERATION_KEY, status: "pending" },
+    select: (mutation) => mutation.state.variables as string,
+  })
+  return useMemo(() => new Set(ids), [ids])
 }
 
 export function useAddCard(deckId: string): UseMutationResult<CardDTO, Error, AddCardRequest> {

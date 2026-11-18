@@ -1,5 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
 import { CaretRight, PencilSimple, Sparkle, Target } from "@phosphor-icons/react"
+import { Link } from "react-router-dom"
 import { Binny, Walkthrough } from "@/components/redesign"
 import { SkeletonBlock } from "@/components/ui/skeleton"
 import type { NewDeckMode } from "./newDeckView"
@@ -7,7 +8,6 @@ import type { NewDeckMode } from "./newDeckView"
 /**
  * FL: 64 r16, 56 r16, 120×20, 4 × 60 r14 (fc.js `put('FL',…)`). One status region for the
  * whole shelf; the blocks stay silent so a screen reader hears "Loading your decks" once.
- * FE (the load error) is QueryState's shared ErrorState / OfflineState, wired in FlashcardsScreen.
  */
 export function DecksLoading() {
   return (
@@ -21,6 +21,44 @@ export function DecksLoading() {
 }
 
 const FOCUS = "focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
+
+/**
+ * FE (fc.js `put('FE',…)`): the first load failed, so there is no shelf to keep. Sad Binny 96, the
+ * heading, one line, a large primary retry, and a way home. Offline is a different state and stays
+ * QueryState's OfflineState; a refetch that fails over decks already on screen is DecksRefreshNotice.
+ */
+export function DecksError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="grid flex-1 content-center justify-items-center gap-3 px-2 py-6 text-center" role="alert">
+      <Binny mood="sad" size={96} />
+      <h2 className="mt-1.5 font-display text-[26px] font-extrabold leading-[1.15] tracking-[-0.02em] text-balance text-primary">
+        We couldn’t load your decks
+      </h2>
+      <p className="mb-1.5 max-w-[30ch] text-[15px] leading-[1.4] text-on-surface-variant">Check your connection, then try again.</p>
+      <button type="button" onClick={onRetry} className={`min-h-[50px] w-full max-w-[320px] rounded-[18px] bg-primary px-7 text-[15.5px] font-bold text-on-primary ${FOCUS}`}>
+        Try again
+      </button>
+      <Link to="/student" className={`inline-flex min-h-11 items-center px-3.5 text-[15px] font-bold text-primary ${FOCUS}`}>Back to Home</Link>
+    </div>
+  )
+}
+
+/**
+ * A refetch failed (the 4s poll, a focus refetch, the refresh after a retry or delete) while the
+ * shelf is already on screen. The shelf stays; this one line says the list may be stale, and goes
+ * away by itself when a refetch succeeds. Same warm strip as the review screen's unsaved-ratings
+ * line (fc.css `.syncb`), so a quiet poll failure never takes the decks away.
+ */
+export function DecksRefreshNotice({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div role="status" className="flex items-center justify-between gap-2.5 rounded-xl bg-tertiary-container px-3 text-[13.5px] font-semibold text-on-tertiary-container">
+      <span>Couldn’t refresh your decks</span>
+      <button type="button" onClick={onRetry} className={`min-h-11 flex-none px-1 font-bold underline decoration-1 underline-offset-2 ${FOCUS}`}>
+        Try again
+      </button>
+    </div>
+  )
+}
 
 const OPTIONS: { mode: NewDeckMode; icon: typeof Target; title: string; tone: string }[] = [
   { mode: "weakness", icon: Target, title: "From a weakness", tone: "bg-error-container text-on-error-container" },
