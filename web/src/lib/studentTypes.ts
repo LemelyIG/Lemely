@@ -81,7 +81,31 @@ export interface PaperBar {
   highlight: boolean
 }
 
-/** Per-paper breakdown card (mirrors `PaperBreakdownDTO`). */
+/** Which `GradeBoundaryStore` rung answered (mirrors `GoalLineDTO.source`). */
+export type BoundarySource = "exact" | "subject_default" | "global_default"
+
+/** The goal block on a paper's steps path (mirrors `GoalLineDTO`). `marks` is
+ * on `outOf`, the latest attempt's maximum. */
+export interface GoalLine {
+  grade: string
+  marks: number
+  outOf: number
+  source: BoundarySource
+  sourceLabel: string
+}
+
+/** One grade-bearing attempt, oldest first (mirrors `PaperAttemptDTO`). `id`
+ * addresses the same record `GET /student/result/{paperId}` looks up. */
+export interface PaperAttempt {
+  id: string
+  recordedAt: string
+  grade: string
+  awarded: number
+  maximum: number
+  label: string
+}
+
+/** Per-paper breakdown (mirrors `PaperBreakdownDTO`). */
 export interface PaperBreakdown {
   title: string
   sub: string
@@ -90,6 +114,10 @@ export interface PaperBreakdown {
   position: string
   positionOk: boolean
   bars: PaperBar[]
+  paperNumber: number
+  outOf: number
+  goal: GoalLine | null
+  attempts: PaperAttempt[]
 }
 
 /**
@@ -105,6 +133,11 @@ export interface PaperHistoryRow {
   grade: string
   gradeColor: VizColor
   tab: string
+  awarded: number
+  maximum: number
+  recordedAt: string
+  paperNumber: number
+  label: string
 }
 
 /** A tile in the topic map (mirrors `TopicTileDTO`). */
@@ -113,6 +146,10 @@ export interface TopicTile {
   acc: string
   color: VizColor
   weak: boolean
+  /** `acc` as an integer 0–100. */
+  accuracy: number
+  /** Mean marks lost per paper that tested the topic; 0 when only a quiz did. */
+  marksToWin: number
 }
 
 /** Subject-page header block (mirrors `SubjectHeaderDTO`). */
