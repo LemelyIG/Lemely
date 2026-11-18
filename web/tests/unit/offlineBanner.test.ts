@@ -24,9 +24,9 @@ const ROOT = path.join(import.meta.dirname, "..", "..")
  * showing an offline banner over, kept in one list so a fifth portal layout
  * falls into this gate rather than out of it. */
 // The student and teacher layouts are components/shell/PortalShell.tsx (portal shell spec).
+// The parent layout is components/shell/PortalShell.tsx too (F1).
 const PORTAL_LAYOUTS = [
   "src/components/shell/PortalShell.tsx",
-  "src/portals/parent/index.tsx",
   "src/portals/admin/index.tsx",
 ] as const
 

@@ -402,7 +402,7 @@ NATIVE_CHECKS.push(
     id: "native-ios-tab-retap-scrolls-to-top",
     platform: "ios",
     width: 390,
-    app: { ...NATIVE_HOME, path: "/student/classes" },
+    app: { ...NATIVE_HOME, path: "/student/profile" },
     async run(page) {
       await page.evaluate(() => {
         document.body.style.minHeight = "3000px";
@@ -410,10 +410,10 @@ NATIVE_CHECKS.push(
       });
       const tab = page
         .getByRole("navigation", { name: "Primary" })
-        .getByRole("link", { name: "Classes" });
+        .getByRole("link", { name: "Me", exact: true });
       await tab.click();
       await page.waitForFunction(() => window.scrollY === 0);
-      if (new URL(page.url()).pathname !== "/student/classes")
+      if (new URL(page.url()).pathname !== "/student/profile")
         throw new Error("a tap while scrolled navigated");
     },
   },
@@ -568,7 +568,7 @@ NATIVE_CHECKS.push(
       if (Math.abs(r.pillCentre - r.iconCentre) > 0.5)
         throw new Error(`pill centre ${r.pillCentre} != icon centre ${r.iconCentre}`);
       if (!r.inLink) throw new Error("pill spills into a neighbouring tab");
-      if (r.hitsCircle) throw new Error("pill overlaps the Correct circle");
+      if (r.hitsCircle) throw new Error("pill overlaps the Scan tab");
     },
   },
 );
@@ -974,9 +974,10 @@ async function expectOneNameForGroup(page, name) {
 /** D11: two heading texts "repeat" when equal after these steps (see Task 5b). */
 const normTitle = (s) => s.trim().toLowerCase().replace(/\s+/g, " ").replace(/^(your|my) /, "");
 
-/** The `to` of each student bottom tab (STUDENT_BOTTOM_TABS in portals/student/shell.tsx)
- * minus the raised Correct action, which is immersive and has no tab root of its own. */
-export const STUDENT_TAB_PATHS = ["/student", "/student/classes", "/student/profile"];
+/** The student bottom tabs (STUDENT_BOTTOM_TABS in portals/student/shell.tsx) with a stable root page:
+ * Home and Me. Scan is immersive, and Practice and Plan redirect to the first subject's page until
+ * their real roots land, so none of the three is a fixed path to audit. */
+export const STUDENT_TAB_PATHS = ["/student", "/student/profile"];
 /** The `to` of each teacher bottom tab (TEACHER_BOTTOM_TABS in portals/teacher/index.tsx). */
 export const TEACHER_TAB_PATHS = ["/teacher", "/teacher/grading", "/teacher/review", "/teacher/classes"];
 
@@ -1824,7 +1825,7 @@ NATIVE_CHECKS.push(
       const targets = [
         { name: "icon button", loc: page.locator("header .lm-native-iconbtn.lm-press:visible").first(), dx: 14, dy: 14 },
         // The tab cell: dims on iOS with no delay (it is a fixed bar, not scroll content), never scales.
-        { name: "tab cell", loc: page.locator("nav.lm-native-tabbar .lm-press:visible", { hasText: "Classes" }), dx: 14, dy: 14, tab: true },
+        { name: "tab cell", loc: page.locator("nav.lm-native-tabbar .lm-press:visible", { hasText: /^Me$/ }), dx: 14, dy: 14, tab: true },
         { name: "Button", loc: page.locator("main .lm-press-scale:not(.lm-native-iconbtn):visible").first(), dx: 10, dy: 10 },
       ]
       for (const t of targets) {
@@ -2045,8 +2046,8 @@ NATIVE_CHECKS.push(
     width: 390,
     app: { ...NATIVE_HOME, path: "/student", init: STANDALONE },
     async run(page) {
-      await page.getByRole("link", { name: "Classes" }).first().click()
-      await page.waitForURL(/\/student\/classes/)
+      await page.getByRole("link", { name: "Me", exact: true }).first().click()
+      await page.waitForURL(/\/student\/profile/)
       await page.mouse.move(4, 400)
       await page.mouse.down()
       await page.mouse.move(60, 402, { steps: 4 })
@@ -2085,8 +2086,8 @@ NATIVE_CHECKS.push(
     platform: "ios",
     app: { ...NATIVE_HOME, path: "/student", init: STANDALONE },
     async run(page) {
-      await page.getByRole("link", { name: "Classes" }).first().click()
-      await page.waitForURL(/\/student\/classes/)
+      await page.getByRole("link", { name: "Me", exact: true }).first().click()
+      await page.waitForURL(/\/student\/profile/)
       await page.mouse.move(4, 400)
       await page.mouse.down()
       await page.mouse.move(30, 401)
@@ -2102,8 +2103,8 @@ NATIVE_CHECKS.push(
     platform: "android",
     app: { ...NATIVE_HOME, path: "/student", init: STANDALONE },
     async run(page) {
-      await page.getByRole("link", { name: "Classes" }).first().click()
-      await page.waitForURL(/\/student\/classes/)
+      await page.getByRole("link", { name: "Me", exact: true }).first().click()
+      await page.waitForURL(/\/student\/profile/)
       await page.mouse.move(4, 400)
       await page.mouse.down()
       await page.mouse.move(60, 402, { steps: 4 })
@@ -2120,8 +2121,8 @@ NATIVE_CHECKS.push(
     // No STANDALONE init: a browser tab, where Safari's swipe and Chrome's back take over.
     app: { ...NATIVE_HOME, path: "/student" },
     async run(page) {
-      await page.getByRole("link", { name: "Classes" }).first().click()
-      await page.waitForURL(/\/student\/classes/)
+      await page.getByRole("link", { name: "Me", exact: true }).first().click()
+      await page.waitForURL(/\/student\/profile/)
       await page.mouse.move(4, 400)
       await page.mouse.down()
       await page.mouse.move(250, 402, { steps: 6 })
@@ -2153,8 +2154,8 @@ const underlayPaints = (page) =>
     }
   })
 async function dragIntoSwipe(page) {
-  await page.getByRole("link", { name: "Classes" }).first().click()
-  await page.waitForURL(/\/student\/classes/)
+  await page.getByRole("link", { name: "Me", exact: true }).first().click()
+  await page.waitForURL(/\/student\/profile/)
   await page.mouse.move(4, 400)
   await page.mouse.down()
   await page.mouse.move(60, 402, { steps: 4 })
@@ -2235,8 +2236,8 @@ const SWIPE_PROBE = () => {
 async function swipeBackWithProbe(page, { fling, deepLink = false }) {
   if (!deepLink) {
     // A pushed entry, so the swipe takes the history path (navigate(-1)); a deep link takes the replace path.
-    await page.getByRole("link", { name: "Classes" }).first().click()
-    await page.waitForURL(/\/student\/classes/)
+    await page.getByRole("link", { name: "Me", exact: true }).first().click()
+    await page.waitForURL(/\/student\/profile/)
   }
   await page.evaluate(SWIPE_PROBE)
   await page.mouse.move(4, 400)
@@ -2359,8 +2360,8 @@ NATIVE_CHECKS.push(
       if ((await direction()) !== "swipe") throw new Error(`first swipe read "${await direction()}"`)
       await swipe()
       if ((await direction()) !== "swipe") throw new Error(`second swipe read "${await direction()}"`)
-      await page.getByRole("link", { name: "Classes" }).first().click()
-      await page.waitForURL(/\/student\/classes/)
+      await page.getByRole("link", { name: "Me", exact: true }).first().click()
+      await page.waitForURL(/\/student\/profile/)
       // The URL moves before React renders the new route; give the layout effect its turn.
       // NF motion: a tab-bar tap reads "tab" now (it used to read "forward"); what matters is that it is not "swipe".
       await page.waitForFunction(() => document.documentElement.dataset.direction === "tab", null, { timeout: 3000 }).catch(async () => {
@@ -2409,8 +2410,8 @@ NATIVE_CHECKS.push(
     width: 390,
     app: { ...NATIVE_HOME, path: "/student" },
     async run(page) {
-      await page.getByRole("link", { name: "Classes" }).first().click()
-      await page.waitForURL(/\/student\/classes/)
+      await page.getByRole("link", { name: "Me", exact: true }).first().click()
+      await page.waitForURL(/\/student\/profile/)
       await page.waitForTimeout(400)
       await page.evaluate(() => {
         window.__vtMax = 0
@@ -2433,8 +2434,8 @@ NATIVE_CHECKS.push(
 
 /** Start a committed history-path swipe and run `during` ~60ms into the slide. */
 async function swipeThenDuringSlide(page, during) {
-  await page.getByRole("link", { name: "Classes" }).first().click()
-  await page.waitForURL(/\/student\/classes/)
+  await page.getByRole("link", { name: "Me", exact: true }).first().click()
+  await page.waitForURL(/\/student\/profile/)
   await page.waitForTimeout(300)
   await page.mouse.move(4, 400)
   await page.mouse.down()
@@ -2462,7 +2463,7 @@ NATIVE_CHECKS.push(
     width: 390,
     app: { ...NATIVE_HOME, path: "/student", init: STANDALONE, motion: true },
     async run(page) {
-      const box = await page.getByRole("link", { name: "Profile" }).first().boundingBox()
+      const box = await page.getByRole("link", { name: "Me", exact: true }).first().boundingBox()
       await swipeThenDuringSlide(page, () => page.mouse.click(box.x + box.width / 2, box.y + box.height / 2))
       if (new URL(page.url()).pathname !== "/student") throw new Error(`a tap during the commit slide moved the page: ${page.url()}`)
     },
@@ -2486,8 +2487,8 @@ NATIVE_CHECKS.push(
     width: 390,
     app: { ...NATIVE_HOME, path: "/student", init: STANDALONE, motion: true },
     async run(page) {
-      await page.getByRole("link", { name: "Classes" }).first().click()
-      await page.waitForURL(/\/student\/classes/)
+      await page.getByRole("link", { name: "Me", exact: true }).first().click()
+      await page.waitForURL(/\/student\/profile/)
       // The router never reports: the guard fires with the commit still pending.
       await page.evaluate(() => {
         history.go = () => {}
@@ -3434,8 +3435,8 @@ const LAYER_PROBE = () => {
   window.__layerFrame = frame
 }
 async function pushThenEdgeDrag(page, to = 210, hold = 150) {
-  await page.getByRole("link", { name: "Classes" }).first().click()
-  await page.waitForURL(/\/student\/classes/)
+  await page.getByRole("link", { name: "Me", exact: true }).first().click()
+  await page.waitForURL(/\/student\/profile/)
   await page.evaluate(LAYER_PROBE)
   await page.mouse.move(4, 400)
   await page.mouse.down()
@@ -3964,7 +3965,7 @@ async function pushFromContent(page) {
   await page.waitForTimeout(400)
   await link.click()
 }
-const tabTap = (page, name) => page.locator("nav.lm-native-tabbar").getByRole("link", { name }).first().click()
+const tabTap = (page, name) => page.locator("nav.lm-native-tabbar").getByRole("link", { name, exact: true }).first().click()
 
 /** The top bar's old and new snapshots may fade (a changed title or chevron); nothing else on the chrome may animate. */
 const chromeMoving = (frames) =>
@@ -3985,7 +3986,7 @@ const PUSH_APP = NAV_APP
 const NAV_CASES = [
   ["push", async (page) => pushFromContent(page), false, PUSH_APP],
   ["back", async (page) => page.goBack(), true, PUSH_APP],
-  ["tab", async (page) => tabTap(page, "Profile"), false, NAV_APP],
+  ["tab", async (page) => tabTap(page, "Me"), false, NAV_APP],
 ]
 NATIVE_CHECKS.push(
   ...["ios", "android"].flatMap((platform) =>
@@ -4010,7 +4011,7 @@ NATIVE_CHECKS.push(
     width: 390,
     app: NAV_APP,
     async run(page) {
-      const frames = await probeNav(page, () => tabTap(page, "Profile"))
+      const frames = await probeNav(page, () => tabTap(page, "Me"))
       const anims = rootAnims(frames)
       if (!anims.length) throw new Error("no root transition ran")
       const bad = anims.filter((a) => !/^lm-vt-fade-(in|out)$/.test(a.name))
@@ -4026,7 +4027,7 @@ NATIVE_CHECKS.push(
     width: 390,
     app: NAV_APP,
     async run(page) {
-      const frames = await probeNav(page, () => tabTap(page, "Profile"))
+      const frames = await probeNav(page, () => tabTap(page, "Me"))
       const anims = rootAnims(frames)
       if (!anims.length) throw new Error("no root transition ran")
       const names = new Set(anims.map((a) => a.name))
@@ -4129,7 +4130,7 @@ NATIVE_CHECKS.push(
 // leave a one-sided tab-bar group, and the attribute that prevents it must exist when React Router takes
 // the old snapshot. An ordinary hop keeps the group.
 const IMMERSIVE_HOPS = [
-  ["into", false, async (page) => tabTap(page, "Correct")],
+  ["into", false, async (page) => tabTap(page, "Scan a paper")],
   ["out-of", true, async (page) => page.goBack()],
 ]
 NATIVE_CHECKS.push(
@@ -4141,7 +4142,7 @@ NATIVE_CHECKS.push(
       app: NAV_APP,
       async run(page) {
         if (needsPush) {
-          await tabTap(page, "Correct")
+          await tabTap(page, "Scan a paper")
           await page.waitForTimeout(900)
         }
         const frames = await probeNav(page, () => act(page))
@@ -4161,7 +4162,7 @@ NATIVE_CHECKS.push(
     width: 390,
     app: NAV_APP,
     async run(page) {
-      const frames = await probeNav(page, () => tabTap(page, "Profile"))
+      const frames = await probeNav(page, () => tabTap(page, "Me"))
       if (frames.svt.some((c) => c.chrome !== null || c.tabName !== "lm-chrome-tabs")) throw new Error(`an ordinary hop dropped the tab bar group: ${JSON.stringify(frames.svt)}`)
       if (!frames.some((f) => /px/.test(f.tabsGroup))) throw new Error("no lm-chrome-tabs group existed during an ordinary hop")
       const topFades = chromeAnims(frames).filter((x) => x.pe.includes("lm-chrome-top") && /view-transition-(old|new)/.test(x.pe) && /^lm-vt-fade-(in|out)$/.test(x.name))
@@ -4175,7 +4176,7 @@ NATIVE_CHECKS.push(
     width: 390,
     app: NAV_APP,
     async run(page) {
-      await tabTap(page, "Profile")
+      await tabTap(page, "Me")
       await page.waitForTimeout(700)
       const frames = await probeNav(page, () => page.goBack())
       const names = new Set(rootAnims(frames).map((a) => a.name))
@@ -4191,9 +4192,9 @@ NATIVE_CHECKS.push(
     async run(page) {
       // Enter Overview by a tab tap (its entry carries the tab state), so the push below starts from a
       // tab-entered page that has a content drill-down (Classes has none).
-      await tabTap(page, "Classes")
+      await tabTap(page, "Me")
       await page.waitForTimeout(700)
-      await tabTap(page, "Overview")
+      await tabTap(page, "Home")
       await page.waitForTimeout(700)
       await pushFromContent(page)
       await page.waitForTimeout(900)
@@ -4212,7 +4213,7 @@ NATIVE_CHECKS.push(
     width: 390,
     app: NAV_APP,
     async run(page) {
-      const frames = await probeNav(page, () => tabTap(page, "Correct"))
+      const frames = await probeNav(page, () => tabTap(page, "Scan a paper"))
       if (!frames.svt.length || frames.svt.some((c) => c.chrome !== "page")) throw new Error(`the hop never set data-vt-chrome="page": ${JSON.stringify(frames.svt)}`)
       // The probe has already run past the transition. The unclaimed-hop fallback clears the flag at 3s, so poll for
       // less than that: only the clear on `finished` can satisfy this.
@@ -4241,7 +4242,7 @@ NATIVE_CHECKS.push(
         }
         requestAnimationFrame(tick)
       })
-      await tabTap(page, "Correct") // into the immersive route
+      await tabTap(page, "Scan a paper") // into the immersive route
       await page.waitForFunction(() => document.getAnimations().some((a) => String(a.effect?.pseudoElement ?? "").startsWith("::view-transition")), null, { timeout: 3000 })
       await page.goBack() // out again, before the first transition has finished
       await page.waitForURL(/\/student$/)
