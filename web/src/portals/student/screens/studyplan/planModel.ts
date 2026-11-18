@@ -159,16 +159,21 @@ function todayGoalGroups(sessions: SessionVM[], today: string): SessionVM[][] {
   ]
 }
 
-/** The ring's three segments: today's practice and flashcards, then the week's papers. */
-function ringGroups(sessions: SessionVM[], today: string): [SessionVM[], SessionVM[], SessionVM[]] {
-  const [practice, flashcards] = todayGoalGroups(sessions, today)
-  return [practice, flashcards, sessions.filter((v) => v.activity === "past_paper")]
+/** The week's papers: any-day, or dated up to the last day. One placed past the week is next week's, not this one's. */
+function weekPaperSessions(sessions: SessionVM[], weekEnd: string): SessionVM[] {
+  return sessions.filter((v) => v.activity === "past_paper" && (v.anyDay || v.date <= weekEnd))
 }
 
-export function ringParts(sessions: SessionVM[], today: string): [number, number, number] {
+/** The ring's three segments: today's practice and flashcards, then the week's papers. */
+function ringGroups(sessions: SessionVM[], today: string, weekEnd: string): [SessionVM[], SessionVM[], SessionVM[]] {
+  const [practice, flashcards] = todayGoalGroups(sessions, today)
+  return [practice, flashcards, weekPaperSessions(sessions, weekEnd)]
+}
+
+export function ringParts(sessions: SessionVM[], today: string, weekEnd: string): [number, number, number] {
   const part = (list: SessionVM[]) =>
     list.length === 0 ? 0 : list.filter((v) => v.status === "done").length / list.length
-  const [a, b, c] = ringGroups(sessions, today)
+  const [a, b, c] = ringGroups(sessions, today, weekEnd)
   return [part(a), part(b), part(c)]
 }
 
@@ -285,13 +290,13 @@ function buildBody(
   const anyDay = all.filter((v) => v.status === "anyDay")
   const later = all.filter((v) => v.status === "later")
   const done = all.filter((v) => v.status === "done")
-  const ring = ringParts(all, today)
+  const ring = ringParts(all, today, overview.weekEnd)
   // Today's count covers today's goals only. A goal with nothing planned today is not one the student can miss.
   const goals = todayGoalGroups(all, today).filter((g) => g.length > 0)
   const goalsPlanned = goals.length
   const goalsDone = goals.filter((g) => g.every((v) => v.status === "done")).length
   // The week's papers get their own line, so a paper on another day never reads as a goal for today.
-  const weekPapers = all.filter((v) => v.activity === "past_paper")
+  const weekPapers = weekPaperSessions(all, overview.weekEnd)
   const papersDone = weekPapers.filter((v) => v.status === "done").length
 
   const days: DayCell[] = []

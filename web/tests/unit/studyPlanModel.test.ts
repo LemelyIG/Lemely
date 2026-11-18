@@ -246,6 +246,20 @@ describe("edges", () => {
     expect(s.body.ring).toEqual([0, 0, 1])
     expect(s.body.ringLabel).toBe("Today: nothing planned. This week: 1 of 1 paper done")
   })
+  it("leaves a paper dated after the week out of the ring and its label", () => {
+    const paper = (id: string, date: string, extra: Partial<StudyPlanSessionDTO> = {}) => S(id, date, { activityType: "past_paper", durationMinutes: 45, ...extra })
+    // Next week's paper is not this week's: no ring segment, no "This week" line.
+    const next = asPlan(planScreen(input(O([SUB("0625", P("0625", [S("a", "2026-08-06"), paper("p", "2026-08-10")]))]))))
+    expect(next.body.ring).toEqual([0, 0, 0])
+    expect(next.body.ringLabel).toBe("Today: 0 of 1 goal done")
+    // It stays out of the count when this week has papers of its own.
+    const mixed = asPlan(planScreen(input(O([SUB("0625", P("0625", [S("a", "2026-08-06"), paper("p", "2026-08-04", { completedAt: DONE }), paper("q", "2026-08-10")]))]))))
+    expect(mixed.body.ring).toEqual([0, 0, 1])
+    expect(mixed.body.ringLabel).toBe("Today: 0 of 1 goal done. This week: 1 of 1 paper done")
+    // An any-day paper, and one on the last day, still belong to the week.
+    const kept = asPlan(planScreen(input(O([SUB("0625", P("0625", [S("a", "2026-08-06"), paper("p", "2026-08-09"), paper("q", "2026-08-10", { anyDay: true })]))]))))
+    expect(kept.body.ringLabel).toBe("Today: 0 of 1 goal done. This week: 0 of 2 papers done")
+  })
   it("points Binny at missed sessions when nothing is due today", () => {
     const behind = asPlan(planScreen(input(O([SUB("0625", P("0625", [S("m1", "2026-08-04"), S("m2", "2026-08-05"), S("b", "2026-08-07")]))]))))
     expect(behind.body.binnyLine).toBe("2 to catch up.")
@@ -266,7 +280,7 @@ describe("edges", () => {
   })
   it("fills the ring per goal as sessions are done", () => {
     const vms = asPlan(planScreen(input(mockWeek()))).all.map((v) => (v.title === "Vectors" ? { ...v, status: "done" as const } : v))
-    expect(ringParts(vms, "2026-08-06")).toEqual([1, 0, 0])
+    expect(ringParts(vms, "2026-08-06", "2026-08-09")).toEqual([1, 0, 0])
   })
   it("resolves an unknown subject filter to all", () => {
     expect(resolveFilter(mockWeek(), "0580")).toBe("0580")
@@ -315,6 +329,6 @@ describe("totality and move rules", () => {
   })
   it("leaves a goal with nothing planned at zero", () => {
     const s = asPlan(planScreen(input(O([SUB("0625", P("0625", [S("a", "2026-08-06", { completedAt: DONE }), S("b", "2026-08-07")]))]))))
-    expect(ringParts(s.all, "2026-08-06")).toEqual([1, 0, 0])
+    expect(ringParts(s.all, "2026-08-06", "2026-08-09")).toEqual([1, 0, 0])
   })
 })
