@@ -108,9 +108,9 @@ describe("the data page is public and reachable — P6.5", () => {
     expect(containsComponent(route!.element, "RequireAuth")).toBe(false)
   })
 
-  it("is linked from the marketing footer, so it is not an orphan route", () => {
+  it("is linked from the Privacy Policy, so it is not an orphan route", () => {
     const source = fs.readFileSync(
-      path.resolve(__dirname, "../../src/portals/marketing/MarketingFooter.tsx"),
+      path.resolve(__dirname, "../../src/portals/marketing/PublicPage.tsx"),
       "utf8",
     )
     expect(source).toMatch(/to="\/data"/)

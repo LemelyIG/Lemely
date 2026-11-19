@@ -219,6 +219,10 @@ describe("the signup/verify/reset/join routes carry honest metadata — Task 19"
       "/",
       "/landing",
       "/data",
+      "/about",
+      "/terms",
+      "/refund-policy",
+      "/privacy",
       "/login",
       // Pre-launch coming-soon screen: public, signed-out reachable.
       "/coming-soon",
@@ -363,7 +367,15 @@ describe("canonical URL and sitemap", () => {
     const locs = [...fs.readFileSync(path.join(pub, "sitemap.xml"), "utf8").matchAll(/<loc>([^<]+)<\/loc>/g)].map(
       (m) => m[1],
     )
-    expect(locs).toEqual(["https://lemelyig.com/", "https://lemelyig.com/data", "https://lemelyig.com/tutors"])
+    expect(locs).toEqual([
+      "https://lemelyig.com/",
+      "https://lemelyig.com/data",
+      "https://lemelyig.com/tutors",
+      "https://lemelyig.com/about",
+      "https://lemelyig.com/terms",
+      "https://lemelyig.com/refund-policy",
+      "https://lemelyig.com/privacy",
+    ])
     expect(fs.readFileSync(path.join(pub, "robots.txt"), "utf8")).toContain(
       "Sitemap: https://lemelyig.com/sitemap.xml",
     )
