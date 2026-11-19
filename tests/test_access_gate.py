@@ -28,7 +28,8 @@ from lemely.auth.otp import OtpStore
 from lemely.auth.service import AuthService, DeviceContext
 from lemely.auth.tokens import mint_access_token
 from lemely.core.access import email_domain, is_allowed_email, normalise_domain
-from lemely.db.models.enums import Role
+from lemely.db.invite_repo import ParentInvitePreview
+from lemely.db.models.enums import InviteRole, Role
 from lemely.runtime.config import AccessSettings, Settings
 from lemely.runtime.errors import AccessRestrictedError
 from lemely.web.app import create_app
@@ -38,6 +39,7 @@ from lemely.web.deps import (
     get_auth_context,
     get_auth_service,
     get_device_registry,
+    get_invite_service,
     get_resend_verification_cooldown_store,
     get_settings,
     get_signup_and_reset_cooldown_store,
@@ -317,10 +319,24 @@ def test_parent_signup_code_is_refused_before_any_mail(stack: _Stack) -> None:
 # ── HTTP surface ─────────────────────────────────────────────────────────────
 
 
+class _LiveParentInvites:
+    """Stands in for ``InviteService``: every code is a live parent invite, with no database."""
+
+    def preview(self, code: str) -> ParentInvitePreview:
+        return ParentInvitePreview(
+            role=InviteRole.parent,
+            school_name=None,
+            class_name=None,
+            teacher_name=None,
+            child_name="your child",
+        )
+
+
 def _client(stack: _Stack) -> Iterator[TestClient]:
     app = create_app()
     app.dependency_overrides[get_settings] = lambda: stack.settings
     app.dependency_overrides[get_auth_service] = lambda: stack.restricted
+    app.dependency_overrides[get_invite_service] = _LiveParentInvites
     app.dependency_overrides[get_user_mirror] = lambda: stack.mirror
     app.dependency_overrides[get_device_registry] = lambda: stack.devices
     signup_cooldown = CooldownStore(clock=lambda: datetime.now(UTC), min_seconds=0)
@@ -372,8 +388,9 @@ def test_http_parent_signup_with_a_disallowed_email_is_403(http: TestClient, sta
     resp = http.post(
         "/api/auth/parent/request-code", json={"email": "p@example.com", "inviteCode": "ANYCODE"}
     )
-    # Either the access gate (403 access_restricted) or the invite check: never a created account.
-    assert resp.status_code in (403, 404), resp.text
+    # The stubbed invite is live, so the refusal can only come from the access gate.
+    assert resp.status_code == 403, resp.text
+    assert resp.json() == {"detail": {"code": "access_restricted", "reason": "domain"}}
     assert stack.mirror.rows == {}
 
 
