@@ -1,6 +1,7 @@
 import { createElement, type ReactElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
+import { Sheet } from "@/components/ui/sheet"
 import type { SessionVM } from "@/portals/student/screens/studyplan/planModel"
 import { SessionDetail, SessionPanel, SessionSheet, type SessionActions } from "@/portals/student/screens/studyplan/SessionDetail"
 
@@ -86,5 +87,21 @@ describe("session sheet (below 1280px)", () => {
     expect(el.props.open).toBe(true)
     expect(el.props.children?.props.side).toBe("adaptive")
     expect(el.props.children?.props.showCloseButton).toBe(false)
+  })
+  it("lets the session heading keep its own weight, not the sheet title's font-semibold default", () => {
+    // Walk the real sheet tree to the SessionDetail it mounts, then render the title wrapper it hands down.
+    const findDetail = (node: unknown): ReactElement<{ titleWrap: (heading: ReactElement) => ReactElement }> | null => {
+      if (Array.isArray(node)) return node.map(findDetail).find((hit) => hit !== null) ?? null
+      if (typeof node !== "object" || node === null || !("props" in node)) return null
+      const el = node as ReactElement<{ children?: unknown; titleWrap: (heading: ReactElement) => ReactElement }>
+      return el.type === SessionDetail ? el : findDetail(el.props.children)
+    }
+    const detailEl = findDetail(sheet(session))
+    expect(detailEl).not.toBeNull()
+    const heading = createElement("h2", { className: "m-0 font-extrabold" }, "Vectors")
+    const title = renderToStaticMarkup(createElement(Sheet, { open: true }, detailEl?.props.titleWrap(heading)))
+    expect(title).toContain("<h2")
+    expect(title).toContain("font-extrabold")
+    expect(title).not.toContain("font-semibold")
   })
 })

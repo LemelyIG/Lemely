@@ -146,7 +146,16 @@ export function SessionSheet({ session, onClose, ...actions }: { session: Sessio
       {session ? (
         <SheetContent side="adaptive" showCloseButton={false} aria-describedby={undefined} className="gap-3 pt-3">
           <PhoneGrabber />
-          <SessionDetail session={session} titleWrap={(heading) => <SheetTitle asChild>{heading}</SheetTitle>} {...actions} />
+          {/* SheetTitle's own font-semibold would sit beside the heading's font-extrabold and win on stylesheet order, so the weight is passed through it. */}
+          <SessionDetail
+            session={session}
+            titleWrap={(heading) => (
+              <SheetTitle asChild className="font-extrabold">
+                {heading}
+              </SheetTitle>
+            )}
+            {...actions}
+          />
         </SheetContent>
       ) : null}
     </Sheet>
