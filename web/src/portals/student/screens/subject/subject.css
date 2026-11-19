@@ -1,0 +1,132 @@
+/* Subject screen (redesign L2), ported from .impeccable/mocks/student-r2/t.css
+   ("subject final", lines 461-569). Colours are roles from index.css, or mixes
+   of two roles; no raw values. Logical properties only (rtlSafety). */
+
+/* ---- Layout: one column, then two from 768px ---------------------------- */
+.sj-layout { display: flex; flex-direction: column; gap: 24px; }
+.sj-col { display: grid; gap: 24px; align-content: start; min-width: 0; }
+@media (min-width: 768px) {
+  .sj-layout { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 32px; align-items: start; }
+  .sj-col { gap: 26px; }
+}
+@media (min-width: 1280px) {
+  .sj-layout { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 48px; }
+}
+.sj-col--aside-first-run { display: none; }
+@media (min-width: 768px) { .sj-col--aside-first-run { display: grid; } }
+
+/* ---- Header ------------------------------------------------------------- */
+.sj-head { display: flex; align-items: center; gap: 10px; padding-block: 6px 6px; }
+.sj-head .sj-head-t { flex: 1; min-width: 0; display: grid; }
+.sj-title { margin: 0; font: 800 28px/1.1 var(--font-display); letter-spacing: -0.03em; color: var(--md-primary); }
+@media (min-width: 1280px) { .sj-title { font-size: 32px; } }
+.sj-sub { font: 500 13px var(--font-sans); color: var(--md-on-surface-variant); }
+
+/* ---- Section headings --------------------------------------------------- */
+.sj-sec { display: grid; gap: 10px; }
+.sj-h2row { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+.sj-h2 { margin: 0; font: 800 18px/1.2 var(--font-sans); letter-spacing: -0.01em; color: var(--md-on-surface); }
+.sj-h2 a { position: relative; display: inline-flex; align-items: center; gap: 8px; padding-block: 4px; padding-inline: 0 6px; border-radius: 10px; color: inherit; }
+.sj-h2 a::before { content: ""; position: absolute; inset: -8px -3px; }
+.sj-h2 a svg { color: var(--md-on-surface-variant); }
+.sj-h2 a:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+
+/* ---- Paper switch ------------------------------------------------------- */
+.sj-ptog { display: inline-flex; padding: 3px; border-radius: 12px; background: var(--md-surface-container-high); gap: 2px; }
+.sj-ptog button { position: relative; border: 0; background: none; min-height: 36px; padding-inline: 12px; border-radius: 9px; font: 600 13px var(--font-sans); color: var(--md-on-surface-variant); cursor: pointer; }
+.sj-ptog button::before { content: ""; position: absolute; inset: -4px 0; }
+.sj-ptog button[aria-selected="true"] { background: var(--md-surface-container-lowest); color: var(--md-primary); box-shadow: 0 1px 3px color-mix(in oklch, var(--md-shadow) 18%, transparent); }
+.sj-ptog button:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+
+/* ---- Steps path --------------------------------------------------------- */
+.sj-pbody { display: grid; gap: 10px; }
+.sj-steps {
+  display: grid; gap: 8px;
+  --sj-goal: var(--grade-a-star);
+  --sj-goal-fill: color-mix(in oklch, var(--sj-goal) 12%, var(--md-surface-container-lowest));
+  --sj-goal-edge: color-mix(in oklch, var(--sj-goal) 35%, var(--md-surface-container-lowest));
+}
+.sj-track { position: relative; display: grid; grid-template-columns: repeat(var(--n, 5), minmax(0, 1fr)); height: 108px; margin-block-start: 4px; align-items: end; gap: 8px; border-block-end: 2px solid var(--md-outline); }
+.sj-stp {
+  width: min(100%, 64px); justify-self: center; height: var(--h); min-height: 44px;
+  border-radius: 14px 14px 4px 4px; border: 0; padding: 8px 0 0; color: inherit; text-decoration: none; font: inherit;
+  background: color-mix(in oklch, var(--c) 22%, var(--md-surface-container-lowest));
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  transform-origin: bottom; animation: sj-grow 0.7s var(--ease-out) both;
+}
+.sj-stp b { font: 800 22px/1 var(--font-display); color: color-mix(in oklch, var(--c), var(--md-on-surface) 25%); }
+.sj-stp[data-current="true"] { background: var(--c); }
+.sj-stp[data-current="true"] b { color: var(--md-on-primary); font-size: 28px; }
+.sj-stp--goal { background: var(--sj-goal-fill); box-shadow: inset 0 0 0 2px var(--sj-goal-edge); cursor: pointer; }
+.sj-stp--goal b { color: var(--sj-goal); }
+.sj-stp--goal span { font: 700 12px var(--font-sans); white-space: nowrap; color: var(--sj-goal); }
+.sj-stp--ghost { background: transparent; box-shadow: inset 0 0 0 2px var(--md-outline-variant); height: var(--h, 34%); animation: none; }
+.sj-steps--ghost .sj-stp--goal { animation: none; cursor: default; }
+.sj-track > :nth-child(2) { animation-delay: 0.06s; }
+.sj-track > :nth-child(3) { animation-delay: 0.12s; }
+.sj-track > :nth-child(4) { animation-delay: 0.18s; }
+.sj-track > :nth-child(5) { animation-delay: 0.26s; }
+@keyframes sj-grow { from { transform: scaleY(0.4); } }
+@media (hover: hover) {
+  .sj-stp { transition: translate 0.2s var(--ease-out), filter 0.2s; }
+  a.sj-stp:hover, button.sj-stp:hover { translate: 0 -3px; filter: saturate(1.15); }
+}
+.sj-stp:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 3px; }
+/* Same gap as the track so every label centres under its bar. */
+.sj-labels { display: grid; grid-template-columns: repeat(var(--n, 5), minmax(0, 1fr)); gap: 8px; text-align: center; font: 500 12px var(--font-sans); color: var(--md-on-surface-variant); }
+.sj-labels > span { display: grid; gap: 1px; }
+.sj-labels b { font: 600 12.5px var(--font-mono); font-variant-numeric: tabular-nums; color: var(--md-on-surface); }
+.sj-labels b small { font-weight: 500; font-size: 12px; color: var(--md-on-surface-variant); }
+.sj-labels [data-current="true"] b { font-weight: 800; }
+.sj-labels .sj-goal-label, .sj-labels .sj-goal-label b, .sj-labels .sj-goal-label b small { color: var(--sj-goal); font-weight: 600; }
+.sj-labels .sj-next { align-self: end; }
+.sj-trend { margin: 0; font: 500 14px var(--font-sans); color: var(--md-on-surface-variant); }
+/* The forecast grade leans toward the ink so grades C and D keep 4.5:1 as text. */
+.sj-trend b { font: 800 15px var(--font-sans); color: color-mix(in oklch, var(--c, currentcolor), var(--md-on-surface) 25%); }
+@media (prefers-reduced-motion: reduce) {
+  .sj-stp { animation: none; transition: none; }
+  a.sj-stp:hover, button.sj-stp:hover { translate: none; }
+}
+
+/* ---- Binny tip ---------------------------------------------------------- */
+.sj-tip { display: grid; gap: 10px; }
+.sj-go { min-height: 50px; width: 100%; justify-content: center; border-radius: 18px; font: 700 15.5px/1 var(--font-sans); box-shadow: 0 14px 24px -16px color-mix(in oklch, var(--md-primary) 70%, transparent); }
+.sj-go span { opacity: 0.75; font-weight: 600; }
+.sj-upl { justify-self: center; display: inline-flex; align-items: center; min-height: 44px; font: 600 14px var(--font-sans); color: var(--md-primary); }
+
+/* ---- Marks to win ------------------------------------------------------- */
+.sj-win { display: grid; }
+.sj-win > ul { list-style: none; margin: 0; padding: 0; }
+.sj-wrow { display: grid; grid-template-columns: minmax(0, 1fr) 44px; align-items: center; gap: 6px; }
+.sj-wrow + .sj-wrow { border-block-start: 1px solid var(--md-outline-variant); }
+.sj-wmain { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 11px 2px; min-height: 44px; color: var(--md-on-surface); }
+.sj-at { display: grid; min-width: 0; }
+.sj-at b { font: 700 15px var(--font-sans); }
+.sj-at span { font: 400 13px var(--font-sans); color: var(--md-primary); }
+.sj-wn { font: 700 17px/1 var(--font-mono); letter-spacing: -0.02em; color: var(--md-primary); font-variant-numeric: tabular-nums; }
+.sj-wn small { font: 600 12px var(--font-sans); letter-spacing: 0; color: var(--md-on-surface-variant); }
+.sj-fc { width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; color: var(--md-primary); background: var(--md-primary-container); }
+.sj-fcx { width: 44px; }
+@media (hover: hover) { .sj-wmain:hover .sj-at b { color: var(--md-primary); } }
+.sj-wmain:focus-visible, .sj-fc:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; border-radius: 12px; }
+
+/* ---- Topics ------------------------------------------------------------- */
+.sj-hint { margin: 0; font: 500 14px/1.4 var(--font-sans); color: var(--md-on-surface-variant); text-wrap: pretty; }
+.sj-ghostchips { display: flex; flex-wrap: wrap; gap: 6px; }
+.sj-ghostchip { min-height: 40px; border-radius: 12px; box-shadow: inset 0 0 0 2px var(--md-outline-variant); }
+
+/* ---- Papers ------------------------------------------------------------- */
+.sj-grade { width: 36px; text-align: center; font: 800 28px/1 var(--font-display); color: var(--c); }
+.sj-more { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; border: 0; background: none; padding: 0; cursor: pointer; font: 700 14px var(--font-sans); color: var(--md-primary); justify-self: start; }
+.sj-more:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; border-radius: 8px; }
+
+/* ---- Loading ------------------------------------------------------------ */
+.sj-skel { display: grid; gap: 14px; }
+.sj-skelbars { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; align-items: end; height: 108px; }
+.sj-skelbars > * { border-radius: 14px 14px 4px 4px; }
+
+/* ---- Error -------------------------------------------------------------- */
+.sj-err { display: grid; justify-items: center; align-content: center; text-align: center; gap: 12px; padding: 24px 8px; min-height: 60dvh; }
+.sj-err h2 { margin: 6px 0 0; font: 800 28px/1.15 var(--font-display); letter-spacing: -0.02em; color: var(--md-primary); text-wrap: balance; }
+.sj-err p { margin: 0 0 6px; max-width: 30ch; font: 500 15px/1.4 var(--font-sans); color: var(--md-on-surface-variant); }
+.sj-err .sj-go { max-width: 300px; }
