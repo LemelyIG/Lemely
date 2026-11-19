@@ -37,11 +37,19 @@ from lemely.core.loose_schemas import Question as SchemeQuestion
 from lemely.core.loose_schemas import QuestionType as SchemeQuestionType
 from lemely.core.loose_schemas import SessionMonth as LooseSessionMonth
 from lemely.runtime.config import Settings
+from lemely.web import usage
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from sqlalchemy.orm import Session, sessionmaker
+
+# The post-settle hooks registered before any test module is collected. Captured here, at
+# conftest import, because pytest imports conftest before it imports a test module: a module that
+# calls ``create_app()`` at import (the authz route tables do, to parametrize over the routes)
+# registers the auto top-up hook during collection, after this line. A per-test snapshot taken
+# later would treat that hook as the starting state and never remove it.
+_BASELINE_POST_SETTLE_HOOKS: tuple[usage.PostSettleHook, ...] = tuple(usage._POST_SETTLE_HOOKS)
 
 
 # US-036: `sys.flags.optimize != 0` (CPython `-O`/`-OO`, or `PYTHONOPTIMIZE`
@@ -188,17 +196,18 @@ def _reset_billing_process_wiring() -> Iterator[None]:
 
     ``create_app`` registers both in process globals. A pusher left behind resolves the default
     sessionmaker and Paymob client itself, so a later test that settles a payment would reach the
-    environment's database instead of its own throwaway one. The hook registry is restored to
-    what it held before the test, so a test that clears or extends it does not change the next.
+    environment's database instead of its own throwaway one. Every test starts from, and the
+    registry is restored to, the hooks held at conftest import (``_BASELINE_POST_SETTLE_HOOKS``),
+    not a snapshot taken at test start. A hook added during collection, by a module that builds
+    the app at import, is therefore dropped before the first test rather than inherited by all.
     """
     from lemely.db.merchant_charge_repo import register_amount_pusher
-    from lemely.web import usage
 
-    hooks = list(usage._POST_SETTLE_HOOKS)
+    usage._POST_SETTLE_HOOKS[:] = _BASELINE_POST_SETTLE_HOOKS
     register_amount_pusher(None)
     yield
     register_amount_pusher(None)
-    usage._POST_SETTLE_HOOKS[:] = hooks
+    usage._POST_SETTLE_HOOKS[:] = _BASELINE_POST_SETTLE_HOOKS
 
 
 @pytest.fixture(autouse=True)
