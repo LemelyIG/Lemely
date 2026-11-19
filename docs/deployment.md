@@ -818,10 +818,14 @@ Rollback across the release is in §5.7.
 
 ### 5.11 Runbook: a payment held for a foreign integration
 
-Alert: log event `paymob_unexpected_integration` (`alert=True`, `path` is `callback` or `inquiry`). A
-Paymob transaction carried a genuine signature and a real order, but its signed `integration_id` is not
-the card, Apple Pay or MOTO id in config (a payment link, a dashboard test, or an id we forgot to
-configure). Nothing was settled: the payment stays `created`/`pending` and reconcile stops polling it.
+Alert: log event `paymob_unexpected_integration` (`alert=True`). Check `path` first. For a
+`callback` or `inquiry`, a transaction on a real order used an integration not allowed for that
+payment. A callback is signed; an inquiry comes from Paymob. Checkout accepts configured card and
+Apple Pay IDs, a saved-card charge accepts MOTO, and a renewal accepts configured IDs. The rejected
+transaction does not settle the payment; an open payment stays open. A rejected callback does not
+clear `next_reconcile_at`; a rejected scheduled inquiry clears it and stops polling.
+
+#### Path `callback` or `inquiry`
 
 1. Identify the payment from the alert's `payment_id` (and `txn_id` / order id if present):
 
@@ -835,22 +839,49 @@ configure). Nothing was settled: the payment stays `created`/`pending` and recon
    WHERE dedupe_key LIKE 'rejected_integration:%' ORDER BY created_at DESC LIMIT 20;
    ```
 
-2. If the `integration_id` is legitimately ours, add it to config
-   (`LEMELY_PAYMOB__CARD_INTEGRATION_ID`, `..._MOTO_INTEGRATION_ID` or
-   `..._APPLE_PAY_INTEGRATION_ID`), redeploy, then hand the payment back to reconcile so it settles
-   through the normal guarded path:
+2. Compare the integration with the Paymob account, environment and how this payment was started.
+   If it is the appropriate integration for that payment and config is wrong, correct the matching
+   `LEMELY_PAYMOB__CARD_INTEGRATION_ID`, `..._MOTO_INTEGRATION_ID` or
+   `..._APPLE_PAY_INTEGRATION_ID` with the approved configuration and redeploy. Use the audited
+   Admin Reconcile action with a reason for a guarded inquiry, then verify the payment and financial
+   outcome. Stop and investigate a 409 or any unverified outcome before further action. Do not
+   configure a MOTO ID as a card ID to bypass the checkout guard.
 
-   ```sql
-   UPDATE payments SET next_reconcile_at = now()
-   WHERE id = '<payment_id>' AND status IN ('created', 'pending');
-   ```
+3. Otherwise escalate to the authorized finance and database operators. Identify the exact
+   transaction, account and mode; compare local and Paymob records, including prior, in-flight,
+   disputed and ambiguous refunds. Do not refund solely because of this alert. If funds were
+   captured, a partial refund can leave money outstanding: establish that the transaction is fully
+   refunded and net exposure is zero before deciding how to resolve the local payment. Separately
+   confirm any noncapture. Resolve unknown outcomes and coordinate any in-flight reconcile first.
+   Prefer the audited inquiry workflow where applicable; it may be unable to resolve a rejected
+   foreign integration. Do not mark the payment failed by direct SQL: that bypasses the audited
+   flow, and a later verified success can still settle it. Escalate unresolved local state for a
+   safe, authorized resolution; do not repeat an ambiguous financial operation.
 
-3. Otherwise refund the transaction in the Paymob dashboard, then mark the payment failed:
+#### Path `subscription_webhook`
 
-   ```sql
-   UPDATE payments SET status = 'failed', next_reconcile_at = NULL
-   WHERE id = '<payment_id>' AND status IN ('created', 'pending');
-   ```
+The renewal check also emits this event with `subscription_id`, `txn_id` and `integration_id`,
+without `payment_id`. It reads Paymob's last successful charge and rejects a present integration ID
+that differs from the configured MOTO ID. No renewal payment is recorded and no period is granted
+by that check, even though the charge succeeded. The event can also come from the drift check; it
+uses the same path label.
+
+1. Find the local subscription and Paymob subscription ID with
+   `SELECT id, status, paymob_subscription_id, current_period_end, paymob_cancelled_at FROM subscriptions WHERE id = '<subscription_id>';`
+   Check the alerted transaction in the correct Paymob account and mode. Compare its integration,
+   amount and state with the subscription and intended MOTO configuration. Check for an existing
+   payment by `paymob_txn_id` before deciding how to resolve the charge.
+2. If the configured MOTO ID is wrong, correct it using approved configuration for the intended
+   account and mode and redeploy.
+   The drift check can revisit eligible subscriptions once per UTC day and applies an eligible
+   missed charge through the same guarded renewal rules; it can also make other drift repairs.
+   Confirm the resulting payment and period. Ended rows with `paymob_cancelled_at` set are not
+   drift candidates. Do not reset stamps or invoke payment reconcile for this path.
+3. If the transaction belongs to another integration or cannot safely be applied, escalate to
+   authorized finance and database operators under the same account, mode, prior-refund and
+   financial-outcome checks in step 3 above. A local payment may not exist, so also verify the
+   transaction and its refund history at Paymob. Do not refund solely because of the alert or replay
+   an ambiguous financial operation. Escalate any record or entitlement correction.
 
 ## 6. Deployment checklist
 

@@ -390,11 +390,22 @@ Also before launch:
 - Set the EGP credit conversion rate in the admin console (a `credit_conversion_rates` row for
   each live currency). The migration seeds none. Until a row exists, every superseded payment
   alerts and needs a manual refund, and nothing re-runs the conversion afterwards.
-- Check that `billing_settings` row `id = 1` exists (validity months, `grace_days`).
+- Check that `billing_settings` row `id = 1` exists and its validity months, `grace_days` and
+  `max_extra_seats` are correct.
 
 ### Alerts to create
 
-Create one log-based alert in GCP for each event name below.
+Create one log-based alert in GCP for each event name below. Key each alert on
+`jsonPayload.event="<name>"` alone. The app writes `level` and `alert` as JSON fields, and the two
+warning-level events in the last group below carry no `alert` field, so a filter on
+`jsonPayload.alert=true` or on error level would miss them.
+
+Scope: this table lists the events named here and nothing more. The code marks other billing events
+`alert=True` that are not in it (for example `paymob_key_mode_mismatch` and
+`subscription_last_transaction_unreadable`). They are outside this runbook until someone decides
+they belong. Adding one is a monitoring decision, not a fix to this table.
+
+Every group below is `alert=True` except the last, "Warning-level events".
 
 Paymob webhooks and HMAC:
 
@@ -402,11 +413,32 @@ Paymob webhooks and HMAC:
 - `paymob_subscription_webhook_malformed`: a subscription webhook body failed validation.
 - `paymob_hmac_failure_unrecorded`: an HMAC failure could not be counted, so the failure count is
   too low.
-- `subscription_webhook_not_deduplicable`: a subscription webhook lacked the facts needed to
-  de-duplicate it, so it was refused.
-- `paymob_unexpected_integration`: a genuinely signed transaction carried an integration id not in
-  config. Nothing was settled. Follow
-  [§5.11](../deployment.md#511-runbook-a-payment-held-for-a-foreign-integration).
+- `subscription_webhook_not_deduplicable`: a verified subscription webhook had no readable Paymob
+  facts to build a de-duplication key from, so no event key was stored. A matching subscription's
+  handler can still run if the trigger has a handler; an unmatched delivery returns without applying
+  it. Handlers are idempotent
+  under the subscription lock, and drift checking is a backstop for eligible rows. Do not replay
+  the webhook. The alert carries `paymob_subscription_id` and `trigger_type`.
+  - For `Successful Transaction`, Paymob returned no readable last charge id. That delivery grants
+    no period. The drift check can re-read and apply an eligible charge, normally at most once per
+    eligible subscription per UTC day.
+  - For any other trigger, Paymob's subscription answer lacked `state` or `updated_at`.
+  - To check one, find the row with
+    `SELECT id, status, current_period_end, paymob_cancelled_at FROM subscriptions WHERE paymob_subscription_id = <id>;`
+    and compare it with the subscription in the Paymob dashboard. If it keeps happening, send the
+    `paymob_subscription_id` values to Paymob support (no keys, no customer data).
+- `paymob_unexpected_integration`: a callback or Paymob read reported an integration id that
+  this kind of payment may not use. The rejected charge is not settled by that check. Two emitters
+  are told apart by the `path` field. Follow
+  [§5.11](../deployment.md#511-runbook-a-payment-held-for-a-foreign-integration) for both.
+  - `callback` or `inquiry` (has `payment_id`): the payment stays open. A rejected callback does
+    not clear its reconciliation schedule; a rejected scheduled inquiry clears it. Check the
+    current row and follow §5.11 steps 1 to 3.
+  - `subscription_webhook` (has `subscription_id` and `txn_id`, no `payment_id`): Paymob took a
+    renewal charge on an integration other than the MOTO one. The money is taken, but Lemely
+    recorded no payment and granted no period. §5.11 has no payment row to hand back to
+    reconcile here. Use its "Path `subscription_webhook`" part. Eligible drift checks may raise
+    it again.
 
 Rate-based metrics, not per-event alerts: `paymob_subscription_hmac_mismatch` and the
 transaction-route HMAC mismatch. A rotated HMAC secret rejects every callback with 401, so alert on
@@ -415,7 +447,27 @@ the rate.
 Subscription renewals and drift:
 
 - `subscription_link_conflict`: a Paymob subscription id conflicts with the one already linked.
-- `subscription_paymob_missing`: Paymob no longer has the subscription, so the row ended.
+- `subscription_paymob_missing`: our cancel and the read-back both got 404 for the Paymob
+  subscription id. One event can be a subscription Paymob deleted. A burst is a configuration
+  fault: a wrong API key, account or `LEMELY_PAYMOB__API_BASE` gives the same pair of 404s. The
+  local stamp is not proof that Paymob stopped charging.
+  - The sweep stamped `paymob_cancelled_at`; the row may already have ended or may still be live
+    with cancellation scheduled for period end. An immediate admin cancel can end the row and its
+    allowance, and queue a cancellation notice (its audit has `paymob_missing`). The stamp stops
+    automatic cancel retries. It also excludes an ended row from the drift check.
+  - Check the API key's account and mode, `LEMELY_PAYMOB__API_BASE`, and the Integration IDs
+    against the intended environment without displaying secrets. For production, verify
+    `LEMELY_PAYMOB__EXPECT_LIVE=true` and check logs for `paymob_key_mode_mismatch` (it is outside
+    this list). The guard only rejects Test-prefixed secret or public keys at startup; it does not
+    validate the API key, base URL, account or Integration IDs. `deploy.yml` does not set it (L1).
+  - In the correct Paymob account and mode, inspect each `paymob_subscription_id` and its current
+    state. Compare the local plan and intended cancellation date with the dashboard; resolve an
+    active remote subscription according to that intent. In particular, do not cancel a live plan
+    early merely because it has a local stamp. An ambiguous result needs investigation before any
+    further cancellation request. Escalate any incorrect local state for manual reconciliation.
+  - A late charge needs separate review. A cancelled row keeps the money and grants no period;
+    an eligible expired row may reactivate. Inspect the recorded payment and related alerts before
+    arranging any refund or changing access. Do not infer the financial outcome from the stamp.
 - `subscription_next_billing_disagrees`: Paymob's `next_billing` differs from our period end by
   more than the tolerance.
 - `subscription_renewal_without_payer`: a renewal arrived for a subscription with no payer.
@@ -423,10 +475,22 @@ Subscription renewals and drift:
 - `subscription_renewal_paid_without_subscription`: a renewal payment matched no subscription.
 - `subscription_renewal_after_cancel_request`: a renewal was paid after the customer asked to
   cancel.
-- `subscription_charge_on_ended_subscription`: a charge landed on a subscription that had ended.
+- `subscription_charge_on_ended_subscription`: a paid charge bought no period, including a
+  cancelled or never-activated plan, an expired plan replaced by another live plan, or a non-plan.
+  The money is kept; investigate and arrange a refund manually.
 - `subscription_charge_after_terms_cancel`: a charge landed after a cancel caused by a terms change.
 - `subscription_renewal_underpaid`: a renewal charged less than expected.
-- `subscription_renewal_paid_above_expected`: a renewal charged more than expected.
+- `subscription_renewal_paid_above_expected`: an accepted renewal exceeded current terms and
+  no other version prices to that amount. Use the excess-refund checks below.
+- `subscription_renewal_paid_reverted_amount`: an accepted renewal exceeded current terms but
+  matches another terms version. Use the excess-refund checks below.
+  Before any refund, verify the settled payment and the prior, in-flight, ambiguous or disputed
+  refund history both locally and in the correct Paymob account and mode. Resolve uncertainty
+  first; do not repeat an operation with an unknown outcome. Calculate the remaining overpayment
+  after confirmed refunds and refund only that amount through the authorized, audited workflow.
+- `subscription_renewal_unexplained_amount`: an accepted renewal was below current terms and
+  matches an overtaken version. Investigate the terms and amount push; nothing further is owed
+  on the terms retained, so do not collect the difference.
 - `subscription_renewal_paid_previous_amount`: a renewal charged the amount before a change.
 - `renewal_seat_payment_credited`: a renewal seat payment arrived too late and became credits.
 
@@ -442,8 +506,15 @@ Cancel, grace and refunds:
   started. Handle by hand.
 - `subscription_refund_with_later_paid_period`: a full refund of the current period while a later
   period is paid. It ends nothing. Handle by hand.
-- `admin_refund_reverse_unavailable`: an admin asked to stop a renewal on a refund that could not
-  do it.
+- `admin_refund_reverse_unavailable`: an admin requested `reverse_change` on a full refund or
+  void, but the purchase effect could not be reversed after the financial operation succeeded.
+  The refund or void succeeded; the intended seat reduction or downgrade was not scheduled.
+  Do not submit the financial operation again. Use `refund_id`, `payment_id` and the alert's
+  reason to inspect the payment, subscription and the `payment.refund.succeeded` audit's
+  `reverse_effect` and `reverse_reason` (the same action is used for a void). Compare current and
+  pending seats or tier with the purchase and later changes. Coordinate an appropriate manual
+  correction with the payer; seat reductions and downgrades use the existing billing flows and
+  normally take effect at renewal. Escalate if those flows cannot safely express the correction.
 - `admin_manual_expiry_failed`: an admin manual expiry of one row raised.
 
 Amount pushes and seats:
@@ -478,15 +549,54 @@ Auto top-up:
 
 Credits and usage:
 
-- `credit_validity_setting_missing`: the `billing_settings` row was deleted. Restore `id = 1`
-  (validity 12 months, or the admin value). The sweeper then settles the stuck pack payments.
+- `credit_validity_setting_missing`: singleton `billing_settings.id = 1` is missing. Pack or
+  top-up settlement fails closed; the callback rolls back and Paymob may retry. The alert may
+  also come from a catalogue read, in which case `payment_id` is null. The same row supplies
+  `seat_ceiling_setting_missing` and `seat_grace_setting_missing`.
+  1. Inspect `billing_settings.id = 1` and the settings audit with read-only database queries;
+     do not use the admin settings GET while the row is missing. In `admin_audit_log`, find action
+     `catalogue.settings.update`, target kind `billing_settings`, target id
+     `00000000-0000-0000-0000-000000000001`, ordered by `created_at` descending. The `after`
+     snapshot records all six setting fields and the version. Audit records after a recreation may
+     describe newer changes. Establish the intended values with the authorized admin before writing.
+  2. Coordinate settings writers and any process that can commit a recreation, including admin
+     settings GETs, during recovery. A GET creates a missing row with validity 12 months, grace
+     3 days, maximum extra seats 200, notice 14 days, version 1, and NULL margin and code-execution
+     price. The LLM price refresh uses a noncommitting read session, so its attempted insert does
+     not persist the row. A committed recreation can let settlement create grants with the seed
+     validity; later settings changes cannot fix their expiry. If the intended values or
+     concurrency cannot be safely established, escalate before recovery.
+  3. Recheck the row read-only. If it is absent, use the existing admin
+     `PUT /api/admin/billing/settings` with all six authorized values, a reason and
+     `expectedVersion=1`. The PUT inserts defaults and applies the values in one transaction.
+     Version 1 also matches a row another process just inserted: the version check alone cannot
+     distinguish that row from this PUT's insertion, and there is no lock on a missing row. If the
+     row exists, compare its current values with the audit and use its freshly read version,
+     changing only fields requiring correction. Never overwrite newer settings from a stale audit;
+     on a conflict, re-read and reassess the intended values before proceeding.
+  4. Track affected payments by alert `payment_id` and confirm their eventual status and grants.
+     Callback retries and the normal reconcile inquiry can settle eligible open payments, with
+     backoff from 15 minutes to 4 hours. Reconcile can stop polling after seven days of unknown
+     outcomes; inspect `paymob_reconcile_stuck` and any still-open payment separately. Do not
+     repeat a charge or refund to recover settlement.
 - `usage_settle_on_closed_job`: a settle was refused because the job had closed.
-- `usage_hold_lost_mid_run`: a hold was lost during a run, so that run is unbilled.
-- `usage_deferred_unbound`: a deferred usage charge had no job to bind to.
 - `usage_job_stranded_holds`: the sweep found and released holds stranded on a job.
 - `usage_expire_job_failed`: expiring a job failed. The job stays open and is retried hourly.
 - `usage_expire_grant_failed`: expiring one grant failed and was skipped.
 - `usage_lease_cap_reached`: a job reached the cap of 3 leases. The sweeper expires the hold.
+
+Warning-level events (no `alert=True`):
+
+- `usage_hold_lost_mid_run`: a hold was lost during a run; renewal stops and a later settle is
+  refused, leaving the work unbilled. Correlate `job_id` with `usage_settle_on_closed_job`.
+- `usage_deferred_unbound`: a non-exempt deferred job finished without binding its subject, so no
+  hold was made and the work ran unbilled. The warning includes `job_id`, action and cost.
+
+Create the same per-event log-based alerts requested above for these warnings, filtering by event
+name without requiring `alert=true` or error severity. To investigate in Logs Explorer, select the
+backend Cloud Run service and filter on `jsonPayload.event="usage_hold_lost_mid_run"` or
+`jsonPayload.event="usage_deferred_unbound"`. Event-name filters preserve the requested monitoring
+policy; adding `alert=True` in code or changing that policy is a separate decision.
 
 ## 6. Results log
 
