@@ -265,3 +265,119 @@ def test_a_slow_but_in_time_answer_is_used(monkeypatch: pytest.MonkeyPatch) -> N
         return httpx.Response(200, json=_body())
 
     assert get_usd_egp_reference(client=Feed(slowish).client()) is not None
+
+
+def test_concurrent_cold_requests_share_one_fetch() -> None:
+    first_in_feed = threading.Event()
+    second_in_feed = threading.Event()
+    release = threading.Event()
+    second_started = threading.Event()
+    results: list[FxReference | None] = []
+
+    def request(_request: httpx.Request) -> httpx.Response:
+        if first_in_feed.is_set():
+            second_in_feed.set()
+        first_in_feed.set()
+        assert release.wait(5)
+        return httpx.Response(200, json=_body())
+
+    def read() -> None:
+        results.append(get_usd_egp_reference(client=client))
+
+    def read_second() -> None:
+        second_started.set()
+        read()
+
+    with Feed(request).client() as client:
+        first = threading.Thread(target=read)
+        second = threading.Thread(target=read_second)
+        first.start()
+        try:
+            assert first_in_feed.wait(1)
+            second.start()
+            assert second_started.wait(1)
+            assert not second_in_feed.wait(0.25)
+        finally:
+            release.set()
+            first.join(5)
+            if second.ident is not None:
+                second.join(5)
+    assert len(results) == 2 and results[0] is not None and results[0] == results[1]
+
+
+def test_redirect_is_refused_even_when_client_follows_redirects() -> None:
+    def request(req: httpx.Request) -> httpx.Response:
+        if req.url.host == "open.er-api.com":
+            return httpx.Response(302, headers={"location": "https://redirect.invalid/"})
+        return httpx.Response(200, json=_body())
+
+    feed = Feed(request)
+    with httpx.Client(transport=httpx.MockTransport(feed), follow_redirects=True) as client:
+        assert get_usd_egp_reference(client=client) is None
+    assert feed.calls == 1
+
+
+def test_fetch_runs_on_daemon_thread() -> None:
+    workers: list[threading.Thread] = []
+
+    def request(_request: httpx.Request) -> httpx.Response:
+        workers.append(threading.current_thread())
+        return httpx.Response(200, json=_body())
+
+    with Feed(request).client() as client:
+        assert get_usd_egp_reference(client=client) is not None
+    assert [worker.daemon for worker in workers] == [True]
+
+
+def test_late_failure_does_not_emit_a_second_warning(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(fx_reference, "DEADLINE_SECONDS", 0.2)
+    release = threading.Event()
+    workers: list[threading.Thread] = []
+
+    def request(_request: httpx.Request) -> httpx.Response:
+        workers.append(threading.current_thread())
+        assert release.wait(5)
+        raise httpx.ReadTimeout("late read timeout")
+
+    with Feed(request).client() as client:
+        try:
+            assert get_usd_egp_reference(client=client) is None
+        finally:
+            release.set()
+            for worker in workers:
+                worker.join(5)
+    assert len(workers) == 1 and not workers[0].is_alive()
+    warnings = [r.message for r in caplog.records if r.name == fx_reference.__name__]
+    assert warnings == ["fx reference: no answer within 0.2 s from open.er-api.com"]
+
+
+def test_an_unexpected_transport_error_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    with Feed(_raise(RuntimeError("unexpected"))).client() as client:
+        assert get_usd_egp_reference(client=client) is None
+    assert "unexpected RuntimeError" in caplog.text
+
+
+def test_an_oversized_stream_is_cut_off(caplog: pytest.LogCaptureFixture) -> None:
+    class Stream(httpx.SyncByteStream):
+        def __iter__(self) -> Iterator[bytes]:
+            yield b" " * (64 * 1024)
+            yield b" "
+            pytest.fail("the worker read beyond the response size cap")
+
+    feed = Feed(lambda _r: httpx.Response(200, stream=Stream()))
+    with feed.client() as client:
+        assert get_usd_egp_reference(client=client) is None
+    assert "body over 65536 bytes" in caplog.text
+
+
+def test_default_transport_cannot_reach_the_fx_feed(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpcore
+
+    def network_attempt(_pool: httpcore.ConnectionPool, _request: httpcore.Request) -> None:
+        pytest.fail("the default transport tried to send the FX request")
+
+    monkeypatch.setattr(httpcore.ConnectionPool, "handle_request", network_attempt)
+    with httpx.Client(trust_env=False) as client:
+        assert client.get(fx_reference.SOURCE_URL).status_code == 503

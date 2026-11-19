@@ -23,7 +23,7 @@ from lemely.db.billing_settings_repo import (
 from lemely.db.llm_price_repo import LlmPriceService, LlmPriceView
 from lemely.db.models.enums import Role
 from lemely.db.session import get_sessionmaker
-from lemely.io.fx_reference import FxReference, get_usd_egp_reference
+from lemely.io import fx_reference as _fx
 from lemely.io.gemini import code_price_models, code_price_row
 from lemely.io.llm.pricing import CLAUDE_PRICE_SOURCES, PriceRow
 from lemely.io.providers import is_anthropic_model
@@ -98,15 +98,15 @@ def get_llm_price_service() -> Iterator[LlmPriceService]:
 PriceService = Annotated[LlmPriceService, Depends(get_llm_price_service)]
 
 
-def get_market_reference() -> FxReference | None:
+def get_market_reference() -> _fx.FxReference | None:
     """The market USD to EGP hint (display only, P08-T21). Never raises; tests override this."""
-    return get_usd_egp_reference()
+    return _fx.get_usd_egp_reference()
 
 
-MarketReference = Annotated[FxReference | None, Depends(get_market_reference)]
+MarketReference = Annotated[_fx.FxReference | None, Depends(get_market_reference)]
 
 
-def market_reference_dto(reference: FxReference | None) -> MarketReferenceDTO | None:
+def market_reference_dto(reference: _fx.FxReference | None) -> MarketReferenceDTO | None:
     if reference is None:
         return None
     return MarketReferenceDTO(
@@ -117,7 +117,7 @@ def market_reference_dto(reference: FxReference | None) -> MarketReferenceDTO | 
 
 
 def settings_dto(
-    view: BillingSettingsView, reference: FxReference | None = None
+    view: BillingSettingsView, reference: _fx.FxReference | None = None
 ) -> BillingSettingsDTO:
     margin = view.margin_egp_per_usd
     code = view.code_execution_usd_per_hour

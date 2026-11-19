@@ -2,24 +2,29 @@
 
 DV-2 carve-out: this module reads a public market rate so an admin can compare it with the rate
 they set by hand. It never feeds a price, a credit conversion, a margin or any other money figure
-(UD-13: admins set every rate). ``tests/test_fx_reference_isolation.py`` fails if a billing
-calculation path imports it, so the value cannot leak into money.
+(UD-13: admins set every rate). Two guards keep the value out of money: the import-linter contract
+"Money paths never reach the market FX hint" (``pyproject.toml``, transitive, so a chain through
+the settings router counts) and ``tests/test_fx_reference_isolation.py`` (direct, dynamic and
+string forms anywhere under ``lemely/``).
 
 Source: ``https://open.er-api.com/v6/latest/USD`` (ExchangeRate-API open access: no key, one update
 a day, rate limited with a 20 minute 429 ban, attribution required, caching allowed, no
 re-distribution). The UI credits the source.
 
-Every failure (transport error, timeout, non-200, bad JSON, missing or out-of-band rate) returns
-``None`` and logs one warning. Nothing raises into a request and nothing alerts. A success is cached
-in process for 24 hours; a failure for 10 minutes (20 after a 429, the feed's own ban), so a dead
-feed is not hammered. The whole fetch gets one 2 s wall-clock budget.
+Every failure (transport error, timeout, non-200, a redirect, an oversized or unreadable body, a
+missing or out-of-band rate, any unexpected error) returns ``None`` and logs one warning. Nothing
+raises into a request and nothing alerts. A success is cached in process for 24 hours; a failure
+for 10 minutes (20 after a 429, the feed's own ban), so a dead feed is not hammered. The whole
+fetch gets one 2 s wall-clock budget.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
@@ -42,6 +47,10 @@ FAILURE_TTL_SECONDS: Final = 10 * 60
 RATE_LIMITED_TTL_SECONDS: Final = 20 * 60
 #: One wall-clock budget for the whole fetch (connect, read, parsing), not per phase.
 DEADLINE_SECONDS: Final = 2.0
+#: The live body is about 4 KB (166 rates). A body far past that is not this feed.
+MAX_BODY_BYTES: Final = 64 * 1024
+#: The fetch thread's name, so a stalled one can be told apart in a thread dump.
+THREAD_NAME: Final = "fx-reference-fetch"
 #: A rate outside this band is a feed fault, not a market (EGP has traded between about 5 and 60).
 MIN_RATE: Final = Decimal(1)
 MAX_RATE: Final = Decimal(1000)
@@ -60,6 +69,8 @@ class FxReference:
 class _Fetched:
     value: FxReference | None
     ttl: float
+    #: Why there is no value, for the one warning; ``None`` on success.
+    problem: str | None = None
 
 
 @dataclass(slots=True)
@@ -102,46 +113,81 @@ def _parse(payload: object) -> FxReference | None:
     return FxReference(rate=rate, source=SOURCE_NAME, as_of=as_of)
 
 
+def _failed(problem: str, ttl: float = FAILURE_TTL_SECONDS) -> _Fetched:
+    return _Fetched(value=None, ttl=ttl, problem=problem)
+
+
+def _read_capped(response: httpx.Response) -> bytes | None:
+    """The body, or ``None`` once it passes ``MAX_BODY_BYTES`` (the rest is never read)."""
+    body = bytearray()
+    for chunk in response.iter_bytes():
+        if len(body) + len(chunk) > MAX_BODY_BYTES:
+            return None
+        body += chunk
+    return bytes(body)
+
+
 def _fetch(client: httpx.Client | None) -> _Fetched:
-    """One request to the source; no reading plus one warning on any failure."""
-    owned = client is None
-    http = client or httpx.Client(timeout=TIMEOUT_SECONDS)
+    """One request to the source. It never raises and never logs: the caller logs ``problem``."""
     try:
-        response = http.get(SOURCE_URL, timeout=TIMEOUT_SECONDS)
-        if response.status_code != 200:
-            logger.warning("fx reference: HTTP %s from %s", response.status_code, SOURCE_NAME)
-            limited = response.status_code == 429
-            return _Fetched(None, RATE_LIMITED_TTL_SECONDS if limited else FAILURE_TTL_SECONDS)
-        reading = _parse(response.json())
+        owned: AbstractContextManager[httpx.Client] = (
+            httpx.Client(timeout=TIMEOUT_SECONDS) if client is None else nullcontext(client)
+        )
+        with (
+            owned as http,
+            http.stream(
+                "GET", SOURCE_URL, timeout=TIMEOUT_SECONDS, follow_redirects=False
+            ) as response,
+        ):
+            if response.status_code != 200:
+                ttl = (
+                    RATE_LIMITED_TTL_SECONDS if response.status_code == 429 else FAILURE_TTL_SECONDS
+                )
+                return _failed(f"HTTP {response.status_code}", ttl)
+            body = _read_capped(response)
+        if body is None:
+            return _failed(f"a body over {MAX_BODY_BYTES} bytes")
+        try:
+            payload: object = json.loads(body)
+        except ValueError:
+            return _failed("an unreadable body")
+        reading = _parse(payload)
     except httpx.HTTPError as exc:
-        logger.warning("fx reference: %s from %s", type(exc).__name__, SOURCE_NAME)
-        return _Fetched(None, FAILURE_TTL_SECONDS)
-    except ValueError:
-        logger.warning("fx reference: unreadable body from %s", SOURCE_NAME)
-        return _Fetched(None, FAILURE_TTL_SECONDS)
-    finally:
-        if owned:
-            http.close()
+        return _failed(type(exc).__name__)
+    except Exception as exc:
+        return _failed(f"unexpected {type(exc).__name__}")
     if reading is None:
-        logger.warning("fx reference: no usable EGP rate from %s", SOURCE_NAME)
-        return _Fetched(None, FAILURE_TTL_SECONDS)
-    return _Fetched(reading, SUCCESS_TTL_SECONDS)
+        return _failed("no usable EGP rate")
+    return _Fetched(value=reading, ttl=SUCCESS_TTL_SECONDS)
 
 
 def _fetch_within_deadline(client: httpx.Client | None) -> _Fetched:
     """``_fetch`` on a daemon thread, abandoned once ``DEADLINE_SECONDS`` of wall clock pass.
 
-    httpx timeouts apply per phase, so a slow feed could hold a request for several of them; this
-    caps the whole wait. An abandoned fetch ends on its own at its per-phase timeouts.
+    httpx timeouts apply per phase (and not at all to DNS), so they cannot cap the whole wait;
+    this does. An abandoned fetch ends on its own at its per-phase timeouts.
+
+    A result that arrives after the deadline is dropped on purpose, success or failure. The waiter
+    has already logged the one warning and cached the miss, so a late failure must not log again,
+    and a late success must not overwrite a cache entry that a newer request may have written. The
+    next request after the short negative cache fetches afresh.
     """
-    box: list[_Fetched] = []
-    worker = threading.Thread(target=lambda: box.append(_fetch(client)), daemon=True)
-    worker.start()
-    worker.join(DEADLINE_SECONDS)
-    if box:
-        return box[0]
-    logger.warning("fx reference: no answer from %s within %.1f s", SOURCE_NAME, DEADLINE_SECONDS)
-    return _Fetched(None, FAILURE_TTL_SECONDS)
+    results: list[_Fetched] = []
+
+    def work() -> None:
+        results.append(_fetch(client))
+
+    worker = threading.Thread(target=work, name=THREAD_NAME, daemon=True)
+    try:
+        worker.start()
+        worker.join(DEADLINE_SECONDS)
+    except RuntimeError as exc:  # no thread could be started
+        return _failed(f"{type(exc).__name__} starting the fetch thread")
+    if results:
+        return results[0]
+    if worker.is_alive():
+        return _failed(f"no answer within {DEADLINE_SECONDS:.1f} s")
+    return _failed("the fetch thread ended without an answer")
 
 
 def get_usd_egp_reference(
@@ -161,5 +207,7 @@ def get_usd_egp_reference(
         if _entry is not None and now < _entry.expires_at:
             return _entry.value
         fetched = _fetch_within_deadline(client)
+        if fetched.problem is not None:
+            logger.warning("fx reference: %s from %s", fetched.problem, SOURCE_NAME)
         _entry = _Entry(value=fetched.value, expires_at=clock() + fetched.ttl)
         return fetched.value

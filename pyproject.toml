@@ -547,6 +547,29 @@ forbidden_modules = [
   "fastapi",
 ]
 
+[[tool.importlinter.contracts]]
+name = "Money paths never reach the market FX hint"
+type = "forbidden"
+source_modules = [
+  "lemely.core",
+  "lemely.db",
+  "lemely.io.paymob",
+  "lemely.web.admin_billing_common",
+  "lemely.web.billing_jobs",
+  "lemely.web.deps_admin_billing",
+  "lemely.web.deps_billing",
+  "lemely.web.merchant_charge_deps",
+  "lemely.web.routers.admin_billing",
+  "lemely.web.routers.admin_billing_customers",
+  "lemely.web.routers.admin_billing_health",
+  "lemely.web.routers.admin_billing_margin",
+  "lemely.web.routers.admin_billing_payments",
+  "lemely.web.routers.billing",
+  "lemely.web.routers.paymob_webhooks",
+  "lemely.web.usage_sweeps",
+]
+forbidden_modules = ["lemely.io.fx_reference"]
+
 [tool.pyright]
 venvPath = '.'
 venv = '.venv'

@@ -304,6 +304,36 @@ def _forbid_live_gemini_calls() -> Iterator[None]:
         gemini_module.GeminiClient._client = property(original)  # type: ignore[method-assign]
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _stub_live_fx_feed() -> Iterator[None]:
+    """Keep the market hint offline, including in tests of unrelated settings fields.
+
+    Stub the real HTTPX transport so tests can still exercise the fetch with
+    MockTransport and unrelated HTTP requests keep their existing behavior.
+    """
+    import httpx
+
+    sync = httpx.HTTPTransport.handle_request
+    async_ = httpx.AsyncHTTPTransport.handle_async_request
+
+    def handle_request(transport: httpx.HTTPTransport, request: httpx.Request) -> httpx.Response:
+        if request.url.host == "open.er-api.com":
+            return httpx.Response(503)
+        return sync(transport, request)
+
+    async def handle_async_request(
+        transport: httpx.AsyncHTTPTransport, request: httpx.Request
+    ) -> httpx.Response:
+        if request.url.host == "open.er-api.com":
+            return httpx.Response(503)
+        return await async_(transport, request)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(httpx.HTTPTransport, "handle_request", handle_request)
+        patch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", handle_async_request)
+        yield
+
+
 class RepoLedgerWriteAttempted(BaseException):
     """Raised when a test tries to write the repo's real spend ledger.
 
