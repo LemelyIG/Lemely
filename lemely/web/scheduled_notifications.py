@@ -481,7 +481,7 @@ def _run_one(
         error = exc
     if recorder is not None:
         _record_safely(
-            partial(recorder.finish, name, now=now(), count=count, error=error),
+            partial(recorder.record_finish, name, now=now(), count=count, error=error),
             job=name,
             phase="finish",
         )

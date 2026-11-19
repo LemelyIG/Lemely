@@ -148,8 +148,8 @@ def test_health_reports_jobs_webhooks_and_failed_charges(
     sm: sessionmaker[Session], admin: uuid.UUID
 ) -> None:
     recorder = JobRunRecorder(sm)
-    recorder.finish("billing.reconcile_pending", now=NOW, count=2, error=None)
-    recorder.finish("usage.expire_grants", now=NOW, count=None, error=RuntimeError("boom"))
+    recorder.record_finish("billing.reconcile_pending", now=NOW, count=2, error=None)
+    recorder.record_finish("usage.expire_grants", now=NOW, count=None, error=RuntimeError("boom"))
     for _ in range(3):
         _event(sm, PaymobEventKind.transaction, 1)
     _renewal_webhook(sm, TRIGGER_FAILED, 2)
@@ -254,9 +254,9 @@ def test_a_successful_renewal_is_not_a_renewal_failure(
 
 def test_only_billing_jobs_are_listed(sm: sessionmaker[Session], admin: uuid.UUID) -> None:
     recorder = JobRunRecorder(sm)
-    recorder.finish("announcements.publish_due", now=NOW, count=1, error=None)
-    recorder.finish("deliver_tutoring_email", now=NOW, count=1, error=None)
-    recorder.finish("subscriptions.expire_overdue", now=NOW, count=0, error=None)
+    recorder.record_finish("announcements.publish_due", now=NOW, count=1, error=None)
+    recorder.record_finish("deliver_tutoring_email", now=NOW, count=1, error=None)
+    recorder.record_finish("subscriptions.expire_overdue", now=NOW, count=0, error=None)
 
     jobs = {
         j["name"]: j for j in _client(sm, admin).get("/api/admin/billing/health").json()["jobs"]

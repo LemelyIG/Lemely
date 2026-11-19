@@ -169,7 +169,7 @@ class JobRunRecorder:
         with self._sm.begin() as session:
             session.execute(stmt)
 
-    def finish(
+    def record_finish(
         self, name: str, *, now: datetime, count: int | None, error: BaseException | None
     ) -> None:
         """Record the outcome: ``count`` for a job that returned, ``error`` for one that raised."""

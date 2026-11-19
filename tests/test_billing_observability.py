@@ -105,7 +105,7 @@ def test_start_then_finish_records_the_run(sm: sessionmaker[Session]) -> None:
     assert started.last_finished_at is None and started.last_outcome is None
     assert started.total_runs == 0
 
-    recorder.finish(
+    recorder.record_finish(
         "billing.reconcile_pending", now=NOW + timedelta(seconds=2), count=3, error=None
     )
     row = _row(sm, "billing.reconcile_pending")
@@ -117,7 +117,7 @@ def test_start_then_finish_records_the_run(sm: sessionmaker[Session]) -> None:
 
 
 def test_a_finish_without_a_start_row_still_inserts(sm: sessionmaker[Session]) -> None:
-    JobRunRecorder(sm).finish("billing.x", now=NOW, count=None, error=BillingError("boom"))
+    JobRunRecorder(sm).record_finish("billing.x", now=NOW, count=None, error=BillingError("boom"))
     row = _row(sm, "billing.x")
     assert row.last_started_at == NOW
     assert (row.last_outcome, row.consecutive_failures, row.total_runs, row.total_failures) == (
@@ -133,11 +133,13 @@ def test_a_failing_job_counts_up_and_a_later_success_resets(sm: sessionmaker[Ses
     recorder = JobRunRecorder(sm)
     name = "billing.reconcile_pending"
     recorder.start(name, NOW)
-    recorder.finish(name, now=NOW + timedelta(seconds=1), count=2, error=None)
+    recorder.record_finish(name, now=NOW + timedelta(seconds=1), count=2, error=None)
     for minute in (1, 2):
         at = NOW + timedelta(minutes=minute)
         recorder.start(name, at)
-        recorder.finish(name, now=at + timedelta(seconds=1), count=None, error=BillingError("boom"))
+        recorder.record_finish(
+            name, now=at + timedelta(seconds=1), count=None, error=BillingError("boom")
+        )
     row = _row(sm, name)
     assert row.last_outcome == "failed"
     assert row.last_error == "BillingError: boom"
@@ -148,7 +150,7 @@ def test_a_failing_job_counts_up_and_a_later_success_resets(sm: sessionmaker[Ses
 
     at = NOW + timedelta(minutes=3)
     recorder.start(name, at)
-    recorder.finish(name, now=at + timedelta(seconds=1), count=5, error=None)
+    recorder.record_finish(name, now=at + timedelta(seconds=1), count=5, error=None)
     row = _row(sm, name)
     assert (row.last_outcome, row.last_error, row.last_result_count) == ("ok", None, 5)
     assert row.consecutive_failures == 0
@@ -158,7 +160,7 @@ def test_a_failing_job_counts_up_and_a_later_success_resets(sm: sessionmaker[Ses
 
 def test_a_start_keeps_the_previous_outcome_until_the_run_ends(sm: sessionmaker[Session]) -> None:
     recorder = JobRunRecorder(sm)
-    recorder.finish("j", now=NOW, count=None, error=BillingError("boom"))
+    recorder.record_finish("j", now=NOW, count=None, error=BillingError("boom"))
     recorder.start("j", NOW + timedelta(minutes=1))
     row = _row(sm, "j")
     assert row.last_started_at == NOW + timedelta(minutes=1)
@@ -170,7 +172,7 @@ def test_the_error_text_is_cut_to_the_column_as_a_whole(sm: sessionmaker[Session
     text = describe_job_error(BillingError("x" * 500))
     assert len(text) == 200
     assert text.startswith("BillingError: xxx")
-    JobRunRecorder(sm).finish("j", now=NOW, count=None, error=BillingError("x" * 500))
+    JobRunRecorder(sm).record_finish("j", now=NOW, count=None, error=BillingError("x" * 500))
     assert _row(sm, "j").last_error == text
 
 
@@ -224,7 +226,7 @@ class _SpyRecorder(JobRunRecorder):
     def start(self, name: str, now: Any) -> None:
         self.calls.append(("start", name, now))
 
-    def finish(
+    def record_finish(
         self, name: str, *, now: Any, count: int | None, error: BaseException | None
     ) -> None:
         self.calls.append(("finish", name, now, count, type(error).__name__ if error else None))
@@ -237,7 +239,7 @@ class _BrokenRecorder(JobRunRecorder):
     def start(self, name: str, now: Any) -> None:
         raise RuntimeError("db down")
 
-    def finish(
+    def record_finish(
         self, name: str, *, now: Any, count: int | None, error: BaseException | None
     ) -> None:
         raise RuntimeError("db down")
