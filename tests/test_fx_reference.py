@@ -6,6 +6,7 @@ sleeps.
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import threading
 import time
@@ -327,6 +328,25 @@ def test_fetch_runs_on_daemon_thread() -> None:
     with Feed(request).client() as client:
         assert get_usd_egp_reference(client=client) is not None
     assert [worker.daemon for worker in workers] == [True]
+
+
+def test_fetch_runs_in_a_copy_of_the_callers_context() -> None:
+    marker: contextvars.ContextVar[str] = contextvars.ContextVar("fx_marker", default="unset")
+    seen: list[str] = []
+
+    def request(_request: httpx.Request) -> httpx.Response:
+        seen.append(marker.get())
+        marker.set("worker")
+        return httpx.Response(200, json=_body())
+
+    token = marker.set("caller")
+    try:
+        with Feed(request).client() as client:
+            assert get_usd_egp_reference(client=client) is not None
+        assert marker.get() == "caller"
+    finally:
+        marker.reset(token)
+    assert seen == ["caller"]
 
 
 def test_late_failure_does_not_emit_a_second_warning(

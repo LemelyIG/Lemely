@@ -20,6 +20,7 @@ fetch gets one 2 s wall-clock budget.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import threading
@@ -177,7 +178,11 @@ def _fetch_within_deadline(client: httpx.Client | None) -> _Fetched:
     def work() -> None:
         results.append(_fetch(client))
 
-    worker = threading.Thread(target=work, name=THREAD_NAME, daemon=True)
+    # The feed makes no priced call, but worker threads under lemely/io run in a copied context
+    # (billing spec §5.7), so a contextvar the caller set is visible here and never written back.
+    worker = threading.Thread(
+        target=contextvars.copy_context().run, args=(work,), name=THREAD_NAME, daemon=True
+    )
     try:
         worker.start()
         worker.join(DEADLINE_SECONDS)

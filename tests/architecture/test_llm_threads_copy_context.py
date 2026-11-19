@@ -60,6 +60,7 @@ _STARTERS_ALLOWED: dict[tuple[str, str], str] = {
     ("answer_extraction.py", "ThreadPoolExecutor"): "re-read pool; submits copy the context",
     ("binding/chunked_read.py", "ThreadPoolExecutor"): "chunk reads; submits copy the context",
     ("binding/orchestrate.py", "ThreadPoolExecutor"): "binding legs; submits copy the context",
+    ("fx_reference.py", "Thread"): "unpriced USD/EGP feed fetch; target is copy_context().run",
     ("gemini.py", "ThreadPoolExecutor"): "uploads and deletes; submits copy the context",
     ("llm/claude_uploads.py", "ThreadPoolExecutor"): "unpriced Files API uploads (map)",
     ("llm/image_fit.py", "ThreadPoolExecutor"): "CPU-only image fitting (map)",
