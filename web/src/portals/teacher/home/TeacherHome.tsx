@@ -5,6 +5,7 @@ import { teacherLoadFailureMessage } from "@/lib/teacherOutcome"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import { EmptyState } from "@/components/ui/state-views"
 import { useActingTeacher } from "@/components/acting/acting-state"
+import { growthModel } from "./growth"
 import { deriveSetup, teacherHomeView } from "./setup"
 import { TeacherSetup } from "./TeacherSetup"
 import { Overview as OverviewScreen } from "../screens/Overview"
@@ -16,13 +17,14 @@ export function TeacherHome() {
   const overview = useTeacherOverview()
   const view = teacherHomeView(classes.status, classes.data?.classes.length ?? 0, overview.status, overview.data)
   const toGrading = (files: File[]) => navigate("/teacher/grading", { state: { files } })
+  const retrying = classes.isFetching || overview.isFetching
   if (view === "loading") return <RouteSkeleton />
   if (view === "error") {
     return (
       <div role="alert" className="rounded-card bg-error-container p-6 text-on-error-container">
         <p className="font-bold">We couldn't load your overview.</p>
         <p className="mt-1 text-body-sm">{teacherLoadFailureMessage(classes.error ?? overview.error)}</p>
-        <button type="button" disabled={classes.isFetching || overview.isFetching} className="mt-3 font-bold underline disabled:opacity-50 disabled:no-underline" onClick={() => { void classes.refetch(); void overview.refetch() }}>Try again</button>
+        <button type="button" aria-busy={retrying} className="mt-3 rounded-md font-bold underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-current" onClick={() => { void classes.refetch(); void overview.refetch() }}>{retrying ? "Trying again…" : "Try again"}</button>
       </div>
     )
   }
@@ -42,7 +44,7 @@ export function TeacherHome() {
     )
   }
   if (view === "setup") {
-    return <TeacherSetup progress={deriveSetup(classes.data!.classes.length, overview.data!)} firstClass={classes.data!.classes[0] ?? null} onFiles={toGrading} />
+    return <TeacherSetup progress={deriveSetup(classes.data!.classes.length, overview.data!)} firstClass={classes.data!.classes[0] ?? null} unlocks={growthModel(classes.data!.classes, overview.data!).unlocks} onFiles={toGrading} />
   }
   return <OverviewScreen overview={overview.data!} classes={classes.data!.classes} onFiles={toGrading} />
 }

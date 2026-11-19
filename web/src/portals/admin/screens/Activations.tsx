@@ -179,7 +179,7 @@ function DecisionDialog({
       title={activate ? "Activate this subscription?" : "Turn this request down?"}
       description={`${row.displayName ?? row.email} asked for ${row.planName}.`}
       footer={
-        <div className="flex flex-wrap justify-end gap-2">
+        <div data-primary-first className="flex flex-wrap justify-end gap-2">
           <Button variant="primary" onClick={onClose}>
             Go back
           </Button>

@@ -75,7 +75,7 @@ export function TutorDirectory() {
           onFiltersChange={change}
           aside={
             <p className="m-0 max-w-prose text-body-md text-on-surface-variant">
-              <Link to={link.to} className="text-on-surface underline underline-offset-4">
+              <Link to={link.to} className="text-on-surface underline! underline-offset-4">
                 {linkText}
               </Link>
               {linkRest}

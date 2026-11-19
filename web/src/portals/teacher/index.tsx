@@ -1,15 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
-import { lazy, Suspense, useState, type ReactNode } from "react"
-import { useQueryClient } from "@tanstack/react-query"
-import { OfflineBanner } from "@/components/ui/offline-banner"
-import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
-import { PhoneBannerSlot } from "@/components/ui/phone-banner-slot"
-import { InstallBanner } from "@/components/InstallBanner"
-import { BadgeSync } from "@/components/badge-sync"
-import { BrandLockup } from "@/components/ui/brand-lockup"
-import { RouteSkeleton } from "@/components/ui/route-skeleton"
-import { ScreenOutlet } from "@/components/ui/screen-outlet"
+import { lazy, Suspense, useRef, useState, type ReactNode, type RefObject } from "react"
 import { Link, NavLink, useLocation } from "react-router-dom"
 import {
   SquaresFour,
@@ -19,42 +10,47 @@ import {
   Warning,
   Books,
   Sparkle,
-  Bell,
-  Megaphone,
   Gear,
-  CreditCard,
-  List,
-  Trash,
-  UploadSimple,
   GraduationCap,
+  Lifebuoy,
+  CreditCard,
   UsersFour,
   type Icon,
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
+import { gradeChipClass } from "@/lib/grade"
+import type { NavShellItem } from "@/components/ui/nav-shells"
+import { ErrorBoundary } from "@/components/ui/error-boundary"
 import { ActingTeacherProvider } from "@/components/acting/acting-context"
 import { useActingTeacher, useCan } from "@/components/acting/acting-state"
-import { gradeChipClass } from "@/lib/grade"
-import { Avatar } from "@/components/ui/avatar"
-import { ErrorBoundary } from "@/components/ui/error-boundary"
-import { portalErrorFallback } from "@/components/route-error"
-import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
-import { BottomNav, SidebarNav, type NavShellItem } from "@/components/ui/nav-shells"
-import { EdgeSwipeBack } from "@/components/edge-swipe-back"
-import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { PortalNotFound } from "@/portals/misc/NotFound"
-import { Breadcrumbs } from "@/components/ui/breadcrumbs"
+// From the shell-only module, not `useTeacherApi`: the shell ships in the entry chunk.
 import { useTeacherClasses } from "@/lib/hooks/useShellQueries"
 import { useProfile } from "@/lib/hooks/useMeApi"
-import { useNotificationCounts } from "@/lib/hooks/useNotificationApi"
 import { useReviewQueueCount } from "@/lib/hooks/useReviewQueueCount"
-import { unreadBadgeLabel } from "@/lib/staffInbox"
+import { STAFF_INBOX_ERROR, TEACHER_INBOX_EMPTY, staffDestinationFor } from "@/lib/staffInbox"
 import { navItems, resolveTrail, classesItemActive, type NavItem } from "./data"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
-import { CreateSheet } from "./components/TopBarSheets"
-import { ProfileAvatarPlaceholder } from "./components/ProfileAvatar"
-import { roleLabel } from "./components/topBarActions"
+import { CREATE_LABEL, CreateSheet, createGlyph } from "./components/CreateSheet"
+import { ScrollFab } from "@/components/ui/fab"
+import { isTabRoot, titleLevelFor } from "@/components/shell/largeTitle"
+import { PortalShell } from "@/components/shell/PortalShell"
+import { ShellIcon } from "@/components/shell/icons"
+import { ShellUserBlock, type ShellSidebarContent } from "@/components/shell/ShellSidebar"
+import { ShellNavList } from "@/components/shell/ShellNavList"
+import { profileName } from "@/components/shell/ShellAvatar"
+import { SHELL_BUTTON_PRIMARY, SHELL_BUTTON_TONAL, SHELL_ICON_BUTTON } from "@/components/shell/shellStyles"
+import {
+  HELP_HREF,
+  INBOX_TO,
+  ANNOUNCEMENTS_TO,
+  PROFILE_EDIT_TO,
+  SETTINGS_TO,
+  roleLabel,
+} from "./components/topBarActions"
+import type { AccountLink } from "@/components/shell/AccountPanel"
+import type { NotificationsPanelProps } from "@/components/shell/NotificationsPanel"
 import { underlyingPathname } from "@/lib/nav/backgroundLocation"
-import { useOverlayState } from "@/lib/nav/useOverlayState"
 import { TEACHER_SETTINGS_TABS } from "@/portals/settings/settingsTabs"
 
 const TEACHER_SETTINGS_BASE = "/teacher/settings"
@@ -108,10 +104,6 @@ const TeacherNotifications = lazy(() =>
 // barrel: importing them all through one barrel module means a chunk
 // containing any one of them pulls in the code for all of them, defeating the
 // per-screen splitting this whole file otherwise does.
-// Loaded on its own so Radix's menu stays out of the entry chunk's budget.
-const ProfileMenu = lazy(() =>
-  import("./components/ProfileMenu").then((m) => ({ default: m.ProfileMenu })),
-)
 const SettingsModalRoute = lazy(() =>
   import("@/portals/settings/SettingsModal").then((m) => ({
     default: m.SettingsModalRoute,
@@ -218,48 +210,77 @@ function ActingPiece({
   )
 }
 
+/** The teacher bell panel's portal facts. */
+export const TEACHER_NOTIFICATIONS_PANEL: Omit<NotificationsPanelProps, "unread" | "triggerClassName"> = {
+  destinationFor: (notification) => staffDestinationFor("teacher", notification),
+  iconFor: (type) => {
+    if (type === "announcement") return <ShellIcon name="mega" />
+    if (type === "at_risk_alert") return <Warning size={18} aria-hidden="true" />
+    return <ShellIcon name="bell" />
+  },
+  inboxTo: INBOX_TO,
+  footerLinks: [
+    { to: INBOX_TO, label: "All notifications" },
+    { to: ANNOUNCEMENTS_TO, label: "Announcements" },
+  ],
+  emptyMessage: `${TEACHER_INBOX_EMPTY.heading}. ${TEACHER_INBOX_EMPTY.body}`,
+  errorHeading: STAFF_INBOX_ERROR.heading,
+}
+
+/** The teacher account panel's links, in order. */
+export const TEACHER_ACCOUNT_LINKS: readonly AccountLink[] = [
+  { id: "profile", label: "Edit profile", to: PROFILE_EDIT_TO, overlay: true, icon: <ShellIcon name="user" /> },
+  { id: "settings", label: "Settings", to: SETTINGS_TO, overlay: true, icon: <Gear size={18} aria-hidden="true" /> },
+  // An account-level page, like Settings: the sidebar carries the work sections and the tools.
+  { id: "billing", label: "Plan and billing", to: "/teacher/billing", icon: <CreditCard size={18} aria-hidden="true" /> },
+  {
+    id: "help",
+    label: "Help and feedback",
+    description: "Email the Lemely team",
+    href: HELP_HREF,
+    icon: <Lifebuoy size={18} aria-hidden="true" />,
+  },
+]
+
 const SIDEBAR_PRIMARY: NavItem["icon"][] = ["overview", "grading", "review", "classes", "atRisk"]
 const SIDEBAR_TOOLS: NavItem["icon"][] = ["schemes", "quizzes", "tutoring", "announcements", "team", "deleted"]
 
-const NAV_ICON: Record<NavItem["icon"], Icon> = {
-  overview: SquaresFour,
-  grading: FileText,
+const NAV_ICON: Record<NavItem["icon"], ReactNode> = {
+  overview: <ShellIcon name="home" />,
+  grading: <FileText size={18} aria-hidden="true" />,
   // The review queue holds the marks the system was not confident enough to
   // apply on its own, so the glyph is a seal with a question in it rather than
   // a checklist: what is waiting here is doubt, not tasks.
-  review: SealQuestion,
-  classes: ChartBar,
-  atRisk: Warning,
-  schemes: Books,
-  quizzes: Sparkle,
-  tutoring: GraduationCap,
-  announcements: Megaphone,
-  notifications: Bell,
-  settings: Gear,
-  team: UsersFour,
-  billing: CreditCard,
-  deleted: Trash,
+  review: <SealQuestion size={18} aria-hidden="true" />,
+  classes: <ShellIcon name="class" />,
+  atRisk: <Warning size={18} aria-hidden="true" />,
+  schemes: <Books size={18} aria-hidden="true" />,
+  quizzes: <Sparkle size={18} aria-hidden="true" />,
+  tutoring: <GraduationCap size={18} aria-hidden="true" />,
+  announcements: <ShellIcon name="mega" />,
+  notifications: <ShellIcon name="bell" />,
+  settings: <Gear size={18} aria-hidden="true" />,
+  team: <UsersFour size={18} aria-hidden="true" />,
+  billing: <CreditCard size={18} aria-hidden="true" />,
+  deleted: <ShellIcon name="trash" />,
 }
 
 /*
- * Packet B3 (Task 4): rows now render through the shared `SidebarNav`
- * primitive (`TeacherNav` below) rather than this file's own copy of the
- * active-row/focus-ring/touch-floor styling — the same retrofit the admin
- * portal took. `unread` is resolved here (not inside `NavShellItem.badge`,
- * which is a plain `string | number`) and passed down as the notifications
- * row's own badge value.
+ * Rows render through the shared shell's `ShellNavList` (`useTeacherSidebar`
+ * below). The review-queue count is resolved there (not inside
+ * `NavShellItem.badge`, which is a plain `string | number`) and passed in as
+ * that row's badge value.
  */
 function toNavShellItem(
   item: NavItem,
   options: { forceActive?: boolean; badge?: string | number; urgent?: boolean } = {},
 ): NavShellItem {
-  const Glyph = NAV_ICON[item.icon]
   return {
     id: item.to,
     to: item.to,
     end: item.end,
     label: item.label,
-    icon: <Glyph size={16} aria-hidden="true" />,
+    icon: NAV_ICON[item.icon],
     active: options.forceActive,
     badge: options.badge,
     urgent: options.urgent,
@@ -267,222 +288,147 @@ function toNavShellItem(
 }
 
 /**
- * Sidebar "Your classes" list. Wired to `GET /teacher/classes`
+ * Sidebar "Your classes" list (the shell renders the group label). Wired to `GET /teacher/classes`
  * (`useTeacherClasses()`) — replaces the mock's 3 hardcoded classes
  * (`recentClasses` in `./data.ts`, one of them fake-flagged "active" with no
  * real "current class" concept anywhere in the app to back it). Capped at 5
  * with a link to the full list rather than an unbounded sidebar.
  */
-function ClassesNavSection() {
+export function ClassesNavList({ labelledBy }: { labelledBy: string }) {
   const { data, isPending, isError } = useTeacherClasses()
 
   return (
-    <div>
-      <div className="text-eyebrow text-on-surface-variant px-2.5 pb-[9px]">Your classes</div>
-      <div className="flex flex-col gap-px">
-        {isPending ? (
-          <div className="px-2.5 py-[7px] text-body-sm text-on-surface-variant">Loading…</div>
-        ) : isError ? (
-          <div className="px-2.5 py-[7px] text-body-sm text-on-surface-variant">Couldn't load classes.</div>
-        ) : data.classes.length === 0 ? (
-          <Link
-            to="/teacher/classes"
-            className="px-2.5 py-[7px] pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-on-primary-container hover:underline rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-          >
-            Add your first class <ForwardArrow />
-          </Link>
-        ) : (
-          <>
-            {data.classes.slice(0, 5).map((c) => (
-              // A `NavLink`, not a plain `Link`: this row is a navigation
-              // destination like any other in the sidebar, so it tells a
-              // teacher which class they are looking at. No `end` — the
-              // default (non-exact) match is deliberate, since this row must
-              // also read as current on the class's `/analytics` child.
-              //
-              // The grade chip is the server's median latest paper grade
-              // (`ClassSummary.grade`), shown only when it exists. The
-              // trailing figure is the real `studentCount`.
-              <NavLink
-                key={c.id}
-                to={`/teacher/classes/${c.id}`}
-                // §6.1's 44px floor on coarse pointers.
-                className={({ isActive }) =>
-                  cn(
-                    "flex items-center gap-2.5 rounded-chip px-2.5 py-1.5 pointer-coarse:min-h-11 text-label transition-colors",
-                    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
-                    isActive
-                      ? "bg-primary-container text-primary"
-                      : "text-on-surface hover:bg-surface-container",
-                  )
-                }
-              >
-                <span className="truncate">{c.label}</span>
-                {c.grade ? (
-                  <span className={cn("ms-auto inline-flex h-4.5 min-w-6 flex-none items-center justify-center rounded-md px-1 pt-0.5 text-data-sm font-bold", gradeChipClass(c.grade, { size: "small" }))}>
-                    <span className="sr-only">Median grade </span>
-                    {c.grade}
-                  </span>
-                ) : null}
-                <span className={cn("inline-flex h-4.5 w-6 flex-none items-center justify-end pt-0.5 text-data-sm tabular-nums text-on-surface-variant", !c.grade && "ms-auto")}>
-                  {c.studentCount}
+    <div role="group" aria-labelledby={labelledBy} className="flex flex-col gap-px">
+      {isPending ? (
+        <div className="px-2.5 py-[7px] text-body-sm text-on-surface-variant">Loading…</div>
+      ) : isError ? (
+        <div className="px-2.5 py-[7px] text-body-sm text-on-surface-variant">Couldn't load classes.</div>
+      ) : data.classes.length === 0 ? (
+        <Link
+          to="/teacher/classes"
+          className="px-2.5 py-[7px] pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-on-primary-container hover:underline rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+        >
+          Add your first class <ForwardArrow />
+        </Link>
+      ) : (
+        <>
+          {data.classes.slice(0, 5).map((c) => (
+            // A `NavLink`, not a plain `Link`: this row is a navigation
+            // destination like any other in the sidebar, so it tells a
+            // teacher which class they are looking at. No `end` — the
+            // default (non-exact) match is deliberate, since this row must
+            // also read as current on the class's `/analytics` child.
+            //
+            // The grade chip is the server's median latest paper grade
+            // (`ClassSummary.grade`), shown only when it exists. The
+            // trailing figure is the real `studentCount`.
+            <NavLink
+              key={c.id}
+              to={`/teacher/classes/${c.id}`}
+              // §6.1's 44px floor on coarse pointers.
+              className={({ isActive }) =>
+                cn(
+                  "flex items-center gap-2.5 rounded-chip px-2.5 py-1.5 pointer-coarse:min-h-11 text-label transition-colors",
+                  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+                  isActive
+                    ? "bg-primary-container text-primary"
+                    : "text-on-surface hover:bg-surface-container",
+                )
+              }
+            >
+              <span className="truncate">{c.label}</span>
+              {c.grade ? (
+                <span className={cn("ms-auto inline-flex h-4.5 min-w-6 flex-none items-center justify-center rounded-md px-1 pt-0.5 text-data-sm font-bold", gradeChipClass(c.grade, { size: "small" }))}>
+                  <span className="sr-only">Median grade </span>
+                  {c.grade}
                 </span>
-              </NavLink>
-            ))}
-            {data.classes.length > 5 ? (
-              <Link
-                to="/teacher/classes"
-                className="px-2.5 py-[7px] pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-on-surface-variant transition-colors hover:text-on-surface rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-              >
-                See all {data.classes.length} <ForwardArrow />
-              </Link>
-            ) : null}
-          </>
-        )}
-      </div>
+              ) : null}
+              <span className={cn("inline-flex h-4.5 w-6 flex-none items-center justify-end pt-0.5 text-data-sm tabular-nums text-on-surface-variant", !c.grade && "ms-auto")}>
+                {c.studentCount}
+              </span>
+            </NavLink>
+          ))}
+          {data.classes.length > 5 ? (
+            <Link
+              to="/teacher/classes"
+              className="px-2.5 py-[7px] pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-on-surface-variant transition-colors hover:text-on-surface rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+            >
+              See all {data.classes.length} <ForwardArrow />
+            </Link>
+          ) : null}
+        </>
+      )}
     </div>
   )
 }
 
 /**
- * Sidebar identity block. Wired to `GET /api/me/profile` (`useProfile()`) —
- * replaces the mock's hardcoded "Mr H. Sabry / Physics dept · CAIE", which no
- * field anywhere supplies. `displayName` is nullable (a caller who never set
- * one); the fallback is the email's local part, never a fabricated name. The
- * subtitle is the caller's real platform role — the only affiliation-like
- * fact this account actually carries, not an invented department/exam board.
- *
- * The squircle comes from the kit's `<Avatar>` rather than a local circle: see
- * the note on the deleted `portals/teacher/components/Avatar.tsx` in the phase
- * report. DESIGN.md §6 reserves circles for status dots so a dot never reads
- * as a person.
+ * The teacher sidebar's content; the shell renders it as the rail and the
+ * drawer. The identity block's name falls back to the email's local part and
+ * its detail is the caller's real platform role, never a fabricated
+ * department. No at-risk badge: summing per-class `atRiskCount` double-counts
+ * a student in several classes, and the layout has no deduplicated student
+ * count. A missing number beats a wrong one. Notifications and Settings live
+ * in the top bar, so the sidebar carries the work sections and the tools.
  */
-function UserBlock() {
-  const { data, isPending, isError } = useProfile()
-
-  if (isPending || isError || !data) {
-    return (
-      <div className="flex items-center gap-2.5 px-0.5 text-body-sm text-on-surface-variant">
-        {isPending ? "Loading…" : "Signed in"}
-      </div>
-    )
-  }
-
-  const name = data.displayName ?? data.email.split("@")[0]
-  return (
-    <div className="flex items-center gap-2.5">
-      <Avatar name={name} src={data.avatarUrl ?? undefined} size="sm" />
-      <div className="min-w-0">
-        <div className="truncate text-body-sm font-medium text-on-surface">{name}</div>
-        <div className="text-body-sm text-on-surface-variant">{roleLabel(data.role)}</div>
-      </div>
-    </div>
-  )
-}
-
-/**
- * Nav list + "Your classes", with no chrome. Shared by the desktop aside and
- * the mobile drawer for the same reason as the student portal's `NavGroups`:
- * the defect P3.1 fixes is navigation that exists at one width and not
- * another, and two copies of the list is how that comes back.
- */
-function TeacherNav() {
+function useTeacherSidebar(): ShellSidebarContent {
   const location = useLocation()
-  // Same query `ClassesNavSection` below subscribes to — react-query dedupes
-  // by queryKey, so this adds no second request, only a second subscriber to
-  // the classes list already in flight (or cached).
+  // Same query `ClassesNavList` subscribes to: react-query dedupes by queryKey.
   const { data } = useTeacherClasses()
   const visibleClassIds = data?.classes.slice(0, 5).map((c) => c.id) ?? []
-  // Task 9 (C3d): the sidebar's own subscriber to `useReviewQueueCount` —
-  // `BottomNav`'s Review tab below subscribes to the same hook, so the two
-  // badges share one deduped `limit: 1` request (see that hook's own doc
-  // comment on why).
+  // `BottomNav`'s Review tab subscribes to the same hook, so the two badges
+  // share one deduped `limit: 1` request.
   const reviewQueueCount = useReviewQueueCount()
   const reviewBadge = reviewQueueCount && reviewQueueCount > 0 ? reviewQueueCount : undefined
-  // No at-risk badge: summing per-class `atRiskCount` double-counts a student
-  // in several classes, and the layout has no deduplicated student count. A
-  // missing number beats a wrong one.
-
-  const toShell = (item: NavItem) =>
-    toNavShellItem(item, {
-      forceActive:
-        item.to === "/teacher/classes"
-          ? classesItemActive(location.pathname, visibleClassIds)
-          : undefined,
-      badge: item.badge === "review-queue" ? reviewBadge : undefined,
-      urgent: item.badge === "review-queue",
-    })
-
-  // Notifications and Settings live in the top bar (icon buttons), so the
-  // sidebar carries the work sections and the tools.
-  const primaryItems = navItems.filter((i) => SIDEBAR_PRIMARY.includes(i.icon)).map(toShell)
-  const toolItems = navItems.filter((i) => SIDEBAR_TOOLS.includes(i.icon)).map(toShell)
-
-  return (
-    // `gap-8`: the three groups (sections, your classes, tools) read as
-    // separate blocks rather than one long list.
-    <div className="flex flex-col gap-8">
-      <SidebarNav variant="abyss" aria-label="Teacher sections" items={primaryItems} />
-      <ClassesNavSection />
-      <SidebarNav variant="abyss" aria-label="Teacher tools" groups={[{ label: "Tools", items: toolItems }]} />
-    </div>
-  )
-}
-
-/**
- * Account link + identity. Also shared between aside and drawer.
- *
- * P3.1 removed the "Open the student portal →" link that used to sit between
- * these two. It could not work for anyone: `RequireAuth` gates `/student` to
- * the `student` role alone, so a teacher, school_admin or platform_admin
- * following it was redirected straight back to `/teacher`. Its twin in the
- * student sidebar pointed the other way and failed the same way. Both are
- * build-era conveniences from before the guard existed.
- */
-function SidebarFooter() {
+  const profile = useProfile()
   // Uploading a paper is marking it. An assistant whose role lacks `mark` has no use for the
   // shortcut, and `Grading` itself explains why (its upload form is gated with the reason).
   const canMark = useCan("mark")
   const { memberships } = useActingTeacher()
-  return (
-    <div className="flex flex-col gap-3">
-      {/* Who the teacher is working as sits with who they are signed in as, and renders nothing
-          unless they assist at least one team. */}
-      {memberships.length > 0 ? (
-        <ActingPiece>
-          <ActingSwitcher />
-        </ActingPiece>
-      ) : null}
-      {canMark ? (
-        <Link
-          to="/teacher/grading"
-          className="inline-flex h-9 w-full items-center justify-center gap-[7px] rounded-chip bg-primary px-3.5 btn-text text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-        >
-          <UploadSimple size={16} aria-hidden="true" />
-          Upload papers
-        </Link>
-      ) : null}
-      <UserBlock />
-    </div>
-  )
-}
-
-function Sidebar() {
-  return (
-    // A well, per DESIGN.md §3.1: `--paper-sunk` is the token whose stated use
-    // is "sidebars, table headers, code blocks, inset areas".
-    <aside className="hidden sidebar:flex w-sidebar flex-none bg-surface-container-lowest border-e border-outline-variant px-3 pb-3 pt-[18px] flex-col gap-4 sticky top-0 h-screen">
-      <BrandLockup className="px-2" />
-
-      <div className="lm-scroll min-h-0 flex-1 overflow-y-auto">
-        <TeacherNav />
-      </div>
-
-      <div className="mt-auto border-t border-outline-variant pt-4">
-        <SidebarFooter />
-      </div>
-    </aside>
-  )
+  const toShell = (item: NavItem) =>
+    toNavShellItem(item, {
+      forceActive: item.to === "/teacher/classes" ? classesItemActive(location.pathname, visibleClassIds) : undefined,
+      badge: item.badge === "review-queue" ? reviewBadge : undefined,
+      urgent: item.badge === "review-queue",
+    })
+  return {
+    navLabel: "Teacher",
+    homeTo: "/teacher",
+    homeLabel: "Lemely, overview",
+    items: navItems.filter((i) => SIDEBAR_PRIMARY.includes(i.icon)).map(toShell),
+    groups: [
+      { id: "classes", label: "Your classes", render: (labelId) => <ClassesNavList labelledBy={labelId} /> },
+      {
+        id: "tools",
+        label: "Tools",
+        render: (labelId) => (
+          <ShellNavList aria-labelledby={labelId} items={navItems.filter((i) => SIDEBAR_TOOLS.includes(i.icon)).map(toShell)} />
+        ),
+      },
+    ],
+    footerAction: canMark ? (
+      <Link to="/teacher/grading" className={SHELL_BUTTON_PRIMARY}>
+        <ShellIcon name="up" />
+        Upload papers
+      </Link>
+    ) : undefined,
+    user: (
+      <>
+        {/* Who the teacher is working as sits with who they are signed in as, and renders nothing
+            unless they assist at least one team. */}
+        {memberships.length > 0 ? (
+          <ActingPiece>
+            <ActingSwitcher />
+          </ActingPiece>
+        ) : null}
+        {profile.data ? (
+          <ShellUserBlock name={profileName(profile.data)} avatarUrl={profile.data.avatarUrl} detail={roleLabel(profile.data.role)} />
+        ) : (
+          <p className="px-0.5 text-body-sm text-on-surface-variant">{profile.isPending ? "Loading…" : "Signed in"}</p>
+        )}
+      </>
+    ),
+  }
 }
 
 // One boundary around the Outlet (not per-route): sidebar and chrome stay
@@ -490,106 +436,29 @@ function Sidebar() {
 // `RouteFallback` (C-11 state-view family); see the student portal for the
 // reasoning, and `state-views.tsx` for why it is not a full `StateView`.
 
-/**
- * Mobile chrome (below `md`, where the aside does not exist): the menu trigger
- * and the breadcrumb trail on one sticky row.
- *
- * The trail renders at every width, not just here — it is the D1.5 back
- * affordance, and a drilled-into screen like `/teacher/students/:id` needs a
- * route back on a laptop too. The *bar* is mobile-only because above `md` the
- * sidebar already carries the logo and the menu button has nothing to open.
- */
-const TOP_BAR_ICON_BUTTON =
-  "relative flex h-9 w-9 flex-none items-center justify-center rounded-chip text-on-surface-variant transition-colors hover:bg-surface-container hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:h-11 pointer-coarse:w-11"
-
-function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
-  const location = useLocation()
-  const overlayState = useOverlayState()
-  // While Settings is a dialog, the page underneath is still the page: the
-  // title and trail follow the background location, not "/teacher/settings".
-  const trail = resolveTrail(
-    underlyingPathname({
-      pathname: location.pathname,
-      state: location.state,
-      overlayBase: TEACHER_SETTINGS_BASE,
-    }),
-  )
-  const title = trail[trail.length - 1]?.label ?? "Overview"
-  const { data: counts } = useNotificationCounts()
-  const unread = unreadBadgeLabel(counts)
-  const { lead } = useActingTeacher()
-  const canMark = useCan("mark")
-
+/** The teacher's own bar buttons: Create (tonal) and Upload papers (primary).
+ * Create's sheet is controlled by `TeacherLayout`, so the Android FAB and the iOS large-title plus open
+ * the same one; the bar's own button is hidden on native phones. */
+function TeacherTopBarActions(create: CreateControl, canMark: boolean) {
   return (
     <>
-      {/* `z-nav`: the bar holds the only navigation that exists below the
-          `sidebar` breakpoint, so it belongs on the nav layer with the
-          sidebar (DESIGN.md §7). Side margins are 16px on mobile, 28px from
-          `md`; the page well below carries its own 72px at `lg`. */}
-      <div
-        data-acting={lead ? "true" : undefined}
-        className={cn(
-          "lm-app-header lm-app-header-pt-2.5 lm-nav-chrome sticky top-2 z-nav mx-4 mb-6 mt-2 flex min-h-14 items-center pb-2.5 gap-0.5 rounded-inner sm:gap-2 bg-surface-container-lowest pe-1 ps-2 ring-1 shadow-[var(--shadow-float)] md:mx-7 sm:pe-3 sm:ps-3 md:ps-[18px]",
-          // While acting, the bar that scrolls with the page carries the cue too: the amber ring
-          // at every width, and the name from `lg` up (below that it would crowd out the page title).
-          lead ? "ring-2 ring-tertiary" : "ring-outline-variant",
-        )}
-      >
-        <NavDrawerTrigger
-          onClick={onOpenNav}
-          label="Open teacher navigation"
-          className="-ms-2 sidebar:hidden"
+      <span data-shell-action="create" className="contents">
+        <CreateSheet
+          open={create.open}
+          onOpenChange={create.onOpenChange}
+          restoreFocusTo={create.opener}
+          triggerClassName={cn(
+            SHELL_BUTTON_TONAL,
+            "max-sm:w-9 max-sm:justify-center max-sm:px-0 max-sm:pointer-coarse:w-11",
+          )}
         />
-        <p className="min-w-0 truncate text-display-sm text-on-surface">
-          {title}
-        </p>
-        {lead ? (
-          <span
-            data-testid="acting-chip"
-            className="hidden min-w-0 flex-none items-center gap-1.5 truncate rounded-chip bg-tertiary-container px-2.5 py-1 text-label text-on-tertiary-container lg:inline-flex lg:max-w-60"
-          >
-            <span className="truncate">Working as {lead.teacherName}</span>
-          </span>
-        ) : null}
-        <div className="flex-1" />
-        <CreateSheet triggerClassName="inline-flex h-9 flex-none cursor-pointer items-center gap-[7px] rounded-chip bg-secondary-container px-3 btn-text text-on-secondary-container transition-colors hover:bg-secondary-container/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:px-3.5 pointer-coarse:h-11" />
-        {canMark ? (
-          <Link
-            to="/teacher/grading"
-            className="me-0 sm:me-2.5 inline-flex h-9 flex-none items-center gap-[7px] rounded-chip bg-primary px-3 btn-text text-on-primary transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary max-sm:justify-center sm:px-3.5 pointer-coarse:h-11 max-sm:pointer-coarse:w-11 max-sm:pointer-coarse:px-0"
-          >
-            <UploadSimple size={16} aria-hidden="true" />
-            <span className="hidden sm:inline">Upload papers</span>
-            <span className="sr-only sm:hidden">Upload papers</span>
-          </Link>
-        ) : null}
-        <Link
-          to="/teacher/notifications"
-          aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"}
-          className={TOP_BAR_ICON_BUTTON}
-        >
-          <Bell size={20} aria-hidden="true" />
-          {unread ? (
-            <span className="absolute -end-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-pill bg-primary px-1 text-data-sm text-on-primary">
-              {unread}
-            </span>
-          ) : null}
+      </span>
+      {/* Uploading is marking: an assistant whose role lacks `mark` is not offered it. */}
+      {canMark ? (
+        <Link to="/teacher/grading" className={cn(SHELL_BUTTON_PRIMARY, "me-2.5 max-shell-sm:hidden")}>
+          <ShellIcon name="up" />
+          Upload papers
         </Link>
-        {/* Below `sm` the bar has no room for a title beside six 44px targets, so
-            the gear folds into the profile menu (which carries Settings). */}
-        <Link to="/teacher/settings" state={overlayState} aria-label="Settings" className={cn(TOP_BAR_ICON_BUTTON, "max-sm:hidden")}>
-          <Gear size={20} aria-hidden="true" />
-        </Link>
-        <Suspense fallback={<ProfileAvatarPlaceholder />}>
-          <ProfileMenu triggerClassName="cursor-pointer" />
-        </Suspense>
-      </div>
-      {/* The D1.5 back affordance: one crumb is just the page's own name, which
-          the title already says, so the trail renders only when drilled in. */}
-      {trail.length > 1 ? (
-        <div className="-mt-3 mb-4 px-4 md:px-page-tablet lg:px-[72px]">
-          <Breadcrumbs items={trail} />
-        </div>
       ) : null}
     </>
   )
@@ -597,10 +466,8 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
 
 /** The four route-backed BottomNav tabs, exported so `navigation.test.ts` can
  * assert each `to` resolves to a mounted route without rendering the shell.
- * Labels declared in tab order ("Overview", "Grading", "Review", "Classes")
- * ahead of `TeacherLayout`'s own "More" so `navShells.test.ts`'s ordered
- * regex over the stripped source sees all five labels in the same order the
- * bar renders them. */
+ * The shell appends the fifth "More" tab itself; `navShells.test.ts` matches
+ * these four labels in tab order ("Overview", "Grading", "Review", "Classes"). */
 export const TEACHER_BOTTOM_TABS: readonly {
   id: string
   label: string
@@ -614,179 +481,130 @@ export const TEACHER_BOTTOM_TABS: readonly {
   { id: "classes", label: "Classes", to: "/teacher/classes", icon: ChartBar },
 ]
 
+interface CreateControl {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  /** The opener that was used when it is not the bar button, so focus can go back to it. */
+  opener: RefObject<HTMLElement | null>
+}
+
 function TeacherLayout() {
-  const [navOpen, setNavOpen] = useState(false)
-  const { lead, notice: actingNotice, choose } = useActingTeacher()
   const location = useLocation()
-  const queryClient = useQueryClient()
-
-  /*
-   * Reads the same query
-   * `ClassesNavSection` already subscribes to (`useTeacherClasses()`,
-   * `GET /teacher/classes`) — react-query dedupes by queryKey
-   * (`["teacher", "classes"]`), so this adds no second network request, only
-   * a second subscriber to the one already in flight.
-   *
-   * A pending query used to render the shared route fallback in place of the
-   * whole shell — sidebar and all — rather than the shell with a fallback
-   * inside it. Packet B1 corrects that the same way it does for the student
-   * portal: the shell renders regardless, with `<RouteSkeleton />` standing
-   * in for the content below. A zero-class teacher is no longer redirected:
-   * the home route shows the setup screen instead.
-   */
+  const [createOpen, setCreateOpen] = useState(false)
+  const createOpener = useRef<HTMLElement | null>(null)
+  const create: CreateControl = {
+    open: createOpen,
+    onOpenChange: (open) => {
+      if (open) createOpener.current = null
+      setCreateOpen(open)
+    },
+    opener: createOpener,
+  }
+  const openCreateFrom = (element: HTMLElement) => {
+    createOpener.current = element
+    setCreateOpen(true)
+  }
+  // Same query the class list subscribes to (deduped by key); a pending list
+  // shows the skeleton inside the shell. A zero-class teacher sees setup on home.
   const classesQuery = useTeacherClasses()
-  // Task 9 (C3d): shares its cache/request with `TeacherNav`'s own
-  // `useReviewQueueCount()` subscriber (same query key) — mounting both the
-  // desktop sidebar and this bottom bar costs one network request, not two.
+  // Shares its request with the sidebar's own subscriber (same query key).
   const reviewQueueCount = useReviewQueueCount()
-
-  // PR 1B fulfils `routes.tsx`'s note ("Phase 4 places those as it rebuilds each surface") for this
-  // portal: a render crash in one screen stays inside this content slot rather than taking the
-  // sidebar down with it or falling out to the top-level `errorElement`. Inside `Suspense` so a
-  // failed chunk load and a render throw both land in this boundary. `resetKey={location.pathname}`
-  // clears a caught error on navigation.
-  const content = (
-    <ErrorBoundary
-      label="This page"
-      resetKey={location.pathname}
-      fallback={portalErrorFallback}
-    >
-      <ScreenOutlet
-        overlay={{
-          routes: teacherContentRoutes(),
-          overlayBase: TEACHER_SETTINGS_BASE,
-          fallbackPath: "/teacher",
-        }}
-      />
-    </ErrorBoundary>
+  const { data: profile } = useProfile()
+  const sidebar = useTeacherSidebar()
+  const { lead, notice: actingNotice, choose } = useActingTeacher()
+  const canMark = useCan("mark")
+  // While Settings is a dialog the page underneath is still the page: title
+  // and trail follow the background location. The trail renders at every
+  // width (the D1.5 back affordance for drilled-into screens).
+  const pagePath = underlyingPathname({ pathname: location.pathname, state: location.state, overlayBase: TEACHER_SETTINGS_BASE })
+  const trail = resolveTrail(pagePath)
+  const level = titleLevelFor(
+    trail,
+    isTabRoot(pagePath, TEACHER_BOTTOM_TABS.map((tab) => tab.to)),
   )
-
+  const rootLevel = level === "root"
   return (
-    // `bg-surface`: the shell owns its own ground rather than depending on
-    // `body`'s paint showing through.
-    <div data-portal="teacher" className="flex min-h-dvh bg-surface">
-      <SkipLink />
-      {/* Task 7 (B5a): see student/index.tsx's own comment on this line —
-          same reason, same shape. */}
-      <BadgeSync />
-      <Sidebar />
-
-      <NavDrawer
-        open={navOpen}
-        onClose={() => setNavOpen(false)}
-        title="Lemely"
-        footer={<SidebarFooter />}
-      >
-        <TeacherNav />
-      </NavDrawer>
-
-      {/* Packet B3 (Task 4): standalone-only, renders nothing — see the
-          component's own doc comment. */}
-      <EdgeSwipeBack />
-
-      <div className="flex-1 min-w-0 flex flex-col">
-        <TeacherTopBar onOpenNav={() => setNavOpen(true)} />
-        {/* `<main>` is the content area only, not the whole column: the skip
-            link's target must not contain the navigation it skips.
-            `pb-bottom-nav`/`sidebar:pb-8`: clearance for the fixed
-            `BottomNav` below the `sidebar` breakpoint, an ordinary bottom
-            gutter once it is gone. */}
-        <main
-          id={MAIN_CONTENT_ID}
-          tabIndex={-1}
-          className="flex-1 min-w-0 overflow-x-hidden w-full max-w-[1600px] px-page-mobile pt-2 pb-bottom-nav sidebar:pb-8 md:px-page-tablet lg:px-[72px] focus:outline-none"
-        >
-          {/* Who the teacher is working as, first and standing: it is the one fact that changes
-              what every control below does. Renders nothing, and no margin, unless acting for a
-              lead (or a choice was just dropped, and then it says why). */}
-          {lead || actingNotice ? (
-            <ActingPiece>
-              <ActingBanner classListError={classesQuery.error} pathname={location.pathname} />
-            </ActingPiece>
-          ) : null}
-          {/* PR 2 part C: offline recovery banner, above the Suspense/
-              ErrorBoundary content it sits over — it renders nothing while
-              online, so its own `mb-6` is the only spacing this adds. */}
-          <OfflineBanner
-            onRetry={() =>
-              void queryClient.refetchQueries({
-                type: "active",
-                predicate: (query) => query.state.status === "error",
-              })
-            }
+    <PortalShell
+      portal="teacher"
+      drawerTitle="Lemely"
+      pending={classesQuery.isPending}
+      overlay={{ routes: teacherContentRoutes(), overlayBase: TEACHER_SETTINGS_BASE, fallbackPath: "/teacher" }}
+      // Who the teacher is working as, first and standing: it is the one fact that changes what
+      // every control below does. Renders nothing, and no margin, unless acting for a lead (or a
+      // choice was just dropped, and then it says why).
+      banner={
+        lead || actingNotice ? (
+          <ActingPiece>
+            <ActingBanner classListError={classesQuery.error} pathname={location.pathname} />
+          </ActingPiece>
+        ) : null
+      }
+      // The server refusing the lead's class list (the lead cannot be reached, or this role cannot
+      // see classes) would make every screen below repeat the refusal, so while acting a lazily
+      // loaded guard says it once. Not acting: the page, as before. If the guard cannot load, the
+      // page renders without it.
+      wrapContent={
+        lead
+          ? (content) => (
+              <ActingPiece resetKey={location.pathname} orElse={content}>
+                <ActingGuard
+                  lead={lead}
+                  classListError={classesQuery.error}
+                  pathname={location.pathname}
+                  onSwitchBack={() => choose(null)}
+                >
+                  {content}
+                </ActingGuard>
+              </ActingPiece>
+            )
+          : undefined
+      }
+      sidebar={sidebar}
+      topBar={{
+        title: trail[trail.length - 1]?.label ?? "Overview",
+        trail,
+        titleLevel: level,
+        backFallback: "/teacher",
+        navLabel: "Open teacher navigation",
+        actions: TeacherTopBarActions(create, canMark),
+        actingAs: lead?.teacherName,
+        largeTitleAction: (
+          <button
+            type="button"
+            aria-label={CREATE_LABEL}
+            aria-haspopup="dialog"
+            onClick={(event) => openCreateFrom(event.currentTarget)}
+            className={SHELL_ICON_BUTTON}
+          >
+            {createGlyph(22, "bold")}
+          </button>
+        ),
+        notifications: TEACHER_NOTIFICATIONS_PANEL,
+        settingsTo: TEACHER_SETTINGS_BASE,
+        account: { links: TEACHER_ACCOUNT_LINKS, detail: profile ? roleLabel(profile.role) : null },
+      }}
+      fab={
+        rootLevel ? (
+          <ScrollFab
+            label={CREATE_LABEL}
+            icon={createGlyph(24)}
+            aria-haspopup="dialog"
+            onClick={(event) => openCreateFrom(event.currentTarget)}
           />
-          {/* Below the offline strip on purpose: connectivity is the transient,
-              self-healing message and belongs on top, while this is a standing fact
-              about the account. Renders nothing, and no margin either, unless the
-              profile has resolved and says the address is unverified. */}
-          <VerifyEmailBanner />
-          {/* UD-11: renders nothing unless the profile says there is no phone number on file. */}
-          <PhoneBannerSlot />
-          {/* Packet A7: same "renders nothing unless there's something to
-              say" shape as the two banners above. Student and teacher only —
-              see the component's own header for why. */}
-          <InstallBanner />
-          {/* Packet B1: the classes-query pending state renders the same
-              `RouteSkeleton` a chunk-load wait does, in the same content
-              slot, rather than blanking the shell below `TeacherTopBar` —
-              see the comment above `classesQuery` for why this is safe to
-              gate on here rather than bailing out of the whole layout. */}
-          {classesQuery.isPending ? (
-            <RouteSkeleton />
-          ) : (
-            <Suspense fallback={<RouteSkeleton />}>
-              {/* The server refusing the lead's class list (the lead cannot be reached, or this role
-                  cannot see classes) would make every screen below repeat the refusal, so while
-                  acting a lazily loaded guard says it once. Not acting: the page, as before. If
-                  the guard cannot load, the page renders without it. */}
-              {lead ? (
-                <ActingPiece resetKey={location.pathname} orElse={content}>
-                  <ActingGuard
-                    lead={lead}
-                    classListError={classesQuery.error}
-                    pathname={location.pathname}
-                    onSwitchBack={() => choose(null)}
-                  >
-                    {content}
-                  </ActingGuard>
-                </ActingPiece>
-              ) : (
-                content
-              )}
-            </Suspense>
-          )}
-        </main>
-      </div>
-
-      {/* Below the `sidebar` breakpoint, the primary navigation — same
-          shape as the student portal's own BottomNav, see that file's
-          comment on the identical mount. The Review tab's badge (Task 9,
-          C3d) is `reviewQueueCount` above. */}
-      <BottomNav
-        items={[
-          ...TEACHER_BOTTOM_TABS.map(
-            (tab): NavShellItem => ({
-              id: tab.id,
-              to: tab.to,
-              end: tab.end,
-              label: tab.label,
-              icon: <tab.icon size={22} aria-hidden="true" />,
-              badge:
-                tab.id === "review" && reviewQueueCount && reviewQueueCount > 0
-                  ? reviewQueueCount
-                  : undefined,
-            }),
-          ),
-          {
-            id: "more",
-            label: "More",
-            icon: <List size={22} aria-hidden="true" />,
-            onClick: () => setNavOpen(true),
-          },
-        ]}
-        className="sidebar:hidden"
-      />
-    </div>
+        ) : undefined
+      }
+      bottomTabs={TEACHER_BOTTOM_TABS.map(
+        (tab): NavShellItem => ({
+          id: tab.id,
+          to: tab.to,
+          end: tab.end,
+          label: tab.label,
+          icon: <tab.icon size={22} aria-hidden="true" />,
+          activeIcon: <tab.icon size={22} weight="fill" aria-hidden="true" />,
+          badge: tab.id === "review" && reviewQueueCount && reviewQueueCount > 0 ? reviewQueueCount : undefined,
+        }),
+      )}
+    />
   )
 }
 
@@ -822,7 +640,7 @@ export const teacherRoute: RouteObject = {
     {
       path: "review/:itemId",
       element: <ReviewItem />,
-      handle: { title: "Review a mark", skeleton: "page-header" },
+      handle: { title: "Review a mark", skeleton: "page-header", immersive: true },
     },
     {
       path: "classes",

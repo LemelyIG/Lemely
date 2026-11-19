@@ -7,6 +7,9 @@ import { cn } from "@/lib/utils"
 import { classCardModel, type ClassCardTrend } from "./models"
 import { useDragScroll } from "./useDragScroll"
 
+// Missing figures keep their row as a dashed cue, so cards stay level and say what fills them.
+const PLACEHOLDER = "rounded-md border border-dashed border-outline-variant px-2 py-1 text-body-sm text-on-surface-variant"
+
 const TREND_TONE: Record<ClassCardTrend["tone"], string> = {
   up: "text-success-text",
   // A fall is not a lost mark, so it stays neutral and carries an arrow instead of crimson.
@@ -54,7 +57,7 @@ export function ClassStrip({ classes }: { classes: ClassSummary[] }) {
                     </span>
                   )}
                 </div>
-                {m.average && <p className="mt-2 text-data-md">Average {m.average}</p>}
+                {m.average ? <p className="mt-2 text-data-md">Average {m.average}</p> : <p className={`mt-2 ${PLACEHOLDER}`}>Average appears after the first marked paper</p>}
                 {trendLine && (
                   <p className="mt-1 truncate text-data-sm text-on-surface-variant">
                     {m.trend && (
@@ -68,8 +71,10 @@ export function ClassStrip({ classes }: { classes: ClassSummary[] }) {
                     {m.meta2}
                   </p>
                 )}
-                {m.weakTopic && (
-                  <div className="mt-3 border-t border-outline-variant pt-3">
+                {!m.trend && c.lastPaper && <p className={`mt-2 ${PLACEHOLDER}`}>Trend appears after a second marked paper</p>}
+                <div className={m.weakTopic ? "mt-3 border-t border-outline-variant pt-3" : "mt-2"}>
+                  {m.weakTopic ? (
+                    <>
                     <p className="flex items-baseline justify-between gap-3 text-body-sm">
                       <span className="min-w-0 truncate">Weakest: {m.weakTopic}</span>
                       {m.weakPct && <span className="shrink-0 text-data-sm text-on-surface-variant">{m.weakPct}<span className="sr-only"> accuracy</span></span>}
@@ -79,8 +84,11 @@ export function ClassStrip({ classes }: { classes: ClassSummary[] }) {
                         <div className="h-full rounded-bar bg-primary" style={{ width: `${m.weakBar * 100}%` }} />
                       </div>
                     )}
-                  </div>
-                )}
+                    </>
+                  ) : (
+                    <p className={PLACEHOLDER}>Weakest topic appears after marking</p>
+                  )}
+                </div>
               </Link>
             </li>
           )

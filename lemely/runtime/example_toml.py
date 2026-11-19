@@ -22,9 +22,10 @@ template developers copy.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
-from lemely.runtime.config import NotificationsSettings, Settings
+from lemely.runtime.config import AccessSettings, NotificationsSettings, Settings
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -598,6 +599,53 @@ def render_example_toml() -> str:
     lines.append("# tutoring mails went out in the last 24 hours, further ones are skipped, not")
     lines.append("# sent. 60 sits below Resend's 100/day free quota, which account mail shares.")
     lines.append(f"email_daily_cap = {s.tutoring.email_daily_cap}")
+    lines.append("")
+
+    lines.append("[access]")
+    lines.append("# Who may sign up, log in or call an authenticated route while Lemely is not")
+    lines.append(
+        "# launched. Empty means open (local dev). Non-empty, only accounts with a VERIFIED"
+    )
+    lines.append("# email on one of these domains get in; everyone else is answered 403")
+    lines.append("# access_restricted. Exact match, so a subdomain is not its parent. Deployed it")
+    lines.append("# is LEMELY_ACCESS__ALLOWED_EMAIL_DOMAINS (comma-separated); deploy.yml sets it")
+    lines.append("# to lemelyig.com for staging and production. Empty it to open access.")
+    # The shipped default (open), not the live value: deployed environments set it, and an
+    # example file documents what ships (same reason as `sweeper_enabled` above).
+    lines.append(f"allowed_email_domains = {json.dumps(AccessSettings().allowed_email_domains)}")
+    lines.append("")
+
+    lines.append("[waitlist]")
+    lines.append("# Shared secret for POST /api/internal/waitlist/digest, the daily applicant")
+    lines.append("# digest Cloud Scheduler triggers (sent in an X-Cron-Secret header). Unset, the")
+    lines.append("# endpoint answers 404. NEVER put it in this file: deployed it is the")
+    lines.append("# LEMELY_WAITLIST__DIGEST_SECRET environment variable.")
+    lines.append('# digest_secret = "..."')
+    lines.append("# Cloudflare Turnstile for the waitlist's first step. Unset, verification is")
+    lines.append("# skipped (local dev). The secret key is LEMELY_WAITLIST__TURNSTILE_SECRET_KEY;")
+    lines.append("# the site key is public and is served to the page by GET /api/waitlist/config.")
+    lines.append('# turnstile_secret_key = "..."')
+    lines.append('# turnstile_site_key = "0x4AAAA..."')
+    lines.append("")
+
+    lines.append("[edge]")
+    lines.append(
+        "# Shared secret the Cloudflare Worker sends as X-Lemely-Edge-Secret. Where a route"
+    )
+    lines.append("# uses the edge guard (the waitlist routes), a request without it is refused and")
+    lines.append("# only then is CF-Connecting-IP trusted for rate limiting. Unset (local dev) the")
+    lines.append("# guard is off. NEVER put it in this file: deployed it is the")
+    lines.append(
+        "# LEMELY_EDGE__ORIGIN_SECRET environment variable, and the Worker's ORIGIN_SECRET."
+    )
+    lines.append('# origin_secret = "..."')
+    lines.append(
+        "# The value being rotated out: still accepted, never sent by the Worker. Blank is"
+    )
+    lines.append(
+        "# unset (LEMELY_EDGE__ORIGIN_SECRET_PREVIOUS). See docs/ci-cd.md for the rotation."
+    )
+    lines.append('# origin_secret_previous = "..."')
 
     # No trailing blank line: pre-commit's end-of-file-fixer collapses a double
     # trailing newline in lemely.toml.example, which would drift from this

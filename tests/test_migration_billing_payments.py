@@ -336,7 +336,7 @@ def test_upgrade_downgrade_upgrade_round_trip(
     downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == DOWN_REVISION
+        assert current_revision(session, within=REVISION) == DOWN_REVISION
         assert not set(NEW_TABLES) & public_tables(session)
         assert not PLAN_TIER_COLUMNS & column_names(session, "plan_tiers")
         assert not SUBSCRIPTION_COLUMNS & column_names(session, "subscriptions")
@@ -359,7 +359,7 @@ def test_upgrade_downgrade_upgrade_round_trip(
     upgrade_head()
 
     with sm() as session:
-        assert current_revision(session) == head_revision()
+        assert current_revision(session, within=REVISION) == head_revision()
         for table in NEW_TABLES:
             assert object_names(session, [table]) == _orm_names(table)
         assert object_names(session, ["subscriptions"]) >= SUBSCRIPTION_OBJECTS

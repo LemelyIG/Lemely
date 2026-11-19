@@ -774,7 +774,7 @@ def test_downgrade_refuses_while_the_audit_log_has_a_row(
         downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == REVISION
+        assert current_revision(session, within=REVISION) == REVISION
         assert set(NEW_TABLES) <= public_tables(session)
         assert session.execute(sa.text("SELECT count(*) FROM admin_audit_log")).scalar_one() == 1
         assert _function_count(session) == 1
@@ -791,7 +791,7 @@ def test_downgrade_refuses_while_a_refund_exists(
         downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == REVISION
+        assert current_revision(session, within=REVISION) == REVISION
         assert session.execute(sa.text("SELECT count(*) FROM payment_refunds")).scalar_one() == 1
 
 
@@ -805,7 +805,7 @@ def test_downgrade_refuses_while_a_conversion_rate_exists(
         downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == REVISION
+        assert current_revision(session, within=REVISION) == REVISION
         assert "credit_conversion_rates" in public_tables(session)
 
 
@@ -819,7 +819,7 @@ def test_downgrade_refuses_while_a_signup_off_period_exists(
         downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == REVISION
+        assert current_revision(session, within=REVISION) == REVISION
         assert "signup_allowance_off_periods" in public_tables(session)
 
 
@@ -844,7 +844,7 @@ def test_upgrade_downgrade_upgrade_round_trip(
     downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == DOWN_REVISION
+        assert current_revision(session, within=REVISION) == DOWN_REVISION
         assert not set(NEW_TABLES) & public_tables(session)
         assert not FOREIGN_INDEXES & _indexes(session)
         assert not set(NEW_ENUMS) & _enums(session)
@@ -866,7 +866,9 @@ def test_upgrade_downgrade_upgrade_round_trip(
     upgrade_head()
 
     with sm() as session:
-        assert current_revision(session) == head_revision()  # later revisions sit above 0057
+        assert (
+            current_revision(session, within=REVISION) == head_revision()
+        )  # later revisions sit above 0057
         # Later revisions add their own objects on top (0058's CHECK on subscriptions, 0059's
         # three CHECKs on payments and its ``cancel_source`` CHECK on subscriptions).
         later = {
@@ -1408,7 +1410,7 @@ def test_downgrade_refuses_after_the_billing_settings_were_edited(
         downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == REVISION
+        assert current_revision(session, within=REVISION) == REVISION
         assert "billing_settings" in public_tables(session)
 
 
@@ -1432,7 +1434,7 @@ def test_downgrade_refuses_while_an_ai_price_override_exists(
         downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == REVISION
+        assert current_revision(session, within=REVISION) == REVISION
         assert "llm_price_overrides" in public_tables(session)
 
 
@@ -1446,7 +1448,7 @@ def test_downgrade_refuses_while_terms_above_version_one_exist(
         downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == REVISION
+        assert current_revision(session, within=REVISION) == REVISION
         assert session.execute(sa.text("SELECT count(*) FROM plan_tier_terms")).scalar_one() == 2
 
 
@@ -1467,7 +1469,7 @@ def test_downgrade_refuses_while_a_subscription_has_pending_terms(
         downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == REVISION
+        assert current_revision(session, within=REVISION) == REVISION
 
 
 def _audit(sm: sessionmaker[Session], admin: uuid.UUID, action: str, key: str | None) -> None:
@@ -1607,7 +1609,7 @@ def test_downgrade_refuses_after_a_tier_was_edited(
         downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == REVISION
+        assert current_revision(session, within=REVISION) == REVISION
 
 
 @pytest.mark.parametrize(
@@ -1637,7 +1639,7 @@ def test_downgrade_refuses_after_a_pack_or_its_signup_validity_was_edited(
         downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == REVISION
+        assert current_revision(session, within=REVISION) == REVISION
 
 
 def test_downgrade_accepts_the_seeded_signup_validity(
@@ -1659,7 +1661,7 @@ def test_downgrade_accepts_the_seeded_signup_validity(
     downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == DOWN_REVISION
+        assert current_revision(session, within=REVISION) == DOWN_REVISION
 
 
 def _load_migration() -> object:
@@ -1729,4 +1731,4 @@ def test_the_migration_fails_fast_when_payments_is_locked(
     assert "lock timeout" in str(outcome["error"])
     with sm() as session:
         expected = DOWN_REVISION if direction == "upgrade" else REVISION
-        assert current_revision(session) == expected
+        assert current_revision(session, within=REVISION) == expected

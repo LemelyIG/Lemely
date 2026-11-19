@@ -12,6 +12,7 @@ import { useReference } from "@/lib/hooks/useReferenceApi"
 import { useSubject } from "@/lib/hooks/useStudentApi"
 import { cn } from "@/lib/utils"
 import { vizText } from "../components/colors"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * Subject (isSubject). Wired to `GET /student/subject/{code}` via
@@ -137,14 +138,14 @@ export function Subject() {
                   ) : null}
                   <div className="mt-1 flex items-center gap-3">
                     <SubjectGlyph subject={subjectHeader.name} className="mt-0.5" />
-                    <h1 className="text-display-lg text-on-surface">{primary}</h1>
+                    <PageHeading repeatsTitle={true} className="text-display-lg text-on-surface">{primary}</PageHeading>
                   </div>
                   <div className="mt-2 max-w-[62ch] text-pretty text-body-md text-on-surface-variant">
                     {subjectHeader.intro}
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-3">
-                  <Card className="min-w-33 px-5 py-4 text-center">
+                  <Card data-native-bleed="off" className="min-w-33 px-5 py-4 text-center">
                     <div className="text-eyebrow text-on-surface-variant">Forecast grade</div>
                     {/* The data face for both figures: §4.2 puts grades, scores and
                         percentages on the tabular rung, not the display face. They
@@ -153,7 +154,7 @@ export function Subject() {
                     <div className="text-data-lg text-on-surface">{subjectHeader.forecast}</div>
                     <div className="text-body-sm text-on-surface-variant">at current trajectory</div>
                   </Card>
-                  <Card className="min-w-33 px-5 py-4 text-center">
+                  <Card data-native-bleed="off" className="min-w-33 px-5 py-4 text-center">
                     <div className="text-eyebrow text-on-surface-variant">Weighted mean</div>
                     <div className="text-data-lg text-on-surface">
                       {subjectHeader.weightedMean}

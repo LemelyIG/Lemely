@@ -126,6 +126,7 @@ def import_all_models() -> None:
         tutoring,
         usage,
         users,
+        waitlist,
     )
 
 

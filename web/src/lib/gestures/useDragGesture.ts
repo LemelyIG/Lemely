@@ -1,5 +1,6 @@
 import { useEffect, useRef, type RefObject } from "react"
 import { clampDelta, shouldCommitDrag, type DragAxis, type DragClamp } from "./dragMath"
+import { releaseVelocity, trimSamples, type PointerSample } from "./sheetMath"
 
 /*
  * Packet B3 (Task 4) · the single source of truth for a one-finger drag
@@ -17,11 +18,35 @@ import { clampDelta, shouldCommitDrag, type DragAxis, type DragClamp } from "./d
  * whatever `onProgress` does with the same numbers.
  */
 
+/** What a release decider sees: the drag's total delta and its signed velocity
+ * along `axis` (px/ms, last 100ms window, `sheetMath.releaseVelocity`). */
+export interface DragRelease {
+  dx: number
+  dy: number
+  velocity: number
+}
+
 export interface DragGestureOptions {
   axis: DragAxis
-  onCommit: (dx: number, dy: number) => void
+  /** `velocity` is the signed release velocity along `axis` (px/ms). */
+  onCommit: (dx: number, dy: number, velocity: number) => void
   onProgress?: (dx: number, dy: number) => void
+  /** The commit-versus-cancel decision for a drag that passed the distance
+   * gate. Return `"cancel"` and the hook springs the target home and calls
+   * `onCancel`, so callers never re-implement the spring. Omitted: the
+   * distance gate alone decides. A fling decider (swipe-back) uses `velocity`. */
+  release?: (release: DragRelease) => "commit" | "cancel"
   onCancel?: () => void
+  /** Runs when a spring-back has finished (or was never needed), so a caller can clear
+   * anything it keeps alive while the target travels home. */
+  onSettled?: () => void
+  /** The CSS easing of the spring-back. Default `var(--ease-spring)` (a small overshoot, for
+   * the drawer, quiz and flashcards); swipe-back passes the iOS curve, which has none. */
+  springEasing?: string
+  /** On commit, leave the target's transform where the finger released it instead of
+   * clearing it. The caller then owns the target and must clear it (swipe-back continues the
+   * gesture off screen before it navigates). Default false. */
+  keepTransformOnCommit?: boolean
   /** Same units as `dragMath.ts`'s `shouldCommitDrag`. Default 10. */
   commitThreshold?: number
   /** Default true. `false` detaches the listener entirely (not merely a
@@ -52,8 +77,9 @@ export interface DragGestureOptions {
 }
 
 /** How long to wait for `springBack`'s `transitionend` before clearing the
- * transition anyway. Longer than `--dur-base` (320ms) with room for a slow
- * frame; the listener normally wins this race. */
+ * transition anyway. Longer than the longest spring used, `--dur-base` (200ms,
+ * pinned by gestureSafety.test.ts), with room for a slow frame; the listener
+ * normally wins this race. */
 const SPRING_FALLBACK_MS = 600
 
 interface DragState {
@@ -81,6 +107,8 @@ export function useDragGesture(ref: RefObject<HTMLElement | null>, options: Drag
     }
 
     let springTimer: ReturnType<typeof setTimeout> | null = null
+    // Windowed pointer samples along the axis, for the release velocity.
+    let samples: PointerSample[] = []
 
     function springBack() {
       const t = target()
@@ -93,9 +121,10 @@ export function useDragGesture(ref: RefObject<HTMLElement | null>, options: Drag
       // Waiting for one left `style.transition` set on the element forever.
       if (!t.style.transform) {
         t.style.transition = ""
+        optionsRef.current.onSettled?.()
         return
       }
-      t.style.transition = "transform var(--dur-base) var(--ease-spring)"
+      t.style.transition = `transform var(--dur-base) ${optionsRef.current.springEasing ?? "var(--ease-spring)"}`
       t.style.transform = ""
       const finish = () => {
         if (springTimer !== null) {
@@ -103,9 +132,14 @@ export function useDragGesture(ref: RefObject<HTMLElement | null>, options: Drag
           springTimer = null
         }
         t.style.transition = ""
-        t.removeEventListener("transitionend", finish)
+        t.removeEventListener("transitionend", onTransitionEnd)
+        optionsRef.current.onSettled?.()
       }
-      t.addEventListener("transitionend", finish, { once: true })
+      // A descendant's own transition bubbles up here; only the target's counts.
+      const onTransitionEnd = (event: TransitionEvent) => {
+        if (event.target === event.currentTarget) finish()
+      }
+      t.addEventListener("transitionend", onTransitionEnd)
       springTimer = setTimeout(finish, SPRING_FALLBACK_MS)
     }
 
@@ -128,6 +162,8 @@ export function useDragGesture(ref: RefObject<HTMLElement | null>, options: Drag
       // for its `position: fixed` descendants, and paying that for a drag
       // that visibly moves nothing is how C2 shifted the bottom nav.
       t.style.transform = moved === 0 ? "" : axis === "x" ? `translateX(${moved}px)` : `translateY(${moved}px)`
+      const now = performance.now()
+      samples = [...trimSamples(samples, now), [now, axis === "x" ? dx : dy] as const]
       optionsRef.current.onProgress?.(dx, dy)
     }
 
@@ -147,9 +183,16 @@ export function useDragGesture(ref: RefObject<HTMLElement | null>, options: Drag
       const dx = event.clientX - state.startX
       const dy = event.clientY - state.startY
       const threshold = optionsRef.current.commitThreshold ?? 10
-      if (shouldCommitDrag(dx, dy, optionsRef.current.axis, threshold)) {
-        clearTransform()
-        optionsRef.current.onCommit(dx, dy)
+      const axis = optionsRef.current.axis
+      const along = axis === "x" ? dx : dy
+      const velocity = releaseVelocity(samples, performance.now(), along)
+      samples = []
+      const decider = optionsRef.current.release
+      const passes =
+        shouldCommitDrag(dx, dy, axis, threshold) && (decider?.({ dx, dy, velocity }) ?? "commit") === "commit"
+      if (passes) {
+        if (!optionsRef.current.keepTransformOnCommit) clearTransform()
+        optionsRef.current.onCommit(dx, dy, velocity)
       } else {
         springBack()
         optionsRef.current.onCancel?.()
@@ -175,6 +218,7 @@ export function useDragGesture(ref: RefObject<HTMLElement | null>, options: Drag
       if (stateRef.current !== null) return
       if (optionsRef.current.startFilter && !optionsRef.current.startFilter(event)) return
       stateRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY }
+      samples = []
       el!.setPointerCapture(event.pointerId)
       el!.addEventListener("pointermove", onPointerMove)
       el!.addEventListener("pointerup", onPointerUp)

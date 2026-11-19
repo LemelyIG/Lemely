@@ -15,6 +15,7 @@ import {
   ChatText,
   Flag,
   Receipt,
+  ListChecks,
   type Icon,
 } from "@phosphor-icons/react"
 import { useQueryClient } from "@tanstack/react-query"
@@ -72,6 +73,7 @@ const Activations = lazy(() =>
 const PipelineHealth = lazy(() =>
   import("./screens/PipelineHealth").then((m) => ({ default: m.PipelineHealth })),
 )
+const Waitlist = lazy(() => import("./screens/Waitlist").then((m) => ({ default: m.Waitlist })))
 const Schools = lazy(() => import("./screens/Schools").then((m) => ({ default: m.Schools })))
 const TutorQueue = lazy(() =>
   import("./screens/tutoring/TutorQueue").then((m) => ({ default: m.TutorQueue })),
@@ -125,6 +127,7 @@ const NAV_ICON: Record<AdminNavItem["icon"], Icon> = {
   moderation: ChatText,
   reports: Flag,
   billing: Receipt,
+  waitlist: ListChecks,
 }
 
 /*
@@ -482,6 +485,11 @@ export const platformAdminRoute: RouteObject = {
       path: "activations",
       element: <Activations />,
       handle: { title: "Platform activations", skeleton: "page-header" },
+    },
+    {
+      path: "waitlist",
+      element: <Waitlist />,
+      handle: { title: "Platform waitlist", skeleton: "list" },
     },
     {
       path: "pipeline",

@@ -248,7 +248,7 @@ export function DecisionDialog({
       title={copy.title}
       description={tutorName}
       footer={
-        <div className="flex flex-wrap justify-end gap-2">
+        <div data-primary-first className="flex flex-wrap justify-end gap-2">
           <Button className="min-h-11" variant="primary" onClick={onClose} disabled={pending}>
             Go back
           </Button>

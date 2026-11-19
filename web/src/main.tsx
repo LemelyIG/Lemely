@@ -6,6 +6,8 @@ import { queryClient } from "./lib/queryClient"
 import { persister } from "./lib/offline/queryPersister"
 import { shouldPersistQuery } from "./lib/offline/persistAllowlist"
 import { AuthProvider } from "./lib/auth/AuthContext"
+import { endSession } from "./lib/auth/storage"
+import { setAccessRestrictedHandler } from "@/lib/access-api"
 import { router } from "./App"
 import { registerPushClientBridge } from "./lib/push/pushClientBridge"
 import { currentBuildId, reportClientError } from "./lib/clientErrors"
@@ -26,6 +28,54 @@ import "./index.css"
 // happened to be mounted. Without this every push falls back to the generic
 // notification even with the app open.
 registerPushClientBridge()
+
+// Any API call refused with 403 `access_restricted` (`lib/api.ts` reports it from every transport).
+// - `unverified`: an allowed address whose inbox is not proven yet. Not a cut-off: send them to
+//   the verify-email flow, whose endpoints still work for them, and keep the session.
+// - otherwise: this session is no longer allowed in. Navigate first, end the session once the
+//   coming-soon screen is on the page: ending it earlier lets `RequireAuth` (still mounted)
+//   redirect to `/login` and win. `endSession` is the sign-out path, so the persisted query cache
+//   and offline queue go too, and the theme flips to light the moment the session is gone.
+/** Resolves once the coming-soon screen is on the page, i.e. once `RequireAuth` has unmounted and can
+ * no longer react to the session going away. `requestAnimationFrame` is paused in a hidden tab, so a
+ * plain timeout is the fallback: after 1s the session ends regardless. */
+const comingSoonMounted = () =>
+  new Promise<void>((resolve) => {
+    let done = false
+    let frame = 0
+    const finish = () => {
+      if (done) return
+      done = true
+      cancelAnimationFrame(frame)
+      window.clearTimeout(timer)
+      resolve()
+    }
+    const timer = window.setTimeout(finish, 1000)
+    const check = () => {
+      if (document.querySelector('[data-screen="coming-soon"]')) finish()
+      else frame = requestAnimationFrame(check)
+    }
+    check()
+  })
+/** One cut-off chain at a time: repeated refusals while one is in flight must not start another. */
+let cutoffInFlight = false
+setAccessRestrictedHandler(({ reason }) => {
+  if (reason === "unverified") {
+    if (!router.state.location.pathname.startsWith("/verify-email")) {
+      void router.navigate("/verify-email", { replace: true })
+    }
+    return
+  }
+  if (cutoffInFlight) return
+  cutoffInFlight = true
+  void router
+    .navigate("/coming-soon", { replace: true })
+    .then(comingSoonMounted)
+    .then(() => endSession())
+    .finally(() => {
+      cutoffInFlight = false
+    })
+})
 
 // The page half of the widget handshake — same "call once, before the app
 // renders" shape as registerPushClientBridge above, for the same reason: the

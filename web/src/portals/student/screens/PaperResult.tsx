@@ -2,6 +2,7 @@
 import { useState, type ReactNode } from "react"
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Check, Minus, ShareNetwork, Trash, Warning } from "@phosphor-icons/react"
+import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Chip } from "@/components/ui/chip"
@@ -28,6 +29,7 @@ import { useAttemptQuestions } from "@/lib/hooks/useSelfReviewApi"
 import { useDeletePaper } from "@/lib/hooks/usePaperDeletionApi"
 import { useResult } from "@/lib/hooks/useStudentApi"
 import type { IntegrityRow, QuestionResult, Result } from "@/lib/studentTypes"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * Paper Result (isResult) - the flagship screen. Renders one result, from
@@ -154,12 +156,20 @@ function IntegrityMark({ row }: { row: IntegrityRow }) {
 function ResultScreen({
   children,
   srHeading,
+  entrance = false,
 }: {
   children: ReactNode
   srHeading?: string
+  /**
+   * Plays the screen's own `lm-in`. Only a live result wants it: it arrives without a view
+   * transition, straight off the run, and its entrance leads into the reveal. A stored result is
+   * already given its entrance by `ScreenOutlet` (or by the push's slide on a phone), and its own
+   * on top was a second fade over the same pixels.
+   */
+  entrance?: boolean
 }) {
   return (
-    <div className="lm-screen flex flex-col gap-6">
+    <div className={cn(entrance && "lm-screen", "flex flex-col gap-6")}>
       {srHeading ? <h1 className="sr-only">{srHeading}</h1> : null}
       {children}
     </div>
@@ -309,7 +319,7 @@ function ResultHeader({
             </div>
           </div>
           {res.headline ? (
-            <h1 className="mt-2.5 text-display-md text-on-surface">{res.headline}</h1>
+            <PageHeading repeatsTitle={false} className="mt-2.5 text-display-md text-on-surface">{res.headline}</PageHeading>
           ) : (
             <h1 className="sr-only">
               Paper result: {res.code} {res.paper}
@@ -690,7 +700,7 @@ export function PaperResult() {
   if (live) {
     const summary = confidenceSummaryOf(live.questions)
     return (
-      <ResultScreen>
+      <ResultScreen entrance>
         <ResultHeader res={live} reveal />
         {live.questions.length > 0 ? (
           <ConfidenceIndicatorSummary

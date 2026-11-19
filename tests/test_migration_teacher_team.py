@@ -228,7 +228,7 @@ def test_downgrade_refuses_while_a_seat_grant_exists(
     """
     sm, downgrade_to = migrated_sessionmaker_with_downgrade
     with sm() as session:
-        revision_before = current_revision(session)
+        revision_before = current_revision(session, within=REVISION)
     teacher, student, member = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     with sm.begin() as session:
         for uid, role in ((teacher, "teacher"), (student, "student")):
@@ -257,7 +257,7 @@ def test_downgrade_refuses_while_a_seat_grant_exists(
         downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == revision_before
+        assert current_revision(session, within=REVISION) == revision_before
         assert TABLE in public_tables(session)
         assert GRANT_FK in object_names(session, ["usage_grants"])
         left = session.execute(
@@ -303,7 +303,7 @@ def test_upgrade_downgrade_upgrade_round_trip(
     downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == DOWN_REVISION
+        assert current_revision(session, within=REVISION) == DOWN_REVISION
         assert TABLE not in public_tables(session)
         codes = set(session.execute(sa.text("SELECT code FROM invites")).scalars())
         assert codes == {"PARENT0001"}  # assistant invites cannot satisfy the old target check

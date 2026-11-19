@@ -97,8 +97,8 @@ describe("SubjectGlyph consumers (source)", () => {
     expect(sourceOf("src/portals/student/screens/Subject.tsx")).toContain("<SubjectGlyph")
   })
 
-  it("the student sidebar's per-subject accordion rows render SubjectGlyph", () => {
-    expect(sourceOf("src/portals/student/index.tsx")).toContain("<SubjectGlyph")
+  it("the student sidebar's subject rows render design A's grade ring", () => {
+    expect(sourceOf("src/portals/student/shell.tsx")).toContain("<GradeRing")
   })
 
   it("the old per-subject icon switch (student/data.ts subjectIcon) is gone, not left as dead duplicate logic", () => {

@@ -542,6 +542,7 @@ function SeatTable({ school }: { school: SeatUsage }) {
           reader is looking, instead of behind a dialog they have to close
           before they can see it. */}
       <ConfirmModal
+        destructive={false}
         open={pendingRevoke !== null}
         onCancel={() => setPendingRevoke(null)}
         title="Free up this seat?"

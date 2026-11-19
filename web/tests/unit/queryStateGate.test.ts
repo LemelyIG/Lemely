@@ -215,6 +215,11 @@ const ALLOWLIST: { path: string; reason: string }[] = [
       "loads no data: a dialog driven by the seat row `SeatsPanel` passes it; imports only the remove-seat, cap and scope mutations",
   },
   {
+    path: "src/portals/student/screens/SubjectEntry.tsx",
+    reason:
+      "loads data, but it is a redirect-only interim tab root: RouteSkeleton while pending, then a Navigate (to the first subject, or Home when there is none), so there is no content an error panel could stand in for. A failed overview fetch is not pending and has no subjects, so it also sends the student Home silently; accepted for an interim root that L4 and L9 replace",
+  },
+  {
     path: "src/portals/teacher/screens/ClassRoster.tsx",
     reason:
       "loads no data: renders the class detail from `useClassDetailContext()`, which its parent layout fetches and gates; imports only the enrol/remove mutations",

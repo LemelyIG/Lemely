@@ -13,6 +13,7 @@ import { usePracticeResult } from "@/lib/hooks/usePracticeApi"
 import { useSubjectName } from "@/lib/hooks/useReferenceApi"
 import { confidenceBandTier, practiceMarkState, practiceResultView } from "./practiceData"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 
@@ -112,9 +113,9 @@ export function PracticeResult() {
           if (view.kind === "marking") {
             return (
               <div className="flex flex-col gap-5 py-12">
-                <h1 className="text-display-lg text-on-surface">
+                <PageHeading repeatsTitle={false} className="text-display-lg text-on-surface">
                   Marking your {subjectName} practice set
-                </h1>
+                </PageHeading>
                 <p className="lm-prose text-body-lg text-on-surface-variant">
                   This usually only takes a moment. The page updates on its own, so there's no
                   need to refresh.
@@ -145,7 +146,7 @@ export function PracticeResult() {
           return (
             <>
               <div className="flex flex-col gap-3">
-                <h1 className="text-display-lg text-on-surface">Your {subjectName} practice set</h1>
+                <PageHeading repeatsTitle={false} className="text-display-lg text-on-surface">Your {subjectName} practice set</PageHeading>
                 {/* The data face, per §4 and §4.2's `data-lg` rung ("the big
                     number: a score"). This is the figure the screen exists to
                     deliver. */}

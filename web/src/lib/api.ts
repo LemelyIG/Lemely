@@ -1,4 +1,5 @@
 import type { ActivityEvent } from "./types"
+import { reportAccessRestricted } from "./accessRestricted"
 import { endSession, getSession, markSessionExpired, setSession } from "./auth/storage"
 import { isTokenExpired } from "./auth/jwt"
 import { parseRetryAfter } from "./routeError"
@@ -222,6 +223,12 @@ async function performRefresh(): Promise<RefreshOutcome> {
     return { status: "unavailable" }
   }
   if (res.status === 401) return { status: "refused" }
+  if (res.status === 403) {
+    // The allow-list refused this account (see `accessRestricted.ts`); the handler ends the session.
+    const parsed = parseErrorBody(res.status, res.statusText, await res.clone().text().catch(() => ""))
+    reportAccessRestricted(res.status, parsed.detail, parsed.body)
+    return { status: "unavailable" }
+  }
   if (!res.ok) return { status: "unavailable" }
   const body = (await res.json()) as RefreshedSession
   setSession({
@@ -390,6 +397,9 @@ export async function request<T>(
       // a 429 or a 503 from every ordinary API call comes through — see the
       // field's own doc on `ApiError` above.
       const retryAfter = parseRetryAfter(res.headers.get("Retry-After"), new Date())
+      // The sign-in/sign-up forms show this refusal inline; only other calls are a cut-off.
+      // (Refresh is reported from `performRefresh`, which has its own check.)
+      if (!isAuthCall) reportAccessRestricted(res.status, parsed.detail, parsed.body)
       throw failure(res.status, parsed, retryAfter ?? undefined, lead)
     }
     // A 204 (e.g. `DELETE /classes/{id}`) has no body — `res.json()` would
@@ -437,6 +447,7 @@ export async function fetchBlobUrl(path: string, apiInit?: ApiRequestInit): Prom
   }
   if (!res.ok) {
     const parsed = parseErrorBody(res.status, res.statusText, await res.clone().text().catch(() => ""))
+    reportAccessRestricted(res.status, parsed.detail, parsed.body)
     throw failure(res.status, parsed, undefined, lead)
   }
   return URL.createObjectURL(await res.blob())
@@ -489,6 +500,7 @@ export async function* streamActivity(
   if (!res.ok) {
     const parsed = parseErrorBody(res.status, res.statusText, await res.clone().text().catch(() => ""))
     const retryAfter = parseRetryAfter(res.headers.get("Retry-After"), new Date())
+    reportAccessRestricted(res.status, parsed.detail, parsed.body)
     throw failure(res.status, parsed, retryAfter ?? undefined, lead)
   }
   if (!res.body) return
@@ -723,6 +735,7 @@ async function uploadOnce<T>(
   if (result.status < 200 || result.status >= 300) {
     const parsed = parseErrorBody(result.status, result.statusText, result.text)
     const retryAfter = parseRetryAfter(result.getHeader("Retry-After"), new Date())
+    reportAccessRestricted(result.status, parsed.detail, parsed.body)
     throw failure(result.status, parsed, retryAfter ?? undefined, lead)
   }
   // Same 204 special-case as `request()` — `JSON.parse("")` would throw.

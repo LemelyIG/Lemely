@@ -31,18 +31,11 @@ describe("Overview.tsx", () => {
   })
 })
 
-describe("student/index.tsx", () => {
-  const source = sourceOf("src/portals/student/index.tsx")
-
-  it("HeaderStreak's visibility class is on the sm: scale, not an arbitrary min-[640px] value", () => {
-    // Scoped to the streak chip's own className (DESIGN.md §14 rule 3), not
-    // the whole file — a separate, unrelated `min-[640px]:px-page-desktop`
-    // padding breakpoint on the app header belongs to a different task and
-    // is out of scope here.
-    const xpStreakAt = source.indexOf("<XPStreak")
-    expect(xpStreakAt).toBeGreaterThan(-1)
-    const nearby = source.slice(Math.max(0, xpStreakAt - 400), xpStreakAt)
-    expect(nearby).toContain("sm:inline-flex")
-    expect(nearby).not.toContain("min-[640px]")
+describe("student shell", () => {
+  // Portal shell spec §1 "Removed": the header streak is gone; the streak lives
+  // in the Overview page (its hero, in the Overview plan).
+  it("no longer renders a streak chip in the shell", () => {
+    expect(sourceOf("src/portals/student/index.tsx")).not.toContain("<XPStreak")
+    expect(sourceOf("src/portals/student/shell.tsx")).not.toContain("<XPStreak")
   })
 })

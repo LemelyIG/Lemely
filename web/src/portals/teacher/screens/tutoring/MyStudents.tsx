@@ -21,6 +21,7 @@ import {
   type StudentRowView,
 } from "@/lib/tutoring/tutorStudentView"
 import type { TutorStudentItem, TutorStudentPage } from "@/lib/tutoringTypes"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * T-19 · My students (`/teacher/tutoring/students`, SPEC §d).
@@ -82,7 +83,7 @@ export function MyStudents() {
           <CaretLeft size={14} aria-hidden />
           Back to tutoring
         </Link>
-        <h1 className="m-0 text-display-md text-on-surface">My students</h1>
+        <PageHeading repeatsTitle={true} className="m-0 text-display-md text-on-surface">My students</PageHeading>
       </div>
 
       {isNoTutorProfile(paged.state.error) ? (

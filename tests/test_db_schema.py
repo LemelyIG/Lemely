@@ -141,6 +141,9 @@ EXPECTED_TABLES = {
     "billing_settings",
     "plan_tier_terms",
     "llm_price_overrides",
+    # Waitlist (lemely/db/models/waitlist.py, migrations 0052-0054 on the develop chain).
+    "waitlist_applicants",
+    "waitlist_digest_log",
 }
 
 # Tables deliberately excluded from `test_every_model_has_timestamps` below.
@@ -186,6 +189,7 @@ TABLES_WITHOUT_TIMESTAMPS = {
     "usage_job_model_costs",
     "signup_allowance_off_periods",
     "plan_tier_terms",
+    "waitlist_digest_log",  # keyed by day; one row per claimed digest
 }
 
 
@@ -329,6 +333,26 @@ def test_0043_merge_heads_joins_the_develop_and_branch_chains() -> None:
     }
     lineage = {r.revision for r in script_dir.iterate_revisions("heads", "base")}
     assert "0043_merge_heads" in lineage
+
+
+def test_migration_chain_has_one_head_joining_billing_and_waitlist() -> None:
+    """``0060_merge_heads`` joins the billing and waitlist chains into the single head.
+
+    Both forked from ``0051_tutor_evidence_uploads``. Two heads would make every
+    ``alembic upgrade head`` (CI, the deploy ``migrate`` job, the container entrypoint)
+    refuse to run, so the join must exist and must be the only head.
+    """
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    script_dir = ScriptDirectory.from_config(Config("alembic.ini"))
+    assert script_dir.get_heads() == ["0060_merge_heads"]
+    revision = script_dir.get_revision("0060_merge_heads")
+    assert revision is not None
+    assert set(revision.down_revision) == {
+        "0059_payment_applied_marker",
+        "0054_waitlist_email_confirmation",
+    }
 
 
 def test_every_enum_column_binds_its_value_not_its_member_name() -> None:

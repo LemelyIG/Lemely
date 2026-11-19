@@ -9,6 +9,8 @@ import { GradeBadge } from "@/components/ui/grade-badge"
 import { EmptyState } from "@/components/ui/state-views"
 import { Input } from "@/components/ui/input"
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
+import { ListGroup, ListRow } from "@/components/ui/list-group"
+import { TableOrList } from "@/components/ui/table-or-list"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
 import {
@@ -20,6 +22,7 @@ import { useReference } from "@/lib/hooks/useReferenceApi"
 import { gradeRank, widestVocabularyFor } from "@/lib/grades"
 import type { QuizSummary } from "@/lib/teacherTypes"
 import { ForwardArrow, SortArrow } from "@/components/ui/inline-arrow"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * Quiz list (T-09's entry screen). Wired to `GET /teacher/quizzes`
@@ -234,10 +237,10 @@ export function Quizzes() {
             <>
               <div className="flex items-end gap-[18px] pb-5 border-b border-outline-variant flex-wrap gap-y-3">
                 <div>
-                  <div className="text-eyebrow text-on-surface-variant">
+                  <div className="text-eyebrow native:hidden text-on-surface-variant">
                     {quizzes.length} quiz{quizzes.length === 1 ? "" : "zes"}
                   </div>
-                  <h1 className="text-display-lg text-on-surface mt-1.5">AI quizzes</h1>
+                  <PageHeading repeatsTitle={true} className="text-display-lg text-on-surface mt-1.5">AI quizzes</PageHeading>
                 </div>
                 <div className="flex-1" />
                 {/* The kit's `<Input>`, which requires a label by type rather than by
@@ -309,95 +312,128 @@ export function Quizzes() {
                   action={canCreate ? { label: "Create a quiz", onClick: () => setShowCreate(true) } : undefined}
                 />
               ) : (
-                <Table density="operate"
-                  tabIndex={0}
-                  role="region"
-                  aria-label="Your quizzes, scrollable horizontally"
-                >
-                  <caption className="sr-only">Your quizzes, sortable by every column</caption>
-                  <THead>
-                    <TR>
-                      {COLUMNS.map((col) => {
-                        const active = col.key === sortColumn
-                        return (
-                          <TH
-                            key={col.key}
-                            numeric={col.key === "questionCount"}
-                            aria-sort={active ? (sortDir === 1 ? "ascending" : "descending") : "none"}
-                          >
-                            <button
-                              type="button"
-                              onClick={() => toggleSort(col.key)}
-                              // `whitespace-nowrap` (P6.1): "Target grade" is two
-                              // words in an uppercase eyebrow inside a table header
-                              // cell, and it broke across two lines at every width
-                              // from 320 to 768 — a two-line clickable target, and on
-                              // a sort control the second line looks like a separate
-                              // header. The column can be wider; the label cannot
-                              // break.
-                              className="inline-flex items-center gap-1 whitespace-nowrap text-eyebrow text-on-surface-variant transition-colors hover:text-on-surface cursor-pointer bg-transparent border-0 p-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-                            >
-                              {col.label}
-                              {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
-                            </button>
-                          </TH>
-                        )
-                      })}
-                      <TH>
-                        <span className="sr-only">Actions</span>
-                      </TH>
-                    </TR>
-                  </THead>
-                  <TBody>
-                    {sorted.length === 0 ? (
-                      <TR>
-                        <TD colSpan={COLUMNS.length + 1} className="py-6 text-on-surface-variant text-body-md">
-                          No quizzes match "{search}".
-                        </TD>
-                      </TR>
+                <TableOrList
+                  storageKey="lemely.quizzes.view"
+                  list={
+                    sorted.length === 0 ? (
+                      <p className="px-4 py-6 text-body-md text-on-surface-variant">No quizzes match "{search}".</p>
                     ) : (
-                      sorted.map((q) => (
-                        <TR key={q.id}>
-                          <TD>
-                            {/* Opts out of §6.1's two-line-clickable rule: a quiz
-                                title is the teacher's own words, and truncating it in
-                                the one column that identifies the row would be worse
-                                than letting it wrap. See scripts/adapt_audit.mjs. */}
-                            <Link
-                              to={`/teacher/quizzes/${q.id}`}
-                              data-wraps-content-title
-                              className="text-on-surface hover:underline"
-                            >
-                              {q.title}
-                            </Link>
-                            {q.status === "draft" ? (
-                              <div className="text-body-sm text-on-surface-variant mt-1">
-                                Step {q.builderStep} of 6
-                              </div>
-                            ) : null}
-                          </TD>
-                          <TD className="text-data-sm text-on-surface-variant">{q.subjectCode}</TD>
-                          <TD>
-                            <Chip tone={statusTone(q.status)}>{statusLabel(q.status)}</Chip>
-                          </TD>
-                          <TD numeric>{q.questionCount}</TD>
-                          <TD>
-                            {q.targetGrade ? (
-                              <GradeBadge grade={q.targetGrade} size="inline" basis="target" />
-                            ) : (
-                              <span className="text-body-sm text-on-surface-variant">Not set</span>
-                            )}
-                          </TD>
-                          <TD className="text-end whitespace-nowrap">
-                            <Button size="sm" variant="secondary" onClick={() => navigate(`/teacher/quizzes/${q.id}`)}>
-                              <>{q.status === "draft" ? "Continue" : "Open"} <ForwardArrow /></>
-                            </Button>
-                          </TD>
+                      <ListGroup label="Your quizzes">
+                        {sorted.map((q) => (
+                          <ListRow
+                            key={q.id}
+                            to={`/teacher/quizzes/${q.id}`}
+                            title={q.title}
+                            subtitle={[
+                              q.subjectCode,
+                              statusLabel(q.status),
+                              q.status === "draft" ? `Step ${q.builderStep} of 6` : null,
+                              q.targetGrade ? `Target ${q.targetGrade}` : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                            trailing={
+                              <span className="text-data-sm tabular-nums">
+                                {q.questionCount} {q.questionCount === 1 ? "question" : "questions"}
+                              </span>
+                            }
+                          />
+                        ))}
+                      </ListGroup>
+                    )
+                  }
+                  table={
+                    <Table density="operate"
+                      tabIndex={0}
+                      role="region"
+                      aria-label="Your quizzes, scrollable horizontally"
+                    >
+                      <caption className="sr-only">Your quizzes, sortable by every column</caption>
+                      <THead>
+                        <TR>
+                          {COLUMNS.map((col) => {
+                            const active = col.key === sortColumn
+                            return (
+                              <TH
+                                key={col.key}
+                                numeric={col.key === "questionCount"}
+                                aria-sort={active ? (sortDir === 1 ? "ascending" : "descending") : "none"}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => toggleSort(col.key)}
+                                  // `whitespace-nowrap` (P6.1): "Target grade" is two
+                                  // words in an uppercase eyebrow inside a table header
+                                  // cell, and it broke across two lines at every width
+                                  // from 320 to 768 — a two-line clickable target, and on
+                                  // a sort control the second line looks like a separate
+                                  // header. The column can be wider; the label cannot
+                                  // break.
+                                  className="inline-flex items-center gap-1 whitespace-nowrap text-eyebrow text-on-surface-variant transition-colors hover:text-on-surface cursor-pointer bg-transparent border-0 p-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                                >
+                                  {col.label}
+                                  {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
+                                </button>
+                              </TH>
+                            )
+                          })}
+                          <TH>
+                            <span className="sr-only">Actions</span>
+                          </TH>
                         </TR>
-                      ))
-                    )}
-                  </TBody>
-                </Table>
+                      </THead>
+                      <TBody>
+                        {sorted.length === 0 ? (
+                          <TR>
+                            <TD colSpan={COLUMNS.length + 1} className="py-6 text-on-surface-variant text-body-md">
+                              No quizzes match "{search}".
+                            </TD>
+                          </TR>
+                        ) : (
+                          sorted.map((q) => (
+                            <TR key={q.id}>
+                              <TD>
+                                {/* Opts out of §6.1's two-line-clickable rule: a quiz
+                                    title is the teacher's own words, and truncating it in
+                                    the one column that identifies the row would be worse
+                                    than letting it wrap. See scripts/adapt_audit.mjs. */}
+                                <Link
+                                  to={`/teacher/quizzes/${q.id}`}
+                                  data-wraps-content-title
+                                  className="text-on-surface hover:underline"
+                                >
+                                  {q.title}
+                                </Link>
+                                {q.status === "draft" ? (
+                                  <div className="text-body-sm text-on-surface-variant mt-1">
+                                    Step {q.builderStep} of 6
+                                  </div>
+                                ) : null}
+                              </TD>
+                              <TD className="text-data-sm text-on-surface-variant">{q.subjectCode}</TD>
+                              <TD>
+                                <Chip tone={statusTone(q.status)}>{statusLabel(q.status)}</Chip>
+                              </TD>
+                              <TD numeric>{q.questionCount}</TD>
+                              <TD>
+                                {q.targetGrade ? (
+                                  <GradeBadge grade={q.targetGrade} size="inline" basis="target" />
+                                ) : (
+                                  <span className="text-body-sm text-on-surface-variant">Not set</span>
+                                )}
+                              </TD>
+                              <TD className="text-end whitespace-nowrap">
+                                <Button size="sm" variant="secondary" onClick={() => navigate(`/teacher/quizzes/${q.id}`)}>
+                                  <>{q.status === "draft" ? "Continue" : "Open"} <ForwardArrow /></>
+                                </Button>
+                              </TD>
+                            </TR>
+                          ))
+                        )}
+                      </TBody>
+                    </Table>
+                  }
+                />
               )}
             </>
           )

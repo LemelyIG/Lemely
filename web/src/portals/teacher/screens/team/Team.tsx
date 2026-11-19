@@ -2,6 +2,7 @@
 /* The 403 for an assistant renders a plain ErrorState with no retry, because retrying cannot change who the teacher is. JoinTeamCard stays outside the query so an assistant can still join a team. */
 import { ApiError } from "@/lib/api"
 import { PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import { PageHeading } from "@/components/ui/page-heading"
 import { QueryState } from "@/components/ui/query-state"
 import { ErrorState } from "@/components/ui/state-views"
 import { useTeam } from "@/lib/hooks/useTeamApi"
@@ -21,7 +22,7 @@ export function Team() {
   const team = useTeam()
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="m-0 text-display-md text-on-surface">Seats and assistants</h1>
+      <PageHeading repeatsTitle className="m-0 text-display-md text-on-surface">Seats and assistants</PageHeading>
       {/* The team is the caller's own whoever they are working as; say so while they act for a lead. */}
       <OwnAccountNote />
       {team.status === "error" && isForbidden(team.error) ? (

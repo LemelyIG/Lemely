@@ -1,8 +1,8 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
-import { useMemo, useRef } from "react"
+import { useMemo } from "react"
 import { Link } from "react-router-dom"
 import { ArrowDownRight, ArrowUpRight, Minus } from "@phosphor-icons/react"
-import { Card } from "@/components/ui/card"
+import { Card, TitledCard } from "@/components/ui/card"
 import { Meter } from "@/components/ui/primitives"
 import { SectionHead } from "@/components/ui/section-head"
 import { buttonVariants } from "@/components/ui/button"
@@ -11,8 +11,6 @@ import { LineChart } from "@/components/ui/lazy-chart"
 import { GradeBadge } from "@/components/ui/grade-badge"
 import { QueryState } from "@/components/ui/query-state"
 import { GettingStarted } from "@/components/ui/getting-started"
-import { PullIndicator } from "@/components/ui/pull-indicator"
-import { usePullToRefresh } from "@/lib/gestures/usePullToRefresh"
 import { SUBJECT_FILL } from "@/components/ui/subject-glyph"
 import { subjectIdentifier } from "@/lib/subjectIdentifier"
 import { useReference } from "@/lib/hooks/useReferenceApi"
@@ -29,6 +27,7 @@ import { useOverview } from "@/lib/hooks/useStudentApi"
 import { useMyClasses } from "@/lib/hooks/useLeaderboardApi"
 import type { MomentumPoint, SubjectRow } from "@/lib/studentTypes"
 import { vizBg } from "../components/colors"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * Overview (isOverview) — the student dashboard. Wired to
@@ -156,7 +155,7 @@ function SubjectLedgerRow({ row }: { row: SubjectRow }) {
        * pointing at. Reserved transparent at rest so it cannot shift the row.
        */
       className={cn(
-        "group flex flex-col gap-3 w-full text-start border-t border-outline-variant px-6 py-4",
+        "lm-native-card-row group flex flex-col gap-3 w-full text-start border-t border-outline-variant px-6 py-4 native:ios:px-4",
         "md:grid md:grid-subject-ledger md:items-center md:gap-4",
         "border-s-2 border-s-transparent hover:border-s-primary hover:bg-surface-container-low",
         "transition-colors duration-[var(--dur-instant)] ease-out-soft",
@@ -382,23 +381,8 @@ export function Overview() {
   const streak = xp.data?.streak?.current
   const xpTotal = xp.data?.totalXp
 
-  // Task 6 (B4b): pull-to-refresh on this screen's own root element, the
-  // same arrangement as `Notifications`/`Announcements` — see that screen's
-  // comment for why the surface must never be `document.documentElement`.
-  const pullSurfaceRef = useRef<HTMLDivElement>(null)
-  const { pulling, refreshing } = usePullToRefresh(pullSurfaceRef, {
-    onRefresh: () => query.refetch(),
-  })
-
   return (
-    <div ref={pullSurfaceRef} className="relative flex flex-col gap-8">
-      <div
-        // P6.3: `z-dropdown`, not `z-10` — see Notifications.tsx's comment.
-        className="pointer-events-none absolute inset-x-0 z-dropdown flex justify-center"
-        style={{ top: "calc(var(--lm-pull-progress, 0) * 40px - 40px)" }}
-      >
-        <PullIndicator progress={pulling ? 1 : 0} refreshing={refreshing} />
-      </div>
+    <div className="relative flex flex-col gap-8">
       <JoinClassPrompt />
       <QueryState
         query={query}
@@ -476,9 +460,9 @@ export function Overview() {
           if (subjects.length === 0) {
             return (
               <>
-                <h1 className="text-display-lg text-on-surface">
+                <PageHeading repeatsTitle={false} className="text-display-lg text-on-surface">
                   {greeting}, {greetingName}.
-                </h1>
+                </PageHeading>
                 <GettingStarted
                   heading="Let's get your first paper marked"
                   body="Lemely works from your own past papers. Mark one and this page fills in on its own."
@@ -543,12 +527,11 @@ export function Overview() {
                 />
               </header>
 
-              <Card className="overflow-hidden">
-                <h2 className="px-6 pt-5 pb-4 text-display-md text-on-surface">Subjects this session</h2>
+              <TitledCard title="Subjects this session" className="overflow-hidden">
                 {subjects.map((row) => (
                   <SubjectLedgerRow key={row.code} row={row} />
                 ))}
-              </Card>
+              </TitledCard>
 
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                 <MomentumPanel points={momentum.points} />

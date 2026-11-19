@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useCan } from "@/components/acting/acting-state"
 import { PermissionGate } from "@/components/acting/permission-gate"
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
@@ -12,12 +12,17 @@ import { cn, relativeTime } from "@/lib/utils"
 import { Select } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
+import { ListGroup, ListRow } from "@/components/ui/list-group"
+import { TableOrList } from "@/components/ui/table-or-list"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import {
   teacherLoadFailureMessage,
   teacherMutationFailureMessage,
 } from "@/lib/teacherOutcome"
 import { Avatar } from "@/components/ui/avatar"
+import { CheckCircle } from "@phosphor-icons/react"
+import { Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
+import { useDialogHistory } from "@/lib/nav/useDialogHistory"
 import {
   useAcknowledgeAtRisk,
   useAtRiskList,
@@ -27,6 +32,7 @@ import type { AtRiskFlag, AtRiskListEntry } from "@/lib/teacherTypes"
 import { SortArrow } from "@/components/ui/inline-arrow"
 import { gradeRank, widestVocabulary } from "@/lib/grades"
 import { useReference } from "@/lib/hooks/useReferenceApi"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * At-risk list (T-06). `GET /teacher/at-risk?reason=&acknowledged=`
@@ -144,9 +150,12 @@ const COLUMNS: { key: SortColumn; label: string }[] = [
 function AcknowledgeControl({
   studentId,
   flag,
+  askVariant = "secondary",
 }: {
   studentId: string
   flag: AtRiskFlag
+  /** The sheet sits one surface step above the page, where the secondary fill disappears in dark. */
+  askVariant?: "secondary" | "primary"
 }) {
   const [open, setOpen] = useState(false)
   const [note, setNote] = useState("")
@@ -189,7 +198,7 @@ function AcknowledgeControl({
 
   if (!open) {
     return (
-      <Button type="button" size="sm" variant="secondary" className="mt-1" onClick={() => setOpen(true)}>
+      <Button type="button" size="sm" variant={askVariant} className="mt-1" onClick={() => setOpen(true)}>
         Acknowledge
       </Button>
     )
@@ -244,7 +253,15 @@ function AcknowledgeControl({
   )
 }
 
-function FlagsCell({ studentId, flags }: { studentId: string; flags: AtRiskFlag[] }) {
+function FlagsCell({
+  studentId,
+  flags,
+  askVariant,
+}: {
+  studentId: string
+  flags: AtRiskFlag[]
+  askVariant?: "secondary" | "primary"
+}) {
   if (flags.length === 0) return <span className="text-body-sm text-on-surface-variant">—</span>
   return (
     <div className="flex flex-col gap-3 max-w-[360px]">
@@ -257,10 +274,89 @@ function FlagsCell({ studentId, flags }: { studentId: string; flags: AtRiskFlag[
             />
             <span className="flex-1 text-pretty">{f.summary}</span>
           </div>
-          <AcknowledgeControl studentId={studentId} flag={f} />
+          <AcknowledgeControl studentId={studentId} flag={f} askVariant={askVariant} />
         </div>
       ))}
     </div>
+  )
+}
+
+/** Short reason names for the list subtitle, from the same labels the filter uses. */
+function reasonLabel(reason: string): string {
+  return REASON_OPTIONS.find((o) => o.value === reason)?.label ?? reason
+}
+
+/** Light: the lowest container, like every shell panel. Dark: one step up so it lifts off the page. */
+const ACK_SHEET_SURFACE =
+  "gap-3 rounded-card border-0 bg-surface-container-lowest p-6 text-on-surface dark:bg-surface-container-high"
+
+/**
+ * One at-risk student in the native list view. The row links to the student;
+ * "Acknowledge" (the screen's core action, D3.5) sits beside it in the row's
+ * action slot and opens a bottom sheet with the same per-flag note form the
+ * table cell uses. The sheet stays mounted after the last flag is
+ * acknowledged, so the teacher sees the result and can still undo it; only
+ * the trigger goes away.
+ */
+function AtRiskListRow({ student: s }: { student: AtRiskListEntry }) {
+  const [open, setOpen] = useState(false)
+  const anchor = useRef<HTMLSpanElement>(null)
+  useDialogHistory({ open, dismissible: true, onClose: () => setOpen(false) })
+  const pending = s.flags.some((f) => !f.acknowledged)
+  const reasons = s.flags.map((f) => `${reasonLabel(f.reason)}${f.acknowledged ? " (acknowledged)" : ""}`).join(" · ")
+  return (
+    <ListRow
+      to={`/teacher/students/${s.studentId}`}
+      leading={<Avatar name={s.displayName} size="sm" />}
+      // The class trails the name and truncates first; the reasons own their line.
+      title={
+        <>
+          {s.displayName}
+          <span className="text-on-surface-variant"> · {s.className}</span>
+        </>
+      }
+      subtitle={reasons}
+      lines={3}
+      action={
+        <span ref={anchor} className="contents">
+          <Sheet open={open} onOpenChange={setOpen}>
+            {pending ? (
+              <SheetTrigger asChild>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  className="min-h-11 min-w-11 px-0"
+                  aria-label={`Acknowledge flags for ${s.displayName}`}
+                  title="Acknowledge"
+                >
+                  <CheckCircle size={22} aria-hidden="true" />
+                </Button>
+              </SheetTrigger>
+            ) : null}
+            <SheetContent
+              side="adaptive"
+              className={ACK_SHEET_SURFACE}
+              onCloseAutoFocus={(e) => {
+                // The trigger is gone once every flag is acknowledged, so focus would fall to the page.
+                if (pending) return
+                const link = anchor.current?.closest(".lm-native-row")?.querySelector("a")
+                if (link) {
+                  e.preventDefault()
+                  link.focus()
+                }
+              }}
+            >
+              <SheetTitle className="pe-8 text-display-md">{s.displayName}</SheetTitle>
+              <SheetDescription>
+                {s.className}. Acknowledging notes that you have seen a flag. It is never a mute.
+              </SheetDescription>
+              <FlagsCell studentId={s.studentId} flags={s.flags} askVariant="primary" />
+            </SheetContent>
+          </Sheet>
+        </span>
+      }
+    />
   )
 }
 
@@ -313,10 +409,10 @@ export function AtRiskList() {
           return (
             <>
               <div className="flex flex-col gap-1">
-              <div className="text-eyebrow text-on-surface-variant">
+              <div className="text-eyebrow native:hidden text-on-surface-variant">
                 Flagged by trajectory, not by one bad day
               </div>
-              <h1 className="text-display-lg text-on-surface mt-1">At-risk students</h1>
+              <PageHeading repeatsTitle={true} className="text-display-lg text-on-surface mt-1">At-risk students</PageHeading>
             </div>
 
             {/* The kit's `<Select>` rather than two hand-rolled `<select>`s. Both
@@ -373,86 +469,99 @@ export function AtRiskList() {
                 }
               />
             ) : (
-              <Table density="operate"
-                tabIndex={0}
-                role="region"
-                aria-label="At-risk students, scrollable horizontally"
-              >
-                <caption className="sr-only">
-                  Flagged students across your classes, sortable by every column. Severity mirrors
-                  the order this list already arrives in from the server: most flags, then worst
-                  grade, first.
-                </caption>
-                <THead>
-                  <TR>
-                    {COLUMNS.map((col) => {
-                      const active = col.key === sortColumn
-                      return (
-                        <TH
-                          key={col.key}
-                          aria-sort={active ? (sortDir === 1 ? "ascending" : "descending") : "none"}
-                          className="align-bottom"
-                        >
-                          <button
-                            type="button"
-                            onClick={() => toggleSort(col.key)}
-                            className="inline-flex items-center gap-1 text-eyebrow text-on-surface-variant transition-colors hover:text-on-surface cursor-pointer bg-transparent border-0 p-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-                          >
-                            {col.label}
-                            {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
-                          </button>
-                        </TH>
-                      )
-                    })}
-                  </TR>
-                </THead>
-                <TBody>
-                  {students.map((s) => (
-                    <TR key={s.studentId} className="align-top">
-                      <TD>
-                        <div className="flex items-center gap-2.5">
-                          <Avatar name={s.displayName} size="sm" />
-                          <Link to={`/teacher/students/${s.studentId}`} className="text-on-surface hover:underline">
-                            {s.displayName}
-                          </Link>
-                        </div>
-                      </TD>
-                      <TD>
-                        <Link
-                          to={`/teacher/classes/${s.classId}`}
-                          className="text-on-surface-variant transition-colors hover:text-on-surface hover:underline"
-                        >
-                          {s.className}
-                        </Link>
-                      </TD>
-                      <TD>
-                        {s.grade ? (
-                          // `AtRiskListEntryDTO.grade` is the student's latest
-                          // recorded grade — the same underlying value as
-                          // `StudentRowDTO.grade` (T-03) and
-                          // `SubjectPredictionDTO.predictedGrade` (T-05), both of
-                          // which render `basis="predicted"` for exactly this
-                          // reason (their own docstrings: "the same domain
-                          // notion... already uses for its below-target rule").
-                          // Matching that here, not `"achieved"` — the same
-                          // value must never read differently on two screens.
-                          <GradeBadge grade={s.grade} size="inline" basis="predicted" />
-                        ) : (
-                          <span className="text-body-sm text-on-surface-variant">No paper grade yet</span>
-                        )}
-                      </TD>
-                      <TD>
-                        <div className={cn("text-data-md", s.flags.length >= 2 ? "text-error" : "text-on-surface-variant")}>
-                          {s.flags.length} flag{s.flags.length === 1 ? "" : "s"}
-                        </div>
-                      </TD>
-                      <TD>
-                        <FlagsCell studentId={s.studentId} flags={s.flags} />
-                      </TD>
-                    </TR>
-                  ))}
-                </TBody>
-              </Table>
+              <TableOrList
+                label="At-risk students"
+                storageKey="lemely.atRisk.view"
+                list={
+                  <ListGroup>
+                    {students.map((s) => (
+                      <AtRiskListRow key={s.studentId} student={s} />
+                    ))}
+                  </ListGroup>
+                }
+                table={
+                  <Table density="operate"
+                    tabIndex={0}
+                    role="region"
+                    aria-label="At-risk students, scrollable horizontally"
+                  >
+                    <caption className="sr-only">
+                      Flagged students across your classes, sortable by every column. Severity mirrors
+                      the order this list already arrives in from the server: most flags, then worst
+                      grade, first.
+                    </caption>
+                    <THead>
+                      <TR>
+                        {COLUMNS.map((col) => {
+                          const active = col.key === sortColumn
+                          return (
+                            <TH
+                              key={col.key}
+                              aria-sort={active ? (sortDir === 1 ? "ascending" : "descending") : "none"}
+                              className="align-bottom"
+                            >
+                              <button
+                                type="button"
+                                onClick={() => toggleSort(col.key)}
+                                className="inline-flex items-center gap-1 text-eyebrow text-on-surface-variant transition-colors hover:text-on-surface cursor-pointer bg-transparent border-0 p-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                              >
+                                {col.label}
+                                {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
+                              </button>
+                            </TH>
+                          )
+                        })}
+                      </TR>
+                    </THead>
+                    <TBody>
+                      {students.map((s) => (
+                        <TR key={s.studentId} className="align-top">
+                          <TD>
+                            <div className="flex items-center gap-2.5">
+                              <Avatar name={s.displayName} size="sm" />
+                              <Link to={`/teacher/students/${s.studentId}`} className="text-on-surface hover:underline">
+                                {s.displayName}
+                              </Link>
+                            </div>
+                          </TD>
+                          <TD>
+                            <Link
+                              to={`/teacher/classes/${s.classId}`}
+                              className="text-on-surface-variant transition-colors hover:text-on-surface hover:underline"
+                            >
+                              {s.className}
+                            </Link>
+                          </TD>
+                          <TD>
+                            {s.grade ? (
+                              // `AtRiskListEntryDTO.grade` is the student's latest
+                              // recorded grade — the same underlying value as
+                              // `StudentRowDTO.grade` (T-03) and
+                              // `SubjectPredictionDTO.predictedGrade` (T-05), both of
+                              // which render `basis="predicted"` for exactly this
+                              // reason (their own docstrings: "the same domain
+                              // notion... already uses for its below-target rule").
+                              // Matching that here, not `"achieved"` — the same
+                              // value must never read differently on two screens.
+                              <GradeBadge grade={s.grade} size="inline" basis="predicted" />
+                            ) : (
+                              <span className="text-body-sm text-on-surface-variant">No paper grade yet</span>
+                            )}
+                          </TD>
+                          <TD>
+                            <div className={cn("text-data-md", s.flags.length >= 2 ? "text-error" : "text-on-surface-variant")}>
+                              {s.flags.length} flag{s.flags.length === 1 ? "" : "s"}
+                            </div>
+                          </TD>
+                          <TD>
+                            <FlagsCell studentId={s.studentId} flags={s.flags} />
+                          </TD>
+                        </TR>
+                      ))}
+                    </TBody>
+                  </Table>
+                }
+              />
             )}
             </>
           )

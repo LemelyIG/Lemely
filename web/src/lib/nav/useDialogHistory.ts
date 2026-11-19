@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
-import { nextDialogHistoryAction } from "@/lib/nav/dialogHistory"
+import { isDialogEntry, nextDialogHistoryAction } from "@/lib/nav/dialogHistory"
+import { historyIndexOf } from "@/lib/nav/backgroundLocation"
 import { dialogHistoryStack } from "@/lib/nav/dialogHistoryStack"
 
 /*
@@ -20,23 +21,23 @@ import { dialogHistoryStack } from "@/lib/nav/dialogHistoryStack"
  * window event that every mounted instance hears. See that file for why
  * neither decision can live in a per-instance ref.
  *
- * One case the plain push/pop pairing gets wrong on its own: `NavDrawer`
- * also closes itself when the *route* changes (tapping a link inside it —
- * see `nav-drawer.tsx`'s own "close on navigation" effect). That real
- * navigation pushes its own entry, landing the browser past the dialog's
- * pushed entry. If this hook still answered that close by calling
- * `navigate(-1)`, it would undo the navigation the reader just asked for
- * rather than merely dismiss the drawer. `openedAtPathRef` guards this: it
- * records the pathname+search the entry was pushed against, and a close is
- * only unwound with `navigate(-1)` when the reader is still on that same
- * route — if the route has already moved on, the pushed entry is treated as
- * spent and left in the stack rather than backed out of.
+ * One case the plain push/pop pairing gets wrong on its own: a link inside the
+ * overlay navigates. Links inside overlays REPLACE the dialog's entry
+ * (`useDialogExitNavigate`), so the history reads [origin, destination] and
+ * one Back returns to the origin. For anything that still navigates past the
+ * entry, `unwindEntry` only calls `navigate(-1)` while the live history entry
+ * is exactly the one this hook pushed (same index, `usr.lemelyDialog` set).
  */
 
 let listening = false
 
+/** Each push gets its own id, carried in the entry's state, so an unwind can tell its entry from a later one at the same index. */
+let nextDialogId = 1
+
 function onWindowPopState() {
-  dialogHistoryStack.handlePopState()
+  dialogHistoryStack.handlePopState(historyIndexOf(window.history.state))
+  // The last overlay may have gone while its own move was in flight; now that move has landed, let go.
+  stopListeningIfIdle()
 }
 
 function startListening() {
@@ -46,7 +47,7 @@ function startListening() {
 }
 
 function stopListeningIfIdle() {
-  if (!listening || dialogHistoryStack.size > 0) return
+  if (!listening || dialogHistoryStack.size > 0 || dialogHistoryStack.hasPendingWork()) return
   window.removeEventListener("popstate", onWindowPopState)
   listening = false
 }
@@ -63,35 +64,98 @@ export function useDialogHistory({
   const navigate = useNavigate()
   const location = useLocation()
   const hasEntryRef = useRef(false)
-  const openedAtPathRef = useRef<string | null>(null)
+  const pushedIdxRef = useRef<number | null>(null)
+  const pushedIdRef = useRef<number | null>(null)
   const releaseRef = useRef<(() => void) | null>(null)
   const unwindTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // True from the moment an unwind is decided until its move has landed (or turned out unnecessary).
+  const unwindingRef = useRef(false)
+  // The overlay reopened while its old entry was still being unwound: push once that has landed.
+  const pushAfterUnwindRef = useRef(false)
+  const openRef = useRef(open)
+  const mountedRef = useRef(true)
   const dismissibleRef = useRef(dismissible)
   const onCloseRef = useRef(onClose)
   const navigateRef = useRef(navigate)
+  const locationRef = useRef(location)
+  openRef.current = open
   dismissibleRef.current = dismissible
   onCloseRef.current = onClose
   navigateRef.current = navigate
+  locationRef.current = location
 
   // Bookkeeping only: the browser has already popped the entry, so there is
   // nothing to unwind. Used when a real back press closes the overlay.
   function discardEntry() {
     hasEntryRef.current = false
-    openedAtPathRef.current = null
+    pushedIdxRef.current = null
+    pushedIdRef.current = null
     releaseRef.current?.()
     releaseRef.current = null
     stopListeningIfIdle()
   }
 
+  function pushEntry() {
+    const id = nextDialogId++
+    pushedIdxRef.current = (historyIndexOf(window.history.state) ?? 0) + 1
+    pushedIdRef.current = id
+    const at = locationRef.current
+    navigateRef.current(at, {
+      state: { ...(at.state as Record<string, unknown> | null), lemelyDialog: true, lemelyDialogId: id },
+      // This push is same-URL bookkeeping, not real navigation — but
+      // `scrollRestorationKey` cannot tell the difference from a real push
+      // on a non-tab-root screen (both change `location.key`). Without
+      // this, opening a dialog scrolls the page to the top.
+      preventScrollReset: true,
+    })
+    hasEntryRef.current = true
+    releaseRef.current = dialogHistoryStack.register({
+      isDismissible: () => dismissibleRef.current,
+      close: () => {
+        discardEntry()
+        onCloseRef.current()
+      },
+      isCurrent: () => isDialogEntry(window.history.state, pushedIdxRef.current, pushedIdRef.current),
+      repush: () => {
+        dialogHistoryStack.expectSelfPop((historyIndexOf(window.history.state) ?? 0) + 1)
+        navigateRef.current(1)
+      },
+    })
+    startListening()
+  }
+
+  // The old entry is gone (or never needed to go): a reopen that waited for that can push now.
+  function settleUnwind() {
+    unwindingRef.current = false
+    if (!pushAfterUnwindRef.current) return
+    pushAfterUnwindRef.current = false
+    if (mountedRef.current && openRef.current && !hasEntryRef.current) pushEntry()
+  }
+
   function unwindEntry() {
-    const openedAt = openedAtPathRef.current
+    const pushedIdx = pushedIdxRef.current
+    const pushedId = pushedIdRef.current
     discardEntry()
-    // Read the live URL rather than this render's `location`: on unmount the
-    // last render is one navigation behind, and unwinding then would undo the
-    // navigation that unmounted us.
-    if (window.location.pathname + window.location.search !== openedAt) return
-    dialogHistoryStack.expectSelfPop()
-    navigateRef.current(-1)
+    unwindingRef.current = true
+    // Read the live history entry rather than this render's `location`: on
+    // unmount the last render is one navigation behind. Unwind only when the
+    // current entry is still the one we pushed (this index AND this push's id);
+    // otherwise the reader has navigated, replaced it, or a newer dialog sits
+    // there, and `navigate(-1)` would undo that.
+    const unwind = () => {
+      if (pushedIdx === null || !isDialogEntry(window.history.state, pushedIdx, pushedId)) {
+        settleUnwind()
+        return
+      }
+      // The listener may have been dropped when the stack emptied; the popstate of this move must be heard.
+      startListening()
+      dialogHistoryStack.expectSelfPop(pushedIdx - 1, settleUnwind)
+      navigateRef.current(-1)
+    }
+    // Stacked overlays closing in one tick: the overlay above is popping (or about to), so the live entry
+    // is its entry, not ours. Wait for that popstate, then read again.
+    if (dialogHistoryStack.hasPendingSelfPop() || dialogHistoryStack.topEntryIsCurrent()) dialogHistoryStack.afterNextSelfPop(unwind)
+    else unwind()
   }
 
   const unwindRef = useRef(unwindEntry)
@@ -99,6 +163,7 @@ export function useDialogHistory({
 
   // Open/close transitions: push on open, unwind on programmatic close.
   useEffect(() => {
+    mountedRef.current = true
     if (unwindTimerRef.current !== null) {
       clearTimeout(unwindTimerRef.current)
       unwindTimerRef.current = null
@@ -111,32 +176,18 @@ export function useDialogHistory({
     })
 
     if (action === "push") {
-      openedAtPathRef.current = location.pathname + location.search
-      navigate(location, {
-        state: { ...(location.state as Record<string, unknown> | null), lemelyDialog: true },
-        // This push is same-URL bookkeeping, not real navigation — but
-        // `scrollRestorationKey` cannot tell the difference from a real push
-        // on a non-tab-root screen (both change `location.key`). Without
-        // this, opening a dialog scrolls the page to the top.
-        preventScrollReset: true,
-      })
-      hasEntryRef.current = true
-      releaseRef.current = dialogHistoryStack.register({
-        isDismissible: () => dismissibleRef.current,
-        close: () => {
-          discardEntry()
-          onCloseRef.current()
-        },
-        repush: () => {
-          dialogHistoryStack.expectSelfPop()
-          navigateRef.current(1)
-        },
-      })
-      startListening()
+      // Reopened while the old entry is still being unwound: pushing now would stack a new entry on the
+      // old one and the unwind's `navigate(-1)` would land on the wrong one. Push once it has landed.
+      if (unwindingRef.current) {
+        pushAfterUnwindRef.current = true
+        return
+      }
+      pushEntry()
       return
     }
 
     if (action === "pop") unwindEntry()
+    else if (!open) pushAfterUnwindRef.current = false
     // `navigate`/`location` intentionally excluded: this must run only on
     // `open` transitions, not on every render caused by router state
     // changing (including the very push/pop this effect itself performs).
@@ -149,6 +200,7 @@ export function useDialogHistory({
   // do nothing at all, since the entry sits at the same URL.
   useEffect(() => {
     return () => {
+      mountedRef.current = false
       if (!hasEntryRef.current) return
       // Deferred a tick so React StrictMode's development remount — cleanup
       // immediately followed by the effect above re-running, which clears

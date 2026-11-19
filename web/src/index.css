@@ -5,6 +5,20 @@
    user who picks dark on a light OS gets the dark variant too. */
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
+/* Native phone frame (docs/superpowers/plans/2026-11-08-native-mobile-frame.md):
+   `html[data-platform]` is set by public/shell-init.js before paint. `native:` is
+   the phone range (the shell-sm edge) on iOS or Android only; desktop, tablet and
+   `other` keep design A. */
+@custom-variant ios (&:where([data-platform="ios"], [data-platform="ios"] *));
+@custom-variant android (&:where([data-platform="android"], [data-platform="android"] *));
+@custom-variant native {
+  @media (max-width: 720px) {
+    &:where([data-platform="ios"], [data-platform="ios"] *, [data-platform="android"], [data-platform="android"] *) {
+      @slot;
+    }
+  }
+}
+
 /* v5 Abyss faces (DESIGN.md §3). Each has one job. */
 @import "@fontsource-variable/bricolage-grotesque"; /* T1 display, 28px and above */
 @import "@fontsource-variable/schibsted-grotesk"; /* T2 UI and text */
@@ -51,6 +65,8 @@
   --md-inverse-on-surface: oklch(0.95 0.006 240);
   --md-inverse-primary: #7fb8e0;
   --md-scrim: oklch(0.20 0.03 242 / 0.55);
+  /* Design A's dialog/drawer backdrop: the same scrim hue at 0.4 alpha. */
+  --md-scrim-dialog: oklch(0.20 0.03 242 / 0.4);
   --md-shadow: oklch(0.30 0.06 242);
 
   --grade-a-star: oklch(0.46 0.12 155);
@@ -62,6 +78,9 @@
   --grade-f: oklch(0.53 0.135 30);
   --grade-g: oklch(0.52 0.138 22);
   --grade-u: oklch(0.50 0.14 15);
+  /* The student sidebar's grade-C ring (design A `--sh-grade-c`): bronze-olive,
+     off reward gold so grades and XP never share a colour. */
+  --grade-c-shell: oklch(0.47 0.09 75);
 
   /* Mascot only (student surfaces and the marketing page) */
   --binny-steel: oklch(0.80 0.01 240);
@@ -80,6 +99,7 @@
 }
 
 :root[data-theme="dark"] {
+  --grade-c-shell: oklch(0.49 0.09 75);
   --md-primary: #7fb8e0;
   --md-primary-hover: #9ccaea;
   --md-on-primary: #042f4f;
@@ -180,11 +200,13 @@
   --color-inverse-on-surface: var(--md-inverse-on-surface);
   --color-inverse-primary: var(--md-inverse-primary);
   --color-scrim: var(--md-scrim);
+  --color-scrim-dialog: var(--md-scrim-dialog);
 
   --color-grade-a-star: var(--grade-a-star);
   --color-grade-a: var(--grade-a);
   --color-grade-b: var(--grade-b);
   --color-grade-c: var(--grade-c);
+  --color-grade-c-shell: var(--grade-c-shell);
   --color-grade-d: var(--grade-d);
   --color-grade-e: var(--grade-e);
   --color-grade-f: var(--grade-f);
@@ -345,6 +367,12 @@
      `sidebar:` variant. Task 4 (B3) migrates every sidebar's ad hoc
      `min-[820px]:`/`md:` literal onto this token. */
   --breakpoint-sidebar: 820px;
+  /* Portal shell (design A, docs/superpowers/specs/2026-11-06-portal-shell-design.md).
+     `shell-lg:` is where the sidebar is a column: the drawer shows below
+     1248px (the user's decision, wider than design A's 1000px); `max-shell-sm:` is the phone range where the top bar
+     goes flat (design A: max-width 720px). */
+  --breakpoint-shell-lg: 1248px;
+  --breakpoint-shell-sm: 721px;
   /* Packet B3 (Task 4): the retrofit's other two dimensions. `--sidebar-width`
      unifies the student sidebar's old 246px with the teacher/admin 252px —
      one shell, one width, not three portals independently reinventing "how
@@ -356,6 +384,8 @@
      see `readSidebarTokens` there for why the pre-mount shell reads these
      back out of this file rather than a second, hand-typed copy. */
   --sidebar-width: 252px;
+  /* Design A's sidebar column (`--as-side: 216px`), used by components/shell. */
+  --shell-sidebar-width: 216px;
   --bottom-nav-height: 56px;
 
   /* ── Font sizes below text-xs, as size-only rungs ────────────────────── */
@@ -391,6 +421,520 @@
   --breakpoint-tablet: 1180px;
 }
 
+/* ── Native frame tokens (docs/superpowers/plans/2026-11-08-native-mobile-frame.md, Task 0).
+   Values from the committed design A preview at 4447a571 (student-home/tokens.css --pf-*,
+   variant-a.css "Native phone frame"). Raw values for the native frame live here and nowhere else. */
+:root {
+  /* Header */
+  --native-large-title-size: 34px;          /* .as-lt: 800 34px/41px Bricolage (variant-a.css) */
+  --native-large-title-lh: 41px;
+  --native-large-title-pad: 2px 16px 8px;   /* .as-lt padding: 2px var(--space-4) var(--space-2) */
+  --native-inline-title-size: 17px;         /* .as-title: 600 17px/22px Schibsted */
+  --native-inline-title-lh: 22px;
+  --native-bar-h-ios: 44px;                 /* --pf-bar-h */
+  --native-bar-h-android: 64px;
+  --native-bar-pad-inline: 8px;             /* .as-bar padding-inline: var(--space-2) */
+  --native-title-inset-ios: 144px;          /* --pf-title-inset: centred title clears three 44px actions */
+  --native-title-inset-detail-ios: 124px;   /* --pf-title-inset-detail: clears the back chevron and label */
+  --native-headline-size: 24px;             /* a screen h1 that says its own words (greeting, hero) steps down so the large title stays the root's loudest line. 24px is under Bricolage's 28px floor, so it is set in the UI face */
+  --native-headline-lh: 1.15;
+  --native-iconbtn-ios: 44px;               /* --pf-iconbtn */
+  --native-iconbtn-android: 48px;
+  --native-bar-icon: 22px;                  /* .as-bar .as-ico */
+  /* Tab bar */
+  --native-tabbar-h-ios: 49px;              /* --pf-tab-h, plus the home indicator inset */
+  --native-tabbar-h-android: 80px;
+  --native-tab-label-ios: 10px;             /* --pf-tab-label */
+  --native-tab-label-android: 12px;
+  --native-tab-icon: 24px;                  /* --pf-tab-ico, both platforms */
+  --native-tab-pad-top-ios: 6px;            /* preview iOS tab link padding-block-start */
+  --native-tab-gap-ios: 2px;
+  --native-tab-emphasis-size: 56px;         /* the raised Scan tab's squircle (nav-shells h-14 w-14, mock TAB6 .scanc) */
+  --native-tab-emphasis-raise: 8px;         /* how far it sits above the labels' line; paint only, the layout box stays pill-high */
+  --native-tab-pill-w: 64px;                /* --pf-pill-w/h: M3 active indicator */
+  --native-tab-pill-h: 32px;
+  --native-tab-press-opacity-ios: 0.55;     /* iOS tab items dim instead of drawing a layer */
+  /* Sheets */
+  --native-grabber-w-ios: 36px;             /* --pf-grab-w/h/gap */
+  --native-grabber-h-ios: 5px;
+  --native-grabber-gap-ios: 5px 6px;        /* above / below */
+  --native-grabber-w-android: 32px;
+  --native-grabber-h-android: 4px;
+  --native-grabber-gap-android: 22px 22px;  /* M3 drag handle centred in a 48dp touch area */
+  --native-sheet-medium: 50dvh;             /* --pf-sheet-medium, both platforms */
+  --native-sheet-large-ios: calc(100dvh - max(env(safe-area-inset-top), 20px) - 10px);
+  --native-sheet-large-android: calc(100dvh - max(env(safe-area-inset-top), 24px) - 24px);
+  --native-sheet-title-ios: 17px;           /* HIG: sheet title 17 semibold */
+  --native-sheet-title-android: 22px;       /* M3 Title Large */
+  --native-fab-size: 56px;                  /* M3 FAB; the extended FAB is this high */
+  --native-fab-radius: 16px;                /* M3 FAB container shape */
+  --native-fab-dur: 200ms;                  /* M3 FAB extend / collapse */
+  --native-fab-gap: 16px;                   /* above the tab bar and off the end edge */
+  --native-back-label-max: 96px;            /* the iOS back label truncates past this */
+  --native-sheet-scale-back: 0.94;          /* --pf-sheet-scale, iOS only */
+  --native-sheet-backdrop: oklch(0.1 0.01 245); /* behind the scaled-back page, both themes */
+  --native-action-row-h: 56px;              /* brief §3.3 action sheet rows; no preview value */
+  --dur-sheet-ios: 320ms;                   /* --pf-sheet-dur */
+  --dur-sheet-android: 300ms;
+  --ease-ios-spring: cubic-bezier(0.32, 0.72, 0, 1);              /* --pf-sheet-ease (iOS) */
+  --ease-m3-emphasized-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1); /* --pf-sheet-ease (Android) */
+  --ease-m3-emphasized: cubic-bezier(0.2, 0, 0, 1);               /* ripple; Android push slides */
+  /* Grouped content */
+  --native-group-radius-ios: 12px;          /* --pf-group-radius (Android: 0) */
+  --native-group-inset-ios: 16px;           /* --pf-group-margin (Android: 0, full-bleed) */
+  --native-gutter-android: 14px;            /* the page gutter Android keeps (preview --as-gutter-sm = PortalShell max-shell-lg:px-3.5) */
+  --native-sep-inset-ios: 16px;             /* --pf-sep-inset (Android: no separators) */
+  --native-row-min-ios: 44px;               /* --pf-row-min */
+  --native-row-1-android: 56px;
+  --native-row-2-android: 72px;             /* brief §3.4 */
+  --native-row-3-android: 88px;             /* brief §3.4 */
+  /* Glass (iOS only). The blur is the app's one blur, var(--blur-nav); not repeated here. */
+  --native-glass-mix: 86%;                  /* --pf-glass-mix */
+  --native-glass-saturate: 1.6;             /* saturate(1.6) */
+  --native-hairline: 0.5px;                 /* --pf-hairline */
+  /* Press */
+  --native-press-dim: 8%;                   /* --pf-press-layer (iOS) */
+  --native-press-ink-light: oklch(0 0 0);   /* --pf-ink-dim: iOS dims toward black in light... */
+  --native-press-ink-dark: oklch(1 0 0);    /* ...and toward white in dark */
+  --native-press-scale: 0.97;               /* --pf-press-scale, buttons only */
+  --native-state-pressed: 10%;              /* --pf-press-layer (Android) */
+  --native-press-delay: 100ms;              /* rows in scrolling content hold the highlight back; buttons stay instant */
+  --native-ripple-dur: 450ms;               /* --pf-ripple-dur, eased by --ease-m3-emphasized */
+  /* Gestures */
+  --native-parallax: 0.3;                   /* brief §3.6 */
+  /* Navigation transitions (brief §3.6) */
+  --native-push-dim: 0.7;                   /* iOS: brightness of the page under a push */
+  --native-axis-shift: 30px;                /* Android shared-axis X travel */
+  --native-fade-out-dur: 90ms;              /* M3 fade-through: the outgoing page */
+  --native-fade-in-dur: 210ms;              /* M3 fade-through: the incoming page */
+  --native-fade-through-scale: 0.92;        /* M3 fade-through: the incoming page's start scale */
+  --native-tab-fade-dur-ios: var(--dur-instant); /* iOS tab switch: a short opacity-only fade */
+  --native-ptr-threshold: 64px;             /* --pf-ptr-threshold, both platforms */
+  --native-ptr-hold-ios: 56px;              /* --pf-ptr-hold: where the content rests while refreshing */
+  --native-ptr-hold-android: 64px;
+  --native-ptr-max: 140px;                  /* preview PTR_MAX: the pull's visual ceiling */
+  --native-ptr-disc-max: 108px;             /* how far the Android disc travels */
+  --native-ptr-spin-ios: 0.8s;              /* one turn of the 8-spoke indicator (stepped) */
+  --native-ptr-spin-android: 1s;            /* one turn of the M3 arc */
+  /* M3 elevation level 1 (the pull disc's resting shadow), tinted from the shadow role, never raw. */
+  --native-elev-1: 0 1px 2px color-mix(in oklch, var(--md-shadow) 30%, transparent), 0 1px 3px 1px color-mix(in oklch, var(--md-shadow) 15%, transparent);
+  /* Page ground (preview --pf-page): the native frame's own, in both themes. */
+  --native-page-ios: var(--md-surface-container);
+  --native-page-android: var(--md-surface-container-low);
+  /* Grouped surface (preview --pf-group = --surface-card): white in light, the raised container in dark. */
+  --native-group-surface: var(--md-surface-container-lowest);
+  /* Edge shadow of the page on top during a push, pop or swipe: colour and strength per theme. */
+  --native-edge-shadow: var(--md-shadow);
+  --native-edge-shadow-strength: 18%;
+}
+:root[data-theme="dark"][data-platform] { /* not a second dark ladder: only the native frame's own grounds */
+  --native-page-ios: var(--md-surface-container-lowest);
+  --native-page-android: var(--md-surface);
+  --native-group-surface: var(--md-surface-container-high);
+  /* --md-shadow is a light blue on the dark ground and would glow. The scrim role is the dark ink
+     (oklch 0.20, alpha 0.55), so the edge shadow takes it and the strength makes up the alpha it
+     already carries (72% of 0.55 is the 40% the shadow had when it was raw black). */
+  --native-edge-shadow: var(--md-scrim);
+  --native-edge-shadow-strength: 72%;
+}
+
+/* ── Native frame: sheets (native frame Task 6; preview .as-pop-panel / .as-modal).
+   Only rendered on the native frame; desktop dialogs never use .lm-sheet. */
+:root[data-platform="ios"] {
+  --native-sheet-large: var(--native-sheet-large-ios);
+  --native-sheet-dur: var(--dur-sheet-ios);
+  --native-sheet-ease: var(--ease-ios-spring);
+  --native-sheet-drag-min: var(--native-iconbtn-ios);
+}
+:root[data-platform="android"] {
+  --native-sheet-large: var(--native-sheet-large-android);
+  --native-sheet-dur: var(--dur-sheet-android);
+  --native-sheet-ease: var(--ease-m3-emphasized-decelerate);
+  --native-sheet-drag-min: var(--native-iconbtn-android);
+}
+.lm-sheet {
+  position: fixed;
+  inset-inline: 0;
+  bottom: var(--lm-keyboard-inset, 0px);
+  z-index: var(--z-index-modal);
+  display: flex;
+  flex-direction: column;
+  max-block-size: calc(var(--native-sheet-large) - var(--lm-keyboard-inset, 0px));
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--md-surface-container-low);
+  border-start-start-radius: var(--radius-card);
+  border-start-end-radius: var(--radius-card);
+  transition: translate var(--native-sheet-dur) var(--native-sheet-ease);
+}
+.lm-sheet[data-dragging] {
+  transition: none;
+}
+/* Dark: the dim is a dark scrim over a dark page, so a container-low sheet sinks into it. One container
+   step up, plus a hairline along the top edge (the sheet's own, so it follows the corner radius), lifts
+   it off the page. Modal, Popover and the Sheet family all render .lm-sheet. */
+:root[data-theme="dark"] .lm-sheet:not(.lm-action-sheet) {
+  background: var(--md-surface-container);
+  box-shadow: inset 0 var(--native-hairline) 0 var(--md-outline-variant);
+}
+
+/* The drag target is the grabber plus header: at least a finger tall (44px iOS, 48px Android),
+   while the visible grabber keeps the preview's geometry. */
+[data-sheet-drag-region] {
+  min-block-size: var(--native-sheet-drag-min);
+  touch-action: none;
+}
+[data-sheet-drag-region][data-no-grabber] {
+  padding-top: var(--space-6);
+}
+.lm-sheet[data-detent="medium"] {
+  block-size: var(--native-sheet-medium);
+}
+.lm-sheet[data-detent="large"] {
+  block-size: calc(var(--native-sheet-large) - var(--lm-keyboard-inset, 0px));
+}
+.lm-sheet:not([data-closing], [data-state="closed"]) {
+  animation: lm-sheet-in var(--native-sheet-dur) var(--native-sheet-ease) both;
+}
+.lm-sheet[data-closing],
+.lm-sheet[data-state="closed"] {
+  animation: lm-sheet-out var(--dur-fast) var(--ease-in-soft) both;
+}
+@keyframes lm-sheet-in {
+  from {
+    translate: 0 100%;
+  }
+}
+@keyframes lm-sheet-out {
+  to {
+    translate: 0 100%;
+  }
+}
+.lm-sheet-grabber {
+  display: block;
+  flex: none;
+  border-radius: var(--radius-pill);
+}
+:root[data-platform="ios"] .lm-sheet-grabber {
+  inline-size: var(--native-grabber-w-ios);
+  block-size: var(--native-grabber-h-ios);
+  margin-block: var(--native-grabber-gap-ios);
+  background: var(--md-outline);
+}
+:root[data-platform="android"] .lm-sheet-grabber {
+  inline-size: var(--native-grabber-w-android);
+  block-size: var(--native-grabber-h-android);
+  margin-block: var(--native-grabber-gap-android);
+  background: color-mix(in oklch, var(--md-on-surface-variant) 40%, transparent);
+}
+/* iOS destructive confirm (native frame Task 7): the sheet itself is transparent and the
+   rows sit in two rounded groups, the second holding only Cancel. */
+.lm-action-sheet {
+  background: transparent;
+  gap: var(--space-2);
+  padding-inline: var(--space-2);
+}
+/* The group and Cancel are children of the sheet body, not of .lm-sheet, so the body carries the
+   gap (iOS: groups about 8px apart) and a bottom margin for browsers where the inset is 0. */
+.lm-action-sheet-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+.lm-action-sheet [data-sheet-drag-region] {
+  display: none;
+}
+.lm-action-sheet-group,
+.lm-action-sheet-cancel {
+  border-radius: var(--native-group-radius-ios);
+  background: var(--md-surface-container-lowest);
+}
+:root[data-theme="dark"] :is(.lm-action-sheet-group, .lm-action-sheet-cancel) {
+  background: var(--md-surface-container-high);
+}
+.lm-action-sheet-row {
+  display: block;
+  inline-size: 100%;
+  min-block-size: var(--native-action-row-h);
+  border-top: var(--native-hairline) solid var(--md-outline);
+  font-size: var(--native-inline-title-size);
+  text-align: center;
+}
+.lm-action-sheet-cancel {
+  border-top: 0;
+  font-weight: 600;
+}
+/* iOS large detent: the page behind scales back, pivoting on the top of the visible area
+   (--native-sheet-sy, written by useSheetScaleBack), over a near-black backdrop. */
+@media (max-width: 720px) {
+  :root[data-platform="ios"] #root {
+    transition:
+      scale var(--native-sheet-dur) var(--native-sheet-ease),
+      translate var(--native-sheet-dur) var(--native-sheet-ease),
+      border-radius var(--native-sheet-dur) var(--native-sheet-ease);
+    transform-origin: 50% calc(var(--native-sheet-sy, 0px) + env(safe-area-inset-top));
+  }
+  :root[data-platform="ios"][data-sheet-depth] #root {
+    scale: var(--native-sheet-scale-back);
+    translate: 0 calc(env(safe-area-inset-top) + 10px);
+    border-radius: var(--native-group-radius-ios);
+    overflow: clip;
+  }
+  :root[data-platform="ios"][data-sheet-depth] body {
+    background: var(--native-sheet-backdrop);
+  }
+}
+
+/* Material's 48dp touch floor for every Button on the Android native frame. A plain rule here rather than
+   a `!` utility on the component: unlayered CSS outranks the layered `pointer-coarse:min-h-11` floor,
+   and the copy checker reads a `!` suffix in a class string as an exclamation mark. */
+@media (max-width: 720px) {
+  :root[data-platform="android"] .lm-btn {
+    min-block-size: var(--native-iconbtn-android);
+    min-inline-size: var(--native-iconbtn-android);
+  }
+}
+
+/* ── Native frame: grouped lists (native frame Task 10; preview variant-a.css section 4). */
+/* Opt-in marker for press feedback; the native rules are in the press block below. */
+.lm-press { --lm-press: 1; }
+.lm-press-scale { --lm-press-scale: 1; }
+.lm-list-row + .lm-list-row { border-top: 1px solid var(--md-outline-variant); }
+@media (max-width: 720px) {
+  /* Everything below is scoped to .lm-native-main: the shell's content column, whose 14px/16px gutter
+     the bleed and inset maths assume. Cards and groups elsewhere (auth, marketing, admin, parent,
+     camera, quiz, dialog panes) keep the design A look. */
+  /* Cards and list groups lose the floating outline. */
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-main :is(.lm-native-card, .lm-native-group) {
+    border: 0;
+    box-shadow: none;
+    background-color: var(--native-group-surface);
+  }
+  /* iOS: inset-grouped inside a 16px page margin. */
+  :root[data-platform="ios"] .lm-native-main {
+    padding-left: max(var(--native-group-inset-ios), env(safe-area-inset-left));
+    padding-right: max(var(--native-group-inset-ios), env(safe-area-inset-right));
+  }
+  :root[data-platform="android"] .lm-native-main {
+    --native-bleed-l: max(var(--native-gutter-android), env(safe-area-inset-left));
+    --native-bleed-r: max(var(--native-gutter-android), env(safe-area-inset-right));
+    padding-left: var(--native-bleed-l);
+    padding-right: var(--native-bleed-r);
+  }
+  :root[data-platform="ios"] .lm-native-main :is(.lm-native-card, .lm-native-group) { border-radius: var(--native-group-radius-ios); }
+  :root[data-platform="ios"] .lm-native-main .lm-native-group-label { padding-inline: var(--space-4); }
+  /* Rows that carry their own desktop dividers (settings, skeletons) drop them for the group separators. */
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-main .lm-native-group > .lm-native-row { border-top: 0; border-bottom: 0; }
+  :root[data-platform="ios"] .lm-native-main .lm-native-row { position: relative; min-height: var(--native-row-min-ios); }
+  :root[data-platform="ios"] .lm-native-main .lm-list-row + .lm-list-row { border-top: 0; }
+  :root[data-platform="ios"] .lm-native-main .lm-native-row + .lm-native-row::before {
+    content: "";
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline: var(--native-sep-inset-ios) 0;
+    block-size: var(--native-hairline);
+    background: var(--md-outline);
+    pointer-events: none;
+  }
+  /* Android: full-bleed and square; the 14px page gutter stays on cards as a transparent border.
+     The width is explicit (page width plus both gutters) so a card that sets w-full, or sits in a
+     flex item, bleeds symmetrically instead of sliding left. The square corners belong to the
+     bleed. Cards that sit side by side in a flex row set data-native-bleed="off": an explicit
+     full-row width would stack them, so they keep the surface look, radius included, and stay
+     inside the gutter. */
+  :root[data-platform="android"] .lm-native-main .lm-native-card:not([data-native-bleed="off"]) {
+    border-radius: 0;
+    inline-size: calc(100% + var(--native-bleed-l) + var(--native-bleed-r));
+    max-inline-size: none;
+    margin-left: calc(-1 * var(--native-bleed-l));
+    margin-right: calc(-1 * var(--native-bleed-r));
+    border-left: var(--native-bleed-l) solid transparent;
+    border-right: var(--native-bleed-r) solid transparent;
+  }
+  :root[data-platform="android"] .lm-native-main .lm-native-group {
+    border-radius: 0;
+    margin-left: calc(-1 * var(--native-bleed-l));
+    margin-right: calc(-1 * var(--native-bleed-r));
+  }
+  :root[data-platform="android"] .lm-native-main .lm-native-group-label { padding-inline: calc(var(--space-4) - var(--native-gutter-android)); }
+  /* M3 lists: content sits 16px from the screen edge. The card's transparent 14px gutter border already
+     counts, so the card keeps only the remainder and its direct content (CardBody, or a row marked
+     lm-native-card-row) adds none. In-card dividers
+     go: rows are separated by their own height and the card edge, as in M3 lists. */
+  :root[data-platform="android"] .lm-native-main .lm-native-card:not([data-native-bleed="off"]) {
+    padding-inline: calc(var(--space-4) - var(--native-gutter-android));
+  }
+  :root[data-platform="android"] .lm-native-main .lm-native-card:not([data-native-bleed="off"]) > :is(.lm-native-card-body, .lm-native-card-row) { padding-inline: 0; }
+  /* The hover margin rule a row reserves is a pointer affordance; on a phone it only shifts the content. */
+  :root[data-platform="android"] .lm-native-main .lm-native-card:not([data-native-bleed="off"]) > .lm-native-card-row { border-inline-start-width: 0; }
+  /* iOS: the same reserved rule would put the row's content 2px right of the section label above the group
+     (label and content both sit one 16px inset in from the group edge). */
+  :root[data-platform="ios"] .lm-native-main .lm-native-card > .lm-native-card-row { border-inline-start-width: 0; }
+  /* Row dividers only: `divide-y` children, `.lm-native-divider`, and the card's direct rows. A border on an
+     input or a table header deeper in the card is that control's own edge and stays. */
+  :root[data-platform="android"] .lm-native-main .lm-native-card:not([data-native-bleed="off"]) :is([class*="divide-y"] > *, .lm-native-divider) {
+    border-block-width: 0;
+  }
+  :root[data-platform="android"] .lm-native-main .lm-native-card:not([data-native-bleed="off"]) > :is(.border-t, .border-b) {
+    border-block-width: 0;
+  }
+  /* A screen heading that says its own words steps down so the large title stays the root's loudest line. */
+  :root:is([data-platform="ios"], [data-platform="android"]) [data-page-heading="own"] {
+    font: 800 var(--native-headline-size) / var(--native-headline-lh) var(--font-sans);
+    letter-spacing: -0.02em;
+  }
+  /* A heading that used to sit inside its card is a section label above the grouped surface (preview .a-sec-h);
+     the type comes from `text-eyebrow` (mono, uppercase) on the element, the inset from here. */
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-section-label {
+    margin: 0 0 var(--space-2);
+    padding-inline: var(--space-4);
+  }
+  :root[data-platform="android"] .lm-native-main .lm-native-section-label { padding-inline: calc(var(--space-4) - var(--native-gutter-android)); }
+  :root[data-platform="android"] .lm-native-main .lm-native-row[data-lines="1"] { min-height: var(--native-row-1-android); }
+  :root[data-platform="android"] .lm-native-main .lm-native-row[data-lines="2"] { min-height: var(--native-row-2-android); }
+  :root[data-platform="android"] .lm-native-main .lm-native-row[data-lines="3"] { min-height: var(--native-row-3-android); }
+  :root[data-platform="android"] .lm-native-main .lm-list-row + .lm-list-row { border-top: 0; }
+}
+
+/* ── Native frame: press states (native frame Task 11; preview variant-a.css section 5).
+   Phone width on iOS/Android; design A keeps its own active:scale-[0.98] rules.
+   One layer drawn as a background image (no ::after, no overflow: hidden), so it
+   follows the element's radius and never clips a badge. */
+@property --lm-press-rr { syntax: "<length-percentage>"; inherits: false; initial-value: 0px; }
+@media (max-width: 720px) {
+  :root[data-platform="ios"] { --lm-press-ink: var(--native-press-ink-light); --lm-press-layer: var(--native-press-dim); }
+  :root[data-theme="dark"][data-platform="ios"] { --lm-press-ink: var(--native-press-ink-dark); }
+  :root[data-platform="android"] { --lm-press-ink: currentColor; --lm-press-layer: var(--native-state-pressed); }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-press[data-pressed] {
+    --lm-press-rr: var(--lm-press-r);
+    background-image: radial-gradient(circle at var(--lm-press-x) var(--lm-press-y), color-mix(in oklch, var(--lm-press-ink) var(--lm-press-layer), transparent) var(--lm-press-rr), transparent var(--lm-press-rr));
+  }
+  :root[data-platform="ios"] .lm-press-scale[data-pressed] { scale: var(--native-press-scale); }
+  /* The design A active:scale-[0.98] is a web press. On native the press owns scale: it is
+     none unless the element opts in, and Android never scales (ripple plus state layer). */
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-press:not(.lm-press-scale) { scale: none; }
+  :root[data-platform="android"] .lm-press-scale { scale: none; }
+  /* iOS tab items dim their glyph and label instead of drawing a layer. */
+  :root[data-platform="ios"] .lm-native-tabbar .lm-press[data-pressed] {
+    background-image: none;
+    opacity: var(--native-tab-press-opacity-ios);
+  }
+  /* Android: the layer ripples out from the touch point. */
+  :root[data-platform="android"] .lm-press[data-pressed] {
+    animation: lm-ripple var(--native-ripple-dur) var(--ease-m3-emphasized);
+  }
+}
+@keyframes lm-ripple { from { --lm-press-rr: 0px; } }
+
+
+/* ── Native frame: pull-to-refresh (native frame Task 13; preview variant-a.css section 6).
+   ShellPullToRefresh sets --pf-pull / --pf-pull-p while the finger is down and data-ptr on the surface;
+   at rest and while refreshing the values come from here. iOS: the content follows the finger and rests
+   at --native-ptr-hold-ios. Android: the content stays put, the disc rests at --native-ptr-hold-android.
+   --pf-pull does not inherit and is written on .lm-ptr-gap and .lm-ptr-content only, so a pull frame never
+   restyles the page inside the content. --pf-pull-p inherits (the spokes and the arc read it) but is written
+   on the gap alone, a subtree of one small indicator. Reduced motion is covered by the global rule at the end
+   of this file, which keeps only the refreshing spin. */
+@property --pf-pull { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --pf-pull-p { syntax: "<number>"; inherits: true; initial-value: 0; }
+.lm-ptr { position: relative; }
+.lm-ptr-gap { position: relative; z-index: 4; block-size: 0; }
+.lm-ptr-ios, .lm-ptr-md { display: none; }
+.lm-ptr:not([data-ptr]) .lm-ptr-gap > * { visibility: hidden; }
+:root[data-platform="ios"] .lm-ptr[data-ptr="refreshing"] :is(.lm-ptr-gap, .lm-ptr-content) { --pf-pull: var(--native-ptr-hold-ios); }
+:root[data-platform="android"] .lm-ptr[data-ptr="refreshing"] .lm-ptr-gap { --pf-pull: var(--native-ptr-hold-android); }
+.lm-ptr[data-ptr="refreshing"] .lm-ptr-gap { --pf-pull-p: 1; }
+:root[data-platform="ios"] .lm-ptr[data-ptr] .lm-ptr-content { translate: 0 var(--pf-pull); }
+:root[data-platform="ios"] .lm-ptr:is([data-ptr="settling"], [data-ptr="refreshing"]) .lm-ptr-content {
+  transition: translate var(--dur-slow) var(--ease-expo);
+}
+/* The gap carries the indicator's travel, so the indicator itself reads no non-inherited variable. */
+:root[data-platform="ios"] .lm-ptr-gap { translate: 0 calc(var(--pf-pull) / 2); }
+:root[data-platform="android"] .lm-ptr-gap { translate: 0 min(var(--pf-pull), var(--native-ptr-disc-max)); }
+.lm-ptr:is([data-ptr="settling"], [data-ptr="refreshing"]) .lm-ptr-gap { transition: translate var(--dur-slow) var(--ease-expo); }
+/* No text selection or callout while a pull is in flight, so a drag over copy never selects it. */
+.lm-ptr[data-ptr="pulling"] { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+:root[data-platform="ios"] .lm-ptr-ios {
+  position: absolute; inset-inline: 0; inset-block-start: -14px;
+  display: block; inline-size: 28px; block-size: 28px; margin-inline: auto;
+}
+:root[data-platform="ios"] .lm-ptr-ios i {
+  position: absolute; inset-block-start: 1px; inset-inline-start: calc(50% - 1.25px);
+  inline-size: 2.5px; block-size: 7.5px; border-radius: var(--radius-pill); background: var(--md-on-surface-variant);
+  transform-origin: 50% 13px; rotate: calc(var(--i) * 45deg);
+  opacity: clamp(0, calc(var(--pf-pull-p) * 8 - var(--i)), 1);
+}
+:root[data-platform="ios"] .lm-ptr[data-ptr="refreshing"] .lm-ptr-ios i { opacity: calc(1 - var(--i) * 0.11); }
+:root[data-platform="ios"] .lm-ptr[data-ptr="refreshing"] .lm-ptr-ios { animation: lm-ptr-spin var(--native-ptr-spin-ios) steps(8) infinite; }
+:root[data-platform="android"] .lm-ptr-md {
+  position: absolute; inset-inline: 0; inset-block-start: -44px; z-index: 1;
+  display: grid; place-items: center; inline-size: 40px; block-size: 40px; margin-inline: auto;
+  border-radius: var(--radius-pill); background: var(--md-surface-container-high); color: var(--md-primary);
+  box-shadow: var(--native-elev-1);
+  opacity: clamp(0, calc(var(--pf-pull-p) * 3), 1);
+}
+:root[data-platform="android"] .lm-ptr[data-ptr="settling"] .lm-ptr-md {
+  transition: opacity var(--dur-base) linear, scale var(--dur-base) var(--ease-out);
+  scale: 0;
+}
+:root[data-platform="android"] .lm-ptr-md svg { inline-size: 24px; block-size: 24px; rotate: calc(var(--pf-pull-p) * 270deg - 90deg); }
+:root[data-platform="android"] .lm-ptr-md circle {
+  fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round;
+  stroke-dasharray: calc(var(--pf-pull-p) * 40) 60;
+}
+:root[data-platform="android"] .lm-ptr[data-ptr="refreshing"] .lm-ptr-md svg { animation: lm-ptr-spin var(--native-ptr-spin-android) linear infinite; }
+:root[data-platform="android"] .lm-ptr[data-ptr="refreshing"] .lm-ptr-md circle { stroke-dasharray: 30 60; }
+@keyframes lm-ptr-spin { to { rotate: 360deg; } }
+
+
+/* ── Native frame: grouped lists inside sheets (native frame Task 8).
+   Task 10's group and row rules above are scoped to .lm-native-main, but sheets portal outside
+   <main>. A sheet is the second scope root: the bell and account sheets (ListGroup) and the
+   settings sheet (SettingsCard) get the same look. The sheet body pads 16px each side, so iOS
+   inset groups need no extra margin and Android groups bleed by exactly that padding. */
+@media (max-width: 720px) {
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-sheet :is(.lm-native-card, .lm-native-group) {
+    border: 0;
+    box-shadow: none;
+  }
+  :root[data-platform="ios"] .lm-sheet :is(.lm-native-card, .lm-native-group) { border-radius: var(--native-group-radius-ios); }
+  :root[data-platform="ios"] .lm-sheet .lm-native-group-label { padding-inline: var(--space-4); }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-sheet .lm-native-group > .lm-native-row { border-top: 0; border-bottom: 0; }
+  :root[data-platform="ios"] .lm-sheet .lm-native-row { position: relative; min-height: var(--native-row-min-ios); }
+  :root[data-platform="ios"] .lm-sheet .lm-list-row + .lm-list-row { border-top: 0; }
+  :root[data-platform="ios"] .lm-sheet .lm-native-row + .lm-native-row::before {
+    content: "";
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline: var(--native-sep-inset-ios) 0;
+    block-size: var(--native-hairline);
+    background: var(--md-outline);
+    pointer-events: none;
+  }
+  :root[data-platform="android"] .lm-sheet .lm-native-group {
+    border-radius: 0;
+    margin-inline: calc(-1 * var(--space-4));
+  }
+  :root[data-platform="android"] .lm-sheet .lm-native-group-label { padding-inline: 0; }
+  :root[data-platform="android"] .lm-sheet .lm-native-row[data-lines="1"] { min-height: var(--native-row-1-android); }
+  :root[data-platform="android"] .lm-sheet .lm-native-row[data-lines="2"] { min-height: var(--native-row-2-android); }
+  :root[data-platform="android"] .lm-sheet .lm-native-row[data-lines="3"] { min-height: var(--native-row-3-android); }
+  :root[data-platform="android"] .lm-sheet .lm-list-row + .lm-list-row { border-top: 0; }
+  /* The page the reader is on. iOS tints the row's title and glyph with the one tint colour; Android
+     (M3 navigation items) seats it in a secondary-container pill. Never colour alone: aria-current is set. */
+  :root[data-platform="ios"] .lm-sheet [data-list-group] [aria-current="page"] { color: var(--md-primary); font-weight: 600; }
+  :root[data-platform="ios"] .lm-sheet [data-list-group] [aria-current="page"] :is(span, svg) { color: var(--md-primary); }
+  :root[data-platform="android"] .lm-sheet [data-list-group] [aria-current="page"] {
+    background: var(--md-secondary-container);
+    border-radius: var(--radius-pill);
+    margin-inline: var(--space-3);
+    /* The pill is inset by its margin, and the row's own 16px padding drops by the same amount, so the
+       glyph and label stay on the other rows' x. */
+    padding-inline: calc(var(--space-4) - var(--space-3));
+    inline-size: auto;
+  }
+  :root[data-platform="android"] .lm-sheet [data-list-group] [aria-current="page"] :is(span, svg) { color: var(--md-on-secondary-container); }
+}
 
 /* The student Overview's subject ledger (P4.1). A named utility rather than an
    arbitrary `grid-cols-[...]` so the template is stated once and reviewable.
@@ -462,6 +1006,10 @@ body {
      tapped element responds — real focus/active states already carry the
      feedback. */
   -webkit-tap-highlight-color: transparent;
+  /* iOS and Android may inflate text after rotation; the type scale is set
+     by the design system, not by the browser (native frame Task 3). */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
   /* Stops a swipe-to-scroll gesture at the page top/bottom from bleeding into
      the browser's pull-to-refresh/back-navigation chrome; each scrollable
      region below still rubber-bands to its own edges. */
@@ -593,6 +1141,14 @@ body {
     touch-action: manipulation;
   }
 
+  /* Every tap target drops the double-tap-to-zoom delay. Links and summaries
+     live here only: they stay out of the min-block-size rule above, so inline
+     prose links keep their line-height. */
+  a[href],
+  summary {
+    touch-action: manipulation;
+  }
+
   /* Checkbox and radio are excluded above, and the exclusion is load-bearing
      rather than an oversight. `Checkbox` and `Radio` render the real input as
      `absolute inset-0 h-full w-full` inside an 18px painted box (the
@@ -658,6 +1214,12 @@ body {
 }
 .text-display-xs {
   font: 700 16px/1.3 var(--font-sans);
+}
+/* The top bar title (design A `.as-title`). Its own class: `text-display-sm`
+   is 700 weight and 1.25 line height, and a layered utility would lose to it. */
+.text-title-bar {
+  font: 800 21px/1 var(--font-sans);
+  letter-spacing: -0.02em;
 }
 /* `overflow-wrap: anywhere` on display headers: a school name or email at 320px
    is wider than the viewport, and html/body clip rather than scroll. Only
@@ -895,7 +1457,12 @@ body {
    not use `viewTransition` — a deep link, a signed-out redirect, anything
    outside shell chrome. */
 html:active-view-transition .lm-screen {
-  animation: none;
+  /* Not `animation: none`. That drops the animation for the transition's length and brings it back
+     when the transition ends, and a changed `animation-name` restarts the animation: every screen
+     faded in a second time just after the slide had finished (nf-polish item 15). A zero duration
+     lets the animation finish at once; once the transition is over the duration returns, but the
+     animation is already past its end, so nothing replays. */
+  animation-duration: 0s;
 }
 
 /* View Transitions for portal-internal navigation (DESIGN.md §9.4), driven
@@ -937,10 +1504,10 @@ html:active-view-transition .lm-screen {
   animation-duration: var(--dur-base);
   animation-timing-function: var(--ease-out-soft);
 }
-html[data-direction="forward"]::view-transition-old(root) {
+html:is([data-direction="forward"], [data-direction="tab"])::view-transition-old(root) {
   animation-name: lm-vt-old-forward;
 }
-html[data-direction="forward"]::view-transition-new(root) {
+html:is([data-direction="forward"], [data-direction="tab"])::view-transition-new(root) {
   animation-name: lm-vt-new-forward;
 }
 html[data-direction="back"]::view-transition-old(root) {
@@ -948,6 +1515,307 @@ html[data-direction="back"]::view-transition-old(root) {
 }
 html[data-direction="back"]::view-transition-new(root) {
   animation-name: lm-vt-new-back;
+}
+
+/* ── Native frame: navigation motion (brief §3.6). The keyframes carry only the property that
+   moves; the gated block below picks them per platform and direction. `--lm-vt-sign` mirrors
+   every horizontal travel in RTL. */
+@keyframes lm-vt-ios-old-push {
+  to {
+    transform: translateX(calc(var(--lm-vt-sign, 1) * var(--native-parallax) * -100%));
+    filter: brightness(var(--native-push-dim));
+  }
+}
+@keyframes lm-vt-ios-new-push {
+  from {
+    transform: translateX(calc(var(--lm-vt-sign, 1) * 100%));
+  }
+}
+@keyframes lm-vt-ios-old-pop {
+  to {
+    transform: translateX(calc(var(--lm-vt-sign, 1) * 100%));
+  }
+}
+@keyframes lm-vt-ios-new-pop {
+  from {
+    transform: translateX(calc(var(--lm-vt-sign, 1) * var(--native-parallax) * -100%));
+    filter: brightness(var(--native-push-dim));
+  }
+}
+@keyframes lm-vt-axis-old-forward {
+  to {
+    transform: translateX(calc(var(--lm-vt-sign, 1) * var(--native-axis-shift) * -1));
+  }
+}
+@keyframes lm-vt-axis-new-forward {
+  from {
+    transform: translateX(calc(var(--lm-vt-sign, 1) * var(--native-axis-shift)));
+  }
+}
+@keyframes lm-vt-axis-old-back {
+  to {
+    transform: translateX(calc(var(--lm-vt-sign, 1) * var(--native-axis-shift)));
+  }
+}
+@keyframes lm-vt-axis-new-back {
+  from {
+    transform: translateX(calc(var(--lm-vt-sign, 1) * var(--native-axis-shift) * -1));
+  }
+}
+@keyframes lm-vt-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes lm-vt-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes lm-vt-scale-in {
+  from {
+    transform: scale(var(--native-fade-through-scale));
+  }
+}
+
+/* Outside the native frame (desktop PWA, tablet, `other`) a committed edge swipe plays the
+   same slide as any pop; the cross-fade default would read as a different gesture. Inside the
+   frame the gated block below silences both (the column already left under the finger). */
+html[data-direction="swipe"]::view-transition-old(root) {
+  animation-name: lm-vt-old-back;
+}
+html[data-direction="swipe"]::view-transition-new(root) {
+  animation-name: lm-vt-new-back;
+}
+
+/* ── Native frame: swipe-back (native frame Task 12). The column follows the
+   finger; the shell ground under it shows a dimmed parallax strip. On release the gesture
+   continues: a commit carries the column off screen (and the dim and strip to rest) before the
+   router navigates; a cancel fades the dim and shadow with the slide home. Scope gate: phone
+   width on iOS or Android only, so nothing paints at 721px and up or on `other`. */
+@property --lm-swipe-progress {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+@property --lm-swipe-shadow {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 1;
+}
+/* Task 12b: the swipe-back underlay layer is empty and takes no space until a drag arms it. */
+[data-swipe-layer] {
+  display: none;
+}
+@media (max-width: 720px) {
+  html:is([data-platform="ios"], [data-platform="android"])[data-swiping] [data-shell-column] {
+    box-shadow: calc(-1 * var(--space-4)) 0 var(--space-4)
+      color-mix(in oklch, var(--native-edge-shadow) calc(var(--lm-swipe-shadow, 1) * var(--native-edge-shadow-strength)), transparent);
+  }
+  html:is([data-platform="ios"], [data-platform="android"])[data-swiping] body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background: color-mix(in oklch, var(--md-scrim) calc((1 - var(--lm-swipe-progress, 0)) * 30%), transparent);
+    translate: calc((var(--lm-swipe-progress, 0) - 1) * var(--native-parallax) * 100%) 0;
+    pointer-events: none;
+  }
+  html[dir="rtl"]:is([data-platform="ios"], [data-platform="android"])[data-swiping] [data-shell-column] {
+    box-shadow: var(--space-4) 0 var(--space-4)
+      color-mix(in oklch, var(--native-edge-shadow) calc(var(--lm-swipe-shadow, 1) * var(--native-edge-shadow-strength)), transparent);
+  }
+  html[dir="rtl"]:is([data-platform="ios"], [data-platform="android"])[data-swiping] body::before {
+    translate: calc((1 - var(--lm-swipe-progress, 0)) * var(--native-parallax) * 100%) 0;
+  }
+  /* Release: the dim and the strip travel on the column's own duration and curve. */
+  html:is([data-platform="ios"], [data-platform="android"])[data-swiping][data-swipe-settling] {
+    transition:
+      --lm-swipe-progress var(--lm-swipe-dur, var(--dur-base)) var(--ease-ios-spring),
+      --lm-swipe-shadow var(--lm-swipe-dur, var(--dur-base)) var(--ease-ios-spring);
+  }
+  html:is([data-platform="ios"], [data-platform="android"])[data-swiping][data-swipe-settling="cancel"] {
+    --lm-swipe-shadow: 0;
+  }
+  /* UIKit ignores touches while the pop completes. */
+  html:is([data-platform="ios"], [data-platform="android"])[data-swiping][data-swipe-settling="commit"] body {
+    pointer-events: none;
+  }
+  /* The column already left under the finger. RR 7 replays a reverse view transition on a history
+     pop, and a second slide after the first reads as a stutter, so the hop plays only the first. */
+  html:is([data-platform="ios"], [data-platform="android"])[data-direction="swipe"]::view-transition-group(root),
+  html:is([data-platform="ios"], [data-platform="android"])[data-direction="swipe"]::view-transition-old(root),
+  html:is([data-platform="ios"], [data-platform="android"])[data-direction="swipe"]::view-transition-new(root) {
+    animation: none;
+  }
+  /* Task 12b: the previous page, parked inert under the column. It carries the parallax (so it
+     slides in at 30% of the column's travel) and its own dim, which replaces the plain dim while
+     a snapshot is present. After a commit it stays until the new page is in, so the hand-over
+     never shows bare ground. */
+  html:is([data-platform="ios"], [data-platform="android"]) [data-swipe-layer][data-state] {
+    display: block;
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+    background: var(--md-surface-container);
+  }
+  html:is([data-platform="ios"], [data-platform="android"]) [data-swipe-scroller] {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    /* The layer itself reads the drag progress (translate, dim). Resetting it here stops the
+       inherited value restyling the whole cloned page on every drag frame. */
+    --lm-swipe-progress: 0;
+    --lm-swipe-shadow: 0;
+  }
+  /* The clone keeps the page's trailing bar actions out of the strip: the real bar's own
+     actions sit at the same spot, so they would show twice. */
+  html:is([data-platform="ios"], [data-platform="android"]) [data-swipe-scroller] header [data-shell-title] ~ * {
+    visibility: hidden;
+  }
+  html:is([data-platform="ios"], [data-platform="android"]) [data-swipe-layer][data-state="armed"] {
+    visibility: hidden;
+  }
+  html:is([data-platform="ios"], [data-platform="android"])[data-swipe-underlay][data-swiping] body::before {
+    background: none;
+  }
+  html:is([data-platform="ios"], [data-platform="android"])[data-swiping] [data-swipe-layer][data-state] {
+    translate: calc((var(--lm-swipe-progress, 0) - 1) * var(--native-parallax) * 100%) 0;
+  }
+  html[dir="rtl"]:is([data-platform="ios"], [data-platform="android"])[data-swiping] [data-swipe-layer][data-state] {
+    translate: calc((1 - var(--lm-swipe-progress, 0)) * var(--native-parallax) * 100%) 0;
+  }
+  html:is([data-platform="ios"], [data-platform="android"])[data-swiping] [data-swipe-layer][data-state]::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background: color-mix(in oklch, var(--md-scrim) calc((1 - var(--lm-swipe-progress, 0)) * 30%), transparent);
+  }
+  @media (prefers-reduced-motion: reduce) and (max-width: 720px) {
+    html:is([data-platform="ios"], [data-platform="android"])[data-swiping] [data-swipe-layer][data-state],
+    html[dir="rtl"]:is([data-platform="ios"], [data-platform="android"])[data-swiping] [data-swipe-layer][data-state] {
+      translate: none;
+    }
+  }
+  /* Chrome stays put (brief §1): the top bar and the tab bar are their own transition groups, and
+     none of their pseudo-elements animates, so they neither move nor cross-fade while the page
+     under them does. A changed bar title snaps; the old snapshot is dropped so the new one is not
+     blended over it. */
+  html:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar {
+    view-transition-name: lm-chrome-top;
+  }
+  html:is([data-platform="ios"], [data-platform="android"]) .lm-native-tabbar {
+    view-transition-name: lm-chrome-tabs;
+  }
+  html:is([data-platform="ios"], [data-platform="android"])::view-transition-group(lm-chrome-top),
+  html:is([data-platform="ios"], [data-platform="android"])::view-transition-group(lm-chrome-tabs),
+  html:is([data-platform="ios"], [data-platform="android"])::view-transition-new(lm-chrome-tabs) {
+    animation: none;
+  }
+  html:is([data-platform="ios"], [data-platform="android"])::view-transition-old(lm-chrome-tabs) {
+    animation: none;
+    display: none;
+  }
+  /* The top bar's old and new snapshots cross-fade (plus-lighter, so unchanged pixels stay put) and
+     only a changed title or back chevron is seen to change. The group never moves. */
+  html:is([data-platform="ios"], [data-platform="android"])::view-transition-old(lm-chrome-top) {
+    animation: lm-vt-fade-out var(--dur-fast) linear both;
+  }
+  html:is([data-platform="ios"], [data-platform="android"])::view-transition-new(lm-chrome-top) {
+    animation: lm-vt-fade-in var(--dur-fast) linear both;
+  }
+  /* A hop into or out of an immersive route (the tab bar is hidden there): the bar is not a group,
+     so it rides in the root snapshot with its page (UIKit hidesBottomBarWhenPushed). `vtChrome.ts`
+     sets this before the old snapshot is taken. */
+  html[data-vt-chrome="page"] .lm-native-tabbar {
+    view-transition-name: none;
+  }
+  /* A swipe already moved the page under the finger: the chrome stays fully silent. */
+  html:is([data-platform="ios"], [data-platform="android"])[data-direction="swipe"]::view-transition-old(lm-chrome-top),
+  html:is([data-platform="ios"], [data-platform="android"])[data-direction="swipe"]::view-transition-new(lm-chrome-top) {
+    animation: none;
+  }
+  /* The old bar snapshot is dropped, as the tab bar's is: with no animation it would sit opaque over
+     the new bar for the whole transition and show the old title. */
+  html:is([data-platform="ios"], [data-platform="android"])[data-direction="swipe"]::view-transition-old(lm-chrome-top) {
+    display: none;
+  }
+
+  html:is([data-platform="ios"], [data-platform="android"]) {
+    --lm-vt-sign: 1;
+  }
+  html[dir="rtl"]:is([data-platform="ios"], [data-platform="android"]) {
+    --lm-vt-sign: -1;
+  }
+
+  /* iOS push and pop: the page slides the full width over a parallaxed, dimmed page beneath
+     (the parallax and the dim are the swipe's own, so a tap and a drag read the same). The
+     incoming page of a push, and the outgoing page of a pop, are on top and carry the edge
+     shadow. Opaque pages, so the default plus-lighter blend is switched off. */
+  :root[data-platform="ios"]:is([data-direction="forward"], [data-direction="back"])::view-transition-old(root),
+  :root[data-platform="ios"]:is([data-direction="forward"], [data-direction="back"])::view-transition-new(root) {
+    mix-blend-mode: normal;
+  }
+  :root[data-platform="ios"][data-direction="forward"]::view-transition-old(root) {
+    animation: lm-vt-ios-old-push var(--dur-sheet-ios) var(--ease-ios-spring) both;
+  }
+  :root[data-platform="ios"][data-direction="forward"]::view-transition-new(root) {
+    animation: lm-vt-ios-new-push var(--dur-sheet-ios) var(--ease-ios-spring) both;
+    box-shadow: calc(-1 * var(--lm-vt-sign) * var(--space-4)) 0 var(--space-4)
+      color-mix(in oklch, var(--native-edge-shadow) var(--native-edge-shadow-strength), transparent);
+  }
+  :root[data-platform="ios"][data-direction="back"]::view-transition-old(root) {
+    animation: lm-vt-ios-old-pop var(--dur-sheet-ios) var(--ease-ios-spring) both;
+    z-index: var(--z-index-sticky);
+    box-shadow: calc(-1 * var(--lm-vt-sign) * var(--space-4)) 0 var(--space-4)
+      color-mix(in oklch, var(--native-edge-shadow) var(--native-edge-shadow-strength), transparent);
+  }
+  :root[data-platform="ios"][data-direction="back"]::view-transition-new(root) {
+    animation: lm-vt-ios-new-pop var(--dur-sheet-ios) var(--ease-ios-spring) both;
+  }
+  /* iOS tab switch: UITabBarController swaps instantly; a short opacity-only cross-fade stands in. */
+  :root[data-platform="ios"][data-direction="tab"]::view-transition-old(root) {
+    animation: lm-vt-fade-out var(--native-tab-fade-dur-ios) linear both;
+  }
+  :root[data-platform="ios"][data-direction="tab"]::view-transition-new(root) {
+    animation: lm-vt-fade-in var(--native-tab-fade-dur-ios) linear both;
+  }
+
+  /* Android push and pop: M3 shared axis X. A short slide plus fade over the emphasized curve. */
+  :root[data-platform="android"]:is([data-direction="forward"], [data-direction="back"])::view-transition-old(root),
+  :root[data-platform="android"]:is([data-direction="forward"], [data-direction="back"])::view-transition-new(root) {
+    mix-blend-mode: normal;
+  }
+  :root[data-platform="android"][data-direction="forward"]::view-transition-old(root) {
+    animation:
+      lm-vt-axis-old-forward var(--dur-sheet-android) var(--ease-m3-emphasized) both,
+      lm-vt-fade-out var(--native-fade-out-dur) linear both;
+  }
+  :root[data-platform="android"][data-direction="forward"]::view-transition-new(root) {
+    animation:
+      lm-vt-axis-new-forward var(--dur-sheet-android) var(--ease-m3-emphasized) both,
+      lm-vt-fade-in var(--native-fade-in-dur) linear var(--native-fade-out-dur) both;
+  }
+  :root[data-platform="android"][data-direction="back"]::view-transition-old(root) {
+    animation:
+      lm-vt-axis-old-back var(--dur-sheet-android) var(--ease-m3-emphasized) both,
+      lm-vt-fade-out var(--native-fade-out-dur) linear both;
+  }
+  :root[data-platform="android"][data-direction="back"]::view-transition-new(root) {
+    animation:
+      lm-vt-axis-new-back var(--dur-sheet-android) var(--ease-m3-emphasized) both,
+      lm-vt-fade-in var(--native-fade-in-dur) linear var(--native-fade-out-dur) both;
+  }
+  /* Android tab switch: M3 fade-through. The old page leaves in 90ms, the new one fades in over
+     210ms from 0.92 scale. No travel. */
+  :root[data-platform="android"][data-direction="tab"]::view-transition-old(root) {
+    animation: lm-vt-fade-out var(--native-fade-out-dur) linear both;
+  }
+  :root[data-platform="android"][data-direction="tab"]::view-transition-new(root) {
+    animation:
+      lm-vt-fade-in var(--native-fade-in-dur) linear var(--native-fade-out-dur) both,
+      lm-vt-scale-in var(--native-fade-in-dur) var(--ease-m3-emphasized-decelerate) var(--native-fade-out-dur) both;
+  }
 }
 
 /* Exit phase for a dismissible overlay (`Modal`, `NavDrawer`; DESIGN.md §9.2
@@ -1017,8 +1885,9 @@ html[data-direction="back"]::view-transition-new(root) {
    browser reflex with nothing useful to act on here, and on a home-screen
    app it reads as a bug rather than a browser feature. */
 .lm-nav-chrome {
-  -webkit-touch-callout: none;
+  -webkit-user-select: none;
   user-select: none;
+  -webkit-touch-callout: none;
 }
 
 /* `padding-top` here is unlayered CSS, and unlayered always beats a layered
@@ -1040,6 +1909,384 @@ html[data-direction="back"]::view-transition-new(root) {
   }
 }
 
+/* ── Native frame: top bar (native frame Task 4). Phone width on iOS/Android
+   only. Unlayered and more specific than .lm-shell-bar-inset, so it replaces
+   the flat design A phone bar's margins, height and transparency. */
+@media (max-width: 720px) {
+  :root { --lm-large-title-block: 0px; } /* the hook overwrites it inline; this keeps animation-range valid on the first frame */
+  :root[data-platform="ios"] { --native-bar-h: var(--native-bar-h-ios); }
+  :root[data-platform="android"] { --native-bar-h: var(--native-bar-h-android); }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar {
+    position: sticky;
+    top: 0;
+    margin: 0;
+    height: auto;
+    min-height: calc(var(--native-bar-h) + env(safe-area-inset-top));
+    padding-top: env(safe-area-inset-top);
+    padding-left: max(var(--native-bar-pad-inline), env(safe-area-inset-left));
+    padding-right: max(var(--native-bar-pad-inline), env(safe-area-inset-right));
+    gap: 0; /* preview .as-bar: the 44/48px actions butt up; the title box is inset, not spaced */
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar {
+    isolation: isolate;
+    background-color: transparent; /* the page ground shows until the surface layer fades in */
+  }
+  /* The bar's surface is a layer under its content (preview .as-bar::before), so it
+     fades without fading the icons. */
+  /* The surface layer is positioned at the base rung, so every bar child is positioned
+     too and paints above it (the scale has no negative rung). */
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar > :not(.lm-native-inline-title) {
+    position: relative;
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: var(--z-index-base);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity var(--dur-base) var(--ease-out-soft);
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar:is([data-collapsed="true"], [data-title-level="detail"][data-stuck="true"])::before {
+    opacity: 1;
+  }
+  /* iOS: glass with a hairline. Android: M3 lift-on-scroll, no shadow, no hairline. */
+  :root[data-platform="ios"] .lm-native-bar::before {
+    background: color-mix(in oklch, var(--md-surface-container-lowest) var(--native-glass-mix), transparent);
+    -webkit-backdrop-filter: blur(var(--blur-nav)) saturate(var(--native-glass-saturate));
+    backdrop-filter: blur(var(--blur-nav)) saturate(var(--native-glass-saturate));
+    border-block-end: var(--native-hairline) solid var(--md-outline-variant);
+  }
+  :root[data-theme="dark"][data-platform="ios"] .lm-native-bar::before {
+    background: color-mix(in oklch, var(--md-surface-container-low) var(--native-glass-mix), transparent);
+  }
+  :root[data-platform="android"] .lm-native-bar::before {
+    background: var(--md-surface-container);
+  }
+  /* Actions: 44px (iOS) / 48px (Android) targets with 22px glyphs; iOS tints them primary,
+     Android keeps on-surface-variant. Root and detail both put the actions at the end. */
+  :root[data-platform="ios"] .lm-native-bar { --native-iconbtn: var(--native-iconbtn-ios); justify-content: flex-end; }
+  :root[data-platform="android"] .lm-native-bar { --native-iconbtn: var(--native-iconbtn-android); }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar .lm-native-iconbtn {
+    inline-size: var(--native-iconbtn);
+    block-size: var(--native-iconbtn);
+    border-radius: 9999px;
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar .lm-native-iconbtn svg {
+    inline-size: var(--native-bar-icon);
+    block-size: var(--native-bar-icon);
+  }
+  :root[data-platform="ios"] .lm-native-bar .lm-native-iconbtn { color: var(--md-primary); }
+  :root[data-platform="android"] .lm-native-bar .lm-native-iconbtn { color: var(--md-on-surface-variant); }
+  /* Detail: back, title, one action. */
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-title-level="detail"] :is([data-shell-action="settings"], [data-shell-action="account"]) {
+    display: none;
+  }
+  /* Teacher detail: Create is hidden too, leaving back, title and the bell. */
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-title-level="detail"] [data-shell-action="create"] {
+    display: none;
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-back { margin-inline-end: auto; align-items: center; }
+  :root[data-platform="ios"] .lm-native-back-label {
+    max-inline-size: var(--native-back-label-max);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* Same specificity as the iconbtn sizing above and later, so the iOS back sizes to chevron plus label. */
+  :root[data-platform="ios"] .lm-native-bar .lm-native-back {
+    inline-size: auto;
+    padding-inline-end: var(--space-2);
+    font-size: var(--native-inline-title-size);
+    line-height: var(--native-inline-title-lh);
+  }
+  :root[data-platform="ios"] .lm-native-back-md,
+  :root[data-platform="android"] :is(.lm-native-back-ios, .lm-native-back-label) { display: none; }
+  /* One class deeper than the trailing-icon colour above, which would otherwise win. */
+  :root[data-platform="android"] .lm-native-bar .lm-native-back { color: var(--md-on-surface); }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-back svg:dir(rtl) { transform: scaleX(-1); }
+  /* Inline title. */
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-inline-title {
+    font-size: var(--native-inline-title-size);
+    line-height: var(--native-inline-title-lh);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--md-on-surface);
+    transition: opacity var(--dur-fast) var(--ease-out-soft);
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-title-level="root"]:not([data-collapsed="true"]) .lm-native-inline-title {
+    opacity: 0;
+  }
+  /* iOS: centred over the bar, clear of three actions (root) or the back label (detail). */
+  :root[data-platform="ios"] .lm-native-inline-title {
+    position: absolute;
+    inset-inline: var(--native-title-inset-ios);
+    inset-block-end: 0;
+    block-size: var(--native-bar-h);
+    line-height: var(--native-bar-h);
+    text-align: center;
+  }
+  :root[data-platform="ios"] .lm-native-bar[data-title-level="detail"] .lm-native-inline-title {
+    inset-inline: var(--native-title-inset-detail-ios);
+  }
+  /* Android: start-aligned in the row. */
+  :root[data-platform="android"] .lm-native-inline-title {
+    position: relative;
+    flex: 1;
+    margin-inline: var(--space-3) var(--space-2);
+  }
+  /* Large title. */
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-large-title {
+    margin: 0;
+    padding: var(--native-large-title-pad);
+    padding-left: max(var(--space-4), env(safe-area-inset-left));
+    padding-right: max(var(--space-4), env(safe-area-inset-right));
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: var(--native-large-title-size);
+    line-height: var(--native-large-title-lh);
+    letter-spacing: -0.03em;
+    color: var(--md-on-surface);
+    text-wrap: balance;
+    overflow-wrap: anywhere;
+    /* Long titles ("0625 Physics · Paper 4 · May/June 2024") wrap to 2 lines. */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    transition: opacity var(--dur-fast) var(--ease-out-soft);
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-collapsed="true"] + .lm-native-large-title {
+    opacity: 0;
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-title-level="detail"] + .lm-native-large-title {
+    display: none;
+  }
+}
+/* ── Native frame: tab bar (native frame Task 5; preview .a-bottombar). */
+@media (max-width: 720px) {
+  :root[data-platform="ios"] { --native-tabbar-h: var(--native-tabbar-h-ios); --native-page: var(--native-page-ios); }
+  :root[data-platform="android"] { --native-tabbar-h: var(--native-tabbar-h-android); --native-page: var(--native-page-android); }
+  :root:is([data-platform="ios"], [data-platform="android"]) [data-portal] {
+    background-color: var(--native-page);
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-main:not([data-immersive]) {
+    padding-bottom: calc(var(--native-tabbar-h) + env(safe-area-inset-bottom));
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-main[data-immersive] {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-tabbar .lm-native-tab-icon svg {
+    inline-size: var(--native-tab-icon);
+    block-size: var(--native-tab-icon);
+  }
+  /* The tab links shed design A's min-h-14 / py-2.5 / centring so the bar is exactly its token height. */
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-tabbar {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-tabbar > * {
+    min-block-size: 0;
+    padding-block-end: 0;
+    justify-content: flex-start;
+    font-weight: 500;
+  }
+  /* The label span carries its own font-medium when active, which would beat the link's weight;
+     it inherits instead, so unselected 500, selected 600 (iOS) / 700 (Android), as the preview. */
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-tabbar .lm-native-tab-label {
+    font-weight: inherit;
+    letter-spacing: 0.01em;
+  }
+  :root[data-platform="ios"] .lm-native-tabbar > * {
+    padding-block-start: var(--native-tab-pad-top-ios);
+    gap: var(--native-tab-gap-ios);
+  }
+  :root[data-platform="ios"] .lm-native-tabbar {
+    block-size: calc(var(--native-tabbar-h-ios) + env(safe-area-inset-bottom));
+    border-top: var(--native-hairline) solid var(--md-outline-variant);
+    background-color: color-mix(in oklch, var(--md-surface-container-lowest) var(--native-glass-mix), transparent);
+    -webkit-backdrop-filter: blur(var(--blur-nav)) saturate(var(--native-glass-saturate));
+    backdrop-filter: blur(var(--blur-nav)) saturate(var(--native-glass-saturate));
+  }
+  :root[data-theme="dark"][data-platform="ios"] .lm-native-tabbar {
+    background-color: color-mix(in oklch, var(--md-surface-container-low) var(--native-glass-mix), transparent);
+  }
+  :root[data-platform="ios"] .lm-native-tabbar .lm-native-tab-label {
+    font-size: var(--native-tab-label-ios);
+    line-height: 1.2;
+  }
+  /* The raised emphasis (Correct) tab is excluded from the selected-state colour and pill rules. */
+  :root[data-platform="ios"] .lm-native-tabbar [aria-current="page"]:not(:has([data-emphasis])) {
+    color: var(--md-primary);
+    font-weight: 600;
+  }
+  :root[data-platform="android"] .lm-native-tabbar > * {
+    padding-block-start: var(--space-3);
+    gap: var(--space-1);
+  }
+  :root[data-platform="android"] .lm-native-tabbar {
+    block-size: calc(var(--native-tabbar-h-android) + env(safe-area-inset-bottom));
+    border-top: 0;
+    background-color: var(--md-surface-container);
+  }
+  :root[data-platform="android"] .lm-native-tabbar .lm-native-tab-label {
+    font-size: var(--native-tab-label-android);
+    line-height: 1.2;
+  }
+  :root[data-platform="android"] .lm-native-tabbar .lm-native-tab-icon {
+    isolation: isolate;
+  }
+  /* The pill is 32px tall around the 24px glyph, so the icon box keeps (pill - icon) / 2 above and below it. */
+  :root[data-platform="android"] .lm-native-tabbar .lm-native-tab-icon:not([data-emphasis]) {
+    margin-block: calc((var(--native-tab-pill-h) - var(--native-tab-icon)) / 2);
+  }
+  /* The raised Correct circle gets a fixed box whose layout height equals the pill's, so every label
+     shares one baseline; the lift is paint only (translate), not a negative margin. */
+  :root[data-platform="android"] .lm-native-tabbar .lm-native-tab-icon[data-emphasis] {
+    inline-size: var(--native-tab-emphasis-size);
+    block-size: var(--native-tab-emphasis-size);
+    margin-block: calc((var(--native-tab-pill-h) - var(--native-tab-emphasis-size)) / 2);
+    translate: 0 calc(-1 * var(--native-tab-emphasis-raise));
+  }
+  /* The pill is positioned at the base rung, so the glyph is positioned too and paints above it. */
+  :root[data-platform="android"] .lm-native-tabbar .lm-native-tab-icon svg {
+    position: relative;
+  }
+  :root[data-platform="android"] .lm-native-tabbar [aria-current="page"] .lm-native-tab-icon:not([data-emphasis])::before {
+    content: "";
+    position: absolute;
+    z-index: var(--z-index-base);
+    inset-inline-start: calc(50% - var(--native-tab-pill-w) / 2);
+    inset-block-start: 50%;
+    inline-size: var(--native-tab-pill-w);
+    block-size: var(--native-tab-pill-h);
+    translate: 0 -50%;
+    border-radius: 9999px;
+    background: var(--md-secondary-container);
+  }
+  /* Selected: the label stays on-surface (bold); only the icon takes on-secondary-container. */
+  :root[data-platform="android"] .lm-native-tabbar [aria-current="page"]:not(:has([data-emphasis])) {
+    color: var(--md-on-surface);
+    font-weight: 700;
+  }
+  :root[data-platform="android"] .lm-native-tabbar [aria-current="page"] .lm-native-tab-icon:not([data-emphasis]) {
+    color: var(--md-on-secondary-container);
+  }
+}
+
+/* ── Native frame: Create leaves the teacher's phone bar (user decision, 2026-11-13).
+   Android: an M3 FAB bottom-end above the tab bar. iOS: a `+` trailing in the large-title row. */
+@media (max-width: 720px) {
+  :root[data-platform="android"] .lm-native-fab {
+    position: fixed;
+    z-index: var(--z-index-nav);
+    inset-inline-end: max(var(--native-fab-gap), env(safe-area-inset-right));
+    inset-block-end: calc(var(--native-tabbar-h) + env(safe-area-inset-bottom) + var(--native-fab-gap));
+    block-size: var(--native-fab-size);
+    min-inline-size: var(--native-fab-size);
+    border-radius: var(--native-fab-radius);
+  }
+  :root[data-platform="android"] .lm-native-fab:dir(rtl) { inset-inline-end: max(var(--native-fab-gap), env(safe-area-inset-left)); }
+  /* M3 extend/collapse: the container is always 16px of padding around the 24px glyph (56px, a plain
+     FAB), and the label's grid track opens from 0fr to 1fr, so width and label fade move together
+     over 200ms on the emphasized curve. The gap rides on the label so a collapsed FAB has none. */
+  :root[data-platform="android"] .lm-native-fab { padding-inline: var(--space-4); gap: 0; }
+  :root[data-platform="android"] .lm-native-fab-label {
+    display: grid;
+    grid-template-columns: minmax(0, 0fr);
+    opacity: 0;
+  }
+  :root[data-platform="android"] .lm-native-fab-label > * {
+    min-inline-size: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    padding-inline-start: 0;
+  }
+  :root[data-platform="android"] .lm-native-fab[data-extended] .lm-native-fab-label { grid-template-columns: minmax(0, 1fr); opacity: 1; }
+  :root[data-platform="android"] .lm-native-fab[data-extended] .lm-native-fab-label > * { padding-inline-start: var(--space-3); }
+  /* Reduced motion: no transition at all, so the FAB steps between its two states. */
+  @media (prefers-reduced-motion: no-preference) {
+    :root[data-platform="android"] .lm-native-fab-label {
+      transition: grid-template-columns var(--native-fab-dur) var(--ease-m3-emphasized), opacity var(--native-fab-dur) var(--ease-m3-emphasized);
+    }
+    :root[data-platform="android"] .lm-native-fab-label > * {
+      transition: padding-inline-start var(--native-fab-dur) var(--ease-m3-emphasized);
+    }
+  }
+  :root[data-platform="android"] .lm-native-fab svg { inline-size: var(--native-tab-icon); block-size: var(--native-tab-icon); }
+  /* Room under the last row so the FAB never covers the end of a page. */
+  :root[data-platform="android"] .lm-native-main[data-fab]:not([data-immersive]) {
+    padding-bottom: calc(var(--native-tabbar-h) + env(safe-area-inset-bottom) + var(--native-fab-size) + 2 * var(--native-fab-gap));
+  }
+  :root[data-platform="ios"] .lm-native-large-action { position: relative; block-size: 0; }
+  :root[data-platform="ios"] .lm-native-large-action > button {
+    position: absolute;
+    inset-inline-end: max(var(--space-2), env(safe-area-inset-right));
+    inset-block-end: calc(var(--space-2) + (var(--native-large-title-lh) - var(--native-iconbtn-ios)) / 2);
+    inline-size: var(--native-iconbtn-ios);
+    block-size: var(--native-iconbtn-ios);
+    border-radius: 9999px;
+    color: var(--md-primary);
+  }
+  :root[data-platform="ios"] .lm-native-large-action > button:dir(rtl) { inset-inline-end: max(var(--space-2), env(safe-area-inset-left)); }
+  :root[data-platform="ios"] .lm-native-large-action > button svg { inline-size: var(--native-bar-icon); block-size: var(--native-bar-icon); }
+  /* The title leaves room for it. */
+  :root[data-platform="ios"] .lm-native-large-title:has(+ .lm-native-large-action) {
+    padding-inline-end: calc(var(--native-iconbtn-ios) + var(--space-2));
+  }
+  /* It collapses away with the large title: hidden for assistive tech and taps once the bar has collapsed. */
+  :root[data-platform="ios"] .lm-native-bar[data-collapsed="true"] ~ .lm-native-large-action {
+    opacity: 0;
+    visibility: hidden;
+  }
+  :root[data-platform="ios"] .lm-native-large-action { transition: opacity var(--dur-fast) var(--ease-out-soft); }
+}
+@media (max-width: 720px) {
+  /* The More sheet's list: M3 sheet lists are flat full-width items (56dp one-line rows); iOS keeps an inset-grouped
+     surface. Neither draws the desktop outline. */
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-sheet [data-list-group] { border: 0; }
+  :root[data-platform="android"] .lm-sheet [data-list-group] { border-radius: 0; background: transparent; }
+  :root[data-platform="android"] .lm-sheet [data-lines="1"] { min-height: var(--native-row-1-android); }
+  :root[data-platform="ios"] .lm-sheet [data-list-group] { border-radius: var(--native-group-radius-ios); }
+  :root[data-platform="ios"] .lm-sheet [data-lines] { min-height: var(--native-row-min-ios); }
+  /* iOS light: an inset group is lowest (white) and must read against the sheet, so a sheet that holds
+     one sits on the grouped-list ground, one step down from the plain sheet. */
+  :root[data-platform="ios"]:not([data-theme="dark"]) .lm-sheet:not(.lm-action-sheet):has([data-list-group]) {
+    background: var(--md-surface-container);
+  }
+}
+@media (max-width: 720px) {
+  :root:is([data-platform="ios"], [data-platform="android"]) .lm-sheet .lm-native-sheet-title { margin: 0; color: var(--md-on-surface); }
+  :root[data-platform="ios"] .lm-sheet .lm-native-sheet-title { font: 600 var(--native-sheet-title-ios) / 1.3 var(--font-sans); text-align: center; }
+  :root[data-platform="android"] .lm-sheet .lm-native-sheet-title { font: 400 var(--native-sheet-title-android) / 1.27 var(--font-sans); }
+}
+
+/* Collapse, scroll-driven where supported (Chrome 115+, Safari 26+), as in the preview:
+   the inline title and the bar's surface fade in over 70% to 100% of the large title's
+   exit, and the large title fades out over its whole exit. Elsewhere, and under reduced
+   motion, data-collapsed flips the same end state at the same threshold. */
+@supports (animation-timeline: scroll()) {
+  @media (prefers-reduced-motion: no-preference) and (max-width: 720px) {
+    @keyframes lm-native-fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes lm-native-fade-out { from { opacity: 1; } to { opacity: 0; } }
+    :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-title-level="root"] :is(.lm-native-inline-title),
+    :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-title-level="root"]::before {
+      animation: lm-native-fade-in linear both;
+      animation-timeline: scroll(root block);
+      animation-range: calc(var(--lm-large-title-block) * 0.7) var(--lm-large-title-block);
+    }
+    :root:is([data-platform="ios"], [data-platform="android"]) .lm-native-bar[data-title-level="root"] + .lm-native-large-title,
+    :root[data-platform="ios"] .lm-native-bar[data-title-level="root"] ~ .lm-native-large-action {
+      animation: lm-native-fade-out linear both;
+      animation-timeline: scroll(root block);
+      animation-range: 0px var(--lm-large-title-block);
+    }
+  }
+}
+
 /* §14 rule 3 forbids an arbitrary value — an inline `style` prop setting a
    raw spacing literal is the same violation in a different syntax, so these
    are named classes instead, off the same `--spacing` scale `py-4`/`py-2.5`
@@ -1050,6 +2297,57 @@ html[data-direction="back"]::view-transition-new(root) {
 }
 .lm-app-header-pt-2\.5 {
   --lm-app-header-pt: calc(var(--spacing) * 2.5);
+}
+
+/* The shared shell's floating top bar (ShellTopBar) keeps design A's 56px box,
+   so the standalone-PWA top inset goes outside it: onto the sticky offset and
+   the margin that sit above the box, never into its height. Unlayered, so it
+   beats the bar's layered `top-2`/`mt-2`; hence additive, like `.lm-app-header`.
+   On phones (<721px) the bar is flat and in flow (`m-0`), so only the margin
+   carries the inset. Browser tabs are untouched: the OS chrome already
+   reserves that area. */
+@media (display-mode: standalone) {
+  .lm-shell-bar-inset {
+    top: calc(var(--spacing) * 2 + env(safe-area-inset-top));
+    margin-top: calc(var(--spacing) * 2 + env(safe-area-inset-top));
+  }
+}
+@media (display-mode: standalone) and (max-width: 720px) {
+  .lm-shell-bar-inset {
+    top: auto;
+    margin-top: env(safe-area-inset-top);
+  }
+}
+
+/* With black-translucent (index.html), an iOS home-screen app draws under the
+   status bar. The shell bar already adds the inset (.lm-shell-bar-inset,
+   .lm-native-bar); full-screen roots outside the shell opt in with this. */
+@media (display-mode: standalone) {
+  .lm-standalone-top {
+    padding-top: env(safe-area-inset-top);
+  }
+}
+
+/* The shared shell's floating top bar (ShellTopBar) is semi-translucent, like
+   the landing page header (brand.css .brand-header): 86% of the bar's own
+   surface over a backdrop blur, so a page scrolling under it stays faintly
+   visible. Unlayered, so it beats the bar's layered `bg-*` utilities, which
+   stay as the solid fallback where backdrop-filter is unsupported. The radius
+   is the one DESIGN §3.2 item 6 allows (`--blur-nav`). Floating bar only
+   (above 720px, the `max-shell-sm` edge): the flat phone bar stays transparent
+   and scrolls with the page, as in design A (variant-a.css, "Floating top bar:
+   semi-translucent", which is gated to `@container ashell (min-width: 721px)`). */
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  @media (min-width: 721px) {
+    .lm-shell-bar-glass {
+      background-color: color-mix(in oklch, var(--md-surface-container-lowest) 86%, transparent);
+      -webkit-backdrop-filter: blur(var(--blur-nav));
+      backdrop-filter: blur(var(--blur-nav));
+    }
+    [data-theme="dark"] .lm-shell-bar-glass {
+      background-color: color-mix(in oklch, var(--md-surface-container-high) 86%, transparent);
+    }
+  }
 }
 
 /* §14 rule 3 forbids an arbitrary value, so this is the named utility for the
@@ -1066,6 +2364,9 @@ html[data-direction="back"]::view-transition-new(root) {
    `.lm-safe-bottom` does for the bar itself. */
 .w-sidebar {
   width: var(--sidebar-width);
+}
+.w-shell-sidebar {
+  width: var(--shell-sidebar-width);
 }
 .pb-bottom-nav {
   padding-bottom: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom));
@@ -1175,6 +2476,25 @@ html[data-direction="back"]::view-transition-new(root) {
     animation: none !important;
   }
 
+  /* Press states: the scale is instant (Task 11). The ripple needs no rule here: the
+     blanket `animation-duration` above collapses it, and its from-keyframe is not held. */
+  .lm-press {
+    transition: none;
+  }
+
+  html[data-swiping] body::before {
+    translate: none !important;
+  }
+
+  /* Native sheets: the slide and the iOS scale-back stop moving (Task 6). */
+  .lm-sheet,
+  .lm-sheet[data-closing],
+  .lm-sheet[data-state="closed"],
+  :root[data-platform="ios"] #root {
+    animation: none;
+    transition: none;
+  }
+
   /* The two exceptions, and the reason the blanket rule above needs one.
      These classes use `animation-delay` as a TIMER, not as motion: duration
      is `0s` and the backwards `both` fill holds `visibility: hidden` until
@@ -1189,5 +2509,18 @@ html[data-direction="back"]::view-transition-new(root) {
   }
   .lm-tier-slow {
     animation-delay: var(--loading-tier-slow) !important;
+  }
+
+  /* Refreshing is a state, not a flourish: the spinner keeps turning, as it does under iOS Reduce Motion
+     and Android's remove-animations. The settle and the finger-following stay stopped (the rules above). */
+  :root[data-platform="android"] .lm-ptr[data-ptr="refreshing"] .lm-ptr-md svg {
+    animation-duration: var(--native-ptr-spin-android) !important;
+    animation-iteration-count: infinite !important;
+    animation-delay: 0s !important;
+  }
+  :root[data-platform="ios"] .lm-ptr[data-ptr="refreshing"] .lm-ptr-ios {
+    animation-duration: var(--native-ptr-spin-ios) !important;
+    animation-iteration-count: infinite !important;
+    animation-delay: 0s !important;
   }
 }

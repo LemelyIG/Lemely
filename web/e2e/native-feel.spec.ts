@@ -223,16 +223,16 @@ test("Assertion 6: scroll restoration on POP; a fresh tab entry scrolls to top",
   await page.evaluate(() => window.scrollTo(0, 600))
 
   const nav = page.getByRole("navigation", { name: "Primary" })
-  await nav.getByRole("link", { name: "Classes", exact: true }).click()
-  await expect(page).toHaveURL(/\/student\/classes$/)
+  await nav.getByRole("link", { name: "Me", exact: true }).click()
+  await expect(page).toHaveURL(/\/student\/profile$/)
 
   await page.goBack()
   await expect(page).toHaveURL(/\/student$/)
   const restoredScrollY = await page.evaluate(() => window.scrollY)
   expect(Math.abs(restoredScrollY - 600)).toBeLessThanOrEqual(50)
 
-  await nav.getByRole("link", { name: "Classes", exact: true }).click()
-  await expect(page).toHaveURL(/\/student\/classes$/)
+  await nav.getByRole("link", { name: "Me", exact: true }).click()
+  await expect(page).toHaveURL(/\/student\/profile$/)
   const freshScrollY = await page.evaluate(() => window.scrollY)
   expect(freshScrollY).toBe(0)
 })

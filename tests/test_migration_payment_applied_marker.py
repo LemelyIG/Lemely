@@ -180,7 +180,7 @@ def test_downgrade_refuses_while_a_marker_or_reason_is_recorded(
         downgrade_to(DOWN_REVISION)
     with sm() as session:
         assert column_names(session, "payments") >= NEW_COLUMNS
-        assert current_revision(session) != DOWN_REVISION
+        assert current_revision(session, within=REVISION) != DOWN_REVISION
 
 
 def test_upgrade_downgrade_upgrade_round_trip(
@@ -191,7 +191,7 @@ def test_upgrade_downgrade_upgrade_round_trip(
 
     downgrade_to(DOWN_REVISION)
     with sm() as session:
-        assert current_revision(session) == DOWN_REVISION
+        assert current_revision(session, within=REVISION) == DOWN_REVISION
         assert not NEW_COLUMNS & column_names(session, "payments")
         assert session.execute(sa.text("SELECT count(*) FROM payments")).scalar_one() == 1
 
@@ -270,7 +270,7 @@ def test_downgrade_refuses_while_a_cancel_source_is_recorded(
         downgrade_to(DOWN_REVISION)
     with sm() as session:
         assert "cancel_source" in column_names(session, "subscriptions")
-        assert current_revision(session) != DOWN_REVISION
+        assert current_revision(session, within=REVISION) != DOWN_REVISION
 
 
 def test_downgrade_drops_cancel_source_when_none_is_recorded_and_upgrade_restores_it(
@@ -351,4 +351,4 @@ def test_the_migration_fails_fast_when_payments_is_locked(
     assert "lock timeout" in str(outcome["error"])
     with sm() as session:
         expected = DOWN_REVISION if direction == "upgrade" else REVISION
-        assert current_revision(session) == expected
+        assert current_revision(session, within=REVISION) == expected

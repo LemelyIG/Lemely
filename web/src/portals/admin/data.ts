@@ -41,6 +41,7 @@ export interface AdminNavItem {
     | "moderation"
     | "reports"
     | "billing"
+    | "waitlist"
   /** Index route match (the lane's dashboard lives at its root). */
   end?: boolean
 }
@@ -58,6 +59,7 @@ export const platformNavItems: AdminNavItem[] = [
   { to: "/platform", label: "Console", icon: "console", end: true },
   { to: "/platform/billing", label: "Billing", icon: "billing" },
   { to: "/platform/activations", label: "Activations", icon: "activations" },
+  { to: "/platform/waitlist", label: "Waitlist", icon: "waitlist" },
   { to: "/platform/tutors", label: "Tutors", icon: "tutors" },
   { to: "/platform/moderation", label: "Moderation", icon: "moderation" },
   { to: "/platform/reports", label: "Reports", icon: "reports" },

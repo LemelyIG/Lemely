@@ -98,12 +98,13 @@ export function ListSkeleton({
     <div
       role="status"
       aria-label="Loading"
-      className={cn("overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest", className)}
+      className={cn("lm-native-group overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest", className)}
     >
       {Array.from({ length: rows }, (_, index) => (
         <div
           key={index}
-          className="flex items-center gap-3 border-b border-outline-variant px-5 py-3.5 last:border-b-0"
+          data-lines="2"
+          className="lm-native-row flex items-center gap-3 border-b border-outline-variant px-5 py-3.5 last:border-b-0"
         >
           {avatar ? <SkeletonCircle announce={false} className="h-7 w-7" /> : null}
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">

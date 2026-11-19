@@ -50,6 +50,7 @@ import type {
 } from "@/lib/teacherTypes"
 import { statusLabel, statusTone } from "./Quizzes"
 import { BackArrow, ForwardArrow } from "@/components/ui/inline-arrow"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * Quiz builder (T-09) — the stepped flow at `/teacher/quizzes/:quizId`.
@@ -1020,6 +1021,7 @@ function StepAssign({
           </ul>
         )}
         <ConfirmModal
+          destructive={false}
           open={unassigning !== null}
           title="Remove this quiz from the class?"
           description={
@@ -1155,12 +1157,14 @@ export function QuizBuilder() {
                 </Link>
                 <div className="flex items-start gap-3 flex-wrap gap-y-2 mt-1">
                   <div className="min-w-0">
-                    <div className="text-eyebrow text-on-surface-variant">
+                    <div className="text-eyebrow native:hidden text-on-surface-variant">
                       {loadedQuiz.subjectCode}
                     </div>
-                    <h1 className="text-display-md mt-1 text-pretty">
+                    <PageHeading repeatsTitle={false} className="text-display-md mt-1 text-pretty">
                       {loadedQuiz.title}
-                    </h1>
+                    </PageHeading>
+                    {/* Data, not a kicker: kept on native as a quiet line under the heading. */}
+                    <p data-native-meta className="hidden native:block m-0 mt-1 text-body-sm text-on-surface-variant">{loadedQuiz.subjectCode}</p>
                   </div>
                   <div className="flex-1" />
                   <Chip tone={statusTone(loadedQuiz.status)}>{statusLabel(loadedQuiz.status)}</Chip>

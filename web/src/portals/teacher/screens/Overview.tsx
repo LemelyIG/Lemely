@@ -5,12 +5,15 @@ import { ReviewQueueTile } from "../home/ReviewQueueTile"
 import { MarkClassSet } from "../home/MarkClassSet"
 import { ClassStrip } from "../home/ClassStrip"
 import { AtRiskTable } from "../home/AtRiskTable"
+import { NextUp } from "../home/NextUp"
+import { growthModel, hasTrends } from "../home/growth"
 
 /** Teacher home (T-01), v5 Abyss. Data comes from TeacherHome; this file only lays it out. */
 export function Overview({ overview, classes, onFiles }: { overview: OverviewDTO; classes: ClassSummary[]; onFiles: (files: File[]) => void }) {
   // A quiz attempt is not an upload, so "Last:" skips those rows.
   const last = overview.recentActivity.find((a) => a.origin !== "quiz")
   const lastUpload = last ? `${last.subjectCode} · ${relativeTime(last.recordedAt)}` : null
+  const growth = growthModel(classes, overview)
   return (
     <div className="grid grid-cols-1 gap-8">
       <h1 className="sr-only">Overview</h1>
@@ -20,8 +23,9 @@ export function Overview({ overview, classes, onFiles }: { overview: OverviewDTO
         <ReviewQueueTile overview={overview} />
         <MarkClassSet lastUpload={lastUpload} onFiles={onFiles} />
       </div>
+      <NextUp growth={growth} />
       <ClassStrip classes={classes} />
-      <AtRiskTable students={overview.atRisk} />
+      <AtRiskTable students={overview.atRisk} trendsReady={hasTrends(classes)} />
     </div>
   )
 }

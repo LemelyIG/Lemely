@@ -34,6 +34,12 @@ import {
 
 export interface Env {
 	BACKEND_URL: string;
+	// Shared secret proving a request came through this Worker (a Worker secret, not a var:
+	// `wrangler secret put ORIGIN_SECRET`). Sent to the backend as X-Lemely-Edge-Secret; the
+	// backend's `[edge] origin_secret` (LEMELY_EDGE__ORIGIN_SECRET) must hold the same value.
+	// Where a route uses the edge guard (the public waitlist routes), the backend refuses a
+	// request without it and only then trusts CF-Connecting-IP for per-client rate limits.
+	ORIGIN_SECRET?: string;
 	// Workers Static Assets (wrangler.jsonc `assets.binding`): the SPA shell
 	// for the tutor pages this script serves.
 	ASSETS: Fetcher;
@@ -64,12 +70,29 @@ function applySecurityHeaders(headers: Headers): void {
 	// the full rationale.
 	headers.set(
 		"Content-Security-Policy",
-		"default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://storage.googleapis.com; media-src 'self' blob:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'",
+		"default-src 'self'; script-src 'self' https://static.cloudflareinsights.com https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://storage.googleapis.com; media-src 'self' blob:; font-src 'self'; frame-src https://challenges.cloudflare.com; connect-src 'self'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'",
 	);
 }
 
+/**
+ * Prove to the backend that this request came through the Worker. Any
+ * `X-Lemely-Edge-Secret` or `CF-Connecting-IP` the visitor sent is replaced (or removed when
+ * there is no secret / no edge IP), so neither can be forged past the edge.
+ */
+function stampEdge(headers: Headers, clientIp: string | null, originSecret: string | undefined): void {
+	if (originSecret) headers.set("X-Lemely-Edge-Secret", originSecret);
+	else headers.delete("X-Lemely-Edge-Secret");
+	if (clientIp) headers.set("CF-Connecting-IP", clientIp);
+	else headers.delete("CF-Connecting-IP");
+}
+
 /** The proxy hop for every /api/* request except the public reads below. */
-function proxyRequestFor(request: Request, target: URL, clientIp: string | null): Request {
+function proxyRequestFor(
+	request: Request,
+	target: URL,
+	clientIp: string | null,
+	originSecret: string | undefined,
+): Request {
 	// `new Request(url, request)` clones method/headers/body from `request`
 	// (standard Fetch API constructor behaviour) while pointing at the new
 	// URL; the resulting `.headers` is a fresh, independently-mutable
@@ -91,6 +114,7 @@ function proxyRequestFor(request: Request, target: URL, clientIp: string | null)
 		proxyRequest.headers.set("X-Forwarded-For", clientIp);
 	}
 	proxyRequest.headers.set("X-Forwarded-Proto", "https");
+	stampEdge(proxyRequest.headers, clientIp, originSecret);
 	return proxyRequest;
 }
 
@@ -129,7 +153,7 @@ export default {
 						() => fetch(publicUpstreamRequest(target, clientIp)),
 						ctx,
 					)
-				: await fetch(proxyRequestFor(request, target, clientIp));
+				: await fetch(proxyRequestFor(request, target, clientIp, env.ORIGIN_SECRET));
 
 		// `new Response(res.body, res)` streams `res.body` through unread rather
 		// than buffering it, so the SSE progress endpoints this comment block

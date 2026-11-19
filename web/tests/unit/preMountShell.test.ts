@@ -406,7 +406,7 @@ describe("NIT (c): index.html's tier 3 copy matches FULL_PAGE_STATE_COPY[\"slow-
     // markup rather than from the copy table above, so this also catches a
     // future edit that types new tier 3 copy directly into index.html
     // without going through fullPageStateCopy.ts at all.
-    const heading = REAL_INDEX_HTML.match(/<h1 class="lm-shell-heading">([\s\S]*?)<\/h1>/)
+    const heading = REAL_INDEX_HTML.match(/<h2 class="lm-shell-heading">([\s\S]*?)<\/h2>/)
     const body = REAL_INDEX_HTML.match(/<p class="lm-shell-body-copy">([\s\S]*?)<\/p>/)
     const reload = REAL_INDEX_HTML.match(
       /<button type="button" class="lm-shell-reload"[^>]*>([\s\S]*?)<\/button>/,
@@ -462,4 +462,14 @@ describe("the shell's brand mark is the v5 Clip Letters paperclip, not the retir
     expect(wordmark).not.toContain("lm-shell-mark-pulse")
     expect(REAL_INDEX_HTML.match(/class="lm-shell-mark lm-shell-mark-pulse"/g)).toHaveLength(1)
   })
+
+  it("keys the shell's dark paint on data-theme alone, so an anonymous visitor never gets dark from the OS", () => {
+    // The theme rule (signed in ? preference : light) is decided in public/shell-init.js and
+    // written to <html data-theme>. If the shell also reacted to prefers-color-scheme, an
+    // anonymous visitor on a dark OS would see a dark loading shell before React mounts.
+    const html = readFileSync(join(ROOT, "index.html"), "utf8")
+    expect(html).not.toMatch(/prefers-color-scheme/)
+    expect(html).toMatch(/\[data-theme="dark"\] #root/)
+  })
+
 })

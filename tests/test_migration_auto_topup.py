@@ -419,7 +419,7 @@ def test_downgrade_refuses_while_a_setting_exists(
 ) -> None:
     sm, downgrade_to = migrated_sessionmaker_with_downgrade
     with sm() as session:
-        revision_before = current_revision(session)
+        revision_before = current_revision(session, within=REVISION)
     user = seed_user(sm, Role.student)
     pack = seed_pack(sm)
     seed_auto_topup(
@@ -430,7 +430,7 @@ def test_downgrade_refuses_while_a_setting_exists(
         downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == revision_before
+        assert current_revision(session, within=REVISION) == revision_before
         assert TABLE in public_tables(session)
         assert (
             session.execute(sa.text("SELECT count(*) FROM auto_topup_settings")).scalar_one() == 1
@@ -443,7 +443,7 @@ def test_downgrade_refuses_while_a_payment_has_a_dedupe_key(
 ) -> None:
     sm, downgrade_to = migrated_sessionmaker_with_downgrade
     with sm() as session:
-        revision_before = current_revision(session)
+        revision_before = current_revision(session, within=REVISION)
     user = seed_user(sm, Role.student)
     seed_payment_row(
         sm,
@@ -457,7 +457,7 @@ def test_downgrade_refuses_while_a_payment_has_a_dedupe_key(
         downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == revision_before
+        assert current_revision(session, within=REVISION) == revision_before
         assert "dedupe_key" in column_names(session, "payments")
         assert TABLE in public_tables(session)
         count = session.execute(
@@ -474,7 +474,7 @@ def test_downgrade_refuses_while_extra_seat_grace_is_set(
     """Either grace column alone is money state: the probe is an OR, not an AND."""
     sm, downgrade_to = migrated_sessionmaker_with_downgrade
     with sm() as session:
-        revision_before = current_revision(session)
+        revision_before = current_revision(session, within=REVISION)
     scene = teacher_with_plan(sm)
     attempt = seed_payment_row(
         sm,
@@ -497,7 +497,7 @@ def test_downgrade_refuses_while_extra_seat_grace_is_set(
         downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == revision_before
+        assert current_revision(session, within=REVISION) == revision_before
         assert column_names(session, "subscriptions") >= SUBSCRIPTION_COLUMNS
 
 
@@ -522,7 +522,7 @@ def test_upgrade_downgrade_upgrade_round_trip(
     downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == DOWN_REVISION
+        assert current_revision(session, within=REVISION) == DOWN_REVISION
         assert TABLE not in public_tables(session)
         assert "dedupe_key" not in column_names(session, "payments")
         assert "sent_at" not in column_names(session, "payments")
@@ -767,4 +767,4 @@ def test_the_migration_fails_fast_when_payments_is_locked(
     assert "lock timeout" in str(outcome["error"])
     with sm() as session:
         expected = DOWN_REVISION if direction == "upgrade" else REVISION
-        assert current_revision(session) == expected
+        assert current_revision(session, within=REVISION) == expected

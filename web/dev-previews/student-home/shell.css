@@ -1,0 +1,81 @@
+/* Preview chrome and state switching shared by variants A, B and C. */
+*, *::before, *::after { box-sizing: border-box }
+body { margin: 0; -webkit-font-smoothing: antialiased; background: oklch(0.90 0.01 240) }
+body:has(.sh-root[data-theme="dark"]) { background: oklch(0.12 0.010 245) }
+
+.sh-toolbar {
+  position: sticky; inset-block-start: 0; z-index: 10;
+  display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+  padding: 8px 16px; background: oklch(0.16 0.014 245); color: #fff;
+  font: 600 13px/1.4 var(--font-ui);
+}
+.sh-toolbar select { font: inherit; min-block-size: 32px }
+.sh-toolbar a { color: #7fb8e0 }
+.sh-toolbar a[aria-current="page"] { color: #fff; text-decoration: none; font-weight: 800 }
+.sh-demo { margin-inline-start: auto; font-family: var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase }
+
+/* The frame is a size container, so variants style themselves with
+   @container queries and "mobile" works in a desktop browser. */
+.sh-root {
+  container-type: inline-size; container-name: home;
+  margin-inline: auto; min-block-size: 100vh;
+  background: var(--surface-page); color: var(--text-body);
+  font-family: var(--font-ui);
+}
+.sh-root[data-width="desktop"] { max-inline-size: none }
+.sh-root[data-width="mobile"] { max-inline-size: 390px }
+
+/* Exactly one state block is visible at a time. */
+.sh-root [data-when-state] { display: none }
+.sh-root[data-state="loading"] [data-when-state~="loading"],
+.sh-root[data-state="error"] [data-when-state~="error"],
+.sh-root[data-state="new"] [data-when-state~="new"] { display: block }
+.sh-root:not([data-state="loading"], [data-state="error"], [data-state="new"]) [data-when-state~="ready"] { display: block }
+
+/* Hero: one block per next-action kind. */
+.sh-root [data-when-action] { display: none }
+.sh-root[data-action="marking"] [data-when-action="marking"],
+.sh-root[data-action="result"] [data-when-action="result"],
+.sh-root[data-action="session"] [data-when-action="session"],
+.sh-root[data-action="first-paper"] [data-when-action="first-paper"],
+.sh-root[data-action="practice"] [data-when-action="practice"],
+.sh-root[data-action="correct"] [data-when-action="correct"] { display: block }
+
+/* Variant C's today list: each item shows when its kind is in data-today. */
+.sh-root [data-today-item] { display: none }
+.sh-root[data-today~="marking"] [data-today-item="marking"],
+.sh-root[data-today~="session"] [data-today-item="session"],
+.sh-root[data-today~="practice"] [data-today-item="practice"],
+.sh-root[data-today~="correct"] [data-today-item="correct"],
+.sh-root[data-today~="first-paper"] [data-today-item="first-paper"] { display: flex }
+
+/* Binny caption: one line per mood. */
+.sh-root [data-when-mood] { display: none }
+.sh-root[data-mood="marking"] [data-when-mood="marking"],
+.sh-root[data-mood="grade-improved"] [data-when-mood="grade-improved"],
+.sh-root[data-mood="paper-marked"] [data-when-mood="paper-marked"],
+.sh-root[data-mood="streak-kept"] [data-when-mood="streak-kept"],
+.sh-root[data-mood="idle"] [data-when-mood="idle"] { display: inline }
+
+/* Streak block: earned streak versus zero streak. The one-paper fixture has
+   no recent XP, which is why it shares the zero-streak block. */
+.sh-root [data-when-streak] { display: none }
+.sh-root:not([data-state="streak-zero"], [data-state="one-paper"]) [data-when-streak="kept"],
+.sh-root[data-state="streak-zero"] [data-when-streak="zero"],
+.sh-root[data-state="one-paper"] [data-when-streak="zero"] { display: block }
+
+/* Study plan, exam dates and the no-plan or one-paper differences. */
+.sh-root[data-state="no-plan"] [data-needs="plan"],
+.sh-root[data-exams="no"] [data-needs="exams"],
+.sh-root[data-state="one-paper"] [data-needs="many-papers"] { display: none }
+.sh-root [data-only-state] { display: none }
+.sh-root[data-state="one-paper"] [data-only-state="one-paper"],
+.sh-root[data-state="no-plan"] [data-only-state="no-plan"],
+.sh-root[data-exams="no"] [data-only-state="no-exams"] { display: block }
+
+.sh-root[data-motion="reduce"] *, .sh-root[data-motion="reduce"] *::before, .sh-root[data-motion="reduce"] *::after {
+  animation: none !important; transition: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sh-root *, .sh-root *::before, .sh-root *::after { animation: none !important; transition: none !important }
+}

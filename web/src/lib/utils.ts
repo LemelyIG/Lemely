@@ -45,6 +45,7 @@ const CUSTOM_FONT_SIZE_CLASSES = [
   "field",
   // ── Build-era names, still live until Phase 4 migrates the last call site ──
   "display-xs",
+  "title-bar",
   "label-sm",
   "metadata",
   "dense-lg",

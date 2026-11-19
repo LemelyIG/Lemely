@@ -126,17 +126,10 @@ describe("QuizTaker.tsx — page-turn swipe flushes autosave before navigating, 
   })
 })
 
-describe("Pull-to-refresh — Notifications, Announcements and Overview all wire usePullToRefresh", () => {
-  const files = [
-    "src/portals/student/screens/Notifications.tsx",
-    "src/portals/student/screens/Announcements.tsx",
-    "src/portals/student/screens/Overview.tsx",
-  ]
-
-  it.each(files)("%s imports usePullToRefresh and renders PullIndicator", (relative) => {
-    const src = sourceOf(relative)
-    expect(src).toContain("usePullToRefresh")
-    expect(src).toContain("PullIndicator")
+describe("Pull-to-refresh — the shell wires usePullToRefresh once (native frame D6)", () => {
+  it("ShellPullToRefresh uses usePullToRefresh and PortalShell mounts it", () => {
+    expect(sourceOf("src/components/shell/ShellPullToRefresh.tsx")).toContain("usePullToRefresh")
+    expect(sourceOf("src/components/shell/PortalShell.tsx")).toContain("<ShellPullToRefresh")
   })
 })
 

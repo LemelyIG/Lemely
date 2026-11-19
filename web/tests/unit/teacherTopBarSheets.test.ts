@@ -11,6 +11,8 @@ import { resolveTrail } from "@/portals/teacher/data"
 
 import { teacherRoute } from "@/portals/teacher"
 import {
+  ANNOUNCEMENTS_TO,
+  INBOX_TO,
   CREATE_ACTIONS,
   HELP_HREF,
   PROFILE_EDIT_TO,
@@ -132,5 +134,11 @@ describe("settings opens over the current page", () => {
     expect(
       underlyingPathname({ pathname: "/teacher/classes", state, overlayBase: "/teacher/settings" }),
     ).toBe("/teacher/classes")
+  })
+})
+
+describe("notifications panel links", () => {
+  it.each([INBOX_TO, ANNOUNCEMENTS_TO])("%s is a mounted teacher route", (to) => {
+    expect(mountedRoute(to)).toBeDefined()
   })
 })

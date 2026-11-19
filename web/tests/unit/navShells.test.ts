@@ -10,7 +10,7 @@ import { stripComments } from "./support/jsxSource"
  * Packet B3 (Task 4) · the shell primitives' retrofit. `nav-shells.tsx`'s own
  * header used to say the route wiring was future work ("stays in the kit
  * unused for now") — this pins that it no longer is: `NavShellItem` wires
- * through react-router's `NavLink`, and every portal's chrome actually mounts
+ * through react-router's `Link`, and every portal's chrome actually mounts
  * `BottomNav`/`SidebarNav` rather than a bespoke copy.
  */
 
@@ -37,8 +37,8 @@ describe("sidebar/bottom-nav constants agree with index.css", () => {
 describe("nav-shells.tsx wires NavShellItem through react-router", () => {
   const source = stripComments(read("components/ui/nav-shells.tsx"))
 
-  it("imports NavLink", () => {
-    expect(source).toMatch(/import\s*\{[^}]*\bNavLink\b[^}]*\}\s*from\s*"react-router-dom"/)
+  it("imports the router Link (one stable element so focus survives an active-state change)", () => {
+    expect(source).toMatch(/import\s*\{[^}]*\bLink\b[^}]*\}\s*from\s*"react-router-dom"/)
   })
 
   it("passes viewTransition on the router-wired link", () => {
@@ -51,7 +51,8 @@ describe("nav-shells.tsx wires NavShellItem through react-router", () => {
 })
 
 describe("every portal shell imports SidebarNav", () => {
-  const PORTALS = ["portals/student/index.tsx", "portals/teacher/index.tsx", "portals/admin/index.tsx"]
+  // Student and teacher render ShellSidebar through PortalShell (portal shell spec).
+  const PORTALS = ["portals/admin/index.tsx"]
 
   it.each(PORTALS)("%s imports SidebarNav", (file) => {
     const source = read(file)
@@ -59,20 +60,42 @@ describe("every portal shell imports SidebarNav", () => {
   })
 })
 
-describe("student and teacher shells mount BottomNav with the five labels in order", () => {
-  it("student/index.tsx imports BottomNav and orders its five tabs", () => {
-    const source = stripComments(read("portals/student/index.tsx"))
-    expect(source).toMatch(/import\s*\{[^}]*\bBottomNav\b[^}]*\}\s*from\s*"@\/components\/ui\/nav-shells"/)
-    expect(source).toMatch(
-      /"Overview"[\s\S]*"Correct"[\s\S]*"Classes"[\s\S]*"Profile"[\s\S]*"More"/,
-    )
+describe("student and teacher render the shared shell sidebar", () => {
+  it("teacher/index.tsx imports from components/shell", () => {
+    expect(read("portals/teacher/index.tsx")).toMatch(/from\s+"@\/components\/shell\//)
   })
 
-  it("teacher/index.tsx imports BottomNav and orders its five tabs", () => {
-    const source = stripComments(read("portals/teacher/index.tsx"))
+  it("student/shell.tsx imports from components/shell", () =>
+    expect(read("portals/student/shell.tsx")).toMatch(/from\s+"@\/components\/shell\//))
+
+  it("ShellNavList renders its rows through nav-shells' NavShellLink", () => {
+    const source = stripComments(read("components/shell/ShellNavList.tsx"))
+    expect(source).toMatch(/import\s*\{[^}]*\bNavShellLink\b[^}]*\}\s*from\s*"@\/components\/ui\/nav-shells"/)
+  })
+
+  it("ShellSidebar is one nav landmark", () => {
+    const source = stripComments(read("components/shell/ShellSidebar.tsx"))
+    expect(source.match(/<nav\b/g)).toHaveLength(1)
+    expect(source).toContain("aria-label={navLabel}")
+  })
+})
+
+describe("student and teacher shells mount BottomNav with the five labels in order", () => {
+  it("student/shell.tsx passes its five tabs (no More cell) to PortalShell in order", () => {
+    const source = stripComments(read("portals/student/shell.tsx"))
+    expect(source).toMatch(/<PortalShell\b/)
+    expect(source).toMatch(/"Home"[\s\S]*"Practice"[\s\S]*"Scan a paper"[\s\S]*"Plan"[\s\S]*"Me"/)
+  })
+
+  it("PortalShell mounts BottomNav and appends More after the portal's tabs", () => {
+    const source = stripComments(read("components/shell/PortalShell.tsx"))
     expect(source).toMatch(/import\s*\{[^}]*\bBottomNav\b[^}]*\}\s*from\s*"@\/components\/ui\/nav-shells"/)
-    expect(source).toMatch(
-      /"Overview"[\s\S]*"Grading"[\s\S]*"Review"[\s\S]*"Classes"[\s\S]*"More"/,
-    )
+    expect(source).toMatch(/\.\.\.bottomTabs[\s\S]*"More"/)
+  })
+
+  it("teacher/index.tsx passes its four tabs to PortalShell in order", () => {
+    const source = stripComments(read("portals/teacher/index.tsx"))
+    expect(source).toMatch(/<PortalShell\b/)
+    expect(source).toMatch(/"Overview"[\s\S]*"Grading"[\s\S]*"Review"[\s\S]*"Classes"/)
   })
 })

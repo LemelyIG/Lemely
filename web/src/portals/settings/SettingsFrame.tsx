@@ -149,7 +149,7 @@ export function SettingsFrame({ title, intro, children }: SettingsFrameProps) {
     <div className="flex min-h-dvh flex-col bg-surface">
       <SkipLink />
 
-      <header className="border-b border-outline-variant bg-surface-container-lowest">
+      <header className="lm-standalone-top border-b border-outline-variant bg-surface-container-lowest">
         <div className="mx-auto flex w-full max-w-200 items-center gap-4 px-4 py-4 md:px-8">
           <Link
             to={home}

@@ -172,7 +172,7 @@ def test_downgrade_refuses_while_a_suspension_or_replaced_amount_is_recorded(
         downgrade_to(DOWN_REVISION)
     with sm() as session:
         assert column_names(session, "subscriptions") >= NEW_COLUMNS
-        assert current_revision(session) != DOWN_REVISION
+        assert current_revision(session, within=REVISION) != DOWN_REVISION
 
 
 def test_upgrade_downgrade_upgrade_round_trip(
@@ -183,7 +183,7 @@ def test_upgrade_downgrade_upgrade_round_trip(
 
     downgrade_to(DOWN_REVISION)
     with sm() as session:
-        assert current_revision(session) == DOWN_REVISION
+        assert current_revision(session, within=REVISION) == DOWN_REVISION
         assert not NEW_COLUMNS & column_names(session, "subscriptions")
         assert session.execute(sa.text("SELECT count(*) FROM subscriptions")).scalar_one() == 1
 
@@ -267,4 +267,4 @@ def test_the_migration_fails_fast_when_subscriptions_is_locked(
     assert "lock timeout" in str(outcome["error"])
     with sm() as session:
         expected = DOWN_REVISION if direction == "upgrade" else REVISION
-        assert current_revision(session) == expected
+        assert current_revision(session, within=REVISION) == expected

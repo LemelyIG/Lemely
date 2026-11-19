@@ -2,6 +2,7 @@ import {
   useEffect,
   useId,
   useRef,
+  type AnimationEvent as ReactAnimationEvent,
   type HTMLAttributes,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
@@ -12,6 +13,9 @@ import { cn } from "@/lib/utils"
 import { lockScroll } from "@/lib/scrollLock"
 import { useDialogHistory } from "@/lib/nav/useDialogHistory"
 import { useOverlayPhase } from "@/lib/overlayPhase"
+import { useNativeFrame } from "@/lib/useNativeFrame"
+import { BottomSheetSurface } from "@/components/ui/bottom-sheet"
+import { useDialogFocus } from "@/components/ui/use-dialog-focus"
 
 /*
  * Dialog built on a portal rather than the native `<dialog>` element.
@@ -26,7 +30,7 @@ import { useOverlayPhase } from "@/lib/overlayPhase"
  * DESIGN.md specifies.
  *
  * Accessibility contract (DESIGN.md §12 gate 8):
- *   - `role="dialog"` + `aria-modal="true"` on the panel.
+ *   - the dialog role + `aria-modal="true"` on the panel (`panelProps`, shared by both surfaces).
  *   - `aria-labelledby` pointed at the title, generated via `useId` so every
  *     modal is labelled without the caller having to invent an id.
  *   - Focus moves into the panel on open and is trapped there (Tab/Shift+Tab
@@ -58,7 +62,19 @@ export interface ModalProps {
   /** `sm` (400px) for confirmations, `md` (520px, default) for forms, `lg`
    * (720px) for content-heavy panels. */
   size?: "sm" | "md" | "lg"
+  /** On the desktop dialog this styles the panel. On the native frame it applies to the
+   * body wrapper inside the sheet, not to the sheet panel itself. */
   className?: HTMLAttributes<HTMLDivElement>["className"]
+  /** Internal, for `ConfirmModal`; call sites never set it. `"auto"` is a
+   * sheet on the native frame and a centred dialog elsewhere; `"action-sheet"`
+   * is the iOS destructive-confirm form: no visible header or footer, the
+   * caller's children are the rows, and the title and description are read
+   * aloud only. */
+  presentation?: "auto" | "action-sheet"
+  /** Internal, for `ConfirmModal`. On the native frame the footer is full-width and
+   * stacked, primary first (`"stacked"`, the default). `"actions"` keeps one end-aligned
+   * row of text buttons, the Material 3 dialog-actions form. */
+  footerLayout?: "stacked" | "actions"
 }
 
 const sizeClasses = {
@@ -66,9 +82,6 @@ const sizeClasses = {
   md: "max-w-[520px]",
   lg: "max-w-[720px]",
 } as const
-
-const FOCUSABLE_SELECTOR =
-  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 export function Modal({
   open,
@@ -81,11 +94,13 @@ export function Modal({
   dismissible = true,
   size = "md",
   className,
+  presentation = "auto",
+  footerLayout = "stacked",
 }: ModalProps) {
+  const { native, platform } = useNativeFrame()
   const titleId = useId()
   const descriptionId = useId()
   const panelRef = useRef<HTMLDivElement>(null)
-  const previouslyFocused = useRef<HTMLElement | null>(null)
 
   // Packet B2b: `open` going false does not unmount the modal immediately —
   // `phase` stays "closing" for the exit animation (`lm-out` below), and
@@ -101,24 +116,8 @@ export function Modal({
   // `useDialogHistory` for the full contract.
   useDialogHistory({ open: mounted, dismissible, onClose })
 
-  // Focus the panel on open, restore the triggering element's focus on close.
-  useEffect(() => {
-    if (!mounted) return
-
-    previouslyFocused.current = document.activeElement as HTMLElement | null
-
-    // Defer to the next frame so the panel is in the DOM before we look for
-    // a focusable descendant inside it.
-    const raf = requestAnimationFrame(() => {
-      const first = panelRef.current?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)
-      ;(first ?? panelRef.current)?.focus()
-    })
-
-    return () => {
-      cancelAnimationFrame(raf)
-      previouslyFocused.current?.focus()
-    }
-  }, [mounted])
+  // Focus the panel on open, trap Tab inside it, restore the triggering element's focus on close.
+  const trapFocus = useDialogFocus(panelRef, mounted)
 
   // Lock background scroll for as long as the modal is mounted, closing
   // animation included — otherwise the page behind it would start scrolling
@@ -141,31 +140,122 @@ export function Modal({
       }
       return
     }
-    if (event.key !== "Tab") return
+    trapFocus(event.nativeEvent)
+  }
 
-    // Manual focus trap: cycle Tab/Shift+Tab within the panel's focusable
-    // descendants rather than letting focus escape into the page behind the
-    // scrim.
-    const panel = panelRef.current
-    if (!panel) return
-    const focusable = Array.from(
-      panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+  // One dialog contract, two surfaces: the native frame swaps only the frame
+  // (a bottom sheet); role, label, focus trap, Escape and history stay shared.
+  const panelProps = {
+    role: "dialog" as const,
+    "aria-modal": true as const,
+    "aria-labelledby": titleId,
+    "aria-describedby": description ? descriptionId : undefined,
+    tabIndex: -1,
+    // `event.target === event.currentTarget`: React's synthetic
+    // `onAnimationEnd` also hears animations bubbling from descendants, and
+    // a spinner or skeleton finishing inside a closing panel would end the
+    // exit early and yank the panel off mid-slide.
+    onAnimationEnd:
+      phase === "closing"
+        ? (event: ReactAnimationEvent<HTMLDivElement>) => {
+            if (event.target === event.currentTarget) onAnimationEnd()
+          }
+        : undefined,
+  }
+
+  const heading = (
+    <div className={cn("flex items-start justify-between gap-4", native && "w-full px-4 pb-2")}>
+      <div className="flex min-w-0 flex-col gap-1">
+        <h2 id={titleId} className="text-display-sm text-on-surface">
+          {title}
+        </h2>
+        {description ? (
+          <p id={descriptionId} className="text-body-md text-on-surface-variant">
+            {description}
+          </p>
+        ) : null}
+      </div>
+      {hideCloseButton ? null : (
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close dialog"
+          className={cn(
+            "flex shrink-0 items-center justify-center rounded-md text-on-surface-variant transition-colors",
+            native ? (platform === "android" ? "h-12 w-12" : "h-11 w-11") : "-me-1 -mt-1 h-8 w-8",
+            "hover:bg-surface-container-low hover:text-on-surface",
+            "active:scale-[0.98]",
+            native && "lm-press lm-press-scale",
+          )}
+        >
+          <X size={18} aria-hidden="true" />
+        </button>
+      )}
+    </div>
+  )
+  const body = <div className="min-h-0 overflow-y-auto lm-scroll">{children}</div>
+  // Native frame: no divider, and the actions are full-width and stacked with the primary on
+  // top (callers list Cancel first, so the column is reversed; a caller whose own row is already
+  // primary-first marks it `data-primary-first`). `actions` is the M3 end-aligned text-button row.
+  const nativeFoot =
+    footerLayout === "actions"
+      ? "flex items-center justify-end gap-2"
+      : "flex w-full flex-col-reverse gap-2 [&>div]:flex [&>div]:w-full [&>div:not([data-primary-first])]:flex-col-reverse [&>div[data-primary-first]]:flex-col [&>div]:gap-2 [&_button]:w-full [&_button]:justify-center"
+  const foot = footer ? (
+    <div
+      className={
+        native ? nativeFoot : "flex items-center justify-end gap-2 border-t border-outline-variant pt-4"
+      }
+    >
+      {footer}
+    </div>
+  ) : null
+
+  if (native) {
+    // The sheet scrim is the preview's lighter dialog scrim (0.4), not the desktop modal's 0.55.
+    return createPortal(
+      <div className="fixed inset-0 z-modal" onKeyDown={handleKeyDown}>
+        <div
+          className="fixed inset-0 z-scrim bg-scrim-dialog motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
+          aria-hidden="true"
+          // The iOS action sheet has no dismissal but its Cancel row, and a scrim tap IS Cancel:
+          // outside the sheet is where a thumb goes to back out, and it can never confirm.
+          onClick={dismissible || presentation === "action-sheet" ? onClose : undefined}
+        />
+        <BottomSheetSurface
+          ref={panelRef}
+          {...panelProps}
+          detents={size === "lg" ? ["medium", "large"] : ["content"]}
+          initialDetent={size === "lg" ? "medium" : "content"}
+          dismissible={dismissible}
+          onDismiss={onClose}
+          closing={phase === "closing"}
+          header={presentation === "action-sheet" ? null : heading}
+          className={presentation === "action-sheet" ? "lm-action-sheet" : undefined}
+          bodyClassName={presentation === "action-sheet" ? "lm-action-sheet-body" : cn("flex flex-col gap-4 px-4 pb-4", className)}
+        >
+          {presentation === "action-sheet" ? (
+            <>
+              <h2 id={titleId} className="sr-only">
+                {title}
+              </h2>
+              {description ? (
+                <p id={descriptionId} className="sr-only">
+                  {description}
+                </p>
+              ) : null}
+              {children}
+            </>
+          ) : (
+            <>
+              {body}
+              {foot}
+            </>
+          )}
+        </BottomSheetSurface>
+      </div>,
+      document.body,
     )
-    if (focusable.length === 0) {
-      event.preventDefault()
-      return
-    }
-    const first = focusable[0]
-    const last = focusable[focusable.length - 1]
-    const active = document.activeElement
-
-    if (event.shiftKey && active === first) {
-      event.preventDefault()
-      last.focus()
-    } else if (!event.shiftKey && active === last) {
-      event.preventDefault()
-      first.focus()
-    }
   }
 
   return createPortal(
@@ -182,22 +272,7 @@ export function Modal({
       />
       <div
         ref={panelRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={description ? descriptionId : undefined}
-        tabIndex={-1}
-        // `event.target === event.currentTarget`: React's synthetic
-        // `onAnimationEnd` also hears animations bubbling from descendants, and
-        // a spinner or skeleton finishing inside a closing panel would end the
-        // exit early and yank the panel off mid-slide.
-        onAnimationEnd={
-          phase === "closing"
-            ? (event) => {
-                if (event.target === event.currentTarget) onAnimationEnd()
-              }
-            : undefined
-        }
+        {...panelProps}
         className={cn(
           "relative z-modal flex max-h-[85vh] w-full flex-col gap-4 rounded-xl border border-outline-variant bg-surface-container-lowest p-6 shadow-[var(--shadow-float)]",
           phase === "closing"
@@ -207,38 +282,9 @@ export function Modal({
           className,
         )}
       >
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex min-w-0 flex-col gap-1">
-            <h2 id={titleId} className="text-display-sm text-on-surface">
-              {title}
-            </h2>
-            {description ? (
-              <p id={descriptionId} className="text-body-md text-on-surface-variant">
-                {description}
-              </p>
-            ) : null}
-          </div>
-          {hideCloseButton ? null : (
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close dialog"
-              className={cn(
-                "-me-1 -mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-on-surface-variant transition-colors",
-                "hover:bg-surface-container-low hover:text-on-surface",
-                "active:scale-[0.98]",
-              )}
-            >
-              <X size={18} aria-hidden="true" />
-            </button>
-          )}
-        </div>
-        <div className="min-h-0 overflow-y-auto lm-scroll">{children}</div>
-        {footer ? (
-          <div className="flex items-center justify-end gap-2 border-t border-outline-variant pt-4">
-            {footer}
-          </div>
-        ) : null}
+        {heading}
+        {body}
+        {foot}
       </div>
     </div>,
     document.body,

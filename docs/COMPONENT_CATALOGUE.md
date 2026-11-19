@@ -130,6 +130,24 @@ hardcoded routes.
 - `item.href` renders a plain `<a>` for now; the P2.5.3 retrofit swaps in
   `react-router`'s `NavLink` where SPA routing is needed.
 
+### Native frame additions (audit batch A)
+- NF polish (lane P1): `SheetContent` takes `nativeHeader` (a title inside the grabber's drag region, so it sits
+  close to the grabber) and `nativeBodyClassName` (default `p-6`). `Popover` takes `sheetTitle` (a short visible
+  one-line title that names the native sheet) and exits through `useOverlayPhase` like `Modal`. `ListRow` takes
+  `current` (`aria-current="page"` with the iOS tint or Android pill marker). `CloseButton` (TopBarSheets) is exported
+  for sheets that want the Create sheet's corner close. `.lm-btn` carries the Android 48dp floor for any control.
+- `fab.tsx` — `Fab({ icon, label, extended })`: the Android native phone's M3 FAB (56px, primary container,
+  bottom-end above the tab bar, safe-area aware). Renders on Android phones only; iOS puts the same action in
+  the large-title row (`ShellTopBar` `largeTitleAction`), desktop keeps the bar button. First user: the teacher's Create.
+  `ScrollFab` is the same button with the scroll state inside it (extend at the top and on scroll up, collapse on scroll
+  down), so a shell that mounts it does not re-render on scroll. The label stays mounted and its width and fade animate
+  over 200ms on the M3 emphasized curve (instant under reduced motion), so the name never leaves the accessibility tree.
+- `card.tsx` — `TitledCard({ title })`: heading inside the card on desktop and `other`; on the native frame the
+  heading steps out as a mono section label above the grouped surface. `CardBody` carries `lm-native-card-body`.
+- `NavShellItem.popup` — a button item that opens a dialog (More): `aria-haspopup="dialog"` and `aria-expanded`.
+- `shell/MoreSheet.tsx` — the More tab on native phones: a titled bottom sheet of the destinations the tab bar
+  does not hold (`ListGroup`/`ListRow`); tablet and desktop keep the drawer.
+
 ## C-14 — Checkbox
 `checkbox.tsx` — `Checkbox({ label, ...inputProps })` (P3.8 chunk b)
 - Not named in the UI-spec §4 C-1..C-13 list — added because T-07's
@@ -394,6 +412,19 @@ stores that the client refuses.
   `ended` (the platform already scheduled the end). A teacher whose team is larger than the
   new plan is told how many students to remove, with "Manage seats".
 - Allowance sizes are never stated (spec §2.1); the server says only bigger or smaller.
+
+## Toggle — `choice` variant, `chip` size (landing waitlist form)
+- `web/src/components/ui/toggle.tsx` — `<Toggle variant="choice" size="chip" pressed onPressedChange>`.
+- Added for the landing waitlist form's wrapping option sets (levels, subjects, exam
+  boards, sessions). No new primitive: `Toggle` already carries the right semantics
+  (`aria-pressed`, `data-state`), and `ToggleGroup` is a joined segmented control that
+  does not wrap, so the existing toggle gained one variant and one size.
+- `choice`: outline at rest, filled `primary` when on, so "picked" never reads as hover.
+  `chip`: 44px high, 12px radius, 16px side padding.
+- The "Other" subject opens `portals/marketing/waitlist/SubjectPicker.tsx`, an ARIA
+  combobox over a multiselectable listbox (44px options, `aria-activedescendant`,
+  Esc closes the picker before the dialog). It is waitlist-specific, not a catalogue
+  primitive.
 
 ## Known follow-ups for the P2.5.3 retrofit
 - Two pre-token-system components duplicate new library components and

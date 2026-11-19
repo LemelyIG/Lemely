@@ -9,6 +9,7 @@ import { MyStudents } from "@/portals/teacher/screens/tutoring/MyStudents"
 import { TutorStudentDetail } from "@/portals/teacher/screens/tutoring/TutorStudentDetail"
 import { StudentDetail as TeacherStudentDetail, StudentDetailView } from "@/portals/teacher/screens/StudentDetail"
 import { TBody, TR } from "@/components/ui/table"
+import { TableOrList } from "@/components/ui/table-or-list"
 import {
   MY_STUDENTS_INTRO,
   NO_STUDENTS_LINE,
@@ -294,7 +295,7 @@ describe("T-20 removes five things from T-05", () => {
   })
 })
 
-/** The row keys of each `TBody` under `node`, expanding the one inner component that holds a table. */
+/** The row keys of each `TBody` under `node`, expanding the inner component that holds a table and the `table` slot of `TableOrList`. */
 function rowKeysOfTables(node: ReactNode): Array<Array<string | null>> {
   const tables: Array<Array<string | null>> = []
   const rowsOf = (children: ReactNode): ReactElement[] => {
@@ -314,6 +315,11 @@ function rowKeysOfTables(node: ReactNode): Array<Array<string | null>> {
     }
     if (typeof element.type === "function" && element.type.name === "StudentTrendPanel") {
       visit((element.type as (props: unknown) => ReactNode)(element.props))
+      return
+    }
+    // The attempt table sits in `TableOrList`'s `table` prop (Task 15), not in its children; the sibling `list` prop is the phone view of the same rows and is not a table.
+    if (element.type === TableOrList) {
+      visit((element.props as { table?: ReactNode }).table)
       return
     }
     visit(element.props.children)
@@ -865,7 +871,7 @@ describe("the source of the tutor's screens", () => {
 
   it("both screens put a title in an h1 and use no raw colour", () => {
     for (const file of [DETAIL_SCREEN, LIST_SCREEN]) {
-      expect(sources[file], file).toContain("<h1")
+      expect(sources[file], file).toMatch(/<h1\b|<PageHeading\b/)
       expect(sources[file], file).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(|oklch\(/)
     }
   })

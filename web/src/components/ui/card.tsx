@@ -1,5 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H3 E4 S5 R4 V3 */
-import type { ComponentProps, HTMLAttributes } from "react"
+import { useId, type ComponentProps, type HTMLAttributes, type ReactNode } from "react"
+import { useNativeFrame } from "@/lib/useNativeFrame"
 import { cn } from "@/lib/utils"
 
 /**
@@ -18,7 +19,7 @@ export function Card({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       className={cn(
-        "bg-surface-container-lowest border border-outline-variant rounded-lg",
+        "bg-surface-container-lowest border border-outline-variant rounded-lg lm-native-card",
         className,
       )}
       {...props}
@@ -31,5 +32,36 @@ export function CardBody({
   className,
   ...props
 }: HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("p-5", className)} {...props} />
+  return <div className={cn("lm-native-card-body p-5", className)} {...props} />
+}
+
+/**
+ * A card whose heading is part of its section. Desktop, tablet and `other` keep the heading inside the
+ * card (display-md). On the native frame the heading steps out of the surface and becomes a mono
+ * section label above it (preview `.a-sec-h`), so a grouped surface holds content only.
+ */
+export function TitledCard({
+  title,
+  className,
+  children,
+  ...props
+}: Omit<ComponentProps<"div">, "title"> & { title: ReactNode }) {
+  const { native } = useNativeFrame()
+  const id = useId()
+  if (native) {
+    return (
+      <section aria-labelledby={id} className="flex flex-col">
+        <h2 id={id} className="lm-native-section-label text-eyebrow">{title}</h2>
+        <Card className={className} {...props}>
+          {children}
+        </Card>
+      </section>
+    )
+  }
+  return (
+    <Card className={className} {...props}>
+      <h2 className="px-6 pt-5 pb-4 text-display-md text-on-surface">{title}</h2>
+      {children}
+    </Card>
+  )
 }

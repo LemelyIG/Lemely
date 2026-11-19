@@ -42,7 +42,7 @@
 .wt-paper p { margin:0; }
 .wt-paper-head { display:flex; align-items:center; justify-content:space-between; }
 .wt-paper-head .brand-label { font:400 12px var(--brand-mono); letter-spacing:.06em; color:var(--brand-hint); }
-.wt-score { position:relative; padding:0 10px; font:600 30px/1 var(--brand-hand); color:var(--brand-art-23); }
+.wt-score { position:relative; padding:0 10px; font:600 30px/1 var(--brand-body); color:var(--brand-art-23); }
 .wt-score svg { position:absolute; inset-inline-start:-6px; top:-8px; overflow:visible; }
 .wt-score ellipse { fill:none; stroke:var(--brand-art-23); stroke-width:2.5; stroke-dasharray:1; stroke-dashoffset:1; animation:walkthrough-draw 350ms var(--wt-ease) .3s forwards; }
 .wt-q { position:relative; display:flex; flex-direction:column; gap:2px; margin-inline:-10px; padding:8px 10px; border-radius:10px; background:transparent; box-shadow:inset 0 0 0 2px transparent; transition:background-color .2s, box-shadow .2s; }
@@ -57,7 +57,7 @@
 .wt-write { font:600 25px var(--brand-hand); white-space:nowrap; padding-inline-end:.3em; margin-inline-end:-.3em; color:var(--brand-art-22); clip-path:inset(0 100% 0 0); animation:walkthrough-write var(--t,.4s) var(--wt-ease) var(--d,.1s) forwards; }
 .wt-tick { flex:none; margin-inline-start:auto; width:22px; height:18px; }
 .wt-tick path { fill:none; stroke:var(--brand-art-23); stroke-width:3; stroke-linecap:round; stroke-linejoin:round; stroke-dasharray:1; stroke-dashoffset:1; animation:walkthrough-draw 220ms var(--wt-ease) var(--d,.05s) forwards; }
-.wt-mark { flex:none; width:28px; font:600 21px var(--brand-hand); color:var(--brand-art-23); }
+.wt-mark { flex:none; width:28px; font:600 21px var(--brand-body); color:var(--brand-art-23); }
 .walkthrough-motion .walkthrough-paper-question { display:inline; min-height:0; height:auto; padding:0; margin:0; border-radius:4px; background:transparent; font:inherit; font-weight:800; color:var(--brand-ink); vertical-align:baseline; }
 .walkthrough-motion .walkthrough-paper-question:disabled { opacity:1; }
 .walkthrough-scan { position:absolute; inset:0 0 auto; height:3px; background:var(--brand-tide); box-shadow:0 0 24px 6px var(--brand-wk-scan-glow); animation:walkthrough-scan 2.4s ease-in-out infinite; z-index:1; }

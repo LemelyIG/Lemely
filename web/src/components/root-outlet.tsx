@@ -1,8 +1,13 @@
 /* Hallmark · pre-emit critique: P5 H4 E5 S5 R4 V4 */
-import { useLayoutEffect } from "react"
-import { Outlet, ScrollRestoration, useNavigationType } from "react-router-dom"
+import { useEffect, useLayoutEffect, useRef } from "react"
+import { Outlet, ScrollRestoration, useLocation, useMatches, useNavigationType } from "react-router-dom"
 import { createScrollKeyer } from "@/lib/nav/scrollRestorationKey"
-import { navigationDirection } from "@/lib/nav/navigationDirection"
+import { resolveDirection } from "@/lib/nav/navigationDirection"
+import { stateDirection } from "@/lib/nav/navDirectionState"
+import { noteRenderedMatches } from "@/lib/nav/vtChrome"
+import { recordHistoryPath } from "@/lib/nav/historyPaths"
+import { consumeSwipeNav } from "@/lib/nav/edgeSwipeBack"
+import { installSnapshotSessionGuard, dropSnapshotsFrom } from "@/lib/nav/pageSnapshotCapture"
 
 /*
  * Packet B2a · the one pathless layout route wrapping every top-level route
@@ -29,10 +34,52 @@ const scrollKey = createScrollKeyer()
 
 export function RootOutlet() {
   const navigationType = useNavigationType()
+  const { key, state, pathname } = useLocation()
+  // A PUSH that means "back" (re-tapping a tab to pop to its root) or "tab" (a tab-bar tap) says so in its location state.
+  const explicit = stateDirection(state)
+  // The entry being left, so a POP out of a tab-bar entry can read as the tab switch it undoes.
+  const leaving = useRef<unknown>(undefined)
+  // History's entry index of the page being left. A POP to a larger index is a browser Forward.
+  const leavingIdx = useRef<number | undefined>(
+    typeof window === "undefined" ? undefined : (window.history.state?.idx as number | undefined),
+  )
+  const matches = useMatches()
+
+  // What the DOM is showing, for vtChrome: the router commits before React paints, so a hop that
+  // interrupts another must compare against this rather than the last committed state.
+  useLayoutEffect(() => {
+    noteRenderedMatches(matches.map((m) => ({ route: { handle: m.handle } })))
+  }, [matches])
+
+  // Keyed on the location key so the one-shot swipe flag is read (and cleared) on every
+  // navigation, even a replace to the same navigation type; it cannot go stale. The
+  // explicit direction comes from the location state, which only changes with the key.
+  // The tab re-tap reads this to go back to a tab root that sits behind the current entry.
+  useLayoutEffect(() => {
+    recordHistoryPath(window.history.state?.idx as number | undefined, pathname)
+  }, [key, pathname])
 
   useLayoutEffect(() => {
-    document.documentElement.dataset.direction = navigationDirection(navigationType)
-  }, [navigationType])
+    const leavingDirection = stateDirection(leaving.current)
+    leaving.current = state
+    const idx = window.history.state?.idx as number | undefined
+    const popForward = navigationType === "POP" && typeof idx === "number" && typeof leavingIdx.current === "number" && idx > leavingIdx.current
+    leavingIdx.current = idx
+    document.documentElement.dataset.direction = consumeSwipeNav()
+      ? "swipe"
+      : resolveDirection(navigationType, explicit, leavingDirection, popForward)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navigationType, key])
+
+  // Native frame Task 12b: the swipe-back underlay shows the page being left, cloned in the router's
+  // navigate middleware (registered in App.tsx). Here: a push overwrites the forward history,
+  // and snapshots never outlive the session.
+  useEffect(() => installSnapshotSessionGuard(), [])
+  useLayoutEffect(() => {
+    if (navigationType !== "PUSH") return
+    const idx = window.history.state?.idx
+    if (typeof idx === "number") dropSnapshotsFrom(idx)
+  }, [navigationType, key])
 
   return (
     <>

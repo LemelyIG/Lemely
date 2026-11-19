@@ -16,6 +16,9 @@ import {
   REASON_LABEL,
   SESSION_ZONE_LABEL,
   cancelledNotice,
+  cancelSheetCopy,
+  completeSheetCopy,
+  confirmPresentation,
   formatTutorDate,
   insideCancelWindowNotice,
   mergePages,
@@ -787,5 +790,17 @@ describe("what the owned files must not do", () => {
     // Not one read of allowedActions in the view itself: every control goes through
     // sessionActions. (The render tests in tutoringSessionScreens.test.ts prove what it draws.)
     expect(view).not.toContain("allowedActions")
+  })
+})
+
+describe("confirmPresentation: only cancelling is destructive", () => {
+  it("marking a session completed is not destructive and drops the false default consequence", () => {
+    const copy = completeSheetCopy(booking())
+    expect(copy.consequence).toBeUndefined()
+    expect(confirmPresentation("complete", copy)).toEqual({ consequence: "", destructive: false })
+  })
+  it("cancelling stays destructive and keeps ConfirmModal's default unless the copy sets one", () => {
+    const copy = cancelSheetCopy(booking())
+    expect(confirmPresentation("cancel", copy)).toEqual({ consequence: copy.consequence, destructive: true })
   })
 })

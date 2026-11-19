@@ -27,6 +27,7 @@ import {
   sessionProgress,
   summarizeSession,
 } from "./flashcardData"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 
@@ -321,7 +322,7 @@ export function FlashcardReview() {
     return (
       <div className="lm-read flex flex-col gap-6">
         <div className="flex flex-col gap-2">
-          <h1 className="text-display-lg text-on-surface">Session complete</h1>
+          <PageHeading repeatsTitle={false} className="text-display-lg text-on-surface">Session complete</PageHeading>
           <p className="lm-prose text-body-lg text-on-surface-variant">
             <span className="text-data-md text-on-surface">{summary.reviewed}</span> card
             {summary.reviewed === 1 ? "" : "s"} reviewed

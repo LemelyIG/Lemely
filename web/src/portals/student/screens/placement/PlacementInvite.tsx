@@ -20,6 +20,7 @@ import {
   PLACEMENT_VERIFY_EMAIL,
   placementInviteView,
 } from "./placementData";
+import { PageHeading } from "@/components/ui/page-heading";
 
 /*
  * S-03 · Placement invite. Reachable both from the S-02 onboarding exit and
@@ -127,9 +128,12 @@ export function PlacementInvite() {
           if (view.kind === "unavailable") {
             return (
               <>
-                <h1 className="text-display-md text-on-surface">
+                <PageHeading
+                  repeatsTitle={false}
+                  className="text-display-md text-on-surface"
+                >
                   {subjectName}
-                </h1>
+                </PageHeading>
                 <Card>
                   <CardBody className="flex flex-col gap-3">
                     <div className="text-body-lg font-medium text-on-surface">
@@ -154,9 +158,9 @@ export function PlacementInvite() {
           return (
             <>
               <div className="flex flex-col gap-2">
-                <h1 className="text-display-md text-on-surface">
+                <PageHeading repeatsTitle={false} className="text-display-md text-on-surface">
                   Get a real starting picture in {subjectName}
-                </h1>
+                </PageHeading>
                 <p className="text-body-md text-on-surface-variant">
                   A short placement test built from real past-paper questions
                   across the syllabus gives us a much better starting picture

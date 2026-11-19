@@ -10,12 +10,15 @@ import { ChartFrame } from "@/components/ui/chart-frame"
 import { LineChart } from "@/components/ui/lazy-chart"
 import { WeaknessChip, type WeaknessSeverity } from "@/components/ui/weakness-chip"
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
+import { ListGroup, ListRow } from "@/components/ui/list-group"
+import { TableOrList } from "@/components/ui/table-or-list"
 import { relativeTime } from "@/lib/utils"
 import { useStudentDetail } from "@/lib/hooks/useTeacherApi"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { teacherLoadFailureMessage } from "@/lib/teacherOutcome"
 import type { Attempt, StudentDetail as StudentDetailData, StudentWeakness } from "@/lib/teacherTypes"
 import { BackArrow } from "@/components/ui/inline-arrow"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * Student detail, teacher view (T-05). `GET /teacher/students/{studentId}`
@@ -254,9 +257,9 @@ export function StudentDetailView({
           {back}
           <div className="flex items-start gap-4 flex-wrap gap-y-2 mt-1">
             <div className="min-w-0">
-              <h1 className="text-display-md mt-1.5 text-pretty">
+              <PageHeading repeatsTitle={false} className="text-display-md mt-1.5 text-pretty">
                 {student.displayName}
-              </h1>
+              </PageHeading>
               <div className="text-body-sm text-on-surface-variant mt-1">
                 {student.engagement.totalPapers} paper
                 {student.engagement.totalPapers === 1 ? "" : "s"} recorded ·{" "}
@@ -378,66 +381,84 @@ export function StudentDetailView({
           {student.attempts.length === 0 ? (
             <div className="text-body-md text-on-surface-variant">No papers recorded yet.</div>
           ) : (
-            <Table density="operate"
-              tabIndex={0}
-              role="region"
-              aria-label="Attempt history, scrollable horizontally"
-            >
-              <caption className="sr-only">Full attempt history, newest first</caption>
-              <THead>
-                <TR>
-                  <TH>Paper</TH>
-                  <TH numeric>Marks</TH>
-                  <TH numeric>Percentage</TH>
-                  <TH>Grade</TH>
-                  <TH>Recorded</TH>
-                  {attemptAction ? (
-                    <TH>
-                      <span className="sr-only">Actions</span>
-                    </TH>
-                  ) : null}
-                </TR>
-              </THead>
-              <TBody>
-                {student.attempts.map((a, index) => (
-                  // `AttemptDTO.paperId` is a "human paper identity"
-                  // (`{subjectCode}/{paperNumber}{paperVariant}`, no session/
-                  // year, no per-attempt id — see `_paper_id` in
-                  // `lemely/web/routers/teacher.py`), NOT a unique key: a
-                  // student who re-sits the same paper (a realistic
-                  // scenario — practice, specimen papers, repeats) has
-                  // multiple attempt rows sharing one `paperId`, which
-                  // produced a real duplicate-React-key console error when
-                  // verified against seeded multi-attempt data. `recordedAt`
-                  // (a full ISO timestamp, one per submission) disambiguates.
-                  // The index also keeps two attempts of one paper on one day
-                  // apart where `recordedAt` is a calendar day (the tutor's
-                  // projection, T-20).
-                  <TR key={`${a.paperId}-${a.recordedAt}-${index}`}>
-                    <TD className="whitespace-nowrap text-data-sm">
-                      {a.subjectCode} · Paper {a.paperNumber} Variant {a.paperVariant}
-                    </TD>
-                    <TD numeric className="text-data-sm">
-                      {a.awardedMarks}/{a.maximumMarks}
-                    </TD>
-                    <TD numeric className="text-data-sm">
-                      {Math.round(a.percentage)}%
-                    </TD>
-                    <TD>
-                      <GradeBadge grade={a.grade} size="inline" basis="achieved" />
-                    </TD>
-                    <TD className="whitespace-nowrap text-on-surface-variant">
-                      {dates.recorded(a.recordedAt)}
-                    </TD>
-                    {attemptAction ? (
-                      <TD className="whitespace-nowrap text-end">
-                        <div className="inline-flex items-center gap-2">{attemptAction(a)}</div>
-                      </TD>
-                    ) : null}
-                  </TR>
-                ))}
-              </TBody>
-            </Table>
+            <TableOrList
+              label="Attempt history"
+              storageKey="lemely.studentAttempts.view"
+              list={
+                <ListGroup>
+                  {student.attempts.map((a, index) => (
+                    <ListRow
+                      key={`${a.paperId}-${a.recordedAt}-${index}`}
+                      title={`${a.subjectCode} · Paper ${a.paperNumber} Variant ${a.paperVariant}`}
+                      subtitle={`${a.awardedMarks}/${a.maximumMarks} · Grade ${a.grade} · ${dates.recorded(a.recordedAt)}`}
+                      trailing={<span className="text-data-sm tabular-nums">{Math.round(a.percentage)}%</span>}
+                    />
+                  ))}
+                </ListGroup>
+              }
+              table={
+                <Table density="operate"
+                  tabIndex={0}
+                  role="region"
+                  aria-label="Attempt history, scrollable horizontally"
+                >
+                  <caption className="sr-only">Full attempt history, newest first</caption>
+                  <THead>
+                    <TR>
+                      <TH>Paper</TH>
+                      <TH numeric>Marks</TH>
+                      <TH numeric>Percentage</TH>
+                      <TH>Grade</TH>
+                      <TH>Recorded</TH>
+                      {attemptAction ? (
+                        <TH>
+                          <span className="sr-only">Actions</span>
+                        </TH>
+                      ) : null}
+                    </TR>
+                  </THead>
+                  <TBody>
+                    {student.attempts.map((a, index) => (
+                      // `AttemptDTO.paperId` is a "human paper identity"
+                      // (`{subjectCode}/{paperNumber}{paperVariant}`, no session/
+                      // year, no per-attempt id — see `_paper_id` in
+                      // `lemely/web/routers/teacher.py`), NOT a unique key: a
+                      // student who re-sits the same paper (a realistic
+                      // scenario — practice, specimen papers, repeats) has
+                      // multiple attempt rows sharing one `paperId`, which
+                      // produced a real duplicate-React-key console error when
+                      // verified against seeded multi-attempt data. `recordedAt`
+                      // (a full ISO timestamp, one per submission) disambiguates.
+                      // The index also keeps two attempts of one paper on one day
+                      // apart where `recordedAt` is a calendar day (the tutor's
+                      // projection, T-20).
+                      <TR key={`${a.paperId}-${a.recordedAt}-${index}`}>
+                        <TD className="whitespace-nowrap text-data-sm">
+                          {a.subjectCode} · Paper {a.paperNumber} Variant {a.paperVariant}
+                        </TD>
+                        <TD numeric className="text-data-sm">
+                          {a.awardedMarks}/{a.maximumMarks}
+                        </TD>
+                        <TD numeric className="text-data-sm">
+                          {Math.round(a.percentage)}%
+                        </TD>
+                        <TD>
+                          <GradeBadge grade={a.grade} size="inline" basis="achieved" />
+                        </TD>
+                        <TD className="whitespace-nowrap text-on-surface-variant">
+                          {dates.recorded(a.recordedAt)}
+                        </TD>
+                        {attemptAction ? (
+                          <TD className="whitespace-nowrap text-end">
+                            <div className="inline-flex items-center gap-2">{attemptAction(a)}</div>
+                          </TD>
+                        ) : null}
+                      </TR>
+                    ))}
+                  </TBody>
+                </Table>
+              }
+            />
           )}
         </section>
 

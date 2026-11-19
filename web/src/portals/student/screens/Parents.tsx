@@ -15,6 +15,7 @@ import { EmptyState } from "@/components/ui/state-views"
 import { QueryState } from "@/components/ui/query-state"
 import { ListSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
 import { studentLoadFailureMessage, studentSaveFailureMessage } from "@/lib/studentOutcome"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * Student-side parent access (design spec §4/§5, superseding D3.11's "add a
@@ -311,7 +312,7 @@ export function Parents() {
   return (
     <div className="flex w-full max-w-160 flex-col gap-6">
       <div className="flex flex-col gap-2">
-        <h1 className="text-display-md text-on-surface">Parent access</h1>
+        <PageHeading repeatsTitle={false} className="text-display-md text-on-surface">Parent access</PageHeading>
         <p className="max-w-[65ch] text-body-md text-on-surface-variant">
           Share your code or a one-time link so a parent can see your marks, predicted grades
           and weak topics. They can't change anything, and you can remove access at any time.

@@ -44,10 +44,10 @@ export function scrollRestorationKey(
 }
 
 /**
- * Route-backed overlays (the teacher Settings dialog): paths at and under
+ * Route-backed overlays (the teacher and student Settings dialogs): paths at and under
  * these render as a dialog over the page the reader was on, not as a page.
  */
-export const OVERLAY_BASES: readonly string[] = ["/teacher/settings"]
+export const OVERLAY_BASES: readonly string[] = ["/teacher/settings", "/student/settings"]
 
 function inOverlay(pathname: string, bases: readonly string[]): boolean {
   const trimmed = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname

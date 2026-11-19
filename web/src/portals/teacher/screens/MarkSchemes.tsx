@@ -4,6 +4,8 @@ import { useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { QueryState } from "@/components/ui/query-state"
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
+import { ListGroup, ListRow } from "@/components/ui/list-group"
+import { TableOrList } from "@/components/ui/table-or-list"
 import { cn } from "@/lib/utils"
 import { StatCard } from "../components/StatCard"
 import { useSchemes, useUploadScheme } from "@/lib/hooks/useTeacherApi"
@@ -14,6 +16,7 @@ import {
   teacherMutationFailureMessage,
 } from "@/lib/teacherOutcome"
 import type { SchemeStatus } from "@/lib/teacherTypes"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * Mark schemes. Wired to `GET /schemes` via `useSchemes()`, upload via
@@ -38,6 +41,13 @@ const STATUS_CHIP: Record<SchemeStatus, string> = {
   parsed: "bg-success-container text-success-text",
   pending: "bg-primary-container text-on-primary-container",
   custom: "bg-surface-container-low text-on-surface-variant",
+}
+
+/** The chip's tone as text colour, for list rows that lead with an unparsed status. */
+const STATUS_TEXT: Record<SchemeStatus, string> = {
+  parsed: "text-success-text",
+  pending: "text-primary",
+  custom: "text-on-surface-variant",
 }
 
 export function MarkSchemes() {
@@ -77,15 +87,15 @@ export function MarkSchemes() {
           <>
             <div className="flex items-end gap-[18px] pb-[18px] border-b border-outline-variant flex-wrap gap-y-2.5">
               <div>
-                <div className="text-eyebrow text-on-surface-variant">
+                <div className="text-eyebrow native:hidden text-on-surface-variant">
                   Library · {schemes.length} scheme{schemes.length === 1 ? "" : "s"}
                 </div>
                 {/* A real h1, not a styled div — same `page-has-heading-one`
                     violation as Grading.tsx, surfaced by the same chunk-b
                     registry expansion. */}
-                <h1 className="text-display-md mt-1.5">
+                <PageHeading repeatsTitle={true} className="text-display-md mt-1.5">
                   Mark schemes
-                </h1>
+                </PageHeading>
               </div>
               <div className="flex-1" />
               <input
@@ -128,50 +138,77 @@ export function MarkSchemes() {
               ))}
             </div>
 
-            <Table density="operate"
-              tabIndex={0}
-              role="region"
-              aria-label="Uploaded mark schemes, scrollable horizontally"
-            >
-              <caption className="sr-only">Uploaded mark schemes</caption>
-              <THead>
-                <TR>
-                  <TH>Document</TH>
-                  <TH>Paper</TH>
-                  <TH>Session</TH>
-                  <TH numeric>Marks</TH>
-                  <TH numeric>Questions</TH>
-                  <TH>Status</TH>
-                </TR>
-              </THead>
-              <TBody>
-                {schemes.map((m) => (
-                  <TR key={m.doc}>
-                    <TD className="min-w-0 max-w-[280px] overflow-hidden text-ellipsis whitespace-nowrap text-data-sm">
-                      {m.doc}
-                    </TD>
-                    <TD className="text-body-md text-on-surface-variant">{m.paper}</TD>
-                    <TD className="text-body-md text-on-surface-variant">{m.session}</TD>
-                    <TD numeric className="text-data-sm">
-                      {m.maxMarks ?? "-"}
-                    </TD>
-                    <TD numeric className="text-data-sm text-on-surface-variant">
-                      {m.questionCount ?? "-"}
-                    </TD>
-                    <TD>
-                      <span
-                        className={cn(
-                          "text-body-sm rounded-full px-[11px] py-[3px]",
-                          STATUS_CHIP[m.status],
-                        )}
-                      >
-                        {m.status}
-                      </span>
-                    </TD>
-                  </TR>
-                ))}
-              </TBody>
-            </Table>
+            <TableOrList
+              label="Mark schemes"
+              storageKey="lemely.markSchemes.view"
+              list={
+                <ListGroup>
+                  {schemes.map((m) => (
+                    <ListRow
+                      key={m.doc}
+                      title={m.doc}
+                      subtitle={
+                        m.status === "parsed" ? (
+                          `${m.paper} · ${m.session} · ${m.status}`
+                        ) : (
+                          <>
+                            <span className={STATUS_TEXT[m.status]}>{m.status}</span>
+                            {` · ${m.paper} · ${m.session}`}
+                          </>
+                        )
+                      }
+                      trailing={m.maxMarks != null ? <span className="text-data-sm">{m.maxMarks} marks</span> : undefined}
+                    />
+                  ))}
+                </ListGroup>
+              }
+              table={
+                <Table density="operate"
+                  tabIndex={0}
+                  role="region"
+                  aria-label="Uploaded mark schemes, scrollable horizontally"
+                >
+                  <caption className="sr-only">Uploaded mark schemes</caption>
+                  <THead>
+                    <TR>
+                      <TH>Document</TH>
+                      <TH>Paper</TH>
+                      <TH>Session</TH>
+                      <TH numeric>Marks</TH>
+                      <TH numeric>Questions</TH>
+                      <TH>Status</TH>
+                    </TR>
+                  </THead>
+                  <TBody>
+                    {schemes.map((m) => (
+                      <TR key={m.doc}>
+                        <TD className="min-w-0 max-w-[280px] overflow-hidden text-ellipsis whitespace-nowrap text-data-sm">
+                          {m.doc}
+                        </TD>
+                        <TD className="text-body-md text-on-surface-variant">{m.paper}</TD>
+                        <TD className="text-body-md text-on-surface-variant">{m.session}</TD>
+                        <TD numeric className="text-data-sm">
+                          {m.maxMarks ?? "-"}
+                        </TD>
+                        <TD numeric className="text-data-sm text-on-surface-variant">
+                          {m.questionCount ?? "-"}
+                        </TD>
+                        <TD>
+                          <span
+                            className={cn(
+                              "text-body-sm rounded-full px-[11px] py-[3px]",
+                              STATUS_CHIP[m.status],
+                            )}
+                          >
+                            {m.status}
+                          </span>
+                        </TD>
+                      </TR>
+                    ))}
+                  </TBody>
+                </Table>
+              }
+            />
           </>
         )}
       </QueryState>

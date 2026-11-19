@@ -58,10 +58,11 @@ from lemely.auth.tokens import (
     mint_otp_token,
     mint_refresh_token,
 )
+from lemely.core.access import is_allowed_email
 from lemely.db.auth_token_repo import AuthTokenError
 from lemely.db.device_repo import RefreshRejectedError
 from lemely.db.models.enums import AuthTokenPurpose, Role
-from lemely.runtime.errors import AuthError
+from lemely.runtime.errors import AccessRestrictedError, AuthError
 
 if TYPE_CHECKING:
     from lemely.auth.email import EmailProvider
@@ -194,6 +195,23 @@ class AuthService:
         self._device_registry = device_registry
         self._email = email
         self._tokens = tokens
+
+    def require_access(self, email: str | None) -> None:
+        """Refuse ``email`` while ``[access]`` restricts who may have an account.
+
+        The one check every flow that creates or opens an account runs *first*, before any
+        GoTrue call, mirror write, device registration or token mint, so a refused caller
+        leaves nothing behind. A no-op when access is open (``allowed_email_domains`` empty).
+        Verification is not asked here: an allowed-domain account must be able to sign up and
+        prove its inbox. The verified-only rule is enforced on every authenticated route by
+        :func:`lemely.web.deps.get_auth_context`.
+
+        Raises:
+            AccessRestrictedError: ``email`` is missing or not on the allow-list.
+        """
+        access = self._settings.access
+        if access.restricted and not is_allowed_email(email, access.allowed_email_domains):
+            raise AccessRestrictedError("domain")
 
     def _register_device(
         self,
@@ -338,6 +356,7 @@ class AuthService:
         contract (create the account, return a working access token) is
         unaffected either way.
         """
+        self.require_access(email)
         # GoTrue is the credential store only: the phone lives in ``public.users``. GoTrue keeps a
         # unique index on ``auth.users.phone``, so forwarding it would refuse a parent who gives
         # the number their child already signed up with (UD-11 makes a phone mandatory for all).
@@ -404,7 +423,9 @@ class AuthService:
         carries the device the user picked from that list (G-10); a stale or
         missing choice falls back to oldest-first, same as before this existed.
         """
+        self.require_access(email)
         token = self._gotrue.password_grant(email, password)
+        self.require_access(token.user.email)
         existing = self._mirror.get_by_id(token.user.id)
         role = existing.role if existing is not None else Role.student
         phone = existing.phone if existing is not None else None
@@ -697,6 +718,8 @@ class AuthService:
         branch matters only to hermetic tests that construct an
         :class:`AuthService` with no ``email`` collaborator at all.
         """
+        if self._settings.access.restricted:
+            return None
         delivers = self._email.delivers_out_of_band if self._email is not None else False
         return None if delivers else link
 
@@ -711,6 +734,8 @@ class AuthService:
         everywhere a caller produces an :class:`AuthResult` or the
         ``resend_verification`` tuple.
         """
+        if self._settings.access.restricted:
+            return None
         delivers = self._email.delivers_out_of_band if self._email is not None else False
         return None if delivers else code
 
@@ -781,7 +806,16 @@ class AuthService:
         exists for. With a real SMS gateway configured this returns ``None`` and
         the code never crosses the wire (D3.16). The gate is the provider's own
         capability, never an environment string.
+
+        While ``[access]`` is restricted it is refused before any SMS: a phone is never a
+        lookup key (so no phone can be tied to an allow-listed account) and there is no
+        phone-login path a code could open.
+
+        Raises:
+            AccessRestrictedError: Access is restricted.
         """
+        if self._settings.access.restricted:
+            self.require_access(None)
         code = self._otp_store.issue(phone)
         self._sms.send_code(phone, code)
         return None if self._sms.delivers_out_of_band else code
@@ -813,6 +847,7 @@ class AuthService:
                 Left to propagate uncaught, exactly as :meth:`request_otp`
                 already does — the router (Task 5) maps it to a 429.
         """
+        self.require_access(email)
         code = self._otp_store.issue(email, channel=OtpChannel.email)
         if self._email is not None:
             self._email.send_signup_code(email, code)
@@ -833,6 +868,7 @@ class AuthService:
         Raises:
             AuthError: The code is unknown, expired, wrong, or locked out.
         """
+        self.require_access(email)
         result = self._otp_store.verify(email, code, channel=OtpChannel.email)
         if result is not OtpResult.ok:
             raise AuthError(f"Email verification failed: {result.value}")
@@ -872,6 +908,7 @@ class AuthService:
         user = self._mirror.get_by_id(user_id)
         if user is None:
             raise AuthError("Refresh token belongs to a user that no longer exists")
+        self.require_access(user.email)
 
         access_token = mint_access_token(
             user_id=user_id,

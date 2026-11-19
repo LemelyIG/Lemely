@@ -20,11 +20,8 @@ function sourceOf(relative: string): string {
   return stripComments(fs.readFileSync(path.join(ROOT, relative), "utf8"))
 }
 
-const PULL_SCREENS = [
-  "src/portals/student/screens/Notifications.tsx",
-  "src/portals/student/screens/Announcements.tsx",
-  "src/portals/student/screens/Overview.tsx",
-]
+// Native frame D6: the shell owns the one pull-to-refresh surface, no screen does.
+const PULL_SCREENS = ["src/components/shell/ShellPullToRefresh.tsx"]
 
 describe("C2 — pull-to-refresh never transforms the document root", () => {
   it.each(PULL_SCREENS)("%s passes a real element ref, not document.documentElement", (relative) => {
@@ -34,7 +31,7 @@ describe("C2 — pull-to-refresh never transforms the document root", () => {
 
   it.each(PULL_SCREENS)("%s attaches that ref to a rendered element", (relative) => {
     const src = sourceOf(relative)
-    expect(src).toMatch(/ref=\{pullSurfaceRef\}/)
+    expect(src).toMatch(/ref=\{surface\}/)
   })
 
   it("usePullToRefresh clamps the imperative transform to a downward pull", () => {
@@ -104,12 +101,29 @@ describe("H5 — a drag cleans up its own imperative state, not just its listene
     expect(body).toContain("releasePointerCapture")
   })
 
-  it("springBack registers its transitionend listener once and has a fallback", () => {
+  it("springBack's transitionend listener is removed on finish (not `once`: a bubbled descendant event must not consume it) and has a fallback", () => {
     const springAt = src.indexOf("function springBack")
     expect(springAt, "no springBack() found in useDragGesture.ts").toBeGreaterThan(-1)
     const body = src.slice(springAt, springAt + 1400)
-    expect(body).toContain("once: true")
+    expect(body).not.toContain("once: true")
+    expect(body).toContain('removeEventListener("transitionend"')
     expect(body).toContain("setTimeout")
+  })
+
+  it("the same handler is added and removed for transitionend", () => {
+    const added = /addEventListener\("transitionend", (\w+)\)/.exec(src)
+    const removed = /removeEventListener\("transitionend", (\w+)\)/.exec(src)
+    expect(added, "no addEventListener(transitionend, handler)").not.toBeNull()
+    expect(removed, "no removeEventListener(transitionend, handler)").not.toBeNull()
+    expect(removed![1]).toBe(added![1])
+  })
+
+  it("the spring fallback outlasts the longest spring (--dur-base)", () => {
+    const fallback = Number(/SPRING_FALLBACK_MS = (\d+)/.exec(src)?.[1])
+    const css = fs.readFileSync(path.join(ROOT, "src/index.css"), "utf8")
+    const base = Number(/--dur-base:\s*(\d+)ms/.exec(css)?.[1])
+    expect(Number.isFinite(fallback) && Number.isFinite(base)).toBe(true)
+    expect(fallback).toBeGreaterThan(base)
   })
 
   it("springBack does not leave style.transition set after a non-moving tap", () => {

@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api"
+import { isAccessRestricted } from "@/lib/access-api"
 import { isEmailUnverifiedError } from "@/lib/authTypes"
 
 /*
@@ -266,6 +267,10 @@ const OTP_PREFIX = "OTP verification failed:"
  */
 const EMAIL_CODE_PREFIX = "Email verification failed:"
 
+/** The pre-launch gate refused this address (403 `access_restricted`). Shown inline on the forms. */
+const AUTH_ACCESS_SIGN_IN = "Lemely isn't open yet. Only team accounts can sign in right now."
+const AUTH_ACCESS_SIGN_UP = "Lemely isn't open yet. Only team accounts can sign up right now."
+
 /**
  * Turn a failed sign-in into a sentence.
  *
@@ -273,6 +278,7 @@ const EMAIL_CODE_PREFIX = "Email verification failed:"
  * is the same request with one flag flipped.
  */
 export function signInFailureMessage(err: unknown): string {
+  if (isAccessRestricted(err)) return AUTH_ACCESS_SIGN_IN
   if (err instanceof ApiError) {
     // `request()` wraps a fetch rejection as ApiError(0, …), so status 0 is
     // this codebase's spelling of "no response at all".
@@ -368,6 +374,7 @@ export function otpRequestFailureMessage(err: unknown): string {
  * REJECTED`'s own comment for the 400 case, and note 4 above for the 429.
  */
 export function signUpFailureMessage(err: unknown): string {
+  if (isAccessRestricted(err)) return AUTH_ACCESS_SIGN_UP
   if (err instanceof ApiError) {
     if (err.status === 0) return AUTH_NETWORK_FAILURE
     if (err.status === 429) return AUTH_COOLDOWN_ACTIVE

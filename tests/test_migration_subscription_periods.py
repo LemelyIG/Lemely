@@ -609,7 +609,7 @@ def test_downgrade_refuses_while_a_period_grant_exists(
     """
     sm, downgrade_to = migrated_sessionmaker_with_downgrade
     with sm() as session:
-        revision_before = current_revision(session)
+        revision_before = current_revision(session, within=REVISION)
     user, tier = _user(sm), _tier(sm)
     sid = _sub(sm, user, tier, SubscriptionStatus.active, payer=user)
     period = _period(
@@ -630,7 +630,7 @@ def test_downgrade_refuses_while_a_period_grant_exists(
         downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == revision_before
+        assert current_revision(session, within=REVISION) == revision_before
         assert TABLE in {
             row[0]
             for row in session.execute(
@@ -655,7 +655,7 @@ def test_downgrade_refuses_while_a_period_exists_without_a_grant(
     """
     sm, downgrade_to = migrated_sessionmaker_with_downgrade
     with sm() as session:
-        revision_before = current_revision(session)
+        revision_before = current_revision(session, within=REVISION)
     user, tier = _user(sm), _tier(sm)
     sid = _sub(sm, user, tier, SubscriptionStatus.active, payer=user)
     payment = _payment(sm, user, tier)
@@ -671,7 +671,7 @@ def test_downgrade_refuses_while_a_period_exists_without_a_grant(
         downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == revision_before
+        assert current_revision(session, within=REVISION) == revision_before
         assert object_names(session, [TABLE]) == _orm_names()
         count = session.execute(sa.text("SELECT count(*) FROM subscription_periods")).scalar_one()
         assert count == 1
@@ -697,7 +697,7 @@ def test_upgrade_downgrade_upgrade_round_trip(
     downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == DOWN_REVISION
+        assert current_revision(session, within=REVISION) == DOWN_REVISION
         assert object_names(session, [TABLE]) == set()
         assert PHASE_02_LIVE_INDEX in object_names(session, ["subscriptions"])  # untouched
         assert GRANT_FK not in object_names(session, ["usage_grants"])

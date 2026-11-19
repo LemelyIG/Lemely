@@ -1,6 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E5 S4 R3 V4 */
 import { Link, useSearchParams } from "react-router-dom"
 import { safeNextPath, withNext } from "@/lib/nextPath"
+import { useTeamSuffix } from "@/portals/access/team"
 import {
   CaretRight,
   ChalkboardTeacher,
@@ -125,10 +126,11 @@ const ROLE_CHOICES: RoleChoice[] = [
 /** One large tappable choice. Title and description both sit inside the
  * `<Link>` so a screen reader announces them as one thing — the same
  * composition `ChildCard` uses for "name, then status, then arrow". */
-function RoleChoiceLink({ to, icon: Glyph, title, description }: RoleChoice) {
+function RoleChoiceLink({ to, icon: Glyph, title, description, teamSuffix }: RoleChoice & { teamSuffix: string }) {
   return (
     <Link
-      to={to}
+      // `to` may already carry `?next=`, so the team flag joins it with `&` rather than a second `?`.
+      to={to.startsWith("/signup") ? `${to}${teamSuffix.replace(/^\?/, to.includes("?") ? "&" : "?")}` : to}
       className="group flex items-start gap-4 rounded-lg border border-outline-variant bg-surface-container-lowest p-6 transition-colors hover:border-outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
     >
       <Glyph size={24} className="mt-1 flex-none text-on-surface-variant" aria-hidden="true" />
@@ -151,13 +153,14 @@ function RoleChoiceLink({ to, icon: Glyph, title, description }: RoleChoice) {
 export function SignupRoleSelect() {
   const [searchParams] = useSearchParams()
   const next = safeNextPath(searchParams.get("next"))
+  const teamSuffix = useTeamSuffix()
   return (
     <AuthFrame
       footer={
         <p className="text-body-sm text-on-surface-variant">
           Already have an account?{" "}
           <Link
-            to="/login"
+            to={`/login${teamSuffix}`}
             className="rounded-sm text-on-primary-container underline underline-offset-2 transition-colors hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             Sign in
@@ -173,7 +176,7 @@ export function SignupRoleSelect() {
 
         <div className="flex flex-col gap-3">
           {ROLE_CHOICES.map((choice) => (
-            <RoleChoiceLink key={choice.to} {...choice} to={withNext(choice.to, next)} />
+            <RoleChoiceLink key={choice.to} {...choice} to={withNext(choice.to, next)} teamSuffix={teamSuffix} />
           ))}
         </div>
 

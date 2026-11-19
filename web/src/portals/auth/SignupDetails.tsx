@@ -13,6 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { ApiError } from "@/lib/api"
 import { signUpFailureMessage } from "@/lib/authOutcome"
 import { phoneErrorCode, phoneErrorMessage, validatePhoneField } from "@/lib/phone"
+import { useTeamSuffix } from "@/portals/access/team"
 import { cn } from "@/lib/utils"
 import { AuthFrame } from "./Login"
 import {
@@ -200,6 +201,7 @@ export function SignupDetails({ role }: SignupDetailsProps) {
   const redeemInvite = useRedeemInvite()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
+  const teamSuffix = useTeamSuffix()
   // See the module docstring's invite section: `?code=`, matching
   // `signupPathForInvite` (`lib/hooks/useInvitesApi.ts`) exactly.
   const inviteCode = searchParams.get("code")
@@ -290,7 +292,7 @@ export function SignupDetails({ role }: SignupDetailsProps) {
       footer={
         <p className="text-body-sm text-on-surface-variant">
           Already have an account?{" "}
-          <Link to="/login" className={LINK_CLASS}>
+          <Link to={`/login${teamSuffix}`} className={LINK_CLASS}>
             Sign in
           </Link>
         </p>
@@ -490,7 +492,7 @@ export function SignupDetails({ role }: SignupDetailsProps) {
               {signUpFailureMessage(signup.error)}
             </p>
             {addressConflict ? (
-              <Link to="/login" className={cn(LINK_CLASS, "w-fit")}>
+              <Link to={`/login${teamSuffix}`} className={cn(LINK_CLASS, "w-fit")}>
                 Log in
               </Link>
             ) : null}

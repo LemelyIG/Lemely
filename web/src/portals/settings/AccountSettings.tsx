@@ -158,6 +158,7 @@ function SignOutEverywhereSection() {
       </SettingsCard>
 
       <ConfirmModal
+        destructive={false}
         open={confirming}
         title="Sign out everywhere?"
         description="Every device signed in to this account will be signed out, including this one."

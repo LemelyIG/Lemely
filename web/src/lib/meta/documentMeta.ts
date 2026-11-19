@@ -83,17 +83,18 @@ export interface PageMeta {
   /** See `SkeletonShape`. Every route with an `element` declares one. */
   skeleton?: SkeletonShape
   /**
-   * `false` opts a route's own entrance out of View Transitions (packet
-   * B2b, DESIGN.md §9.4) — a static declaration of the exception, not
-   * something any router mechanism reads automatically (`viewTransition` is
-   * a per-navigation option on the `Link`/`navigate()` call, not something
-   * react-router derives from the destination route's `handle`). It exists
-   * so the exception is visible in the route table itself rather than only
-   * as an absence at every call site that navigates here — the same reason
-   * `skeleton` lives on `handle` rather than being inferred. Omitted (not
-   * `true`) everywhere else: the ordinary case needs no marker.
+   * `false` opts a route's own entrance out of the native push that `nativePushDefault`
+   * (`lib/nav/nativePushDefault.ts`) gives every phone drill-down. That middleware reads this
+   * marker from the destination route, so it is real, not documentation. An explicit
+   * `viewTransition` on the `Link`/`navigate()` call still wins over it. Omitted (not `true`)
+   * everywhere else: the ordinary case needs no marker. No route uses it today.
    */
   viewTransition?: false
+  /** Native frame: a full-screen task route. The phone tab bar hides on iOS/Android and
+   * `<main>` drops its tab-bar padding. Omitted everywhere else. */
+  immersive?: true
+  /** The route renders its own offline strip, so the shell hides its banner there. Omitted everywhere else, including immersive routes that have none (no route sets it yet). */
+  ownOfflineBanner?: true
 }
 
 /** The product name, appended to every page title. */
@@ -106,7 +107,7 @@ export const SITE_NAME = "Lemely"
  */
 export const DEFAULT_TITLE = "Lemely, marking for CAIE past papers"
 export const DEFAULT_DESCRIPTION =
-  "Lemely marks a photographed or uploaded CAIE past-paper attempt against the official marking scheme, with method marks, and returns per-question marks, a grade, and the topics to work on."
+  "Lemely marks Cambridge IGCSE, O Level and A Level past papers against the official mark scheme, with method marks, a grade and topics to work on."
 
 /**
  * Type guard for a route handle carrying page metadata.
@@ -176,6 +177,28 @@ function setMetaTag(attr: "name" | "property", key: string, content: string): vo
   tag.setAttribute("content", content)
 }
 
+/** The production origin. Staging builds point their canonical here too, so staging never competes with it. */
+export const CANONICAL_ORIGIN = "https://lemelyig.com"
+
+/**
+ * The canonical URL for a pathname: the production origin plus the path, with
+ * `/landing` (an alias of `/`, see `routes.tsx`) collapsed to `/` and any query
+ * or hash dropped.
+ */
+export function canonicalUrl(pathname: string): string {
+  return `${CANONICAL_ORIGIN}${pathname === "/landing" ? "/" : pathname}`
+}
+
+function setCanonical(href: string): void {
+  let link = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]')
+  if (!link) {
+    link = document.createElement("link")
+    link.setAttribute("rel", "canonical")
+    document.head.appendChild(link)
+  }
+  link.setAttribute("href", href)
+}
+
 /**
  * Applies a match chain's metadata to the live document.
  *
@@ -195,4 +218,7 @@ export function applyDocumentMeta(matches: readonly { handle?: unknown }[]): voi
   // that page rather than as the site root.
   setMetaTag("property", "og:title", title)
   setMetaTag("property", "og:description", description)
+  const url = canonicalUrl(window.location.pathname)
+  setCanonical(url)
+  setMetaTag("property", "og:url", url)
 }

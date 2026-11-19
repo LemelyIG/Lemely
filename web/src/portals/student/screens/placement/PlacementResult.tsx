@@ -11,6 +11,7 @@ import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import { usePlacementResult } from "@/lib/hooks/usePlacementApi"
 import { useSubjectName } from "@/lib/hooks/useReferenceApi"
 import { placementResultView } from "./placementData"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * S-05 · Placement results. Framed explicitly and warmly as a *baseline*,
@@ -104,9 +105,9 @@ export function PlacementResult() {
                     `animate-spin` is a transform, which is the only thing
                     §9.2 permits. */}
                 <CircleNotch size={28} className="animate-spin text-on-surface-variant" aria-hidden="true" />
-                <h1 className="text-body-lg font-medium text-on-surface">
+                <PageHeading repeatsTitle={false} className="text-body-lg font-medium text-on-surface">
                   Marking your {subjectName} placement test
-                </h1>
+                </PageHeading>
                 <p className="max-w-[55ch] text-body-md text-on-surface-variant">
                   This usually only takes a moment. This page will update on its own, so there is
                   no need to refresh.
@@ -123,7 +124,7 @@ export function PlacementResult() {
           return (
             <>
               <div className="flex flex-col gap-2">
-                <h1 className="text-display-md text-on-surface">Your {subjectName} starting picture</h1>
+                <PageHeading repeatsTitle={false} className="text-display-md text-on-surface">Your {subjectName} starting picture</PageHeading>
                 <p className="max-w-[65ch] text-body-md text-on-surface-variant">
                   This is a baseline, not a grade. It is a snapshot of where you're starting from,
                   so your study plan can target what actually needs work. It gets more accurate
@@ -146,7 +147,7 @@ export function PlacementResult() {
                 </Card>
               ) : null}
 
-              <div className="grid grid-cols-1 gap-5 min-[720px]:grid-cols-2">
+              <div className="grid grid-cols-1 gap-5 min-[721px]:grid-cols-2">
                 <Card>
                   <CardBody className="flex flex-col gap-3">
                     <div className="text-eyebrow text-on-surface-variant">Strongest topics</div>

@@ -8,6 +8,24 @@
  * it paints.
  */
 ;(function () {
+  // Platform for the native phone frame (docs/superpowers/plans/
+  // 2026-11-08-native-mobile-frame.md). This is the ONLY platform resolver:
+  // src/lib/platform.ts's readPlatform just reads data-platform back.
+  // tests/unit/platform.test.ts runs this file against the decision table.
+  try {
+    var nav = window.navigator || navigator
+    var ua = (nav && nav.userAgent) || ""
+    var uaData = nav && nav.userAgentData
+    var platform = "other"
+    if (uaData && uaData.platform === "Android") platform = "android"
+    else if (/\b(iPhone|iPad|iPod)\b/.test(ua)) platform = "ios"
+    else if (/\bMacintosh\b/.test(ua) && nav.maxTouchPoints > 1) platform = "ios"
+    else if (/\bAndroid\b/.test(ua)) platform = "android"
+    document.documentElement.dataset.platform = platform
+  } catch (platformError) {
+    // Worst case the page keeps design A (no data-platform = "other").
+  }
+
   // Theme preference (C5b). Resolves and paints the theme BEFORE the shell
   // markup below is parsed, so a cold load in dark mode never flashes light
   // first — the same "runs early, parser-blocking, no defer/async" timing
@@ -33,8 +51,20 @@
     // this file cannot import that module (it runs before any bundle
     // exists), so the table is duplicated here in plain ES5;
     // `tests/unit/themeInit.test.ts` pins the two against each other.
+    // The one rule (`resolveEffectiveTheme` in theme.ts): signed in ? preference : light.
+    // "Signed in" is whatever `lib/auth/storage.ts` persists synchronously: a parseable
+    // `lemely.session` object. No stored session means light, never OS dark.
+    var signedIn = false
+    try {
+      var storedSession = localStorage.getItem("lemely.session")
+      signedIn = !!storedSession && JSON.parse(storedSession) !== null
+    } catch (sessionError) {
+      signedIn = false
+    }
     var resolvedTheme
-    if (storedTheme === "light") {
+    if (!signedIn) {
+      resolvedTheme = "light"
+    } else if (storedTheme === "light") {
       resolvedTheme = "light"
     } else if (storedTheme === "dark") {
       resolvedTheme = "dark"

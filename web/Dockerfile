@@ -5,7 +5,7 @@
 # nginx.conf and docker-compose.yml for the CORS reasoning this exists to
 # implement — MISSION.md §3 "Definition of done for deployment").
 
-FROM node:22-slim AS builder
+FROM node:26-slim AS builder
 
 WORKDIR /build
 

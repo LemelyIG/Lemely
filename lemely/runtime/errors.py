@@ -81,6 +81,26 @@ class AuthError(LemelyError):
     exit_code = 8
 
 
+class AccessRestrictedError(LemelyError):
+    """The caller's email is not allowed in while access is restricted (``[access]``).
+
+    Deliberately **not** an :class:`AuthError`: every auth route already turns an
+    ``AuthError`` into a 400 or 401, and this must stay a 403 ``access_restricted`` wherever it
+    is raised (signup, login, refresh, parent OTP, seat and invite account creation). The app's
+    exception handler maps it; a route never has to remember to.
+
+    ``reason`` is ``"domain"`` (the address is not on the allow-list) or ``"unverified"`` (it is,
+    but the inbox was never proven). It names no domain, so the answer cannot be used to learn
+    the allow-list.
+    """
+
+    exit_code = 8
+
+    def __init__(self, reason: str = "domain") -> None:
+        super().__init__(f"Access is restricted ({reason}).")
+        self.reason = reason
+
+
 class EmptyGradeBoundaryStoreError(LemelyError):
     """``component_thresholds`` has no verified rows.
 

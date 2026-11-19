@@ -8,6 +8,7 @@ import {
   filtersToSearchParams,
   type DirectoryFilterState,
 } from "@/lib/tutoring/discovery"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * S-33 · Find a tutor (`/student/tutors`, SPEC §d). G-16's filters plus
@@ -30,7 +31,7 @@ export function FindTutor() {
   return (
     <div className="flex w-full flex-col gap-6">
       <div className="flex flex-col gap-2">
-        <h1 className="m-0 text-display-md text-on-surface">Tutors</h1>
+        <PageHeading repeatsTitle={true} className="m-0 text-display-md text-on-surface">Tutors</PageHeading>
         <p className="m-0 max-w-prose text-body-md text-on-surface-variant">{DIRECTORY_INTRO}</p>
       </div>
       <DirectoryView

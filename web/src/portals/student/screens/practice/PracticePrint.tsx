@@ -7,6 +7,7 @@ import { QueryState } from "@/components/ui/query-state"
 import { formatQuestionTopic } from "@/components/quiz/quizTakerData"
 import { usePracticeExport } from "@/lib/hooks/usePracticeApi"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /* Hallmark · pre-emit critique: P4 H4 E5 S4 R4 V4 */
 
@@ -87,7 +88,7 @@ export function PracticePrint() {
           ) : (
             <>
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <h1 className="text-display-lg text-on-surface">{data.title}</h1>
+                <PageHeading repeatsTitle={false} className="text-display-lg text-on-surface">{data.title}</PageHeading>
                 <div className="flex flex-wrap gap-3 print:hidden">
                   <Button variant="accent" onClick={() => window.print()}>
                     Print

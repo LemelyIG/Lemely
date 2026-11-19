@@ -8,11 +8,15 @@ import { DEFAULT_TITLE, DEFAULT_DESCRIPTION } from "@/lib/meta/documentMeta"
 import type { PageMeta } from "@/lib/meta/documentMeta"
 import { MarketingHeader } from "./MarketingHeader"
 import { MarketingFooter } from "./MarketingFooter"
+import { PublicPage } from "./PublicPage"
+import { publicPages } from "./publicPages"
+import { WaitlistProvider } from "./waitlist/WaitlistDialog"
 import "./marketing.css"
 import "./brand-tokens.css"
 import "./brand.css"
 
 const Landing = lazy(() => import("./Landing").then(m => ({ default: m.Landing })))
+const ConfirmEmail = lazy(() => import("./waitlist/ConfirmEmail").then(m => ({ default: m.ConfirmEmail })))
 const DataHandling = lazy(() => import("./DataHandling").then(m => ({ default: m.DataHandling })))
 const Pricing = lazy(() => import("./Pricing").then(m => ({ default: m.Pricing })))
 
@@ -57,12 +61,16 @@ function HashScroll() {
 }
 
 export function MarketingFrame({ children }: { children: React.ReactNode }) {
-  return <div className="marketing-brand min-h-dvh">
-    <SkipLink />
-    <MarketingHeader />
-    <main id={MAIN_CONTENT_ID} tabIndex={-1}>{children}</main>
-    <MarketingFooter />
-  </div>
+  /* No theme pin here: `<html data-theme>` is the one switch (anonymous visitors light, signed-in
+     users their own choice, `lib/theme/theme.ts`), so the frame and every portal agree. */
+  return <WaitlistProvider>
+    <div className="marketing-brand min-h-dvh">
+      <SkipLink />
+      <MarketingHeader />
+      <main id={MAIN_CONTENT_ID} tabIndex={-1}>{children}</main>
+      <MarketingFooter />
+    </div>
+  </WaitlistProvider>
 }
 
 /**
@@ -112,8 +120,7 @@ export const marketingRoute: RouteObject = {
 /**
  * The data page, in the same public frame as the landing page (P6.5, D6.8 A).
  *
- * In the marketing shell rather than standing alone because it is reached from
- * that shell's footer, and a reader who follows a footer link into a page with
+ * In the marketing shell because it is reached from the Privacy Policy, and a reader who follows a footer link into a page with
  * no header has been dropped somewhere rather than taken somewhere: the way
  * back has to still be there.
  */
@@ -167,6 +174,37 @@ export const pricingRoute: RouteObject = {
     title: "Pricing",
     description: "Lemely plans and credit packs for students and teachers, monthly or yearly.",
     skeleton: "page-header",
+  } satisfies PageMeta,
+}
+
+export const publicPageRoutes: RouteObject[] = publicPages.map((page) => ({
+  path: page.path,
+  element: <MarketingFrame><PublicPage page={page} /></MarketingFrame>,
+  handle: {
+    title: page.metaTitle ?? page.title,
+    description: page.description,
+    skeleton: "page-header",
+  } satisfies PageMeta,
+}))
+
+/** The page the waitlist confirmation email links to. Public, in the marketing frame, never gated. */
+export function MarketingWaitlistConfirm() {
+  return (
+    <MarketingFrame>
+      <Suspense fallback={<RouteSkeleton />}>
+        <ConfirmEmail />
+      </Suspense>
+    </MarketingFrame>
+  )
+}
+
+export const waitlistConfirmRoute: RouteObject = {
+  path: "waitlist/confirm",
+  element: <MarketingWaitlistConfirm />,
+  handle: {
+    title: "Confirm your email",
+    description: "Confirm your email address for the Lemely waitlist.",
+    skeleton: "standalone",
   } satisfies PageMeta,
 }
 

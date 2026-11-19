@@ -61,7 +61,7 @@ export function PortalSettingsLayout({ basePath }: PortalSettingsLayoutProps) {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-2">
-        <Eyebrow>Account</Eyebrow>
+        <Eyebrow className="native:hidden">Account</Eyebrow>
         <h1 className="text-display-md text-on-surface">Settings</h1>
       </div>
 

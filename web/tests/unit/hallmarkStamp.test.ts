@@ -87,7 +87,6 @@ const UNSTAMPED_KIT = [
   "src/components/ui/slider.tsx",
   "src/components/ui/stepper.tsx",
   "src/components/ui/subject-tag.tsx",
-  "src/components/ui/switch.tsx",
   "src/components/ui/table.tsx",
   "src/components/ui/tabs.tsx",
   "src/components/ui/textarea.tsx",

@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
@@ -14,9 +15,12 @@ import { X } from "@phosphor-icons/react"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { ErrorBoundary } from "@/components/ui/error-boundary"
 import { portalErrorFallback } from "@/components/route-error"
+import { BottomSheetSurface } from "@/components/ui/bottom-sheet"
 import { lockScroll } from "@/lib/scrollLock"
+import { useNativeFrame } from "@/lib/useNativeFrame"
 import { historyIndexOf, overlayCloseAction } from "@/lib/nav/backgroundLocation"
 import { cn } from "@/lib/utils"
+import { nextSettingsTabIndex } from "@/components/shell/shellModel"
 import { activeSettingsTab, settingsTabPath, type SettingsTab } from "./settingsTabs"
 import { SettingsHeadingLevel } from "./SettingsRows"
 
@@ -106,6 +110,7 @@ export function SettingsModal({
   linkState,
   children,
 }: SettingsModalProps) {
+  const { native } = useNativeFrame()
   const titleId = useId()
   const tabHeadingId = useId()
   const panelRef = useRef<HTMLDivElement>(null)
@@ -148,6 +153,37 @@ export function SettingsModal({
     }
   }, [])
 
+  // Focus must not leave the dialog by Tab. A panel that swaps content or
+  // disables the focused control (a save pending) leaves focus on <body>,
+  // behind the inert app root and outside the dialog's own key handler, so
+  // Tab would walk out of the modal. This listener sits on the document, sees
+  // that Tab, and seats focus back in the panel. Nested dialogs and listboxes
+  // (a confirmation, a select popup) portal to `body` and manage their own.
+  useLayoutEffect(() => {
+    function guardTab(event: KeyboardEvent) {
+      if (event.key !== "Tab") return
+      const panel = panelRef.current
+      if (!panel) return
+      const active = document.activeElement
+      if (active && active !== document.body) {
+        if (panel.contains(active)) return
+        const nested = active.closest('[role="dialog"],[role="listbox"]')
+        if (nested && nested !== panel) return
+      }
+      event.preventDefault()
+      const stops = tabbable(panel)
+      const current = Array.from(
+        panel.querySelectorAll<HTMLElement>('nav a[aria-current="page"]'),
+      ).find(isShown)
+      const target = event.shiftKey
+        ? (stops[stops.length - 1] ?? panel)
+        : (current ?? stops[0] ?? panel)
+      target.focus()
+    }
+    document.addEventListener("keydown", guardTab)
+    return () => document.removeEventListener("keydown", guardTab)
+  }, [])
+
   // A new tab starts at the top of the panel, and the phone tab strip keeps
   // the current tab in view.
   useEffect(() => {
@@ -185,6 +221,22 @@ export function SettingsModal({
     }
   }
 
+  /** Design A: arrow keys move between sections (up/down on the rail,
+   * left/right on the phone strip), Home/End jump; switching replaces history. */
+  function handleTabKeys(event: ReactKeyboardEvent<HTMLElement>) {
+    const links = Array.from(event.currentTarget.querySelectorAll<HTMLAnchorElement>("a"))
+    const next = nextSettingsTabIndex(
+      links.indexOf(document.activeElement as HTMLAnchorElement),
+      event.key,
+      links.length,
+      event,
+    )
+    if (next === null) return
+    event.preventDefault()
+    links[next].focus()
+    links[next].click()
+  }
+
   const tabLinks = (variant: "rail" | "strip") =>
     tabs.map((tab) => (
       <NavLink
@@ -208,16 +260,99 @@ export function SettingsModal({
       </NavLink>
     ))
 
+  const closeButton = (
+    <button
+      type="button"
+      onClick={onClose}
+      aria-label="Close settings"
+      className={cn(
+        "flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-on-surface-variant transition-colors md:hidden",
+        "hover:bg-surface-container hover:text-on-surface active:scale-[0.98]",
+        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+      )}
+    >
+      <X size={20} aria-hidden="true" />
+    </button>
+  )
+  const tabHeading = activeTab ? (
+    <div className="flex flex-col gap-1 md:pe-12">
+      <h3 id={tabHeadingId} className="text-display-sm text-on-surface">
+        {activeTab.label}
+      </h3>
+      <p className="max-w-[60ch] text-body-sm text-on-surface-variant">{activeTab.description}</p>
+    </div>
+  ) : null
+  const scroller = (inner: ReactNode) => (
+    <div
+      ref={contentRef}
+      className="min-h-0 flex-1 overflow-y-auto overscroll-contain lm-scroll"
+      aria-labelledby={activeTab ? tabHeadingId : undefined}
+      role={activeTab ? "region" : undefined}
+    >
+      {inner}
+    </div>
+  )
+  const scrim = (
+    <div
+      className="fixed inset-0 z-scrim bg-scrim-dialog motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
+      aria-hidden="true"
+      onClick={onClose}
+    />
+  )
+
+  // Native phones: the same dialog as a sheet that opens at the medium detent and drags up to
+  // large. The title row is the drag header; the tab strip and the sections scroll in the body,
+  // and the sections get the native group look from the sheet's own scope (.lm-sheet in index.css).
+  if (native) {
+    return createPortal(
+      <div className="fixed inset-0 z-modal" onKeyDown={handleKeyDown}>
+        {scrim}
+        <BottomSheetSurface
+          ref={panelRef}
+          role="dialog"
+          aria-modal={true}
+          aria-labelledby={titleId}
+          tabIndex={-1}
+          data-settings-dialog
+          detents={["medium", "large"]}
+          initialDetent="medium"
+          onDismiss={onClose}
+          header={
+            <div className="flex w-full items-center justify-between gap-3 ps-4 pe-2 pb-2">
+              <h2 id={titleId} className="text-display-md text-on-surface">
+                {title}
+              </h2>
+              {closeButton}
+            </div>
+          }
+          bodyClassName="flex flex-col overflow-hidden"
+        >
+          <nav
+            aria-label="Settings sections"
+            data-settings-tabs="strip"
+            onKeyDown={handleTabKeys}
+            className="flex shrink-0 gap-1 overflow-x-auto border-b border-outline-variant px-4 pt-1 pb-3 lm-scroll"
+          >
+            {tabLinks("strip")}
+          </nav>
+          {scroller(
+            <div className="flex w-full flex-col gap-8 px-4 pt-6 pb-8">
+              {tabHeading}
+              <SettingsHeadingLevel level={4}>{children}</SettingsHeadingLevel>
+            </div>,
+          )}
+        </BottomSheetSurface>
+      </div>,
+      document.body,
+    )
+  }
+
   return createPortal(
     <div
       className="fixed inset-0 z-modal flex items-stretch justify-center md:items-center md:p-6"
       onKeyDown={handleKeyDown}
     >
-      <div
-        className="fixed inset-0 z-scrim bg-scrim motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
-        aria-hidden="true"
-        onClick={onClose}
-      />
+      {scrim}
       <div
         ref={panelRef}
         role="dialog"
@@ -227,7 +362,7 @@ export function SettingsModal({
         data-settings-dialog
         className={cn(
           "relative z-modal flex h-dvh w-full flex-col overflow-hidden bg-surface focus:outline-none",
-          "md:h-[min(46rem,calc(100dvh-3rem))] md:max-w-240 md:flex-row md:rounded-card md:border md:border-outline-variant md:shadow-[var(--shadow-float)]",
+          "md:h-[min(46rem,calc(100dvh-3rem))] md:max-w-240 md:flex-row md:rounded-card md:shadow-[var(--shadow-panel)]",
           "motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-spring)_both]",
         )}
       >
@@ -238,22 +373,12 @@ export function SettingsModal({
             <h2 id={titleId} className="text-display-md text-on-surface">
               {title}
             </h2>
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close settings"
-              className={cn(
-                "flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-on-surface-variant transition-colors md:hidden",
-                "hover:bg-surface-container hover:text-on-surface active:scale-[0.98]",
-                "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
-              )}
-            >
-              <X size={20} aria-hidden="true" />
-            </button>
+            {closeButton}
           </div>
           <nav
             aria-label="Settings sections"
             data-settings-tabs="strip"
+            onKeyDown={handleTabKeys}
             className="flex gap-1 overflow-x-auto px-4 pt-1 pb-3 lm-scroll md:hidden"
           >
             {tabLinks("strip")}
@@ -261,6 +386,7 @@ export function SettingsModal({
           <nav
             aria-label="Settings sections"
             data-settings-tabs="rail"
+            onKeyDown={handleTabKeys}
             className="hidden flex-col gap-1 overflow-y-auto px-3 pb-6 md:flex"
           >
             {tabLinks("rail")}
@@ -268,26 +394,12 @@ export function SettingsModal({
         </div>
 
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-          <div
-            ref={contentRef}
-            className="min-h-0 flex-1 overflow-y-auto overscroll-contain lm-scroll"
-            aria-labelledby={activeTab ? tabHeadingId : undefined}
-            role={activeTab ? "region" : undefined}
-          >
+          {scroller(
             <div className="mx-auto flex w-full max-w-180 flex-col gap-8 px-4 pt-6 pb-[max(env(safe-area-inset-bottom),2rem)] md:px-10 md:pt-8 md:pb-10">
-              {activeTab ? (
-                <div className="flex flex-col gap-1 md:pe-12">
-                  <h3 id={tabHeadingId} className="text-display-sm text-on-surface">
-                    {activeTab.label}
-                  </h3>
-                  <p className="max-w-[60ch] text-body-sm text-on-surface-variant">
-                    {activeTab.description}
-                  </p>
-                </div>
-              ) : null}
+              {tabHeading}
               <SettingsHeadingLevel level={4}>{children}</SettingsHeadingLevel>
-            </div>
-          </div>
+            </div>,
+          )}
           {/* Wide screens: the close button sits top-right of the panel. After
               the scroller in source order, so it paints above it without a
               z-index of its own. */}
