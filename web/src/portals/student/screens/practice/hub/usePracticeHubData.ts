@@ -6,16 +6,16 @@ import { usePracticeRuns, usePracticeTopicsMany, useStudentQuizzes } from "@/lib
 import { useReference } from "@/lib/hooks/useReferenceApi"
 import { useOverview } from "@/lib/hooks/useStudentApi"
 import { subjectNameFor } from "@/lib/reference"
-import type { HubInput, HubSubject } from "./hubModel"
+import { profileQueryState, type HubInput, type HubSubject } from "./hubModel"
 
 /**
  * Composes every query the hub reads into one `HubInput`. Subjects are the
  * overview's (they carry paper counts) followed by any enrolled subject with
  * no paper yet, so a first-time student can still open the builder.
  *
- * `refetchAll` retries exactly the queries `hubState` turns into the error
- * state (overview, runs, topics); `refetching` is true while any of them is in
- * flight, so the retry button can show it is working instead of looking dead.
+ * `refetchAll` retries every query behind a hub error or notice (overview,
+ * profile, runs, topics); `refetching` is true while any of them is in flight,
+ * so the retry button can show it is working instead of looking dead.
  */
 export function usePracticeHubData(): {
   input: HubInput
@@ -46,9 +46,10 @@ export function usePracticeHubData(): {
   const placement = usePlacementAvailabilities(codes)
   const now = useMemo(() => new Date(), [])
 
+  const profileState = profileQueryState(profile)
   const input: HubInput = {
     overviewStatus: overview.data === undefined ? overview.status : "success",
-    profileStatus: profile.data === undefined ? profile.status : "success",
+    profileStatus: profileState.profileStatus,
     subjects,
     topics: codes.map((code, i) => ({ code, status: topicQueries[i].status, data: topicQueries[i].data })),
     runsStatus: runs.data === undefined ? runs.status : "success",
@@ -74,6 +75,6 @@ export function usePracticeHubData(): {
       void runs.refetch()
       for (const q of topicQueries) void q.refetch()
     },
-    refetching: overview.isFetching || profile.isFetching || runs.isFetching || topicQueries.some((q) => q.isFetching),
+    refetching: overview.isFetching || profileState.refetching || runs.isFetching || topicQueries.some((q) => q.isFetching),
   }
 }

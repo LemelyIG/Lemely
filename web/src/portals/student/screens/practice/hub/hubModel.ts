@@ -10,6 +10,19 @@ import { plural, topicLabel } from "../practiceCopy"
 
 export type HubQueryStatus = "pending" | "error" | "success"
 export type HubState = "loading" | "error" | "firstTime" | "sparse" | "normal"
+export type HubErrorKind = "topics" | "subjects"
+
+/**
+ * Maps the profile query onto a hub status. Cached data always reads as
+ * success. With none, an uncached manual retry resets TanStack's status from
+ * error to pending but keeps `errorUpdateCount`, so the failure stays an error
+ * until the retry lands and the Retry button does not unmount mid-flight.
+ */
+export function profileQueryState(query: { data: unknown; status: HubQueryStatus; errorUpdateCount: number; isFetching: boolean }): { profileStatus: HubQueryStatus; refetching: boolean } {
+  const profileStatus = query.data !== undefined ? "success"
+    : query.status === "pending" && query.errorUpdateCount > 0 ? "error" : query.status
+  return { profileStatus, refetching: query.isFetching }
+}
 
 export interface HubSubject {
   code: string
@@ -79,6 +92,10 @@ export interface RecentRow {
 
 export interface HubView {
   state: HubState
+  /** Set exactly when `state` is "error": which source failed, so the copy only promises what still works. */
+  errorKind: HubErrorKind | null
+  /** The lists render but the profile failed, so subjects with no paper yet may be missing. */
+  notice: "subjects" | null
   subtitle: string | null
   binny: { mood: "happy" | "open"; line: string } | null
   homework: HomeworkView | null
@@ -128,13 +145,32 @@ export function dueLabel(item: Pick<StudentQuizListItem, "dueAt" | "isOverdue">,
   return `due ${shortDate(item.dueAt)}`
 }
 
+function isPending(input: HubInput): boolean {
+  return input.overviewStatus === "pending" || input.profileStatus === "pending" || input.runsStatus === "pending" || input.topics.some((t) => t.status === "pending")
+}
+
+/**
+ * Why the hub cannot render its lists, or null when it can.
+ * - "topics": overview, runs or a subject's topics failed with nothing cached.
+ * - "subjects": only the profile failed, and no other source gave a subject to
+ *   work from. The profile is what finds enrolled subjects that have no paper
+ *   yet, so without it the hub cannot tell a first run from a failed load.
+ * A failed profile alongside subjects the overview already gave is not an
+ * error: the lists render and `practiceHubView` raises a notice instead.
+ */
+function failureKind(input: HubInput): HubErrorKind | null {
+  const topicsFailed =
+    input.overviewStatus === "error" || input.runsStatus === "error" || input.topics.some((t) => t.status === "error" && t.data === undefined)
+  if (topicsFailed) return "topics"
+  // A pending source may still bring subjects, so never call the profile fatal while one loads.
+  if (isPending(input)) return null
+  if (input.profileStatus === "error" && input.subjects.length === 0) return "subjects"
+  return null
+}
+
 export function hubState(input: HubInput): HubState {
-  const anyError =
-    input.overviewStatus === "error" || input.profileStatus === "error" || input.runsStatus === "error" || input.topics.some((t) => t.status === "error" && t.data === undefined)
-  if (anyError) return "error"
-  const anyPending =
-    input.overviewStatus === "pending" || input.profileStatus === "pending" || input.runsStatus === "pending" || input.topics.some((t) => t.status === "pending")
-  if (anyPending) return "loading"
+  if (failureKind(input)) return "error"
+  if (isPending(input)) return "loading"
   const papers = paperCount(input.subjects)
   if (papers === 0 && input.runs.length === 0) return "firstTime"
   if (papers === 1) return "sparse"
@@ -298,9 +334,14 @@ export function practiceHubView(input: HubInput): HubView {
   const primarySubject = allWinBack[0]?.subjectCode ?? input.subjects[0]?.code ?? null
   const recentAll = recentRows(input.runs, input.subjects, input.now)
   const showsContent = state === "normal" || state === "sparse"
+  const errorKind = state === "error" ? failureKind(input) : null
+  // Runs load on their own source; with no subject to name them they still list, by code.
+  const showsRecent = showsContent || errorKind === "subjects"
   const papers = paperCount(input.subjects)
   return {
     state,
+    errorKind,
+    notice: input.profileStatus === "error" && state !== "error" && state !== "loading" ? "subjects" : null,
     subtitle: showsContent && allWinBack.length > 0 ? `${plural(allWinBack.length, "topic")} to win back` : null,
     binny: binnyFor(state, allWinBack[0], papers),
     homework: state === "loading" ? null : pickHomework(input.homework, input.now),
@@ -313,8 +354,8 @@ export function practiceHubView(input: HubInput): HubView {
     }),
     winBack: showsContent ? allWinBack.slice(0, WIN_BACK_SHOWN) : [],
     winBackMore: showsContent ? allWinBack.slice(WIN_BACK_SHOWN) : [],
-    recent: showsContent ? recentAll.slice(0, RECENT_SHOWN) : [],
-    recentMore: showsContent ? recentAll.slice(RECENT_SHOWN) : [],
+    recent: showsRecent ? recentAll.slice(0, RECENT_SHOWN) : [],
+    recentMore: showsRecent ? recentAll.slice(RECENT_SHOWN) : [],
     showScanTip: state === "sparse" || (state === "normal" && papers === 0),
     primarySubject,
   }

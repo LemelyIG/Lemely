@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs"
 import { QueryClient, QueryObserver } from "@tanstack/react-query"
 import { describe, expect, it } from "vitest"
 import type { PracticeRun, StudentQuizListItem } from "@/lib/practiceHubTypes"
@@ -9,6 +10,7 @@ import {
   hubTiles,
   pickHomework,
   practiceHubView,
+  profileQueryState,
   recentRows,
   winBackRows,
   type HubInput,
@@ -110,6 +112,54 @@ describe("dayLabel / dueLabel", () => {
 })
 
 describe("hubState", () => {
+  it.each([true, false])("retains the profile failure through a real retry (subjects known: %s)", async (known) => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    let resolveRetry!: (value: { enrolments: never[] }) => void
+    let attempt = 0
+    const observer = new QueryObserver(client, {
+      queryKey: ["profile"],
+      queryFn: () => ++attempt === 1
+        ? Promise.reject(new Error("offline"))
+        : new Promise<{ enrolments: never[] }>((resolve) => { resolveRetry = resolve }),
+      enabled: false,
+    })
+    const unsubscribe = observer.subscribe(() => {})
+    const model = () => practiceHubView(input({
+      profileStatus: profileQueryState(observer.getCurrentResult()).profileStatus,
+      ...(known ? {} : { subjects: [], topics: [], placement: [], runs: [] }),
+    }))
+    expect(model().state).toBe("loading")
+    await observer.refetch()
+    expect(profileQueryState(observer.getCurrentResult()).profileStatus).toBe("error")
+    expect(model().notice ?? model().errorKind).toBe("subjects")
+    const retry = observer.refetch()
+    // TanStack drops an uncached query back to pending while retrying; the
+    // hook's `refetching` (isFetching) is busy and the mapped status stays error.
+    expect(observer.getCurrentResult().status).toBe("pending")
+    expect(profileQueryState(observer.getCurrentResult()).refetching).toBe(true)
+    expect(profileQueryState(observer.getCurrentResult()).profileStatus).toBe("error")
+    expect(model().notice ?? model().errorKind).toBe("subjects")
+    resolveRetry({ enrolments: [] })
+    await retry
+    expect(profileQueryState(observer.getCurrentResult()).refetching).toBe(false)
+    expect(profileQueryState(observer.getCurrentResult()).profileStatus).toBe("success")
+    expect(model().notice).toBeNull()
+    expect(model().errorKind).toBeNull()
+    unsubscribe()
+    client.clear()
+  })
+
+  it("first load without any prior failure is still pending", () => {
+    expect(profileQueryState({ data: undefined, status: "pending", errorUpdateCount: 0, isFetching: true }).profileStatus).toBe("pending")
+  })
+
+  it("usePracticeHubData uses the mapped profile status and busy state", () => {
+    const hook = readFileSync(new URL("../../src/portals/student/screens/practice/hub/usePracticeHubData.ts", import.meta.url), "utf8")
+    expect(hook).toMatch(/const profileState = profileQueryState\(profile\)/)
+    expect(hook).toMatch(/profileStatus:\s*profileState\.profileStatus/)
+    expect(hook).toMatch(/refetching:.*profileState\.refetching/)
+  })
+
   it("keeps cached topics visible after a real failed refetch", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const cached = topics("0580", [["Vectors", 9]])
@@ -134,9 +184,44 @@ describe("hubState", () => {
     client.clear()
   })
 
-  it("waits for the profile and reports an unavailable profile", () => {
+  it("waits for the profile before deciding anything", () => {
     expect(hubState(input({ profileStatus: "pending" }))).toBe("loading")
-    expect(hubState(input({ profileStatus: "error" }))).toBe("error")
+  })
+
+  it("a failed profile does not block the hub while the overview already gave subjects", () => {
+    const view = practiceHubView(input({ profileStatus: "error" }))
+    expect(view.state).toBe("normal")
+    expect(view.errorKind).toBeNull()
+    expect(view.notice).toBe("subjects")
+    expect(view.winBack.map((row) => row.label)).toEqual(["Vectors", "Quadratic inequalities", "Waves"])
+    expect(view.recent).toHaveLength(1)
+    expect(view.tiles[0].disabled).toBe(false)
+  })
+
+  it("a failed profile with no usable subject is its own error, never a false first run", () => {
+    const view = practiceHubView(input({ profileStatus: "error", subjects: [], topics: [], placement: [], runs: [] }))
+    expect(view.state).toBe("error")
+    expect(view.errorKind).toBe("subjects")
+    expect(view.notice).toBeNull()
+    expect(view.binny).toBeNull()
+    expect(view.showScanTip).toBe(false)
+  })
+
+  it("a failed profile with no subject still lists runs that already loaded", () => {
+    const view = practiceHubView(input({ profileStatus: "error", subjects: [], topics: [], placement: [] }))
+    expect(view.errorKind).toBe("subjects")
+    expect(view.recent).toHaveLength(1)
+  })
+
+  it("a failed topics source is the topics error, even if the profile failed too", () => {
+    expect(practiceHubView(input({ runsStatus: "error" })).errorKind).toBe("topics")
+    expect(practiceHubView(input({ runsStatus: "error", profileStatus: "error" })).errorKind).toBe("topics")
+  })
+
+  it("no error kind or notice when everything loaded", () => {
+    const view = practiceHubView(input())
+    expect(view.errorKind).toBeNull()
+    expect(view.notice).toBeNull()
   })
 
   it("is loading while any source is pending", () => {

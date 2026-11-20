@@ -101,6 +101,10 @@ function input(over: Partial<HubInput> = {}): HubInput {
 
 const render = () => renderToStaticMarkup(createElement(MemoryRouter, null, createElement(PracticeHub)))
 const count = (haystack: string, needle: string) => haystack.split(needle).length - 1
+/** Every live-region role in the markup, in order: nested regions double-announce. */
+const liveRegions = (html: string) => html.match(/role="(?:alert|status)"/g) ?? []
+/** The opening tag of the one button whose own content says "Try again", or "" when there is none. */
+const retryButton = (html: string) => html.match(/<button[^>]*>(?=(?:(?!<\/button>)[\s\S])*Try again)/)?.[0] ?? ""
 
 beforeEach(() => {
   hub.input = input()
@@ -204,8 +208,85 @@ describe("PracticeHub", () => {
     hub.refreshError = true
     const out = render()
     expect(out).toContain("Win marks back")
-    expect(out).toContain('role="alert"')
+    expect(out).toContain("Couldn’t refresh practice")
     expect(out).toContain("Try again")
+  })
+
+  it("the refresh banner is one live region, not an alert wrapping a status", () => {
+    hub.refreshError = true
+    const out = render()
+    expect(liveRegions(out)).toEqual(['role="status"'])
+    expect(out).not.toContain('role="alert"')
+  })
+
+  it("the refresh banner retry shows it is working while refetching", () => {
+    hub.refreshError = true
+    hub.refetching = true
+    const button = retryButton(render())
+    expect(button).toContain('aria-busy="true"')
+    expect(button).toContain('disabled=""')
+  })
+
+  it("the refresh banner retry is live while idle", () => {
+    hub.refreshError = true
+    const button = retryButton(render())
+    expect(button).not.toBe("")
+    expect(button).not.toContain(' disabled=""')
+    expect(button).not.toContain("aria-busy")
+  })
+
+  it("profile failed, subjects known: lists stay usable and one notice says subjects may be missing", () => {
+    hub.input = input({ profileStatus: "error" })
+    const out = render()
+    expect(out).toContain("Win marks back")
+    expect(out).toContain('aria-label="Recent"')
+    expect(out).toContain("Some subjects may be missing")
+    expect(liveRegions(out)).toEqual(['role="status"'])
+    expect(out).not.toContain("The tiles still work")
+    expect(retryButton(out)).not.toBe("")
+  })
+
+  it("profile failed with a failed refresh too: still one live region", () => {
+    hub.input = input({ profileStatus: "error" })
+    hub.refreshError = true
+    expect(liveRegions(render())).toHaveLength(1)
+  })
+
+  it("profile failed, no subject: says so, never claims the tiles work, no first-run walkthrough", () => {
+    hub.input = input({ profileStatus: "error", subjects: [], topics: [], placement: [], runs: [] })
+    const out = render()
+    expect(out).toContain("We couldn’t load your subjects")
+    expect(out).not.toContain("The tiles still work")
+    expect(out).not.toContain('class="rd-walk"')
+    expect(out).not.toContain("Scan a paper")
+    expect(liveRegions(out)).toEqual(['role="alert"'])
+    expect(retryButton(out)).not.toBe("")
+  })
+
+  it("profile failed, no subject: the retry shows it is working while refetching", () => {
+    hub.input = input({ profileStatus: "error", subjects: [], topics: [], placement: [], runs: [] })
+    hub.refetching = true
+    expect(retryButton(render())).toContain('disabled=""')
+  })
+
+  it("profile failed, subjects known: the notice retry shows it is working while refetching", () => {
+    hub.input = input({ profileStatus: "error" })
+    hub.refetching = true
+    expect(retryButton(render())).toContain('disabled=""')
+  })
+
+  it("profile failed, no subject, runs loaded: Recent still shows", () => {
+    hub.input = input({ profileStatus: "error", subjects: [], topics: [], placement: [] })
+    const out = render()
+    expect(out).toContain("We couldn’t load your subjects")
+    expect(out).toContain('aria-label="Recent"')
+  })
+
+  it("topics error with no subject to open: the tiles claim is dropped", () => {
+    hub.input = input({ runsStatus: "error", subjects: [], topics: [], placement: [] })
+    const out = render()
+    expect(out).toContain("We couldn’t load your topics")
+    expect(out).not.toContain("The tiles still work")
   })
 
   it("error (CE): the tiles still work, an alert explains and offers a retry", () => {

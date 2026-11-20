@@ -2,12 +2,11 @@
 /* L4 · Practice tab root (mock C, practice-hub-final.html). Thin: every decision is in hubModel. */
 import { BinnyLine } from "@/components/redesign"
 import { PageHeading } from "@/components/ui/page-heading"
-import { ErrorState } from "@/components/ui/state-views"
 // import { SetBuilderSheet } from "./builder/SetBuilderSheet" — enabled in Task 9
 import { HomeworkRow } from "./hub/HomeworkRow"
 import { practiceHubView } from "./hub/hubModel"
 import { HubLayout } from "./hub/HubLayout"
-import { FirstRun, HubError, HubSkeleton } from "./hub/HubStates"
+import { FirstRun, HubError, HubNotice, HubSkeleton } from "./hub/HubStates"
 import { HubTiles } from "./hub/HubTiles"
 import { RecentRuns } from "./hub/RecentRuns"
 import { usePracticeHubData } from "./hub/usePracticeHubData"
@@ -19,6 +18,8 @@ export function PracticeHub() {
   const hub = usePracticeHubData()
   const view = practiceHubView(hub.input)
   const order = hub.builderSubjects.map((s) => s.code)
+  // One notice at a time keeps one live region: a failed profile is the more specific news.
+  const notice = view.notice ?? (hub.refreshError ? "refresh" : null)
 
   /* Task 9 re-enables these with the sheet below (needs useLocation, useNavigate, useParams, useSearchParams):
   const { subjectCode } = useParams<{ subjectCode?: string }>()
@@ -58,15 +59,16 @@ export function PracticeHub() {
           binnyAfterTiles={wide ? null : binny}
           tiles={<HubTiles tiles={view.tiles} />}
           middle={
-            view.state === "error" ? (
-              <HubError onRetry={hub.refetchAll} retrying={hub.refetching} />
+            view.state === "error" && view.errorKind ? (
+              <HubError
+                kind={view.errorKind}
+                tilesWork={view.tiles.some((t) => t.key === "set" && !t.disabled)}
+                onRetry={hub.refetchAll}
+                retrying={hub.refetching}
+              />
             ) : (
               <>
-                {hub.refreshError ? (
-                  <div role="alert">
-                    <ErrorState compact heading="Couldn’t refresh practice" body="Showing your last loaded information." action={{ label: "Try again", onClick: hub.refetchAll }} />
-                  </div>
-                ) : null}
+                {notice ? <HubNotice kind={notice} onRetry={hub.refetchAll} retrying={hub.refetching} /> : null}
                 {view.state === "firstTime" && view.binny ? <FirstRun line={view.binny.line} /> : null}
               </>
             )
