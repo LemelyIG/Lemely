@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P3 H4 E4 S3 R4 V3 */
 import { Link } from 'react-router-dom'
 import { marketingLinks } from './content'
 import type { PublicPageCopy } from './publicPages'
