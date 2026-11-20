@@ -72,7 +72,11 @@ describe("SubjectSteps", () => {
     const out = html(GhostSteps, {})
     expect(out).toContain('aria-hidden="true"')
     expect(out.match(/sj-stp--ghost/g)).toHaveLength(4)
-    expect(out).toContain("A* line")
+    expect(out).toContain("sj-stp--goal")
+    expect(out.match(/--n:5/g)).toHaveLength(2)
+    expect(out).not.toContain("sj-goal-label")
+    expect(out).not.toMatch(/<b>.*?<\/b>/)
+    expect(out).not.toContain(" line")
   })
   it("sizes the track to the bars, ghosts and goal it actually draws", () => {
     expect(html(SubjectSteps, { steps: full.path.steps }).match(/--n:5/g)).toHaveLength(2)
@@ -115,6 +119,11 @@ describe("SubjectSteps", () => {
     expect(out).toContain("Reached")
     expect(out).not.toContain("to go")
     expect(out).not.toMatch(/-\d+ marks?/)
+  })
+  it("draws the first-run ghost for an explicit A* goal", () => {
+    const out = html(GhostSteps, { goalGrade: "A*" })
+    expect(out).toContain("<b>A*</b>")
+    expect(out).toContain("A* line")
   })
   it("draws the first-run ghost for another goal grade without naming A*", () => {
     const out = html(GhostSteps, { goalGrade: "B" })

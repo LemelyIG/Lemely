@@ -86,7 +86,7 @@ export function SubjectSteps({
 }
 
 /** The first-run outline of the path to come. Decorative only. */
-export function GhostSteps({ goalGrade = "A*" }: { goalGrade?: string }) {
+export function GhostSteps({ goalGrade }: { goalGrade?: string }) {
   const n: Vars = { "--n": GHOST_PATH_HEIGHTS.length + 1 }
   return (
     <div className="sj-steps sj-steps--ghost" aria-hidden="true">
@@ -95,14 +95,14 @@ export function GhostSteps({ goalGrade = "A*" }: { goalGrade?: string }) {
           <span key={h} className="sj-stp sj-stp--ghost" style={{ "--h": `${h}%` } as Vars} />
         ))}
         <span className="sj-stp sj-stp--goal" style={{ "--h": "100%" } as Vars}>
-          <b>{goalGrade}</b>
+          {goalGrade ? <b>{goalGrade}</b> : null}
         </span>
       </div>
       <div className="sj-labels" style={n}>
         {GHOST_PATH_HEIGHTS.map((h) => (
           <span key={h} />
         ))}
-        <span className="sj-goal-label">{goalGrade} line</span>
+        {goalGrade ? <span className="sj-goal-label">{goalGrade} line</span> : <span />}
       </div>
     </div>
   )
