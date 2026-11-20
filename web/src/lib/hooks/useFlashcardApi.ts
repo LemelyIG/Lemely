@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef } from "react"
+import { useCallback, useEffect, useMemo, useRef } from "react"
 import {
   useMutation,
   useMutationState,
   useQuery,
   useQueryClient,
+  type MutationCache,
   type QueryClient,
   type UseMutationResult,
   type UseQueryResult,
@@ -143,35 +144,88 @@ export function useGenerateDeck(): UseMutationResult<GenerateDeckResponseDTO, Er
 
 const RETRY_GENERATION_KEY = ["flashcards", "retry-generation"] as const
 
-/** One request per deck: a second retry of a deck already in flight joins it instead of sending again. */
-const retriesInFlight = new Map<string, Promise<GenerationStatusDTO>>()
-function retryOnce(deckId: string): Promise<GenerationStatusDTO> {
-  const live = retriesInFlight.get(deckId)
-  if (live) return live
-  const request = flashcardApi.retryGeneration(deckId).finally(() => retriesInFlight.delete(deckId))
-  retriesInFlight.set(deckId, request)
-  return request
+type RetryMutation = ReturnType<MutationCache["getAll"]>[number]
+
+/**
+ * The request behind each retry mutation this hook started. Keyed by the Mutation object, not by deck
+ * id and not module-wide: "in flight" is then whatever the QueryClient's own mutation cache still
+ * holds, so `queryClient.clear()` on sign-out drops every entry with it (a retry of the same deck id in
+ * the next session sends a new request) and a mutation that was cleared is recognisably orphaned.
+ * A pending mutation missing from this map (restored, or started elsewhere) has no request to join.
+ */
+const retryRequests = new WeakMap<RetryMutation, Promise<GenerationStatusDTO>>()
+
+const retryMutations = (cache: MutationCache) => cache.findAll({ mutationKey: RETRY_GENERATION_KEY })
+
+/** The request of a retry this hook started for the deck and the cache still holds as pending. */
+function liveRetryRequest(cache: MutationCache, deckId: string): Promise<GenerationStatusDTO> | undefined {
+  for (const m of retryMutations(cache)) {
+    if (m.state.status === "pending" && m.state.variables === deckId) {
+      const request = retryRequests.get(m)
+      if (request) return request
+    }
+  }
+  return undefined
 }
 
 /**
  * Retries a failed deck. Returns the final state (200), which seeds the generation query.
- * `onError` is a hook-level callback, so it fires for every deck's failure; a callback passed to
- * `mutate()` only fires for the latest call when several decks are retried in a row.
+ * A second call for a deck that is already retrying (a stale closure, a second screen instance)
+ * joins the live request instead of sending another. Only the call that started the request acts on
+ * its outcome (seeding the cache and refreshing the lists on success, `onError` on failure), so a
+ * deck settling once has its effects once. `onError` is not passed to `mutate()`, which fires only
+ * for the latest call when several decks are retried in a row. `queryClient.clear()` empties the
+ * mutation cache but cannot cancel a request: an outcome that lands after it belongs to the old
+ * session and is dropped, success and failure alike, so it cannot overwrite the new session's cache.
  */
 export function useRetryGeneration(
   onError?: (error: Error, deckId: string) => void,
-): UseMutationResult<GenerationStatusDTO, Error, string> {
+): { mutate: (deckId: string) => void } {
   const queryClient = useQueryClient()
-  return useMutation({
+  const mutation = useMutation({
     mutationKey: RETRY_GENERATION_KEY,
-    mutationFn: retryOnce,
-    onError: (error, deckId) => onError?.(error, deckId),
-    onSuccess: (state, deckId) => {
-      queryClient.setQueryData(flashcardKeys.generation(deckId), state)
-      void queryClient.invalidateQueries({ queryKey: flashcardKeys.deck(deckId) })
-      invalidateDeckLists(queryClient)
-    },
+    mutationFn: (deckId: string) => flashcardApi.retryGeneration(deckId),
   })
+  // Calls from older renders must see the latest callback and mutation without changing identity.
+  const latest = useRef({ mutation, onError })
+  latest.current = { mutation, onError }
+  const mutateAsync = useCallback(
+    (deckId: string) => {
+      const cache = queryClient.getMutationCache()
+      const joined = liveRetryRequest(cache, deckId)
+      if (joined) return joined
+      // The mutation is added to the cache synchronously, so the one that was not there before the
+      // call is this call's. Looking for "a pending retry of this deck" could find a restored one.
+      const before = new Set(retryMutations(cache))
+      const request = latest.current.mutation.mutateAsync(deckId)
+      const owner = retryMutations(cache).find((m) => !before.has(m))
+      if (owner) retryRequests.set(owner, request)
+      const owned = () => owner !== undefined && retryMutations(cache).includes(owner)
+      const report = latest.current.onError
+      request.then(
+        (state) => {
+          if (!owned()) return
+          queryClient.setQueryData(flashcardKeys.generation(deckId), state)
+          void queryClient.invalidateQueries({ queryKey: flashcardKeys.deck(deckId) })
+          invalidateDeckLists(queryClient)
+        },
+        (error: Error) => {
+          if (owned()) report?.(error, deckId)
+        },
+      )
+      return request
+    },
+    [queryClient],
+  )
+  // Only the action is exposed: per-call callbacks and the raw mutation result could still report an
+  // outcome from a session that `queryClient.clear()` has ended.
+  const mutate = useCallback(
+    (deckId: string) => {
+      void mutateAsync(deckId).catch(() => {})
+    },
+    [mutateAsync],
+  )
+  return useMemo(() => ({ mutate }), [mutate])
 }
 
 /**

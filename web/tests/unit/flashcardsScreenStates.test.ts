@@ -76,7 +76,9 @@ vi.mock("@/portals/student/screens/flashcards/DeckMenu", () => ({ DeckMenu: () =
 vi.mock("@/portals/student/screens/flashcards/NewDeckSheet", () => ({ NewDeckSheet: () => null }))
 
 import { ApiError } from "@/lib/api"
-import type { DeckSummaryDTO } from "@/lib/flashcardTypes"
+import { flashcardKeys } from "@/lib/flashcardApi"
+import { useRetryGeneration } from "@/lib/hooks/useFlashcardApi"
+import type { DeckSummaryDTO, GenerationStatusDTO } from "@/lib/flashcardTypes"
 import { FlashcardsScreen } from "@/portals/student/screens/flashcards/FlashcardsScreen"
 
 function deck(o: Partial<DeckSummaryDTO> & { id: string }): DeckSummaryDTO {
@@ -161,6 +163,27 @@ describe("retrying failed decks", () => {
     })
   })
 
+  it("exposes only the retry action and ignores per-call callbacks after the session is cleared", async () => {
+    let retry!: ReturnType<typeof useRetryGeneration>
+    const callback = vi.fn()
+    let settle!: (state: GenerationStatusDTO) => void
+    h.retryRequest.mockImplementation(() => new Promise((resolve) => { settle = resolve }))
+    function Probe() {
+      retry = useRetryGeneration()
+      return null
+    }
+    renderToStaticMarkup(createElement(QueryClientProvider, { client }, createElement(Probe)))
+    expect(Object.keys(retry)).toEqual(["mutate"])
+    // Extra arguments from untyped callers must not reach the underlying observer.
+    ;(retry.mutate as (...args: unknown[]) => void)("a", { onSuccess: callback, onSettled: callback })
+    await flush()
+    client.clear()
+    settle({ deckId: "a", status: "ready", requestedCount: 10, generatedCount: 10, error: null })
+    await flush()
+    expect(callback).not.toHaveBeenCalled()
+    expect(client.getQueryData(flashcardKeys.generation("a"))).toBeUndefined()
+  })
+
   it("retrying A then B keeps A busy and sends one request per deck", async () => {
     const settle: Array<() => void> = []
     h.retryRequest.mockImplementation(() => new Promise((resolve) => settle.push(() => resolve({ status: "writing" }))))
@@ -187,6 +210,120 @@ describe("retrying failed decks", () => {
     render()
     expect(lastRow("a")?.retrying).toBe(false)
     expect(lastRow("b")?.retrying).toBe(false)
+    lastRow("a")?.onRetry?.()
+    await flush()
+    expect(h.retryRequest).toHaveBeenCalledTimes(3)
+    settle[2]()
+    await flush()
+  })
+
+  // renderToStaticMarkup never unmounts, so this does not prove unmount survival. It proves that
+  // stale same-frame calls and a second screen instance on one QueryClient share one mutation per
+  // deck, and that the failure callback lives on that mutation: one toast each, then a new retry runs.
+  it("shares one mutation and one toast per deck across stale and second-instance calls, then permits another retry", async () => {
+    const reject: Array<(error: Error) => void> = []
+    h.retryRequest.mockImplementation(() => new Promise((_resolve, fail) => reject.push(fail)))
+    render()
+    const staleRetry = lastRow("a")?.onRetry
+    staleRetry?.()
+    staleRetry?.()
+    render() // a new screen instance sharing the same QueryClient
+    lastRow("a")?.onRetry?.()
+    lastRow("b")?.onRetry?.()
+    await flush()
+    expect(h.retryRequest.mock.calls.map((call) => call[0])).toEqual(["a", "b"])
+    const pending = client.getMutationCache().getAll().filter((m) => m.state.status === "pending").length
+    reject.forEach((fail) => fail(new Error("nope")))
+    await flush()
+    expect(h.toast).toHaveBeenCalledTimes(2)
+    expect(pending).toBe(2)
+    render()
+    lastRow("a")?.onRetry?.()
+    await flush()
+    expect(h.retryRequest).toHaveBeenCalledTimes(3)
+    reject[2](new Error("again"))
+    await flush()
+    expect(h.toast).toHaveBeenCalledTimes(3)
+  })
+
+  it("a cleared session neither swallows the next retry nor toasts the old request's late failure", async () => {
+    const reject: Array<(error: Error) => void> = []
+    h.retryRequest.mockImplementation(() => new Promise((_resolve, fail) => reject.push(fail)))
+    render()
+    lastRow("a")?.onRetry?.()
+    await flush()
+    expect(h.retryRequest).toHaveBeenCalledTimes(1)
+
+    client.clear() // sign-out: web/src/lib/auth/storage.ts clearQueries
+    render()
+    expect(lastRow("a")?.retrying).toBe(false)
+
+    lastRow("a")?.onRetry?.()
+    await flush()
+    expect(h.retryRequest).toHaveBeenCalledTimes(2)
+    render()
+    expect(lastRow("a")?.retrying).toBe(true)
+
+    reject[0](new Error("old session"))
+    await flush()
+    expect(h.toast).not.toHaveBeenCalled()
+    reject[1](new Error("new session"))
+    await flush()
+    expect(h.toast).toHaveBeenCalledTimes(1)
+  })
+
+  it("a late success from a cleared session never overwrites the new session's cache or refetches for it", async () => {
+    const settle: Array<(state: GenerationStatusDTO) => void> = []
+    h.retryRequest.mockImplementation(() => new Promise((resolve) => settle.push(resolve)))
+    const state = (generatedCount: number): GenerationStatusDTO =>
+      ({ deckId: "a", status: "ready", requestedCount: 10, generatedCount, error: null })
+    const invalidate = vi.spyOn(client, "invalidateQueries")
+    render()
+    lastRow("a")?.onRetry?.()
+    await flush()
+
+    client.clear() // sign-out, then a second sign-in on the same QueryClient
+    render()
+    lastRow("a")?.onRetry?.()
+    await flush()
+    expect(h.retryRequest).toHaveBeenCalledTimes(2)
+
+    settle[1](state(2)) // the new session's request lands first
+    await flush()
+    expect(client.getQueryData(flashcardKeys.generation("a"))).toEqual(state(2))
+    const refetches = invalidate.mock.calls.length
+    expect(refetches).toBeGreaterThan(0)
+
+    settle[0](state(1)) // the old session's request lands late
+    await flush()
+    expect(client.getQueryData(flashcardKeys.generation("a"))).toEqual(state(2))
+    expect(invalidate.mock.calls.length).toBe(refetches)
+    expect(h.toast).not.toHaveBeenCalled()
+  })
+
+  it("a live request is still owned: its success seeds the cache once, and a restored pending mutation is not mistaken for it", async () => {
+    const settle: Array<(state: GenerationStatusDTO) => void> = []
+    h.retryRequest.mockImplementation(() => new Promise((resolve) => settle.push(resolve)))
+    const ready: GenerationStatusDTO = { deckId: "a", status: "ready", requestedCount: 10, generatedCount: 10, error: null }
+    const invalidate = vi.spyOn(client, "invalidateQueries")
+    render()
+    const retryA = lastRow("a")?.onRetry // a stale closure: it predates the restored mutation below
+    // A pending mutation for the same deck that this screen never started (restored, nothing running it).
+    const restored = client.getMutationCache().build(client, {
+      mutationKey: ["flashcards", "retry-generation"],
+      mutationFn: () => new Promise<GenerationStatusDTO>(() => {}),
+    })
+    restored.state = { ...restored.state, status: "pending", variables: "a" }
+    retryA?.()
+    retryA?.() // same frame: joins the request just started, not the restored mutation
+    await flush()
+    expect(h.retryRequest).toHaveBeenCalledTimes(1)
+
+    client.getMutationCache().remove(restored) // the restored one going away must not orphan the live request
+    settle[0](ready)
+    await flush()
+    expect(client.getQueryData(flashcardKeys.generation("a"))).toEqual(ready)
+    expect(invalidate.mock.calls.filter(([f]) => JSON.stringify(f?.queryKey) === JSON.stringify(flashcardKeys.deck("a")))).toHaveLength(1)
   })
 
   it("toasts every failure, not only the latest deck's", async () => {
