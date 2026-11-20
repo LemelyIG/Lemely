@@ -4,6 +4,8 @@
  * `web/tests/unit/placement.test.ts`, same split as `onboardingData.ts`.
  */
 
+import { ApiError } from "@/lib/api"
+import { isEmailUnverifiedError } from "@/lib/authTypes"
 import type {
   PlacementAvailability,
   PlacementResult,
@@ -160,3 +162,19 @@ export function placementResultView(result: PlacementResult): PlacementResultVie
   const { strongest, weakest } = rankTopics(result.topicBreakdown)
   return { kind: "ranked", strongest, weakest, showWorkingLevel: result.spansMultipleBands }
 }
+
+/**
+ * `POST /api/student/placement` answers `403 {"code": "email_unverified"}`
+ * when the student has not verified their email: placement marking spends
+ * usage, and the free allowance arrives only after verification. Structured,
+ * so it is read as a shape, the same way `correctionFailureMessage` reads it.
+ */
+export function isPlacementEmailUnverified(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 403 && isEmailUnverifiedError(err.detail)
+}
+
+/** Shown in place of the start button; the banner above it links to the resend flow. */
+export const PLACEMENT_VERIFY_EMAIL = {
+  heading: "Verify your email to start your placement test",
+  body: "Lemely marks the test for you, and marking unlocks once you verify your email. Use the link we sent you, or ask for a new one.",
+} as const

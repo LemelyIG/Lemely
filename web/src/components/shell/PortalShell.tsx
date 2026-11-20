@@ -19,6 +19,7 @@ import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import { ScreenOutlet, type ScreenOverlay } from "@/components/ui/screen-outlet"
 import { MAIN_CONTENT_ID, SkipLink } from "@/components/ui/skip-link"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
+import { PhoneBannerSlot } from "@/components/ui/phone-banner-slot"
 import { MoreSheet } from "./MoreSheet"
 import { ShellPullToRefresh } from "./ShellPullToRefresh"
 import { ShellSidebar, type ShellSidebarContent } from "./ShellSidebar"
@@ -47,6 +48,10 @@ export interface PortalShellProps {
   overlay?: ScreenOverlay
   /** Android native phones: the portal's floating action button (hidden on immersive routes). */
   fab?: ReactNode
+  /** First in the page well, above the offline strip: a standing fact that changes what every control does (the teacher's "Working as" banner). */
+  banner?: ReactNode
+  /** Wraps the route content inside the shell's error boundary and Suspense (the teacher's acting guard). */
+  wrapContent?: (content: ReactNode) => ReactNode
 }
 
 /**
@@ -72,6 +77,8 @@ export function PortalShell({
   pending,
   overlay,
   fab,
+  banner,
+  wrapContent,
 }: PortalShellProps) {
   const [navOpen, setNavOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
@@ -89,6 +96,11 @@ export function PortalShell({
   const ownOfflineBanner = matches.some((m) => (m.handle as { ownOfflineBanner?: boolean } | undefined)?.ownOfflineBanner)
   const level = topBar.titleLevel ?? titleLevelFor(topBar.trail)
   const closeNav = () => setNavOpen(false)
+  const content = (
+    <ErrorBoundary label="This page" resetKey={location.pathname} fallback={portalErrorFallback}>
+      <ScreenOutlet overlay={overlay} />
+    </ErrorBoundary>
+  )
   const onActiveTap = (item: NavShellItem, event: MouseEvent) => {
     if (!item.to) return
     if (!isPlainPrimaryClick(event)) return
@@ -128,6 +140,7 @@ export function PortalShell({
           data-fab={fab && !immersive ? "" : undefined}
           className="lm-native-main @container/home w-full min-w-0 flex-1 overflow-x-hidden px-[72px] pt-1 pb-10 focus:outline-none max-shell-lg:px-3.5 max-shell-lg:pb-9 max-sidebar:pb-bottom-nav"
         >
+          {banner}
           {/* A route with its own offline strip (handle.ownOfflineBanner) hides this one, so two never stack. */}
           {ownOfflineBanner ? null : (
             <OfflineBanner
@@ -137,15 +150,15 @@ export function PortalShell({
             />
           )}
           <VerifyEmailBanner />
+          {/* UD-11: renders nothing unless the profile says there is no mobile number on file. */}
+          <PhoneBannerSlot />
           <InstallBanner />
           {pending ? (
             <RouteSkeleton />
           ) : (
             <Suspense fallback={<RouteSkeleton />}>
               <ShellPullToRefresh enabled={native && level === "root"}>
-                <ErrorBoundary label="This page" resetKey={location.pathname} fallback={portalErrorFallback}>
-                  <ScreenOutlet overlay={overlay} />
-                </ErrorBoundary>
+                {wrapContent ? wrapContent(content) : content}
               </ShellPullToRefresh>
             </Suspense>
           )}

@@ -91,7 +91,6 @@ who it links to in one row.
 
 from __future__ import annotations
 
-import secrets
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -106,6 +105,7 @@ from lemely.db.class_repo import (
     ClassService,
     JoinCodeError,
 )
+from lemely.db.invite_codes import constraint_name, generate_invite_code
 from lemely.db.models import Invite, School, SchoolClass, SchoolMembership, Seat, User
 from lemely.db.models.enums import InviteRole, MembershipRole, Role, SeatStatus
 from lemely.db.parent_repo import MAX_LINKED_PARENTS, ParentLimitReachedError
@@ -178,17 +178,13 @@ class InviteRoleMismatchError(InviteError):
     :attr:`~lemely.db.models.enums.Role.parent`. Nothing else is checked
     here — a bare ``classes.join_code`` and every other role combination
     keep their pre-existing, unchecked behaviour.
+
+    A third case, for every caller: an ``assistant`` invite
+    (:attr:`~lemely.db.models.enums.InviteRole.assistant`) is never redeemable through
+    :meth:`InviteService.redeem`. It is redeemed only by the teacher-team route.
     """
 
 
-# Alphabet excludes visually-ambiguous characters (0/O, 1/I/L), mirroring
-# `class_repo._JOIN_CODE_ALPHABET` for the same reason: a holder must be able
-# to reliably transcribe a code read off a screen or a slip of paper. The
-# length differs from a class join code's on purpose, so the two families
-# read as visually distinct even though `preview`/`redeem` accept either
-# interchangeably.
-_INVITE_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-_INVITE_CODE_LENGTH = 10
 _INVITE_CODE_MAX_ATTEMPTS = 8
 
 #: Name of the partial unique index `Invite.__table_args__` declares on
@@ -764,12 +760,20 @@ class InviteService:
                 ``caller_role`` is not
                 :attr:`~lemely.db.models.enums.Role.parent`, or ``code`` is
                 a student/teacher invite and ``caller_role`` *is*
-                :attr:`~lemely.db.models.enums.Role.parent` (→ 403).
+                :attr:`~lemely.db.models.enums.Role.parent`, or ``code`` is an
+                assistant invite, which this method never consumes (→ 403).
         """
         user_uuid = _as_uuid(user_id)
         with self._sessionmaker() as session, session.begin():
             invite = self._find_live_invite(session, code, for_update=True)
             if invite is not None:
+                if invite.role is InviteRole.assistant:
+                    # An assistant invite attaches the redeemer to a teacher's team and
+                    # is consumed only by the team route's own redemption. Refused
+                    # before `_redeem_invite` so this path can never mark it redeemed.
+                    raise InviteRoleMismatchError(
+                        f"Invite {code!r} is an assistant invite; it is not redeemable here"
+                    )
                 if invite.role is InviteRole.parent:
                     if caller_role is not Role.parent:
                         raise InviteRoleMismatchError(
@@ -927,8 +931,10 @@ class InviteService:
             cls = session.get(SchoolClass, invite.class_id)
             if cls is not None:  # pragma: no cover - class_id is FK-guaranteed to resolve
                 class_name = cls.name
-                teacher_name = self._teacher_name(session, cls.teacher_id)
+                teacher_name = self._public_teacher_name(session, cls.teacher_id)
                 school_name = school_name or self._school_name(session, cls.school_id)
+        if invite.team_teacher_id is not None:
+            teacher_name = self._public_teacher_name(session, invite.team_teacher_id)
         return InvitePreview(
             role=invite.role,
             school_name=school_name,
@@ -942,7 +948,7 @@ class InviteService:
             role=InviteRole.student,
             school_name=self._school_name(session, cls.school_id),
             class_name=cls.name,
-            teacher_name=self._teacher_name(session, cls.teacher_id),
+            teacher_name=self._public_teacher_name(session, cls.teacher_id),
             child_name=None,
         )
 
@@ -960,7 +966,7 @@ class InviteService:
         if invite.child_id is not None:
             child = session.get(User, invite.child_id)
             if child is not None:  # pragma: no cover - child_id is FK-guaranteed to resolve
-                child_name = child.display_name or "your child"
+                child_name = (child.display_name or "").strip() or "your child"
             linked = self._parent_link_service.linked_parent_ids_in_session(
                 session, invite.child_id
             )
@@ -980,11 +986,18 @@ class InviteService:
         school = session.get(School, school_id)
         return school.name if school is not None else None
 
-    def _teacher_name(self, session: Session, teacher_id: uuid.UUID) -> str | None:
+    def _public_teacher_name(self, session: Session, teacher_id: uuid.UUID) -> str | None:
+        """The teacher's stripped display name for the anonymous preview, or ``None``.
+
+        Never the email: the preview is unauthenticated and a class join code is
+        unlimited-use and widely shared, so a fallback to ``email`` would let anyone
+        who guesses codes harvest teacher addresses. A blank name reads as ``None``
+        and the client omits the possessive.
+        """
         teacher = session.get(User, teacher_id)
-        if teacher is None:  # pragma: no cover - SchoolClass.teacher_id is a NOT NULL FK
+        if teacher is None:  # pragma: no cover - the teacher id is a NOT NULL FK
             return None
-        return teacher.display_name or teacher.email
+        return (teacher.display_name or "").strip() or None
 
     # -- Internals: ownership and quota ------------------------------------------
 
@@ -1052,7 +1065,7 @@ class InviteService:
         """
         for _ in range(_INVITE_CODE_MAX_ATTEMPTS):
             invite = Invite(
-                code=_generate_invite_code(),
+                code=generate_invite_code(),
                 role=role,
                 created_by=created_by,
                 school_id=school_id,
@@ -1076,11 +1089,6 @@ class InviteService:
         raise InviteError("Could not generate a unique invite code; please retry")
 
 
-def _generate_invite_code() -> str:
-    """Generate a random invite code from a non-ambiguous alphabet."""
-    return "".join(secrets.choice(_INVITE_CODE_ALPHABET) for _ in range(_INVITE_CODE_LENGTH))
-
-
 def _is_reusable_child_violation(exc: IntegrityError) -> bool:
     """``True`` only for a violation of ``uq_invites_reusable_child``.
 
@@ -1092,15 +1100,7 @@ def _is_reusable_child_violation(exc: IntegrityError) -> bool:
     fixable code collision (mirrors ``notification_repo``'s and ``xp_repo``'s
     identical narrow-match discipline for the same reason).
     """
-    return _constraint_name(exc) == _REUSABLE_CHILD_CONSTRAINT_NAME
-
-
-def _constraint_name(exc: IntegrityError) -> str | None:
-    """Best-effort constraint name off a psycopg ``IntegrityError``."""
-    orig = getattr(exc, "orig", None)
-    diag = getattr(orig, "diag", None)
-    name = getattr(diag, "constraint_name", None)
-    return str(name) if name is not None else None
+    return constraint_name(exc) == _REUSABLE_CHILD_CONSTRAINT_NAME
 
 
 def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:

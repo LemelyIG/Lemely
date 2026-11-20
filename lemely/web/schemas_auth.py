@@ -34,6 +34,11 @@ class SignupRequestDTO(ApiModel):
     absent field is a pydantic 422 (missing required field), never a silently
     assumed ``False``. A consent checkbox the server does not itself enforce
     would be decorative, and a default here is exactly what would make it so.
+
+    ``phone`` is required (UD-11) but typed ``str | None`` on purpose: an absent field must
+    reach the route as a **422** ``phone_required`` carrying the stable error code, which a
+    pydantic "field required" error would not. The route validates it with
+    :func:`lemely.core.phone.validate_phone` (format only, no OTP) and stores E.164.
     """
 
     email: str
@@ -124,13 +129,16 @@ class ParentSignupDTO(ApiModel):
 
     ``acceptedTerms`` carries the identical D7.11 rule
     :class:`SignupRequestDTO` documents — deliberately no default, so a
-    missing field is a 422, never a silently assumed ``False``.
+    missing field is a 422, never a silently assumed ``False``. ``phone`` follows
+    :class:`SignupRequestDTO`: required, validated by the route (422 ``phone_required`` /
+    ``phone_invalid``).
     """
 
     proofToken: str
     password: str
     acceptedTerms: bool
     displayName: str | None = None
+    phone: str | None = None
     deviceId: str | None = None
 
 

@@ -1,0 +1,1199 @@
+"""Teacher team service: leased student seats and assistants (spec §2.2, §2.3, §4.4, §5.9).
+
+:class:`TeacherTeamService` works inside a ``Session`` its caller owns, so the class
+join (``ClassService.join_by_code_with_notice``) claims a seat in the same
+transaction as the enrolment: a refused seat rolls the enrolment back.
+:class:`TeacherTeamStore` opens one transaction per unit of work for routers and the
+team-permission guard.
+
+**Seat count.** Active plus leaving ``student_seat`` rows must stay at or below
+``included_seats + extra_seats`` of the teacher's live subscription (status
+``active`` or ``past_due``; ``past_due`` is the grace period, §5.2). The count is
+taken under ``SELECT … FOR UPDATE`` on that subscription row, so two concurrent joins
+serialise and the second sees the first's seat. A teacher with no live plan has zero
+seats.
+
+**Lock order.** Every path that creates or reactivates a seat takes its locks in one
+order, and every other writer must take any lock it shares with this one in the same
+order:
+
+1. the teacher's live ``subscriptions`` row (``FOR UPDATE``);
+2. the ``teacher_members`` row of the pair (``FOR UPDATE``);
+3. the ledger: the owner advisory locks in ascending user-id order, then the grant
+   rows in chain order (index R14, ``lemely.db.usage_ledger_repo``).
+
+Steps 1 and 2 are taken here. Step 3 is the seat-allowance hook:
+``claim_seat_for_class_join`` calls ``grant_seat_allowance_on_claim``
+(``lemely.db.seat_allowance_repo``) before each of its two returns, inside a savepoint,
+which puts the ledger locks at step 3 of the same transaction. That grant is a
+``seat_allowance`` grant, which the ledger never uses to repay the student's own debt
+(index R13), and the seat's ``cap_units`` and ``cap_period`` bound what the student may
+overflow into the teacher's credits. A ledger failure there is logged (alert
+``seat_allowance_grant_failed``) and never refuses the class join: the monthly job repairs
+the seat on its next tick.
+``set_scope``, ``set_cap`` and ``request_removal`` lock only the member row (step 2).
+``release_due`` is one ``UPDATE`` and locks no subscription row: releasing a seat only
+ever frees capacity.
+
+**Ownership.** Methods that take a ``member_id`` do not know the caller. Routers call
+:meth:`TeacherTeamService.owned_member` first, which answers an id the caller does not
+own exactly like an unknown id.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Final
+
+import structlog
+from sqlalchemy import and_, case, exists, func, or_, select, true, update
+from sqlalchemy.exc import IntegrityError
+
+from lemely.core.metered_actions import SEAT_ACTIONS, MeteredAction
+from lemely.core.team_permissions import (
+    TeamPermission,
+    UnknownPermissionError,
+    effective_permissions,
+    validate_overrides,
+)
+from lemely.db.invite_codes import constraint_name, generate_invite_code
+from lemely.db.models import (
+    ClassEnrollment,
+    Invite,
+    PlanTier,
+    SchoolClass,
+    SchoolMembership,
+    Subject,
+    Subscription,
+    User,
+)
+from lemely.db.models.billing import PlanAudience, PlanTierTerms
+from lemely.db.models.enums import InviteRole, Role, SubscriptionStatus
+from lemely.db.models.team import (
+    AssistantRole,
+    CapPeriod,
+    TeacherMember,
+    TeacherMemberKind,
+    TeacherMemberStatus,
+)
+from lemely.db.models.usage import (
+    GrantKind,
+    UsageEntry,
+    UsageEntryKind,
+    UsageGrant,
+    UsageGrantBalance,
+)
+from lemely.db.seat_allowance_repo import grant_seat_allowance_on_claim
+from lemely.db.usage_ledger_repo import HELD_KINDS, UsageLedger, _usable_at
+
+if TYPE_CHECKING:
+    import uuid
+    from collections.abc import Iterator, Sequence
+
+    from sqlalchemy import ColumnElement
+    from sqlalchemy.orm import InstrumentedAttribute, Session, sessionmaker
+
+alerts = structlog.get_logger("lemely.db.teacher_team_repo")
+
+LIVE_PLAN_STATUSES: Final = (SubscriptionStatus.active, SubscriptionStatus.past_due)
+"""Subscription states whose seats count (``past_due`` is the grace, spec §5.2)."""
+
+TEACHER_AUDIENCE: Final = PlanAudience.teacher
+"""``plan_tiers.audience`` of a teacher tier (Phase 02)."""
+
+_HELD: Final = (TeacherMemberStatus.active, TeacherMemberStatus.leaving)
+
+MAX_LIVE_ASSISTANT_INVITES: Final = 20
+"""Cap on a teacher's live (unexpired, unredeemed) assistant invites, as for parent links."""
+
+MAX_ASSISTANT_INVITE_TTL: Final = timedelta(days=30)
+"""Longest an assistant invite may live. Spec §4.4 says only "expire"; the frontend
+contract (index A24, ``expiresInDays`` 1-30) sets the bound."""
+
+MAX_CAP_UNITS: Final = 1_000_000_000
+"""Largest cap a teacher may set, in usage units. Far above any real cap (the team screens
+stop at one million) and far below the ``BIGINT`` the column and the ledger sums use, so a
+cap can never overflow them."""
+
+_INVITE_CODE_ATTEMPTS: Final = 8
+
+SEAT_ACTIONS_OFF_BY_DEFAULT: Final = frozenset({MeteredAction.STUDY_PLAN})
+"""Seat actions a teacher turns on per seat (spec §2.2: study plans are off by default)."""
+
+
+def default_seat_actions() -> list[str]:
+    """Return a new seat's ``scope_actions``: every seat action except the opt-in ones."""
+    return sorted(action.value for action in SEAT_ACTIONS - SEAT_ACTIONS_OFF_BY_DEFAULT)
+
+
+class TeamError(Exception):
+    """Base class for teacher-team failures."""
+
+
+class NoFreeSeat(TeamError):
+    """The teacher has no free seat for a new student (→ 409 ``no_free_seat``)."""
+
+
+class TeamMemberNotFound(TeamError):
+    """No such member, or not the caller's, or the wrong kind, or removed (→ 404)."""
+
+
+class TeamStateError(TeamError):
+    """The member exists but cannot take this change in its current state (→ 409)."""
+
+
+class InvalidScope(TeamError):
+    """A scope names an unknown subject or an action a seat cannot cover (→ 422)."""
+
+
+class InvalidCap(TeamError):
+    """A cap is negative or above :data:`MAX_CAP_UNITS` (→ 422)."""
+
+
+class NotATeacher(TeamStateError):
+    """The account is not a teacher, so it cannot lead or join a team as an assistant (→ 403).
+
+    A :class:`TeamStateError` subclass: a caller that handles only the base class still
+    refuses the request, as a 409.
+    """
+
+
+class InvalidInviteExpiry(TeamError):
+    """An invite expiry is not in the future or is beyond the longest allowed (→ 422)."""
+
+
+class InvalidPermissions(TeamError):
+    """Permission toggles name something that is not a team permission (→ 422)."""
+
+
+class AssistantInviteNotFound(TeamError):
+    """No live assistant invite has this code (→ 404)."""
+
+
+class AssistantInviteRedeemed(TeamError):
+    """The assistant invite was redeemed by someone else (→ 409)."""
+
+
+class AssistantInviteLimitError(TeamError):
+    """The teacher already holds the most live assistant invites allowed (→ 409)."""
+
+
+def _require_aware(value: datetime, name: str) -> None:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(f"{name} must be timezone-aware")
+
+
+_INVITE_CODE_CONSTRAINT: Final = "ix_invites_code"
+_PAIR_CONSTRAINT: Final = "uq_teacher_members_teacher_member"
+
+
+def member_toggles(member: TeacherMember) -> dict[str, bool] | None:
+    """Return the assistant's stored toggles, checked, or ``None`` if they are unreadable.
+
+    ``permissions`` is JSONB, so a row can hold any JSON value (``[]``, ``"x"``, ``5``,
+    ``null``) however it got there. Only an object of known permission names mapped to
+    bools is a toggle set; anything else is ``None``. Never raises.
+    """
+    raw: object = member.permissions
+    if not isinstance(raw, Mapping):
+        return None
+    try:
+        return validate_overrides(raw)
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def member_effective_permissions(member: TeacherMember) -> frozenset[TeamPermission]:
+    """Return the permissions the assistant's role and toggles grant; empty if unreadable.
+
+    The one reading of a row's permissions, shared by the guard
+    (:meth:`TeacherTeamService.assistant_has_permission`) and every read path that
+    reports them, so a malformed row grants nothing and shows nothing, and never raises.
+    """
+    toggles = member_toggles(member)
+    if toggles is None or member.role_preset is None:
+        return frozenset()
+    try:
+        return effective_permissions(member.role_preset, toggles)
+    except (ValueError, TypeError, AttributeError):
+        return frozenset()
+
+
+def month_end(now: datetime) -> datetime:
+    """Return the first instant of the UTC month after ``now`` (a seat's ``leaves_at``).
+
+    Raises:
+        ValueError: ``now`` is naive; a naive instant has no month in UTC.
+    """
+    _require_aware(now, "now")
+    current = now.astimezone(UTC)
+    if current.month == 12:
+        return datetime(current.year + 1, 1, 1, tzinfo=UTC)
+    return datetime(current.year, current.month + 1, 1, tzinfo=UTC)
+
+
+def month_start(now: datetime) -> datetime:
+    """Return the first instant of ``now``'s UTC month (a ``month`` cap's window start).
+
+    Raises:
+        ValueError: ``now`` is naive; a naive instant has no month in UTC.
+    """
+    _require_aware(now, "now")
+    current = now.astimezone(UTC)
+    return datetime(current.year, current.month, 1, tzinfo=UTC)
+
+
+@dataclass(frozen=True)
+class AssistantAccess:
+    """The outcome of one assistant-acting-for-a-lead lookup.
+
+    ``member`` is the granting row, or ``None``. ``lead_unavailable`` is ``True`` only
+    when the assistant holds an active row under the lead and the lead holds school data.
+    """
+
+    member: TeacherMember | None
+    lead_unavailable: bool
+
+
+def lead_has_school_data(
+    lead_teacher_user_id: ColumnElement[uuid.UUID] | InstrumentedAttribute[uuid.UUID] | uuid.UUID,
+) -> ColumnElement[bool]:
+    """SQL predicate: the lead holds a school membership or owns a school class.
+
+    The one definition behind the assistant guard's refusal and the ``available`` flag on
+    the memberships list. It accepts a literal id or a column of an enclosing query (the
+    ``EXISTS`` subqueries auto-correlate), so one statement serves a single lead or a
+    whole list of them.
+    """
+    return or_(
+        exists().where(SchoolMembership.user_id == lead_teacher_user_id),
+        exists().where(
+            SchoolClass.teacher_id == lead_teacher_user_id,
+            SchoolClass.school_id.is_not(None),
+        ),
+    )
+
+
+class TeacherTeamService:
+    """Seats and assistants of teachers, inside one caller-owned transaction."""
+
+    def __init__(self, session: Session) -> None:
+        """Bind the service to ``session``; the caller owns its transaction."""
+        self._session = session
+
+    # -- Seats: capacity -----------------------------------------------------
+
+    def seat_capacity(self, teacher_user_id: uuid.UUID) -> int:
+        """Return included seats plus usable extra seats (capped by a pending reduction), or 0."""
+        return self._capacity(teacher_user_id, lock=False)
+
+    def seats_used(self, teacher_user_id: uuid.UUID) -> int:
+        """Return the teacher's active plus leaving seats."""
+        stmt = (
+            select(func.count())
+            .select_from(TeacherMember)
+            .where(
+                TeacherMember.teacher_user_id == teacher_user_id,
+                TeacherMember.kind == TeacherMemberKind.student_seat,
+                TeacherMember.status.in_(_HELD),
+            )
+        )
+        return int(self._session.scalar(stmt) or 0)
+
+    # -- Seats: claim ----------------------------------------------------------
+
+    def claim_seat_for_class_join(
+        self, *, student_user_id: uuid.UUID, class_id: uuid.UUID, now: datetime
+    ) -> TeacherMember:
+        """Take (or extend) the student's seat with the class's teacher (spec §4.4).
+
+        Call after the enrolment row is written, in the same transaction. The first
+        join with a teacher creates the seat with default scope: the subjects of the
+        teacher's school-less classes the student is in, and every seat action except
+        ``study_plan`` (:func:`default_seat_actions`). A later join adds the class
+        subject to the seat. A ``leaving`` seat stays ``leaving`` (the teacher's
+        removal stands); a ``removed`` seat is reactivated with fresh defaults if a
+        seat is free. The table keeps one row per (teacher, member) pair for ever, so a
+        reactivation UPDATEs that row (status, scope, cap) and never inserts. The row
+        keeps its original ``created_at``, so a reactivated seat sorts as old as its
+        first claim in :meth:`seats_for_student`, which Phase 04's payer chain uses to
+        decide which seat pays first ("older seat pays first"). An assistant row, live
+        or removed, is never converted to a seat.
+
+        The claim takes the locks of the module docstring's steps 1 and 2, then issues
+        this month's seat allowance for the claim instant ``now``, prorated to the days
+        left (spec §5.9); idempotent for a re-used seat, and nothing for a ``leaving``
+        one. The grant runs in a savepoint and a failure is logged, never raised: a ledger
+        fault must not refuse a class join, and the monthly job repairs the seat.
+
+        Raises:
+            NoFreeSeat: A new or reactivated seat would exceed the plan's seats.
+            TeamStateError: The class does not exist, belongs to a school (school
+                classes enrol through school seats, spec §2.8), the student is the
+                class's own teacher, or the pair is an assistant (live or removed).
+        """
+        cls = self._session.get(SchoolClass, class_id)
+        if cls is None:
+            raise TeamStateError(f"Unknown class: {class_id}")
+        if cls.school_id is not None:
+            raise TeamStateError("A school class enrols through school seats, not teacher seats")
+        teacher_id = cls.teacher_id
+        if student_user_id == teacher_id:
+            raise TeamStateError("A teacher cannot take a seat in their own class")
+        capacity = self._capacity(teacher_id, lock=True)
+        existing = self._member_row(teacher_id, student_user_id, lock=True)
+        if existing is not None and existing.kind is not TeacherMemberKind.student_seat:
+            raise TeamStateError("This account is already this teacher's assistant")
+        if existing is not None and existing.status is not TeacherMemberStatus.removed:
+            subject = cls.subject_code
+            current = list(existing.scope_subjects or [])
+            if subject is not None and subject not in current:
+                existing.scope_subjects = sorted([*current, subject])
+                self._session.flush()
+            self._grant_seat_allowance(existing.id, now=now)
+            return existing
+        if self.seats_used(teacher_id) >= capacity:
+            raise NoFreeSeat(f"Teacher {teacher_id} has no free seat")
+        subjects = self._joined_subjects(student_user_id, teacher_id, also=cls.subject_code)
+        if existing is None:
+            member = TeacherMember(
+                teacher_user_id=teacher_id,
+                member_user_id=student_user_id,
+                kind=TeacherMemberKind.student_seat,
+                scope_subjects=subjects,
+                scope_actions=default_seat_actions(),
+                cap_units=None,
+                cap_period=CapPeriod.month,
+                status=TeacherMemberStatus.active,
+            )
+            self._session.add(member)
+        else:
+            # One row per (teacher, member) pair, ever: reuse it, never INSERT a second.
+            member = existing
+            member.status = TeacherMemberStatus.active
+            member.leaves_at = None
+            member.scope_subjects = subjects
+            member.scope_actions = default_seat_actions()
+            member.cap_units = None
+            member.cap_period = CapPeriod.month
+        self._session.flush()
+        self._grant_seat_allowance(member.id, now=now)
+        return member
+
+    def _grant_seat_allowance(self, member_id: uuid.UUID, *, now: datetime) -> None:
+        """Issue the seat's allowance for this month in a savepoint; a failure is only alerted."""
+        try:
+            with self._session.begin_nested():
+                grant_seat_allowance_on_claim(self._session, member_id, now=now)
+        except Exception:
+            alerts.error(
+                "seat_allowance_grant_failed",
+                alert=True,
+                teacher_member_id=str(member_id),
+                exc_info=True,
+            )
+
+    # -- Seats: reads ----------------------------------------------------------
+
+    def seats_for_student(self, student_user_id: uuid.UUID) -> list[TeacherMember]:
+        """Return the student's active and leaving seats, oldest first (spec §5.6)."""
+        stmt = (
+            select(TeacherMember)
+            .where(
+                TeacherMember.member_user_id == student_user_id,
+                TeacherMember.kind == TeacherMemberKind.student_seat,
+                TeacherMember.status.in_(_HELD),
+            )
+            .order_by(TeacherMember.created_at, TeacherMember.id)
+        )
+        return list(self._session.scalars(stmt))
+
+    def list_seats(self, teacher_user_id: uuid.UUID) -> list[TeacherMember]:
+        """Return the teacher's active and leaving seats, oldest first."""
+        stmt = (
+            select(TeacherMember)
+            .where(
+                TeacherMember.teacher_user_id == teacher_user_id,
+                TeacherMember.kind == TeacherMemberKind.student_seat,
+                TeacherMember.status.in_(_HELD),
+            )
+            .order_by(TeacherMember.created_at, TeacherMember.id)
+        )
+        return list(self._session.scalars(stmt))
+
+    def owned_member(
+        self,
+        teacher_user_id: uuid.UUID,
+        member_id: uuid.UUID,
+        *,
+        kind: TeacherMemberKind | None,
+    ) -> TeacherMember:
+        """Return the teacher's own non-removed member ``member_id`` (of ``kind`` if given).
+
+        Raises:
+            TeamMemberNotFound: Unknown, another teacher's, the wrong kind, or removed;
+                one answer for all four, so an id leaks nothing.
+        """
+        stmt = select(TeacherMember).where(
+            TeacherMember.id == member_id,
+            TeacherMember.teacher_user_id == teacher_user_id,
+            TeacherMember.status != TeacherMemberStatus.removed,
+        )
+        if kind is not None:
+            stmt = stmt.where(TeacherMember.kind == kind)
+        member = self._session.scalars(stmt).first()
+        if member is None:
+            raise TeamMemberNotFound(f"Unknown team member: {member_id}")
+        return member
+
+    def display_names(self, user_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, str | None]:
+        """Return ``users.display_name`` for each id (never the email)."""
+        if not user_ids:
+            return {}
+        rows = self._session.execute(
+            select(User.id, User.display_name).where(User.id.in_(list(user_ids)))
+        )
+        return {user_id: name for user_id, name in rows}
+
+    # -- Seats: scope, cap, removal ----------------------------------------------
+
+    def set_scope(self, member_id: uuid.UUID, *, subjects: list[str], actions: list[str]) -> None:
+        """Replace a seat's subjects and actions (spec §2.2).
+
+        Routing is per subject: the seat pays only for work on a paper, quiz or plan
+        in one of ``subjects``, and only for the ``actions`` listed.
+
+        Raises:
+            TeamMemberNotFound: No such member.
+            TeamStateError: The member is an assistant or removed.
+            InvalidScope: An action is not in ``SEAT_ACTIONS`` (index R12), or a subject
+                is not a ``subjects.code``.
+        """
+        member = self._locked_member(member_id)
+        if (
+            member.kind is not TeacherMemberKind.student_seat
+            or member.status is TeacherMemberStatus.removed
+        ):
+            raise TeamStateError("Only a held seat has a scope")
+        scopable = {action.value for action in SEAT_ACTIONS}
+        unknown_actions = sorted(set(actions) - scopable)
+        if unknown_actions:
+            raise InvalidScope(f"Actions a seat cannot cover: {unknown_actions}")
+        wanted = sorted(set(subjects))
+        known = set(self._session.scalars(select(Subject.code).where(Subject.code.in_(wanted))))
+        unknown_subjects = [code for code in wanted if code not in known]
+        if unknown_subjects:
+            raise InvalidScope(f"Unknown subjects: {unknown_subjects}")
+        member.scope_subjects = wanted
+        member.scope_actions = sorted(set(actions))
+        self._session.flush()
+
+    def set_cap(
+        self, member_id: uuid.UUID, *, cap_units: int | None, cap_period: CapPeriod
+    ) -> None:
+        """Set a seat's overflow cap or an assistant's spend cap (``None`` = see model doc).
+
+        Raises:
+            TeamMemberNotFound: No such member.
+            TeamStateError: The member is removed.
+            InvalidCap: ``cap_units`` is negative or above :data:`MAX_CAP_UNITS`.
+        """
+        member = self._locked_member(member_id)
+        if member.status is TeacherMemberStatus.removed:
+            raise TeamStateError("A removed member has no cap")
+        if cap_units is not None and not 0 <= cap_units <= MAX_CAP_UNITS:
+            raise InvalidCap(f"A cap must be between 0 and {MAX_CAP_UNITS}")
+        member.cap_units = cap_units
+        member.cap_period = CapPeriod(cap_period)
+        self._session.flush()
+
+    def request_removal(self, member_id: uuid.UUID, *, now: datetime) -> None:
+        """Mark a seat ``leaving`` until the end of the current month (spec §5.9).
+
+        Idempotent: a seat already leaving keeps its original ``leaves_at``.
+
+        Raises:
+            TeamMemberNotFound: No such member.
+            TeamStateError: The member is an assistant or already removed.
+        """
+        member = self._locked_member(member_id)
+        if (
+            member.kind is not TeacherMemberKind.student_seat
+            or member.status is TeacherMemberStatus.removed
+        ):
+            raise TeamStateError("Only a held seat can be removed this way")
+        if member.status is TeacherMemberStatus.leaving:
+            return
+        member.status = TeacherMemberStatus.leaving
+        member.leaves_at = month_end(now)
+        self._session.flush()
+
+    def release_due(self, *, now: datetime) -> int:
+        """Set every leaving seat whose ``leaves_at`` has passed to ``removed``; the count.
+
+        Run by the ``seats.release_due`` sweeper job (registered in Phase 05). The
+        current seat grant runs to its own expiry (spec §5.9).
+
+        Raises:
+            ValueError: ``now`` is naive.
+        """
+        _require_aware(now, "now")
+        released = self._session.scalars(
+            update(TeacherMember)
+            .where(
+                TeacherMember.kind == TeacherMemberKind.student_seat,
+                TeacherMember.status == TeacherMemberStatus.leaving,
+                TeacherMember.leaves_at <= now,
+            )
+            .values(status=TeacherMemberStatus.removed)
+            .returning(TeacherMember.id)
+            .execution_options(synchronize_session=False)
+        ).all()
+        return len(released)
+
+    # -- Assistants ------------------------------------------------------------------
+
+    def create_assistant_invite(
+        self, teacher_user_id: uuid.UUID, *, role: AssistantRole, expires_at: datetime
+    ) -> Invite:
+        """Mint a single-use, expiring assistant invite for the teacher's team (spec §4.4).
+
+        Only a teacher account leads a team, so only a teacher can mint. The mint is
+        serialised per teacher by a lock on the teacher's ``users`` row, so the
+        live-invite cap holds under concurrent mints. The lock is ``FOR NO KEY UPDATE``:
+        it queues other mints but not the foreign-key checks of unrelated inserts.
+
+        Raises:
+            ValueError: ``expires_at`` is naive.
+            InvalidInviteExpiry: ``expires_at`` is not after now, or is more than
+                :data:`MAX_ASSISTANT_INVITE_TTL` ahead.
+            NotATeacher: ``teacher_user_id`` is not a teacher account.
+            AssistantInviteLimitError: The teacher holds the most live invites allowed.
+            TeamError: No unique code after several attempts (astronomically unlikely).
+        """
+        _require_aware(expires_at, "expires_at")
+        issued = datetime.now(UTC)
+        if not issued < expires_at <= issued + MAX_ASSISTANT_INVITE_TTL:
+            raise InvalidInviteExpiry(
+                f"An assistant invite must expire within {MAX_ASSISTANT_INVITE_TTL.days} days"
+            )
+        lead_role = self._session.scalar(
+            select(User.role).where(User.id == teacher_user_id).with_for_update(key_share=True)
+        )
+        if lead_role is not Role.teacher:
+            raise NotATeacher("Only a teacher account can invite assistants")
+        live = self._session.scalar(
+            select(func.count())
+            .select_from(Invite)
+            .where(
+                Invite.team_teacher_id == teacher_user_id,
+                Invite.redeemed_by.is_(None),
+                Invite.expires_at > func.now(),
+            )
+        )
+        if int(live or 0) >= MAX_LIVE_ASSISTANT_INVITES:
+            raise AssistantInviteLimitError(
+                f"A teacher may hold at most {MAX_LIVE_ASSISTANT_INVITES} live assistant invites"
+            )
+        for _ in range(_INVITE_CODE_ATTEMPTS):
+            invite = Invite(
+                code=generate_invite_code(),
+                role=InviteRole.assistant,
+                created_by=teacher_user_id,
+                team_teacher_id=teacher_user_id,
+                assistant_role=AssistantRole(role),
+                expires_at=expires_at,
+                reusable=False,
+            )
+            try:
+                with self._session.begin_nested():
+                    self._session.add(invite)
+                    self._session.flush()
+            except IntegrityError as exc:
+                if constraint_name(exc) != _INVITE_CODE_CONSTRAINT:
+                    raise
+                continue
+            return invite
+        raise TeamError("Could not generate a unique invite code; please retry")
+
+    def redeem_assistant_invite(
+        self, *, code: str, user_id: uuid.UUID, now: datetime
+    ) -> TeacherMember:
+        """Attach ``user_id`` to the invite's teacher as an assistant (spec §2.3).
+
+        The invite row is locked first, so two redemptions of one code serialise and the
+        second sees it consumed. An invite is consumed exactly once. Replaying it by the
+        same user returns their active row untouched (role and toggles kept). A replay
+        after the assistant was removed is refused: the invite is spent, and only a new
+        one brings them back. A removed assistant who redeems a fresh invite has the
+        same row reactivated (UPDATE, never a second row) with the invite's role and no
+        toggles. Nothing is consumed when a check below refuses.
+
+        Raises:
+            ValueError: ``now`` is naive.
+            AssistantInviteNotFound: No unexpired assistant invite has ``code``.
+            AssistantInviteRedeemed: The invite was already used (by anyone), and the
+                caller is not its redeemer with an active assistant row.
+            NotATeacher: The redeemer is not a teacher account.
+            TeamStateError: The redeemer is the lead teacher, or already holds a seat or
+                an assistant row (live) with them.
+        """
+        _require_aware(now, "now")
+        invite = self._session.scalars(
+            select(Invite).where(Invite.code == code).with_for_update()
+        ).first()
+        if (
+            invite is None
+            or invite.role is not InviteRole.assistant
+            or invite.team_teacher_id is None
+            or invite.assistant_role is None
+            or (invite.expires_at is not None and invite.expires_at <= now)
+        ):
+            raise AssistantInviteNotFound("Unknown assistant invite")
+        teacher_id = invite.team_teacher_id
+        if invite.redeemed_by is not None:
+            if invite.redeemed_by == user_id:
+                member = self._member_row(teacher_id, user_id, lock=True)
+                if (
+                    member is not None
+                    and member.kind is TeacherMemberKind.assistant
+                    and member.status is TeacherMemberStatus.active
+                ):
+                    return member
+            raise AssistantInviteRedeemed("This assistant invite has already been used")
+        if teacher_id == user_id:
+            raise TeamStateError("A teacher cannot be their own assistant")
+        redeemer_role = self._session.scalar(select(User.role).where(User.id == user_id))
+        if redeemer_role is not Role.teacher:
+            raise NotATeacher("Only a teacher account can be an assistant")
+        member = self._member_row(teacher_id, user_id, lock=True)
+        if member is not None and member.kind is not TeacherMemberKind.assistant:
+            raise TeamStateError("This account already holds a seat with this teacher")
+        if member is not None and member.status is not TeacherMemberStatus.removed:
+            raise TeamStateError("This account already assists this teacher")
+        if member is None:
+            member = self._insert_assistant(teacher_id, user_id, invite.assistant_role)
+        else:
+            member.status = TeacherMemberStatus.active
+            member.leaves_at = None
+            member.role_preset = invite.assistant_role
+            member.permissions = {}
+            member.cap_units = None
+            member.cap_period = CapPeriod.month
+        invite.redeemed_by = user_id
+        invite.redeemed_at = now
+        self._session.flush()
+        return member
+
+    def list_assistant_invites(self, teacher_user_id: uuid.UUID, *, now: datetime) -> list[Invite]:
+        """Return the teacher's unredeemed, unexpired assistant invites, oldest first.
+
+        Raises:
+            ValueError: ``now`` is naive.
+        """
+        _require_aware(now, "now")
+        stmt = (
+            select(Invite)
+            .where(
+                Invite.team_teacher_id == teacher_user_id,
+                Invite.redeemed_by.is_(None),
+                Invite.expires_at > now,
+            )
+            .order_by(Invite.created_at, Invite.id)
+        )
+        return list(self._session.scalars(stmt))
+
+    def revoke_assistant_invite(self, teacher_user_id: uuid.UUID, invite_id: uuid.UUID) -> None:
+        """Delete the teacher's own unredeemed assistant invite (index R3).
+
+        Locks the invite row, so a revoke racing a redemption of the same code ends with
+        exactly one of them winning.
+
+        Raises:
+            AssistantInviteNotFound: Unknown, another teacher's, or already redeemed;
+                one answer for all three.
+        """
+        invite = self._session.scalars(
+            select(Invite)
+            .where(
+                Invite.id == invite_id,
+                Invite.team_teacher_id == teacher_user_id,
+                Invite.redeemed_by.is_(None),
+            )
+            .with_for_update()
+        ).first()
+        if invite is None:
+            raise AssistantInviteNotFound(f"Unknown assistant invite: {invite_id}")
+        self._session.delete(invite)
+        self._session.flush()
+
+    def assistant_membership(
+        self, assistant_user_id: uuid.UUID, teacher_user_id: uuid.UUID
+    ) -> TeacherMember | None:
+        """Return the active assistant row linking the two accounts, or ``None``."""
+        stmt = select(TeacherMember).where(
+            TeacherMember.teacher_user_id == teacher_user_id,
+            TeacherMember.member_user_id == assistant_user_id,
+            TeacherMember.kind == TeacherMemberKind.assistant,
+            TeacherMember.status == TeacherMemberStatus.active,
+        )
+        return self._session.scalars(stmt).first()
+
+    def assistant_access(
+        self,
+        assistant_user_id: uuid.UUID,
+        lead_teacher_user_id: uuid.UUID,
+        perm: TeamPermission,
+    ) -> AssistantAccess:
+        """Resolve what ``assistant_user_id`` may do for that lead: a grant, or why not.
+
+        The single rule behind ``require_team_permission`` and Phase 04's estimate route:
+        the row's role preset with its toggles applied (spec §2.3) must include ``perm``,
+        and the lead must still be a teacher account. No row, a removed row, a lead who
+        is no longer a teacher, a missing permission, an unreadable row (toggles that
+        are not a JSON object of bools, or an unknown preset) and the lead themselves
+        all yield no grant: the check fails closed and never raises.
+
+        School data is never reachable through an assistant (Phase 03 follow-up). A lead
+        who holds any ``school_memberships`` row, or owns any class with a non-null
+        ``school_id`` (:func:`lead_has_school_data`), confers nothing: the school's shared
+        question-bank tier, its rosters, analytics and invite codes are school-scoped data
+        that team permissions were never meant to cover, and school billing is out of the
+        team spec's scope. The rule lives here, not in the router guard, so every caller
+        (including Phase 04's estimate route) inherits it, and it is evaluated in the
+        same statement as the permission lookup, live on every call: a lead who joins a
+        school (or has a school class created for them) loses the assistant path on the
+        very next request. The lead acting for themselves never reaches this method.
+
+        ``lead_unavailable`` is set only when the assistant holds an active row under a
+        teacher lead and that lead holds school data, so a caller can tell "your team is
+        unavailable right now" from "you have no standing here". A caller with no active
+        row never learns anything about the lead.
+        """
+        if assistant_user_id == lead_teacher_user_id:
+            return AssistantAccess(member=None, lead_unavailable=False)
+        # One query, one round trip: the lead's current role and the school-data flag
+        # ride along as a join and a column, so a lead who was demoted, re-roled or moved
+        # into a school after the row was written confers nothing.
+        row = self._session.execute(
+            select(TeacherMember, lead_has_school_data(TeacherMember.teacher_user_id))
+            .join(User, User.id == TeacherMember.teacher_user_id)
+            .where(
+                TeacherMember.teacher_user_id == lead_teacher_user_id,
+                TeacherMember.member_user_id == assistant_user_id,
+                TeacherMember.kind == TeacherMemberKind.assistant,
+                TeacherMember.status == TeacherMemberStatus.active,
+                User.role == Role.teacher,
+            )
+        ).first()
+        if row is None:
+            return AssistantAccess(member=None, lead_unavailable=False)
+        member, school_data = row
+        if school_data:
+            return AssistantAccess(member=None, lead_unavailable=True)
+        if member.role_preset is None or perm not in member_effective_permissions(member):
+            return AssistantAccess(member=None, lead_unavailable=False)
+        return AssistantAccess(member=member, lead_unavailable=False)
+
+    def assistant_has_permission(
+        self,
+        assistant_user_id: uuid.UUID,
+        lead_teacher_user_id: uuid.UUID,
+        perm: TeamPermission,
+    ) -> TeacherMember | None:
+        """Return the active assistant row if it grants ``perm`` for that lead, else ``None``.
+
+        :meth:`assistant_access` with the reason dropped: every refusal, including the
+        school-data one, is ``None``. See there for the rule.
+        """
+        return self.assistant_access(assistant_user_id, lead_teacher_user_id, perm).member
+
+    def memberships_with_availability(
+        self, assistant_user_id: uuid.UUID
+    ) -> list[tuple[TeacherMember, bool]]:
+        """Return every team the account actively assists, oldest first, with availability.
+
+        Teams whose lead is no longer a teacher account are left out: such a row confers
+        nothing (:meth:`assistant_access`), so it is not offered either. The flag is
+        ``False`` for a lead who holds school data (:func:`lead_has_school_data`, the
+        guard's own predicate), computed in the same statement: no per-team query.
+        """
+        stmt = (
+            select(TeacherMember, ~lead_has_school_data(TeacherMember.teacher_user_id))
+            .join(User, User.id == TeacherMember.teacher_user_id)
+            .where(
+                TeacherMember.member_user_id == assistant_user_id,
+                TeacherMember.kind == TeacherMemberKind.assistant,
+                TeacherMember.status == TeacherMemberStatus.active,
+                User.role == Role.teacher,
+            )
+            .order_by(TeacherMember.created_at, TeacherMember.id)
+        )
+        return [(member, bool(available)) for member, available in self._session.execute(stmt)]
+
+    def memberships_for_assistant(self, assistant_user_id: uuid.UUID) -> list[TeacherMember]:
+        """Return every team the account actively assists, oldest first.
+
+        See :meth:`memberships_with_availability`, which also says whether each lead is
+        available to assistants.
+        """
+        return [m for m, _ in self.memberships_with_availability(assistant_user_id)]
+
+    def lead_is_available(self, lead_teacher_user_id: uuid.UUID) -> bool:
+        """Whether assistants may act for this lead: they hold no school data."""
+        return not bool(self._session.scalar(select(lead_has_school_data(lead_teacher_user_id))))
+
+    def list_assistants(self, teacher_user_id: uuid.UUID) -> list[TeacherMember]:
+        """Return the teacher's active assistants, oldest first."""
+        stmt = (
+            select(TeacherMember)
+            .where(
+                TeacherMember.teacher_user_id == teacher_user_id,
+                TeacherMember.kind == TeacherMemberKind.assistant,
+                TeacherMember.status == TeacherMemberStatus.active,
+            )
+            .order_by(TeacherMember.created_at, TeacherMember.id)
+        )
+        return list(self._session.scalars(stmt))
+
+    def update_assistant(
+        self,
+        member_id: uuid.UUID,
+        *,
+        role: AssistantRole | None,
+        permissions: Mapping[str, object] | None,
+    ) -> TeacherMember:
+        """Change an assistant's role preset and/or toggles; ``None`` leaves a field as is.
+
+        ``permissions`` replaces the stored overrides (``{}`` clears them). It is checked
+        by :func:`~lemely.core.team_permissions.validate_overrides` before anything is
+        written, so a refused toggle leaves the role unchanged too. Billing, seats and
+        assistants are not team permissions, so no toggle can name them.
+
+        Raises:
+            TeamMemberNotFound: No such member.
+            TeamStateError: The member is a seat or removed.
+            InvalidPermissions: A toggle is not a team permission or not a bool.
+        """
+        member = self._locked_member(member_id)
+        if (
+            member.kind is not TeacherMemberKind.assistant
+            or member.status is TeacherMemberStatus.removed
+        ):
+            raise TeamStateError("Only an active assistant has a role")
+        if permissions is not None:
+            try:
+                member.permissions = validate_overrides(permissions)
+            except UnknownPermissionError as exc:
+                raise InvalidPermissions(str(exc)) from exc
+        if role is not None:
+            member.role_preset = AssistantRole(role)
+        self._session.flush()
+        return member
+
+    def remove_assistant(self, member_id: uuid.UUID) -> None:
+        """Remove an assistant at once (no month-end period; assistants have no allowance).
+
+        Raises:
+            TeamMemberNotFound: No such member.
+            TeamStateError: The member is a seat or already removed.
+        """
+        member = self._locked_member(member_id)
+        if (
+            member.kind is not TeacherMemberKind.assistant
+            or member.status is TeacherMemberStatus.removed
+        ):
+            raise TeamStateError("Only an active assistant can be removed this way")
+        member.status = TeacherMemberStatus.removed
+        member.leaves_at = None
+        self._session.flush()
+
+    # -- Usage reads (team screens) ------------------------------------------------------
+
+    def cap_used(self, member: TeacherMember, *, now: datetime) -> int:
+        """Units the member drew from the teacher's grants in its cap window, plus open holds.
+
+        The same sum as Phase 01's ``UsageLedger._cap_used`` for the payer the chain
+        builds from this row (owner = the teacher, ``teacher_member_id`` = this row,
+        window = this UTC month for ``month``, none for ``total``): settled draws in the
+        window, negated, plus the hold and release lines still netting to an open hold.
+        A seat's own ``seat_allowance`` grants are owned by the student, so they never
+        count against the cap.
+
+        Raises:
+            ValueError: ``now`` is naive.
+        """
+        _require_aware(now, "now")
+        base = (
+            select(func.coalesce(func.sum(UsageEntry.units), 0))
+            .join(UsageGrant, UsageGrant.id == UsageEntry.grant_id)
+            .where(
+                UsageGrant.owner_user_id == member.teacher_user_id,
+                UsageEntry.teacher_member_id == member.id,
+            )
+        )
+        settled = base.where(UsageEntry.kind == UsageEntryKind.settle)
+        if member.cap_period is CapPeriod.month:
+            settled = settled.where(UsageEntry.event_at >= month_start(now))
+        held = base.where(UsageEntry.kind.in_(HELD_KINDS))
+        return -int(self._session.scalar(settled) or 0) + int(self._session.scalar(held) or 0)
+
+    def seat_meter_fraction(self, member: TeacherMember, *, now: datetime) -> float | None:
+        """Share of the seat's current allowance used (``UsageLedger.meter_fraction``).
+
+        ``None`` for an assistant, and for a seat with no current ``seat_allowance`` grant.
+        """
+        if member.kind is not TeacherMemberKind.student_seat:
+            return None
+        return UsageLedger(self._session).meter_fraction(
+            member.member_user_id, teacher_member_id=member.id, now=now
+        )
+
+    def cap_used_many(
+        self, members: Sequence[TeacherMember], *, now: datetime
+    ) -> dict[uuid.UUID, int]:
+        """:meth:`cap_used` for many members in one grouped query, keyed by member id.
+
+        The same sums as the single-member read: settled draws on the member's teacher's
+        grants (windowed to this UTC month for a ``month`` cap, unwindowed for ``total``),
+        negated, plus the hold and release lines still netting to an open hold (never
+        windowed). Members with no lines are ``0``.
+
+        Raises:
+            ValueError: ``now`` is naive.
+        """
+        _require_aware(now, "now")
+        if not members:
+            return {}
+        ids = [member.id for member in members]
+        month_ids = [m.id for m in members if m.cap_period is CapPeriod.month]
+        in_window = UsageEntry.event_at >= month_start(now)
+        if month_ids:
+            in_window = or_(UsageEntry.teacher_member_id.not_in(month_ids), in_window)
+        else:
+            in_window = true()
+        settled = func.sum(
+            case(
+                (and_(UsageEntry.kind == UsageEntryKind.settle, in_window), UsageEntry.units),
+                else_=0,
+            )
+        )
+        held = func.sum(case((UsageEntry.kind.in_(HELD_KINDS), UsageEntry.units), else_=0))
+        rows = self._session.execute(
+            select(UsageEntry.teacher_member_id, settled, held)
+            .join(UsageGrant, UsageGrant.id == UsageEntry.grant_id)
+            .join(TeacherMember, TeacherMember.id == UsageEntry.teacher_member_id)
+            .where(
+                UsageEntry.teacher_member_id.in_(ids),
+                UsageGrant.owner_user_id == TeacherMember.teacher_user_id,
+            )
+            .group_by(UsageEntry.teacher_member_id)
+        ).all()
+        used = dict.fromkeys(ids, 0)
+        for member_id, settled_units, held_units in rows:
+            used[member_id] = -int(settled_units or 0) + int(held_units or 0)
+        return used
+
+    def seat_meter_fractions(
+        self, members: Sequence[TeacherMember], *, now: datetime
+    ) -> dict[uuid.UUID, float | None]:
+        """:meth:`seat_meter_fraction` for many members in one grouped query, keyed by id.
+
+        Reads each seat's current ``seat_allowance`` grants (owned by the student, usable
+        at ``now``) exactly as ``UsageLedger.meter_fraction`` does. Assistants and seats
+        with no current grant are ``None``.
+        """
+        fractions: dict[uuid.UUID, float | None] = {member.id: None for member in members}
+        seat_ids = [m.id for m in members if m.kind is TeacherMemberKind.student_seat]
+        if not seat_ids:
+            return fractions
+        rows = self._session.execute(
+            select(
+                UsageGrant.teacher_member_id,
+                func.coalesce(func.sum(UsageGrant.units), 0),
+                func.coalesce(func.sum(UsageGrantBalance.remaining), 0),
+            )
+            .join(UsageGrantBalance, UsageGrantBalance.grant_id == UsageGrant.id)
+            .join(TeacherMember, TeacherMember.id == UsageGrant.teacher_member_id)
+            .where(
+                UsageGrant.kind == GrantKind.seat_allowance,
+                UsageGrant.teacher_member_id.in_(seat_ids),
+                UsageGrant.owner_user_id == TeacherMember.member_user_id,
+                _usable_at(now),
+            )
+            .group_by(UsageGrant.teacher_member_id)
+        ).all()
+        for member_id, total, remaining in rows:
+            if total:
+                fractions[member_id] = (int(total) - int(remaining)) / int(total)
+        return fractions
+
+    # -- Internals ---------------------------------------------------------------
+
+    def _capacity(self, teacher_user_id: uuid.UUID, *, lock: bool) -> int:
+        stmt = (
+            select(
+                Subscription.extra_seats,
+                Subscription.pending_extra_seats,
+                PlanTierTerms.included_seats,
+            )
+            .join(PlanTier, Subscription.plan_tier_id == PlanTier.id)
+            # The seats come from the terms the subscriber is on, never the tier's live column: an
+            # admin edit changes capacity at the subscriber's renewal, not mid-period (UD13-A).
+            .join(
+                PlanTierTerms,
+                and_(
+                    PlanTierTerms.plan_tier_id == Subscription.plan_tier_id,
+                    PlanTierTerms.terms_version == Subscription.terms_version,
+                ),
+            )
+            .where(
+                Subscription.user_id == teacher_user_id,
+                Subscription.status.in_(LIVE_PLAN_STATUSES),
+                PlanTier.audience == TEACHER_AUDIENCE,
+            )
+            .order_by(
+                Subscription.payer_user_id.is_(None),  # a paid row beats a manual one (R25)
+                Subscription.created_at,
+                Subscription.id,
+            )
+            .limit(1)
+        )
+        if lock:
+            stmt = stmt.with_for_update(of=Subscription)
+        row = self._session.execute(stmt).first()
+        if row is None:
+            return 0
+        extra, pending, included = row
+        # A scheduled seat reduction lowers the usable extra seats at once (the same rule as
+        # ``merchant_charge_repo.usable_extra_seats``, inlined: this module imports nothing from
+        # the billing charge code).
+        usable_extra = int(extra or 0) if pending is None else min(int(extra or 0), int(pending))
+        return int(included or 0) + usable_extra
+
+    def _member_row(
+        self, teacher_user_id: uuid.UUID, member_user_id: uuid.UUID, *, lock: bool
+    ) -> TeacherMember | None:
+        stmt = select(TeacherMember).where(
+            TeacherMember.teacher_user_id == teacher_user_id,
+            TeacherMember.member_user_id == member_user_id,
+        )
+        if lock:
+            stmt = stmt.with_for_update()
+        return self._session.scalars(stmt).first()
+
+    def _locked_member(self, member_id: uuid.UUID) -> TeacherMember:
+        member = self._session.get(TeacherMember, member_id, with_for_update=True)
+        if member is None:
+            raise TeamMemberNotFound(f"Unknown team member: {member_id}")
+        return member
+
+    def _insert_assistant(
+        self, teacher_user_id: uuid.UUID, member_user_id: uuid.UUID, role: AssistantRole
+    ) -> TeacherMember:
+        """Insert the pair's first row as an assistant.
+
+        The pair row is unique, so a concurrent redemption of a second invite by the same
+        user (no row existed to lock) ends in a violation of that constraint here; it is
+        reported as the state error it is, and the caller's transaction rolls the invite
+        back. Any other violation is not this race and propagates.
+        """
+        member = TeacherMember(
+            teacher_user_id=teacher_user_id,
+            member_user_id=member_user_id,
+            kind=TeacherMemberKind.assistant,
+            role_preset=role,
+            permissions={},
+            cap_units=None,
+            cap_period=CapPeriod.month,
+            status=TeacherMemberStatus.active,
+        )
+        try:
+            with self._session.begin_nested():
+                self._session.add(member)
+                self._session.flush()
+        except IntegrityError as exc:
+            if constraint_name(exc) != _PAIR_CONSTRAINT:
+                raise
+            raise TeamStateError("This account already has a place on this team") from exc
+        return member
+
+    def _joined_subjects(
+        self, student_user_id: uuid.UUID, teacher_user_id: uuid.UUID, *, also: str | None
+    ) -> list[str]:
+        stmt = (
+            select(SchoolClass.subject_code)
+            .join(ClassEnrollment, ClassEnrollment.class_id == SchoolClass.id)
+            .where(
+                ClassEnrollment.student_id == student_user_id,
+                SchoolClass.teacher_id == teacher_user_id,
+                SchoolClass.school_id.is_(None),
+                SchoolClass.subject_code.is_not(None),
+            )
+            .distinct()
+        )
+        subjects = {code for code in self._session.scalars(stmt) if code is not None}
+        if also is not None:
+            subjects.add(also)
+        return sorted(subjects)
+
+
+def assistant_has_permission(
+    session: Session,
+    assistant_user_id: uuid.UUID,
+    lead_teacher_user_id: uuid.UUID,
+    perm: TeamPermission,
+) -> TeacherMember | None:
+    """:meth:`TeacherTeamService.assistant_has_permission` for a caller holding a session."""
+    return TeacherTeamService(session).assistant_has_permission(
+        assistant_user_id, lead_teacher_user_id, perm
+    )
+
+
+class TeacherTeamStore:
+    """Opens one transaction per unit of team work (routers and the team guard)."""
+
+    def __init__(self, sessionmaker: sessionmaker[Session]) -> None:
+        """Wire the store to a session factory."""
+        self._sessionmaker = sessionmaker
+
+    @contextmanager
+    def transaction(self) -> Iterator[TeacherTeamService]:
+        """Yield a service bound to a new transaction; commit on exit, roll back on error."""
+        with self._sessionmaker() as session, session.begin():
+            yield TeacherTeamService(session)
+
+
+__all__ = [
+    "LIVE_PLAN_STATUSES",
+    "MAX_ASSISTANT_INVITE_TTL",
+    "MAX_CAP_UNITS",
+    "MAX_LIVE_ASSISTANT_INVITES",
+    "SEAT_ACTIONS_OFF_BY_DEFAULT",
+    "TEACHER_AUDIENCE",
+    "AssistantAccess",
+    "AssistantInviteLimitError",
+    "AssistantInviteNotFound",
+    "AssistantInviteRedeemed",
+    "InvalidCap",
+    "InvalidInviteExpiry",
+    "InvalidPermissions",
+    "InvalidScope",
+    "NoFreeSeat",
+    "NotATeacher",
+    "TeacherTeamService",
+    "TeacherTeamStore",
+    "TeamError",
+    "TeamMemberNotFound",
+    "TeamStateError",
+    "assistant_has_permission",
+    "default_seat_actions",
+    "lead_has_school_data",
+    "member_effective_permissions",
+    "member_toggles",
+    "month_end",
+    "month_start",
+]

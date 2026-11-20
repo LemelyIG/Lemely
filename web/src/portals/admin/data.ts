@@ -40,6 +40,7 @@ export interface AdminNavItem {
     | "tutors"
     | "moderation"
     | "reports"
+    | "billing"
     | "waitlist"
   /** Index route match (the lane's dashboard lives at its root). */
   end?: boolean
@@ -56,6 +57,7 @@ export const schoolNavItems: AdminNavItem[] = [
 /** X-01…X-03. The queue sits second because it is the only one with work in it. */
 export const platformNavItems: AdminNavItem[] = [
   { to: "/platform", label: "Console", icon: "console", end: true },
+  { to: "/platform/billing", label: "Billing", icon: "billing" },
   { to: "/platform/activations", label: "Activations", icon: "activations" },
   { to: "/platform/waitlist", label: "Waitlist", icon: "waitlist" },
   { to: "/platform/tutors", label: "Tutors", icon: "tutors" },
@@ -97,6 +99,14 @@ export function resolveAdminTrail(pathname: string, lane: AdminLane): TrailCrumb
 
   const section = items.find((item) => item.to === path)
   if (section) return [{ label: rootLabel, to: rootPath }, { label: section.label }]
+
+  if (lane === "platform" && path.startsWith("/platform/billing/")) {
+    const area = path.slice("/platform/billing/".length).split("/")[0]
+    const label = (
+      { catalogue: "Catalogue", payments: "Payments", margin: "Money and margin", health: "Health", customers: "Customer" } as Record<string, string>
+    )[area]
+    if (label) return [{ label: rootLabel, to: rootPath }, { label: "Billing", to: "/platform/billing" }, { label }]
+  }
 
   if (lane === "platform") {
     for (const detail of PLATFORM_DETAIL_CRUMBS) {

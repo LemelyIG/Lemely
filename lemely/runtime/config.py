@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import re
 from collections.abc import Mapping
@@ -353,6 +354,16 @@ class GeminiSettings(BaseModel):
     # three marks. Not with `correction_retry_keep_higher`.
     correction_retry_median: bool = True
     correction_retry_median_below: float = Field(default=0.86, ge=0.0, le=1.0)
+
+    @field_validator("pricing")
+    @classmethod
+    def _prices_are_finite_and_non_negative(
+        cls, value: dict[str, list[float]]
+    ) -> dict[str, list[float]]:
+        for model, rates in value.items():
+            if any(not math.isfinite(rate) or rate < 0 for rate in rates):
+                raise ValueError(f"pricing[{model!r}]: rates must be finite and non-negative")
+        return value
 
     @field_validator("claude_cache_for")
     @classmethod
@@ -1247,6 +1258,22 @@ class NotificationsSettings(BaseModel):
     study_plan_reminder_hour: int = Field(default=8, ge=0, le=23)
 
 
+class UsageSettings(BaseModel):
+    """Usage metering (paymob billing spec §2.4, §5.7).
+
+    Overrides via ``lemely.toml`` under ``[usage]`` or ``LEMELY_USAGE__*`` env vars.
+
+    ``enforce`` is true in every deployed environment: every LLM-backed route reserves
+    against the usage ledger and answers 402 when the payer chain cannot cover the top of
+    the estimate. ``tests/conftest.py`` sets it false for the suite, so route tests written
+    before metering need no ledger; the metering tests build an enforcing ``UsageMeter``
+    themselves. Not emitted to ``lemely.toml.example``: nobody setting Lemely up turns it off.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    enforce: bool = True
+
+
 class TutoringSettings(BaseModel):
     """The tutoring marketplace (spec docs/tutoring/SPEC.md §b).
 
@@ -1262,6 +1289,22 @@ class TutoringSettings(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     email_daily_cap: int = Field(default=60, ge=0)
+
+
+class TeamSettings(BaseModel):
+    """Teacher seats and assistants (paymob billing spec §2.2, §4.4).
+
+    Overrides via ``lemely.toml`` under ``[team]`` or ``LEMELY_TEAM__*`` env vars.
+
+    ``enforce_teacher_seats`` is true in every deployed environment: a student's join
+    of a school-less class whose teacher has no free seat is refused (409
+    ``no_free_seat``). ``tests/conftest.py`` sets it false for the suite, so class-join
+    tests written before seats need no plan; the seat tests enforce explicitly. Not
+    emitted to ``lemely.toml.example``: nobody setting Lemely up turns it off.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    enforce_teacher_seats: bool = True
 
 
 class EdgeSettings(BaseModel):
@@ -1420,6 +1463,152 @@ class EmailSettings(BaseModel):
     api_base_url: str = "https://api.resend.com"
 
 
+#: An optional positive integer id where a blank env var means "not set".
+OptionalId = Annotated[int | None, BeforeValidator(_blank_to_none)]
+
+#: Paymob's key prefixes carry the mode: ``egy_sk_test_...``, ``egy_pk_live_...`` (skill
+#: ``intention-api.md``; the same shape without a region prefix also exists). A key with no
+#: such prefix has no readable mode.
+_PAYMOB_KEY_MODE_RE = re.compile(r"^(?:[a-z]{2,4}_)?[sp]k_(test|live)_")
+
+
+def _paymob_key_mode(key: str | None) -> Literal["test", "live"] | None:
+    """``"test"`` or ``"live"`` from a Paymob key's prefix, ``None`` when it shows neither."""
+    match = _PAYMOB_KEY_MODE_RE.match(key or "")
+    if match is None:
+        return None
+    return "live" if match.group(1) == "live" else "test"
+
+
+class PaymobKeyModeError(RuntimeError):
+    """Startup refused: a test-mode Paymob key where live keys are required (``expect_live``)."""
+
+
+class PaymobSettings(BaseModel):
+    """Paymob (Egypt) credentials and endpoints (billing spec §3, §7).
+
+    Overrides via ``LEMELY_PAYMOB__*`` env vars (``lemely.toml`` ``[paymob]`` also
+    works but is not emitted in ``lemely.toml.example``: every field here is a
+    credential or a deploy-time origin, never a knob someone sets up locally).
+
+    **Every credential defaults to ``None`` and that is a supported state**, as for
+    :class:`EmailSettings` and :class:`PushSettings`: an unregistered GitHub secret
+    renders as ``""``, ``_blank_to_none`` maps it to ``None``, ``checkout_configured``
+    is ``False``, checkout answers 503 and the webhook answers 503. Metering never
+    calls Paymob, so allowances and credits keep working (spec §6).
+
+    ``secret_key`` (``Authorization: Token``) authorises intentions, refunds and voids;
+    ``api_key`` mints the one-hour auth token used for inquiry and subscriptions;
+    ``hmac_secret`` verifies callbacks; ``card_token_key`` (urlsafe base64 of 32
+    bytes) encrypts saved-card tokens at rest. All four are server-only and typed
+    :class:`SecretStr`. ``public_key`` is handed to the browser inside the Unified
+    Checkout URL and is deliberately a plain ``str``, like ``vapid_public_key``.
+
+    ``notification_base_url`` / ``redirection_base_url`` are the public origins the
+    webhook route and the SPA return page are joined onto; ``deploy.yml`` sets them
+    per environment so a staging intention never calls back into production.
+    """
+
+    # A validation error echoes its input by default, which here is the credentials.
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+    secret_key: OptionalSecret = None
+    public_key: OptionalCredential = None
+    api_key: OptionalSecret = None
+    hmac_secret: OptionalSecret = None
+    card_integration_id: OptionalId = Field(default=None, ge=1)
+    moto_integration_id: OptionalId = Field(default=None, ge=1)
+    apple_pay_integration_id: OptionalId = Field(default=None, ge=1)
+    card_token_key: OptionalSecret = None
+    api_base: AbsoluteOrigin = "https://accept.paymob.com"
+    checkout_base: AbsoluteOrigin = "https://eg.checkout.paymob.com"
+    notification_base_url: AbsoluteOrigin = "https://lemelyig.com"
+    redirection_base_url: AbsoluteOrigin = "https://lemelyig.com"
+    timeout_seconds: float = Field(default=20.0, gt=0)
+    # Whether Paymob's ``PUT subscriptions/{id}`` can change ``amount_cents`` on a
+    # ``use_transaction_amount=true`` plan (spec section 10 question 7, sandbox S14). When
+    # false, upgrades are refused, seat reductions that need a lower amount are refused, and
+    # extra seats are charged at each renewal by Phase 06's fallback job (index R19). Default
+    # true until the sandbox answers.
+    subscription_amount_updatable: bool = True
+    # Test and live share one base URL, so the mode comes only from the keys and Integration
+    # IDs. ``deploy.yml`` sets this for production alone: a production start on test keys
+    # would sell real credits for test cards (skill audit I2).
+    expect_live: bool = False
+
+    @property
+    def key_mode_mismatch(self) -> bool:
+        """True when the public and secret keys are readably in different modes (test vs live).
+
+        Paymob answers 404 at checkout for a mixed pair. Only a key whose prefix shows its mode
+        is judged (the suite's fixtures use bare ``sk``/``pk``), and an unset key is a supported
+        state. Not fatal: the app starts, :attr:`checkout_configured` is ``False`` and the
+        client refuses writes until the keys are fixed (:meth:`log_key_mode_mismatch` alerts).
+        """
+        secret_mode = _paymob_key_mode(
+            self.secret_key.get_secret_value() if self.secret_key is not None else None
+        )
+        public_mode = _paymob_key_mode(self.public_key)
+        return secret_mode is not None and public_mode is not None and secret_mode != public_mode
+
+    def require_live_keys(self) -> None:
+        """Refuse to start on a test-mode key when ``expect_live`` is set (production).
+
+        Raises :class:`PaymobKeyModeError`, a plain ``RuntimeError`` and deliberately not a
+        pydantic ``ValidationError``: those carry the whole offending input, credentials
+        included, in ``errors()`` and ``json()``. The message names the field, never the key.
+        Integration IDs carry no mode marker, so "the IDs are the Live ones" stays on the
+        go-live checklist.
+        """
+        if not self.expect_live:
+            return
+        secret = self.secret_key.get_secret_value() if self.secret_key is not None else None
+        for name, key in (("secret_key", secret), ("public_key", self.public_key)):
+            if _paymob_key_mode(key) == "test":
+                raise PaymobKeyModeError(
+                    f"paymob.{name} is a test-mode key but paymob.expect_live is set "
+                    "(production): refusing to start on test keys"
+                )
+
+    def log_key_mode_mismatch(self) -> bool:
+        """Log ``paymob_key_mode_mismatch`` (error, ``alert=True``) and return ``True`` if any."""
+        if not self.key_mode_mismatch:
+            return False
+        structlog.get_logger("lemely.paymob").error(
+            "paymob_key_mode_mismatch",
+            alert=True,
+            detail="paymob.secret_key and paymob.public_key are in different modes; "
+            "checkout and Paymob writes answer 503 until they match",
+        )
+        return True
+
+    @property
+    def key_mode(self) -> Literal["test", "live"]:
+        """The mode objects made with these keys live in (Paymob plan ids exist in one mode only).
+
+        Read from the secret key's prefix. A key with no readable prefix (the suite's bare
+        fixtures, an unset key) is judged by ``expect_live``: live where production insists on
+        it, test everywhere else.
+        """
+        mode = _paymob_key_mode(
+            self.secret_key.get_secret_value() if self.secret_key is not None else None
+        )
+        return mode or ("live" if self.expect_live else "test")
+
+    @property
+    def checkout_configured(self) -> bool:
+        """True when a one-off card checkout can be created and its callback verified."""
+        return not self.key_mode_mismatch and all(
+            value is not None
+            for value in (
+                self.secret_key,
+                self.public_key,
+                self.api_key,
+                self.hmac_secret,
+                self.card_integration_id,
+            )
+        )
+
+
 class _RemovedKeysDotEnvSource(DotEnvSettingsSource):
     """pydantic-settings' ``.env`` source minus every F4-removed key.
 
@@ -1445,6 +1634,9 @@ class Settings(BaseSettings):
         # any code that reconstructs Settings from a dump) would reject the
         # field-name key as an extra input. Allow both field name and aliases.
         populate_by_name=True,
+        # A validation error echoes its input by default, and this model's input holds every
+        # credential. ``str(exc)`` is what a startup traceback prints to the logs.
+        hide_input_in_errors=True,
     )
     gradio: GradioSettings = GradioSettings()
     paths: PathsSettings = PathsSettings()
@@ -1461,6 +1653,9 @@ class Settings(BaseSettings):
     notifications: NotificationsSettings = NotificationsSettings()
     email: EmailSettings = EmailSettings()
     tutoring: TutoringSettings = TutoringSettings()
+    usage: UsageSettings = UsageSettings()
+    team: TeamSettings = TeamSettings()
+    paymob: PaymobSettings = PaymobSettings()
     waitlist: WaitlistSettings = WaitlistSettings()
     access: AccessSettings = AccessSettings()
     edge: EdgeSettings = EdgeSettings()

@@ -51,6 +51,7 @@ EXPECTED_TABLES = {
     "mark_schemes",
     "plan_tiers",
     "subscriptions",
+    "subscription_periods",
     "uploads",
     "attempts",
     "question_results",
@@ -112,6 +113,35 @@ EXPECTED_TABLES = {
     "tutor_access_audit",
     "tutoring_reports",
     "tutoring_blocks",
+    # Usage ledger (lemely/db/models/usage.py, migration 0052).
+    "usage_rates",
+    "usage_estimators",
+    "usage_grants",
+    "usage_grant_balances",
+    "usage_jobs",
+    "usage_entries",
+    "usage_debts",
+    # Billing payments (lemely/db/models/billing.py, migration 0053).
+    "credit_packs",
+    "payments",
+    "paymob_events",
+    "saved_cards",
+    # Auto top-up (lemely/db/models/billing.py, migration 0056).
+    "auto_topup_settings",
+    # Teacher team (lemely/db/models/team.py, migration 0054).
+    "teacher_members",
+    # Admin billing (lemely/db/models/admin_audit.py and billing_ops.py, migration 0057).
+    "admin_audit_log",
+    "job_runs",
+    "paymob_webhook_failures",
+    "payment_refunds",
+    "usage_job_model_costs",
+    "signup_allowance_off_periods",
+    "credit_conversion_rates",
+    "billing_settings",
+    "plan_tier_terms",
+    "llm_price_overrides",
+    # Waitlist (lemely/db/models/waitlist.py, migrations 0052-0054 on the develop chain).
     "waitlist_applicants",
     "waitlist_digest_log",
 }
@@ -135,6 +165,14 @@ EXPECTED_TABLES = {
 # (``tests/test_db_tutoring_schema.py`` asserts they have no ``updated_at``).
 # ``tutor_evidence_uploads`` (migration 0051, T30 F30-5) is a fifth append-only log
 # of the same shape: one row per T6 upload attempt, never updated.
+# ``usage_entries`` (migration 0052) is the usage ledger: a trigger rejects every
+# UPDATE and DELETE, so it carries ``created_at`` (and ``event_at``) only.
+# Migration 0057: ``admin_audit_log`` is append-only (a trigger rejects UPDATE and DELETE),
+# ``paymob_webhook_failures`` and ``usage_job_model_costs`` and ``signup_allowance_off_periods``
+# are written once and never updated (``received_at`` / ``created_at`` only), and ``job_runs``
+# is one upserted row per job whose ``last_*`` columns are its own timestamps.
+# ``plan_tier_terms`` is the append-only history of a tier's terms (``created_at`` only; the same
+# trigger as the audit log).
 TABLES_WITHOUT_TIMESTAMPS = {
     "otp_challenges",
     "auth_cooldowns",
@@ -144,6 +182,13 @@ TABLES_WITHOUT_TIMESTAMPS = {
     "parent_link_events",
     "tutor_access_audit",
     "tutor_evidence_uploads",
+    "usage_entries",
+    "admin_audit_log",
+    "job_runs",
+    "paymob_webhook_failures",
+    "usage_job_model_costs",
+    "signup_allowance_off_periods",
+    "plan_tier_terms",
     "waitlist_digest_log",  # keyed by day; one row per claimed digest
 }
 
@@ -286,7 +331,28 @@ def test_0043_merge_heads_joins_the_develop_and_branch_chains() -> None:
         "0042_question_result_source_box",
         "0039_paper_soft_delete",
     }
-    assert script_dir.get_heads() == ["0054_waitlist_email_confirmation"]
+    lineage = {r.revision for r in script_dir.iterate_revisions("heads", "base")}
+    assert "0043_merge_heads" in lineage
+
+
+def test_migration_chain_has_one_head_joining_billing_and_waitlist() -> None:
+    """``0060_merge_heads`` joins the billing and waitlist chains into the single head.
+
+    Both forked from ``0051_tutor_evidence_uploads``. Two heads would make every
+    ``alembic upgrade head`` (CI, the deploy ``migrate`` job, the container entrypoint)
+    refuse to run, so the join must exist and must be the only head.
+    """
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    script_dir = ScriptDirectory.from_config(Config("alembic.ini"))
+    assert script_dir.get_heads() == ["0060_merge_heads"]
+    revision = script_dir.get_revision("0060_merge_heads")
+    assert revision is not None
+    assert set(revision.down_revision) == {
+        "0059_payment_applied_marker",
+        "0054_waitlist_email_confirmation",
+    }
 
 
 def test_every_enum_column_binds_its_value_not_its_member_name() -> None:

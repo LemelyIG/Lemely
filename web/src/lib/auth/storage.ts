@@ -5,6 +5,7 @@
  * logins (D1.11's 3-device-limit semantics rely on a stable device id).
  */
 
+import { clearActingLead } from "@/lib/actingTeacher"
 import { randomUuid } from "@/lib/uuid"
 import { queryClient } from "@/lib/queryClient"
 import { persister } from "@/lib/offline/queryPersister"
@@ -93,8 +94,15 @@ export function setSession(session: Session): void {
  * may have happened tabs or days earlier, describing a sign-out that this
  * reader chose themselves (SHOULD-FIX 4).
  */
+/** localStorage key of the one-use post-verification `next` (`signupNext.ts`); a sign-out must
+ * drop it so the next person on a shared device never inherits it. */
+export const SIGNUP_NEXT_KEY = "lemely.signup.next"
+
 export function clearSession(): void {
+  // Whoever signs in next on this tab must not inherit the last person's "working as".
+  clearActingLead()
   localStorage.removeItem(SESSION_KEY)
+  localStorage.removeItem(SIGNUP_NEXT_KEY)
   notify(null)
   expiredSignal = false
   expiredRole = undefined
@@ -174,6 +182,62 @@ export function endSession(caches: SessionCaches = defaultSessionCaches): Promis
   const removing = caches.removePersistedQueries()
   const clearing = caches.clearUploadQueue()
   return Promise.allSettled([removing, clearing]).then(() => undefined)
+}
+
+/*
+ * Another tab changed who is signed in.
+ *
+ * `localStorage` is shared by every tab and `sessionStorage` is not, so the session can change
+ * underneath a tab that is mid-way through "working as" someone, or simply holding the previous
+ * person's cache. This tab hears of it only through the `storage` event. When the user id in the
+ * session changes (a different person signed in, or the session was removed), this tab forgets
+ * who it was acting for, drops its in-memory and persisted query cache so none of the previous
+ * person's data can be shown to the next, and tells `AuthContext`, which is how a signed-out tab
+ * reaches the sign-in screen. A token refresh keeps the same user id and does nothing here.
+ */
+
+/** The user id inside a raw stored session, or `null` when absent or unreadable. */
+export function sessionUserIdOf(raw: string | null): string | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as { userId?: unknown }
+    return typeof parsed.userId === "string" ? parsed.userId : null
+  } catch {
+    return null
+  }
+}
+
+export interface SessionStorageChange {
+  key: string | null
+  oldValue: string | null
+  newValue: string | null
+}
+
+/**
+ * Handle one `storage` event. Exported (with injectable caches) so the rule can be tested without
+ * a second tab. A `null` key means the whole store was cleared, which is a change.
+ */
+export function handleSessionStorageEvent(
+  event: SessionStorageChange,
+  caches: SessionCaches = defaultSessionCaches,
+): boolean {
+  if (event.key !== null && event.key !== SESSION_KEY) return false
+  const before = sessionUserIdOf(event.oldValue)
+  const after = sessionUserIdOf(event.newValue)
+  if (event.key !== null && before === after) return false
+  clearActingLead()
+  caches.clearQueries()
+  void Promise.resolve(caches.removePersistedQueries()).catch(() => undefined)
+  notify(getSession())
+  return true
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (event) => {
+    // Only `localStorage` carries the session; `sessionStorage` events (the acting choice) are this tab's own.
+    if (event.storageArea !== null && event.storageArea !== window.localStorage) return
+    handleSessionStorageEvent(event)
+  })
 }
 
 /*

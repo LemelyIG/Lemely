@@ -14,6 +14,7 @@ import {
   GraduationCap,
   ChatText,
   Flag,
+  Receipt,
   ListChecks,
   type Icon,
 } from "@phosphor-icons/react"
@@ -26,6 +27,7 @@ import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { SidebarNav, type NavShellItem } from "@/components/ui/nav-shells"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
+import { PhoneBannerSlot } from "@/components/ui/phone-banner-slot"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import { ScreenOutlet } from "@/components/ui/screen-outlet"
@@ -89,6 +91,28 @@ const TutoringReportDetail = lazy(() =>
   import("./screens/tutoring/ReportDetail").then((m) => ({ default: m.ReportDetail })),
 )
 
+const BillingLayout = lazy(() =>
+  import("./screens/billing/BillingLayout").then((m) => ({ default: m.BillingLayout })),
+)
+const BillingCustomers = lazy(() =>
+  import("./screens/billing/Customers").then((m) => ({ default: m.Customers })),
+)
+const BillingCustomerDetail = lazy(() =>
+  import("./screens/billing/CustomerDetail").then((m) => ({ default: m.CustomerDetail })),
+)
+const BillingCatalogue = lazy(() =>
+  import("./screens/billing/Catalogue").then((m) => ({ default: m.Catalogue })),
+)
+const BillingPayments = lazy(() =>
+  import("./screens/billing/Payments").then((m) => ({ default: m.Payments })),
+)
+const BillingMargin = lazy(() =>
+  import("./screens/billing/Margin").then((m) => ({ default: m.Margin })),
+)
+const BillingHealth = lazy(() =>
+  import("./screens/billing/Health").then((m) => ({ default: m.Health })),
+)
+
 const NAV_ICON: Record<AdminNavItem["icon"], Icon> = {
   dashboard: SquaresFour,
   // A seat is a chair. The glyph is the literal object the quota counts, which
@@ -102,6 +126,7 @@ const NAV_ICON: Record<AdminNavItem["icon"], Icon> = {
   tutors: GraduationCap,
   moderation: ChatText,
   reports: Flag,
+  billing: Receipt,
   waitlist: ListChecks,
 }
 
@@ -352,6 +377,8 @@ function AdminLayout({ lane }: { lane: AdminLane }) {
               about the account. Renders nothing, and no margin either, unless the
               profile has resolved and says the address is unverified. */}
           <VerifyEmailBanner />
+          {/* UD-11: renders nothing unless the profile says there is no phone number on file. */}
+          <PhoneBannerSlot />
           <Suspense fallback={<RouteSkeleton />}>
             {/* PR 1B fulfils `routes.tsx`'s note ("Phase 4 places those as it
                 rebuilds each surface") for both admin lanes: a render crash
@@ -439,6 +466,20 @@ export const platformAdminRoute: RouteObject = {
       path: "schools",
       element: <Schools />,
       handle: { title: "Platform schools", skeleton: "page-header" },
+    },
+    // Billing (Paymob phase 08, spec §8). Inherits the platform_admin guard.
+    {
+      path: "billing",
+      element: <BillingLayout />,
+      handle: { title: "Platform billing", skeleton: "page-header" },
+      children: [
+        { index: true, element: <BillingCustomers />, handle: { title: "Billing customers", skeleton: "list" } },
+        { path: "customers/:userId", element: <BillingCustomerDetail />, handle: { title: "Billing customer", skeleton: "page-header" } },
+        { path: "payments", element: <BillingPayments />, handle: { title: "Billing payments", skeleton: "list" } },
+        { path: "catalogue", element: <BillingCatalogue />, handle: { title: "Billing catalogue", skeleton: "page-header" } },
+        { path: "margin", element: <BillingMargin />, handle: { title: "Billing money and margin", skeleton: "page-header" } },
+        { path: "health", element: <BillingHealth />, handle: { title: "Billing health", skeleton: "page-header" } },
+      ],
     },
     {
       path: "activations",

@@ -23,6 +23,7 @@ export function MarketingFooter() {
                 {x.label}
               </a>
             ))}
+            <Link to="/pricing">Pricing</Link>
             <Link to="/join">Parent access</Link>
           </nav>
           <nav aria-label="Contact">

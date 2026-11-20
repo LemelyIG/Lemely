@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
-import { lazy, useRef, useState, type ReactNode, type RefObject } from "react"
+import { lazy, Suspense, useRef, useState, type ReactNode, type RefObject } from "react"
 import { Link, NavLink, useLocation } from "react-router-dom"
 import {
   SquaresFour,
@@ -13,13 +13,19 @@ import {
   Gear,
   GraduationCap,
   Lifebuoy,
+  CreditCard,
+  UsersFour,
   type Icon,
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 import { gradeChipClass } from "@/lib/grade"
 import type { NavShellItem } from "@/components/ui/nav-shells"
+import { ErrorBoundary } from "@/components/ui/error-boundary"
+import { ActingTeacherProvider } from "@/components/acting/acting-context"
+import { useActingTeacher, useCan } from "@/components/acting/acting-state"
 import { PortalNotFound } from "@/portals/misc/NotFound"
-import { useTeacherClasses } from "@/lib/hooks/useTeacherApi"
+// From the shell-only module, not `useTeacherApi`: the shell ships in the entry chunk.
+import { useTeacherClasses } from "@/lib/hooks/useShellQueries"
 import { useProfile } from "@/lib/hooks/useMeApi"
 import { useReviewQueueCount } from "@/lib/hooks/useReviewQueueCount"
 import { STAFF_INBOX_ERROR, TEACHER_INBOX_EMPTY, staffDestinationFor } from "@/lib/staffInbox"
@@ -126,6 +132,19 @@ const ClassesSettingsSection = lazy(() =>
     default: m.ClassesSettingsSection,
   })),
 )
+const Team = lazy(() => import("./screens/team/Team").then((m) => ({ default: m.Team })))
+const TeacherBilling = lazy(() =>
+  import("@/portals/billing/BillingScreens").then((m) => ({ default: m.TeacherBilling })),
+)
+const TeacherPlans = lazy(() =>
+  import("@/portals/billing/PlansScreen").then((m) => ({ default: m.TeacherPlans })),
+)
+const TeacherUsageHistory = lazy(() =>
+  import("@/portals/billing/UsageHistory").then((m) => ({ default: m.TeacherUsageHistory })),
+)
+const TeacherReceipts = lazy(() =>
+  import("@/portals/billing/Receipts").then((m) => ({ default: m.TeacherReceipts })),
+)
 const InstallSettingsSection = lazy(() =>
   import("@/portals/settings/InstallSettings").then((m) => ({
     default: m.InstallSettingsSection,
@@ -156,6 +175,41 @@ const TutorStudentDetail = lazy(() =>
   import("./screens/tutoring/TutorStudentDetail").then((m) => ({ default: m.TutorStudentDetail })),
 )
 
+// "Working as" is for the teacher who assists a team, which is almost nobody, so the switcher and
+// the banner (and the menu and labels they need) are fetched only when there is something to show.
+// Named exports, hence the `.then` shape, like every screen above.
+const ActingSwitcher = lazy(() =>
+  import("@/components/acting/acting-switcher").then((m) => ({ default: m.ActingSwitcher })),
+)
+const ActingGuard = lazy(() =>
+  import("@/components/acting/acting-guard").then((m) => ({ default: m.ActingGuard })),
+)
+const ActingBanner = lazy(() =>
+  import("@/components/acting/acting-banner").then((m) => ({ default: m.ActingBanner })),
+)
+
+/**
+ * Loads one of the acting pieces without letting a failed fetch take the shell down: they sit
+ * outside the content boundary (in the sidebar, above the page), where a throw would reach the
+ * router's error screen. Missing, they cost the cue and the switcher; the 403s still read right.
+ */
+function ActingPiece({
+  children,
+  resetKey,
+  orElse = null,
+}: {
+  children: ReactNode
+  resetKey?: unknown
+  /** Rendered if the piece fails to load: the page itself, for the guard that wraps it. */
+  orElse?: ReactNode
+}) {
+  return (
+    <ErrorBoundary label="Working as" resetKey={resetKey} fallback={() => orElse}>
+      <Suspense fallback={null}>{children}</Suspense>
+    </ErrorBoundary>
+  )
+}
+
 /** The teacher bell panel's portal facts. */
 export const TEACHER_NOTIFICATIONS_PANEL: Omit<NotificationsPanelProps, "unread" | "triggerClassName"> = {
   destinationFor: (notification) => staffDestinationFor("teacher", notification),
@@ -177,6 +231,8 @@ export const TEACHER_NOTIFICATIONS_PANEL: Omit<NotificationsPanelProps, "unread"
 export const TEACHER_ACCOUNT_LINKS: readonly AccountLink[] = [
   { id: "profile", label: "Edit profile", to: PROFILE_EDIT_TO, overlay: true, icon: <ShellIcon name="user" /> },
   { id: "settings", label: "Settings", to: SETTINGS_TO, overlay: true, icon: <Gear size={18} aria-hidden="true" /> },
+  // An account-level page, like Settings: the sidebar carries the work sections and the tools.
+  { id: "billing", label: "Plan and billing", to: "/teacher/billing", icon: <CreditCard size={18} aria-hidden="true" /> },
   {
     id: "help",
     label: "Help and feedback",
@@ -187,7 +243,7 @@ export const TEACHER_ACCOUNT_LINKS: readonly AccountLink[] = [
 ]
 
 const SIDEBAR_PRIMARY: NavItem["icon"][] = ["overview", "grading", "review", "classes", "atRisk"]
-const SIDEBAR_TOOLS: NavItem["icon"][] = ["schemes", "quizzes", "tutoring", "announcements", "deleted"]
+const SIDEBAR_TOOLS: NavItem["icon"][] = ["schemes", "quizzes", "tutoring", "announcements", "team", "deleted"]
 
 const NAV_ICON: Record<NavItem["icon"], ReactNode> = {
   overview: <ShellIcon name="home" />,
@@ -204,6 +260,8 @@ const NAV_ICON: Record<NavItem["icon"], ReactNode> = {
   announcements: <ShellIcon name="mega" />,
   notifications: <ShellIcon name="bell" />,
   settings: <Gear size={18} aria-hidden="true" />,
+  team: <UsersFour size={18} aria-hidden="true" />,
+  billing: <CreditCard size={18} aria-hidden="true" />,
   deleted: <ShellIcon name="trash" />,
 }
 
@@ -323,6 +381,10 @@ function useTeacherSidebar(): ShellSidebarContent {
   const reviewQueueCount = useReviewQueueCount()
   const reviewBadge = reviewQueueCount && reviewQueueCount > 0 ? reviewQueueCount : undefined
   const profile = useProfile()
+  // Uploading a paper is marking it. An assistant whose role lacks `mark` has no use for the
+  // shortcut, and `Grading` itself explains why (its upload form is gated with the reason).
+  const canMark = useCan("mark")
+  const { memberships } = useActingTeacher()
   const toShell = (item: NavItem) =>
     toNavShellItem(item, {
       forceActive: item.to === "/teacher/classes" ? classesItemActive(location.pathname, visibleClassIds) : undefined,
@@ -344,16 +406,27 @@ function useTeacherSidebar(): ShellSidebarContent {
         ),
       },
     ],
-    footerAction: (
+    footerAction: canMark ? (
       <Link to="/teacher/grading" className={SHELL_BUTTON_PRIMARY}>
         <ShellIcon name="up" />
         Upload papers
       </Link>
-    ),
-    user: profile.data ? (
-      <ShellUserBlock name={profileName(profile.data)} avatarUrl={profile.data.avatarUrl} detail={roleLabel(profile.data.role)} />
-    ) : (
-      <p className="px-0.5 text-body-sm text-on-surface-variant">{profile.isPending ? "Loading…" : "Signed in"}</p>
+    ) : undefined,
+    user: (
+      <>
+        {/* Who the teacher is working as sits with who they are signed in as, and renders nothing
+            unless they assist at least one team. */}
+        {memberships.length > 0 ? (
+          <ActingPiece>
+            <ActingSwitcher />
+          </ActingPiece>
+        ) : null}
+        {profile.data ? (
+          <ShellUserBlock name={profileName(profile.data)} avatarUrl={profile.data.avatarUrl} detail={roleLabel(profile.data.role)} />
+        ) : (
+          <p className="px-0.5 text-body-sm text-on-surface-variant">{profile.isPending ? "Loading…" : "Signed in"}</p>
+        )}
+      </>
     ),
   }
 }
@@ -366,7 +439,7 @@ function useTeacherSidebar(): ShellSidebarContent {
 /** The teacher's own bar buttons: Create (tonal) and Upload papers (primary).
  * Create's sheet is controlled by `TeacherLayout`, so the Android FAB and the iOS large-title plus open
  * the same one; the bar's own button is hidden on native phones. */
-function TeacherTopBarActions(create: CreateControl) {
+function TeacherTopBarActions(create: CreateControl, canMark: boolean) {
   return (
     <>
       <span data-shell-action="create" className="contents">
@@ -380,10 +453,13 @@ function TeacherTopBarActions(create: CreateControl) {
           )}
         />
       </span>
-      <Link to="/teacher/grading" className={cn(SHELL_BUTTON_PRIMARY, "me-2.5 max-shell-sm:hidden")}>
-        <ShellIcon name="up" />
-        Upload papers
-      </Link>
+      {/* Uploading is marking: an assistant whose role lacks `mark` is not offered it. */}
+      {canMark ? (
+        <Link to="/teacher/grading" className={cn(SHELL_BUTTON_PRIMARY, "me-2.5 max-shell-sm:hidden")}>
+          <ShellIcon name="up" />
+          Upload papers
+        </Link>
+      ) : null}
     </>
   )
 }
@@ -435,6 +511,8 @@ function TeacherLayout() {
   const reviewQueueCount = useReviewQueueCount()
   const { data: profile } = useProfile()
   const sidebar = useTeacherSidebar()
+  const { lead, notice: actingNotice, choose } = useActingTeacher()
+  const canMark = useCan("mark")
   // While Settings is a dialog the page underneath is still the page: title
   // and trail follow the background location. The trail renders at every
   // width (the D1.5 back affordance for drilled-into screens).
@@ -451,6 +529,36 @@ function TeacherLayout() {
       drawerTitle="Lemely"
       pending={classesQuery.isPending}
       overlay={{ routes: teacherContentRoutes(), overlayBase: TEACHER_SETTINGS_BASE, fallbackPath: "/teacher" }}
+      // Who the teacher is working as, first and standing: it is the one fact that changes what
+      // every control below does. Renders nothing, and no margin, unless acting for a lead (or a
+      // choice was just dropped, and then it says why).
+      banner={
+        lead || actingNotice ? (
+          <ActingPiece>
+            <ActingBanner classListError={classesQuery.error} pathname={location.pathname} />
+          </ActingPiece>
+        ) : null
+      }
+      // The server refusing the lead's class list (the lead cannot be reached, or this role cannot
+      // see classes) would make every screen below repeat the refusal, so while acting a lazily
+      // loaded guard says it once. Not acting: the page, as before. If the guard cannot load, the
+      // page renders without it.
+      wrapContent={
+        lead
+          ? (content) => (
+              <ActingPiece resetKey={location.pathname} orElse={content}>
+                <ActingGuard
+                  lead={lead}
+                  classListError={classesQuery.error}
+                  pathname={location.pathname}
+                  onSwitchBack={() => choose(null)}
+                >
+                  {content}
+                </ActingGuard>
+              </ActingPiece>
+            )
+          : undefined
+      }
       sidebar={sidebar}
       topBar={{
         title: trail[trail.length - 1]?.label ?? "Overview",
@@ -458,7 +566,8 @@ function TeacherLayout() {
         titleLevel: level,
         backFallback: "/teacher",
         navLabel: "Open teacher navigation",
-        actions: TeacherTopBarActions(create),
+        actions: TeacherTopBarActions(create, canMark),
+        actingAs: lead?.teacherName,
         largeTitleAction: (
           <button
             type="button"
@@ -501,7 +610,11 @@ function TeacherLayout() {
 
 export const teacherRoute: RouteObject = {
   path: "teacher",
-  element: <TeacherLayout />,
+  element: (
+    <ActingTeacherProvider>
+      <TeacherLayout />
+    </ActingTeacherProvider>
+  ),
   children: [
     // P6.5 · `handle.title` on every child. See `lib/meta/documentMeta.ts`.
     {
@@ -648,6 +761,31 @@ export const teacherRoute: RouteObject = {
       path: "notifications",
       element: <TeacherNotifications />,
       handle: { title: "Notifications", skeleton: "list" },
+    },
+    {
+      path: "team",
+      element: <Team />,
+      handle: { title: "Seats and assistants", skeleton: "page-header" },
+    },
+    {
+      path: "billing",
+      element: <TeacherBilling />,
+      handle: { title: "Plan and billing", skeleton: "page-header" },
+    },
+    {
+      path: "billing/plans",
+      element: <TeacherPlans />,
+      handle: { title: "Plans and credits", skeleton: "page-header" },
+    },
+    {
+      path: "billing/history",
+      element: <TeacherUsageHistory />,
+      handle: { title: "Usage history", skeleton: "list" },
+    },
+    {
+      path: "billing/receipts",
+      element: <TeacherReceipts />,
+      handle: { title: "Receipts", skeleton: "list" },
     },
     {
       // A dialog over the current page: `ScreenOutlet`'s overlay (in the layout)

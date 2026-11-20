@@ -11,10 +11,14 @@ import { ApiError } from "@/lib/api"
 import type { InvitePreview } from "@/lib/authTypes"
 import { parseJoinCode } from "@/lib/joinProtocol"
 import { withNext } from "@/lib/nextPath"
+import { joinFailureMessage } from "@/lib/assistantRoles"
+import { useJoinTeam } from "@/lib/hooks/useTeamApi"
 import {
+  ASSISTANT_INVITE_NEEDS_TEACHER_MESSAGE,
   canRedeemInviteAs,
   describeInvitePreview,
   INVITE_ROLE_MISMATCH_MESSAGE,
+  isInviteCodeFormat,
   isTerminalRedeemFailure,
   normalizeInviteCode,
   previewErrorCopy,
@@ -97,8 +101,9 @@ import { AuthFrame } from "./Login"
 
 /** The pre-lookup step: a code field, optionally pre-filled from `/join/:code`
  * (spec §G-08's first bullet). Submitting moves the screen to the lookup
- * result rather than validating anything client-side beyond "not empty" —
- * the server is the only real authority on whether a code exists. */
+ * result. The only client-side check is the code's *shape* (`isInviteCodeFormat`):
+ * the server 404s a malformed code without a lookup, so the button waits for a
+ * well-formed one. Whether a well-formed code exists is still the server's call. */
 function CodeEntryStep({
   code,
   onChangeCode,
@@ -129,7 +134,7 @@ function CodeEntryStep({
         className="font-mono tracking-[0.08em]"
       />
 
-      <Button type="submit" variant="accent" size="lg" disabled={code.trim().length === 0}>
+      <Button type="submit" variant="accent" size="lg" disabled={!isInviteCodeFormat(normalizeInviteCode(code))}>
         Find my invite
       </Button>
     </form>
@@ -207,9 +212,13 @@ function InvitePreviewStep({
             ? "Teacher invite"
             : preview.role === "parent"
               ? "Parent invite"
-              : "Student invite"}
+              : preview.role === "assistant"
+                ? "Team invite"
+                : "Student invite"}
         </div>
-        <h1 className="text-display-lg text-on-surface">You're about to join</h1>
+        <h1 className="text-display-lg text-on-surface">
+          {preview.role === "assistant" ? "You're about to join a team" : "You're about to join"}
+        </h1>
       </div>
 
       <div className="flex flex-col gap-1 rounded-md border border-outline-variant bg-surface-container-low p-4">
@@ -227,11 +236,12 @@ function InvitePreviewStep({
 
       {blocked ? (
         <p role="alert" className="text-body-sm text-error">
-          {INVITE_ROLE_MISMATCH_MESSAGE}
+          {preview.role === "assistant" ? ASSISTANT_INVITE_NEEDS_TEACHER_MESSAGE : INVITE_ROLE_MISMATCH_MESSAGE}
         </p>
       ) : redeemError ? (
         <p role="alert" className="text-body-sm text-error">
-          {redeemFailureMessage(redeemError)}
+          {/* A team invite is redeemed through the team route, which words its own refusals. */}
+          {preview.role === "assistant" ? joinFailureMessage(redeemError) : redeemFailureMessage(redeemError)}
         </p>
       ) : null}
 
@@ -256,7 +266,9 @@ function InvitePreviewStep({
                 // heading ("Create your student account") once there.
                 preview.role === "parent"
                 ? "Create your parent account"
-                : "Continue"}
+                : preview.role === "assistant"
+                  ? "Create a teacher account"
+                  : "Continue"}
           </Button>
         )}
         <Button type="button" variant="ghost" size="md" onClick={onDifferentCode}>
@@ -280,15 +292,19 @@ function JoinWithCodeScreen({ initialCode }: { initialCode: string }) {
   // separate is what stops every keystroke firing a request — the lookup only
   // (re)starts on an explicit submit, or once here on mount for a deep link.
   const [codeInput, setCodeInput] = useState(initialCode)
-  const [activeCode, setActiveCode] = useState(initialCode)
+  // A deep link whose code is malformed never reaches the lookup: the field is
+  // pre-filled and the entry step waits for a well-formed code.
+  const [activeCode, setActiveCode] = useState(isInviteCodeFormat(initialCode) ? initialCode : "")
 
   const preview = useInvitePreview(activeCode)
   const redeem = useRedeemInvite()
+  // A team invite is redeemed by a signed-in teacher through the team route, not the invites route.
+  const joinTeam = useJoinTeam()
 
   const handleSubmitCode = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const normalized = normalizeInviteCode(codeInput)
-    if (!normalized) return
+    if (!isInviteCodeFormat(normalized)) return
     setCodeInput(normalized)
     setActiveCode(normalized)
   }
@@ -296,6 +312,7 @@ function JoinWithCodeScreen({ initialCode }: { initialCode: string }) {
   const goBackToEntry = () => {
     setActiveCode("")
     redeem.reset()
+    joinTeam.reset()
   }
 
   const confirmSignedOut = () => {
@@ -304,6 +321,13 @@ function JoinWithCodeScreen({ initialCode }: { initialCode: string }) {
   }
 
   const confirmSignedIn = () => {
+    if (preview.data?.role === "assistant") {
+      joinTeam.mutate(activeCode, {
+        // The team page lists the teams you now assist and is where "Working as" starts.
+        onSuccess: () => navigate("/teacher/team", { replace: true }),
+      })
+      return
+    }
     redeem.mutate(
       { code: activeCode },
       {
@@ -402,8 +426,8 @@ function JoinWithCodeScreen({ initialCode }: { initialCode: string }) {
             preview={data}
             isSignedIn={session !== null}
             canRedeem={session === null || canRedeemInviteAs(data.role, session.role)}
-            isRedeeming={redeem.isPending}
-            redeemError={redeem.isError ? redeem.error : null}
+            isRedeeming={redeem.isPending || joinTeam.isPending}
+            redeemError={redeem.isError ? redeem.error : joinTeam.isError ? joinTeam.error : null}
             onConfirmSignedOut={confirmSignedOut}
             onConfirmSignedIn={confirmSignedIn}
             onDifferentCode={goBackToEntry}

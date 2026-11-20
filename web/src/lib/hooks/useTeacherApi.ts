@@ -18,7 +18,6 @@ import type {
   ClassAnalytics,
   ClassDetail,
   ClassInviteCode,
-  ClassList,
   ClassPapers,
   ClassSummary,
   CreateClassRequest,
@@ -42,7 +41,6 @@ import type {
   ResolveReviewRequest,
   ReviewItemDetail,
   ReviewQueueItem,
-  ReviewQueueList,
   RosterEntry,
   SchemeList,
   SchemeRow,
@@ -53,6 +51,7 @@ import type {
   UploadResponse,
 } from "@/lib/teacherTypes"
 
+export { useReviewQueue, useTeacherClasses } from "@/lib/hooks/useShellQueries"
 /*
  * React-query hooks + plain async helpers wrapping the teacher-portal API
  * (`lemely/web/routers/teacher.py`, `lemely/web/routers/classes.py`). Follows
@@ -91,12 +90,8 @@ export function useTeacherOverview(): UseQueryResult<Overview, Error> {
 
 // ── Classes (T-01 class cards, T-02 classes list) ───────────────────────────
 
-export function useTeacherClasses(): UseQueryResult<ClassList, Error> {
-  return useQuery({
-    queryKey: ["teacher", "classes"],
-    queryFn: () => request<ClassList>("/teacher/classes"),
-  })
-}
+// `useTeacherClasses` and `useReviewQueue` live in `useShellQueries.ts` (the portal shell reads them
+// and ships in the entry chunk); they are re-exported below so every caller is unchanged.
 
 /** `POST /classes` (T-02 create-class action). Invalidates the classes list. */
 export function useCreateClass(): UseMutationResult<ClassSummary, Error, CreateClassRequest> {
@@ -331,60 +326,6 @@ export function useUnacknowledgeAtRisk(
 
 // ── Review queue (T-07 queue list, T-08 remark) ──────────────────────────────
 
-/**
- * `GET /teacher/review?class_id=&reason=&min_age_hours=&limit=&cursor=`
- * (T-07/T-09). `classId`/`reason`/`minAgeHours` are real server-side filters
- * (`ReviewService.list_queue`) — never applied client-side against an
- * unfiltered fetch. A malformed `classId` 422s on the backend; the screen
- * renders that as a normal query error rather than hiding it.
- *
- * `limit` (server default 50, 1..200) bounds the page size; `cursor`, when
- * given, continues a previous page — both are Task 9's keyset pagination,
- * consumed by Task 11's "Load more" (`Review.tsx`). Both are part of the
- * query key so a page fetched under one cursor is cached separately from
- * every other page, the same as the three filters already are.
- *
- * `staleTime` (C3d) defaults to react-query's own default (effectively
- * "always stale") when omitted, matching every existing caller's behaviour
- * unchanged; `useReviewQueueCount` passes `60_000` so the sidebar/bottom-nav
- * badge doesn't refetch on every mount or focus for a number that is a hint,
- * not a live counter.
- */
-export function useReviewQueue(params?: {
-  classId?: string
-  reason?: string
-  minAgeHours?: number
-  limit?: number
-  cursor?: string
-  staleTime?: number
-}): UseQueryResult<ReviewQueueList, Error> {
-  const classId = params?.classId
-  const reason = params?.reason
-  const minAgeHours = params?.minAgeHours
-  const limit = params?.limit
-  const cursor = params?.cursor
-  const query = new URLSearchParams()
-  if (classId) query.set("class_id", classId)
-  if (reason) query.set("reason", reason)
-  if (minAgeHours !== undefined) query.set("min_age_hours", String(minAgeHours))
-  if (limit !== undefined) query.set("limit", String(limit))
-  if (cursor) query.set("cursor", cursor)
-  const qs = query.toString()
-  return useQuery({
-    queryKey: [
-      "teacher",
-      "review",
-      "queue",
-      classId ?? null,
-      reason ?? null,
-      minAgeHours ?? null,
-      limit ?? null,
-      cursor ?? null,
-    ],
-    queryFn: () => request<ReviewQueueList>(`/teacher/review${qs ? `?${qs}` : ""}`),
-    staleTime: params?.staleTime,
-  })
-}
 
 /** `GET /teacher/review/{itemId}` (T-08 full detail). 403 out-of-scope / 404
  * unknown / 422 malformed id all surface as a normal query error. */

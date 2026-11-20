@@ -13,7 +13,7 @@ for the same string are two independent entries with independent codes and
 independent TTLs — the dict key is the ``(channel, address)`` pair, never the
 address alone. ``channel`` defaults to :attr:`OtpChannel.phone` on both
 :meth:`OtpStore.issue` and :meth:`OtpStore.verify`, so every pre-existing
-positional call site (``AuthService.request_otp``/``verify_otp``, ``lemely.db.seed``,
+positional call site (``AuthService.request_otp``, ``lemely.db.seed``,
 and every test that predates the email channel) is unchanged.
 
 Lifecycle:

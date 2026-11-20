@@ -35,6 +35,7 @@ distinct, never-repeated keys cannot grow the map without bound either.
 from __future__ import annotations
 
 import math
+import threading
 from collections import OrderedDict, deque
 from typing import TYPE_CHECKING
 
@@ -80,6 +81,8 @@ class SlidingWindowLimiter:
         self._window_seconds = window_seconds
         self._clock = clock
         self._events: OrderedDict[str, deque[float]] = OrderedDict()
+        # Sync routes run on a thread pool, so check-and-record must be atomic.
+        self._lock = threading.Lock()
 
     def _pruned(self, key: str, now: float) -> deque[float] | None:
         """Drop ``key``'s expired timestamps; forget the key if none remain.
@@ -108,8 +111,13 @@ class SlidingWindowLimiter:
         Check-and-record is one call, not two — mirroring
         :meth:`~lemely.auth.cooldown.CooldownStore.check_and_stamp` — so there
         is no way to ask "would this be allowed" without it counting as the
-        attempt. A denied call does not itself record an event.
+        attempt. A denied call does not itself record an event. Atomic across
+        threads (one lock); the limit is per Cloud Run instance, not global.
         """
+        with self._lock:
+            return self._allow(key)
+
+    def _allow(self, key: str) -> bool:
         now = self._clock()
         events = self._pruned(key, now)
         if events is not None:
@@ -134,12 +142,13 @@ class SlidingWindowLimiter:
         guaranteed the window has actually rolled, rather than waking one
         tick early and being denied again.
         """
-        now = self._clock()
-        events = self._pruned(key, now)
-        if events is None or len(events) < self._limit:
-            return 0
-        remaining = self._window_seconds - (now - events[0])
-        return max(1, math.ceil(remaining))
+        with self._lock:
+            now = self._clock()
+            events = self._pruned(key, now)
+            if events is None or len(events) < self._limit:
+                return 0
+            remaining = self._window_seconds - (now - events[0])
+            return max(1, math.ceil(remaining))
 
 
 __all__ = ["SlidingWindowLimiter"]

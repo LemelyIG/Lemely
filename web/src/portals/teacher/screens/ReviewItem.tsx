@@ -1,4 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
+import { PermissionGate } from "@/components/acting/permission-gate"
+import { useCan } from "@/components/acting/acting-state"
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Flag } from "@phosphor-icons/react"
@@ -321,6 +323,7 @@ function DismissForm({ itemId, onDone }: { itemId: string; onDone: () => void })
   const [note, setNote] = useState("")
 
   return (
+    <PermissionGate permission="mark">
     <form
       onSubmit={(e) => {
         e.preventDefault()
@@ -346,6 +349,7 @@ function DismissForm({ itemId, onDone }: { itemId: string; onDone: () => void })
         </div>
       ) : null}
     </form>
+    </PermissionGate>
   )
 }
 
@@ -359,6 +363,7 @@ function ResolveControls({
   registerAccept: (fn: (() => void) | null) => void
 }) {
   const resolve = useResolveReviewItem(detail.itemId)
+  const canMark = useCan("mark")
   const [mode, setMode] = useState<"accept" | "adjust">("accept")
   const [acceptNote, setAcceptNote] = useState("")
   const [overrideMarks, setOverrideMarks] = useState(
@@ -388,9 +393,10 @@ function ResolveControls({
   }, [resolve, acceptNote, onDone])
 
   useEffect(() => {
-    registerAccept(mode === "accept" && !resolve.isPending ? handleAccept : null)
+    // The keyboard shortcut must not accept a mark the role is not allowed to accept.
+    registerAccept(mode === "accept" && !resolve.isPending && canMark ? handleAccept : null)
     return () => registerAccept(null)
-  }, [registerAccept, handleAccept, mode, resolve.isPending])
+  }, [registerAccept, handleAccept, mode, resolve.isPending, canMark])
 
   function handleSaveCorrection(e: FormEvent) {
     e.preventDefault()
@@ -419,6 +425,7 @@ function ResolveControls({
   }
 
   return (
+    <PermissionGate permission="mark">
     <section className="flex flex-col gap-3">
       <div className="text-display-sm">Your decision</div>
       <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-[18px] flex flex-col gap-4">
@@ -519,6 +526,7 @@ function ResolveControls({
         ) : null}
       </div>
     </section>
+    </PermissionGate>
   )
 }
 

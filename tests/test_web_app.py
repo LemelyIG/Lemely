@@ -525,7 +525,7 @@ def test_grading_queue_excludes_the_us039_unflagged_blank() -> None:
     from lemely.core.schemas import AccuracyReport, GradePrediction
     from lemely.db.models.enums import Role, UploadStatus
     from lemely.db.teacher_paper_repo import TeacherPaperRow
-    from lemely.web.deps import AuthContext
+    from lemely.web.deps import AuthContext, TeamActor
     from lemely.web.routers.teacher import grading_queue
 
     def _report(questions: list[CorrectedQuestion]) -> AccuracyReport:
@@ -605,8 +605,10 @@ def test_grading_queue_excludes_the_us039_unflagged_blank() -> None:
             return [row]
 
     auth = AuthContext(user_id=str(uuid.uuid4()), role=Role.teacher.value)
+    me = uuid.UUID(auth.user_id)
+    actor = TeamActor(actor_user_id=me, lead_teacher_user_id=me, member_id=None, auth=auth)
 
-    dto = grading_queue(auth, _FakeRepo())  # type: ignore[arg-type]
+    dto = grading_queue(actor, _FakeRepo())  # type: ignore[arg-type]
 
     body = dto.model_dump()
     question_ids = {r["questionId"] for r in body["rows"]}

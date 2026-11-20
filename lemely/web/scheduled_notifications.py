@@ -35,22 +35,36 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from functools import partial
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 import structlog
 from sqlalchemy import select
 
+from lemely.db.admin_customer_repo import expire_manual_subscriptions
 from lemely.db.announcement_repo import DEFAULT_CLAIM_LIMIT
+from lemely.db.billing_observability_repo import prune_webhook_failures
 from lemely.db.models.engagement import Streak
 from lemely.db.models.enums import NotificationType
 from lemely.db.models.study_plan import StudyPlan as DbStudyPlan
 from lemely.db.models.study_plan import StudyPlanSession
 from lemely.db.models.users import User
 from lemely.db.xp_repo import DEFAULT_ZONE, resolve_zone
+from lemely.web.llm_price_refresh import refresh_prices
 from lemely.web.notify import notify_safely
 from lemely.web.purge import purge_expired_papers, purge_expired_teacher_papers
+from lemely.web.subscription_jobs import (
+    drift_check_job,
+    expire_overdue_job,
+    monthly_seat_allowance_job,
+    period_end_job,
+    release_due_seats_job,
+    terms_change_notices_job,
+    terms_move_fixed_path_job,
+)
 from lemely.web.tutoring_email import deliver_tutoring_email
+from lemely.web.usage_sweeps import ReconcileMemo, RepairCursor, usage_jobs
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
@@ -59,11 +73,13 @@ if TYPE_CHECKING:
     from sqlalchemy.sql import ColumnElement
 
     from lemely.db.announcement_repo import AnnouncementRow, AnnouncementService
+    from lemely.db.billing_observability_repo import JobRunRecorder
     from lemely.db.notification_repo import NotificationService
     from lemely.io.notify_email import TransactionalEmailProvider
     from lemely.io.storage import StorageBackend
     from lemely.runtime.config import NotificationsSettings
     from lemely.web.push import NotificationTransport
+    from lemely.web.subscription_deps import SubscriptionDeps
 
 log = structlog.get_logger(__name__)
 
@@ -429,26 +445,66 @@ def remind_study_plans(
 # ---------------------------------------------------------------------------
 
 
-def run_jobs(jobs: Sequence[tuple[str, Callable[[], int]]]) -> dict[str, int | None]:
+def _utcnow() -> datetime:
+    """Default clock: aware UTC now. Production wiring only — tests inject their own."""
+    return datetime.now(UTC)
+
+
+def _record_safely(step: Callable[[], None], *, job: str, phase: str) -> None:
+    """Run one recorder write; a failure is logged (type only) and never reaches the job.
+
+    Losing one health row must not stop a billing job or change its result. The exception
+    message is not logged: a driver error can echo SQL parameters.
+    """
+    try:
+        step()
+    except Exception as exc:
+        log.warning("job_run_record_failed", job=job, phase=phase, error_type=type(exc).__name__)
+
+
+def _run_one(
+    name: str,
+    job: Callable[[], int],
+    recorder: JobRunRecorder | None,
+    now: Callable[[], datetime],
+) -> int | None:
+    """One job's count, or ``None`` when it threw; reported to ``recorder`` either way."""
+    if recorder is not None:
+        started = now()
+        _record_safely(partial(recorder.start, name, started), job=name, phase="start")
+    error: Exception | None = None
+    count: int | None = None
+    try:
+        count = job()
+    except Exception as exc:
+        log.warning("sweep_job_failed", job=name, exc_info=True)
+        error = exc
+    if recorder is not None:
+        _record_safely(
+            partial(recorder.record_finish, name, now=now(), count=count, error=error),
+            job=name,
+            phase="finish",
+        )
+    return count
+
+
+def run_jobs(
+    jobs: Sequence[tuple[str, Callable[[], int]]],
+    *,
+    recorder: JobRunRecorder | None = None,
+    now: Callable[[], datetime] = _utcnow,
+) -> dict[str, int | None]:
     """Run each job in turn, each wrapped individually.
 
     A job that throws is a logged warning and the others still run (§4). The
     returned map carries each job's count, or ``None`` for one that threw, so
     a caller (and a test) can see exactly which did what.
+
+    ``recorder`` (the admin health view's ``job_runs`` writer) hears about the start and
+    the end of every job, success or failure. It never changes a result: a recorder that
+    raises is logged as ``job_run_record_failed`` and ignored.
     """
-    results: dict[str, int | None] = {}
-    for name, job in jobs:
-        try:
-            results[name] = job()
-        except Exception:
-            log.warning("sweep_job_failed", job=name, exc_info=True)
-            results[name] = None
-    return results
-
-
-def _utcnow() -> datetime:
-    """Default clock: aware UTC now. Production wiring only — tests inject their own."""
-    return datetime.now(UTC)
+    return {name: _run_one(name, job, recorder, now) for name, job in jobs}
 
 
 @dataclass(slots=True)
@@ -479,9 +535,37 @@ class Sweeper:
     #: without one keeps exactly the pre-tutoring job set.
     email_provider: TransactionalEmailProvider | None = None
     email_daily_cap: int = 60
+    #: ``billing.reconcile_pending`` (billing spec §5.10), given only when Paymob is
+    #: configured, the same optional-collaborator pattern as ``email_provider``.
+    billing_reconcile: Callable[[datetime], int] | None = None
+    #: Billing spec §5.7: the usage ledger's sweeps run only where metering is enforced
+    #: (``deps.get_sweeper``); a sweeper built for notifications alone, as most tests
+    #: build one, keeps exactly the jobs it had.
+    usage_metering: bool = False
+    usage_reconcile: ReconcileMemo = field(default_factory=ReconcileMemo)
+    usage_repair: RepairCursor = field(default_factory=RepairCursor)
+    #: Writes ``job_runs`` for the admin health view (Phase 07). ``deps.get_sweeper`` sets it;
+    #: ``None`` for a sweeper built without a database, as most tests build one.
+    job_recorder: JobRunRecorder | None = None
+    #: Paymob billing Phase 05: the subscription jobs run only when given (Paymob configured),
+    #: the same optional-collaborator pattern as ``billing_reconcile``.
+    subscriptions: SubscriptionDeps | None = None
+    #: The two seat jobs run whatever the Paymob configuration: manual teacher plans grant
+    #: seats too (DV-22). ``deps.get_sweeper`` sets it; tests that build a sweeper for
+    #: notifications alone keep the jobs they had.
+    seat_allowances: bool = False
+    #: Collaborators for the local part of ``subscriptions.expire_overdue`` when Paymob is not
+    #: configured: the row still expires and stops granting seat allowance, and the Paymob cancel
+    #: is left to the failed-cancel retry once Paymob is configured (DV-32).
+    expiry: SubscriptionDeps | None = None
+    #: Paymob billing Phase 06, given only where saved-card charges are configured: the fallback
+    #: renewal seat charge, then the auto top-up. Both run after every Phase 05 job, so an
+    #: expired plan's seats are handled first.
+    billing_extra_seat_renewal: Callable[[datetime], int] | None = None
+    billing_auto_topup: Callable[[datetime], int] | None = None
 
     def sweep_once(self) -> dict[str, int | None]:
-        """Run announcements, streaks, study-plan reminders, purge and tutoring email, once each."""
+        """Run every job given (notifications, purge, email, billing, usage, subscription, seat)."""
         moment = self.now()
         jobs: list[tuple[str, Callable[[], int]]] = [
             (
@@ -511,6 +595,10 @@ class Sweeper:
                     hour=self.settings.study_plan_reminder_hour,
                     memo=self.plan_memo,
                 ),
+            ),
+            (
+                "admin.expire_manual_subscriptions",
+                lambda: expire_manual_subscriptions(self.sessionmaker, now=moment),
             ),
         ]
         storage, bucket = self.storage, self.bucket
@@ -542,7 +630,90 @@ class Sweeper:
                     ),
                 )
             )
-        return run_jobs(jobs)
+        billing_reconcile = self.billing_reconcile
+        if billing_reconcile is not None:
+            jobs.append(("billing.reconcile_pending", lambda: billing_reconcile(moment)))
+        if self.job_recorder is not None:
+            # The admin health surface: ``job_runs`` is written for every job, and the
+            # refused-callback table it reads beside it is bounded (UD-6, 90 days). Wired
+            # together by ``deps.get_sweeper``, like the other optional collaborators, so a
+            # sweeper built without a recorder keeps exactly the jobs it had.
+            jobs.append(
+                (
+                    "billing.prune_webhook_failures",
+                    lambda: prune_webhook_failures(self.sessionmaker, now=moment),
+                )
+            )
+            # UD13-D, DV-6: other instances pick up an admin AI price change within one sweep pass.
+            jobs.append(("billing.llm_price_refresh", lambda: refresh_prices(self.sessionmaker)))
+        if self.usage_metering:
+            jobs.extend(
+                usage_jobs(
+                    self.sessionmaker,
+                    now=moment,
+                    memo=self.usage_reconcile,
+                    repair=self.usage_repair,
+                )
+            )
+        # DV-32: an expired teacher plan grants no new month, and a seat leaving at month end
+        # is released before the new month's grant, so the order below is load-bearing.
+        subscriptions = self.subscriptions
+        expiry = subscriptions or self.expiry
+        if subscriptions is not None:
+            # Plan terms moves (UD13-A): announce them, then cancel the plans a move would reprice
+            # where Paymob cannot change the amount, before the sweep that pushes cancels.
+            jobs.extend(
+                [
+                    (
+                        "billing.terms_change_notices",
+                        lambda: terms_change_notices_job(subscriptions, now=moment),
+                    ),
+                    (
+                        "billing.terms_move_fixed_path",
+                        lambda: terms_move_fixed_path_job(subscriptions, now=moment),
+                    ),
+                ]
+            )
+        if expiry is not None:
+            jobs.append(
+                (
+                    "subscriptions.expire_overdue",
+                    lambda: expire_overdue_job(expiry, now=moment),
+                )
+            )
+        if subscriptions is not None:
+            jobs.extend(
+                [
+                    (
+                        "subscriptions.period_end",
+                        lambda: period_end_job(subscriptions, now=moment),
+                    ),
+                    (
+                        "subscriptions.drift_check",
+                        lambda: drift_check_job(subscriptions, now=moment),
+                    ),
+                ]
+            )
+        if self.seat_allowances:
+            jobs.extend(
+                [
+                    (
+                        "seats.release_due",
+                        lambda: release_due_seats_job(self.sessionmaker, now=moment),
+                    ),
+                    (
+                        "seats.monthly_allowance",
+                        lambda: monthly_seat_allowance_job(self.sessionmaker, now=moment),
+                    ),
+                ]
+            )
+        extra_seat_renewal = self.billing_extra_seat_renewal
+        if extra_seat_renewal is not None:
+            jobs.append(("billing.extra_seat_renewal_charge", lambda: extra_seat_renewal(moment)))
+        auto_topup = self.billing_auto_topup
+        if auto_topup is not None:
+            jobs.append(("billing.auto_topup", lambda: auto_topup(moment)))
+        return run_jobs(jobs, recorder=self.job_recorder, now=self.now)
 
 
 async def run_sweeper(sweeper: Sweeper, *, poll_seconds: float, stop: asyncio.Event) -> None:

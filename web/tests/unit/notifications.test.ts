@@ -223,11 +223,11 @@ describe("NOTIFICATION_TYPES", () => {
 
   it("lists every backend notification type, in the enum's order", () => {
     const backend = backendTypes()
-    expect(backend).toHaveLength(14) // non-vacuity: 6 original + 8 tutoring
+    expect(backend).toHaveLength(15) // non-vacuity: 6 original + 8 tutoring + billing
     expect([...NOTIFICATION_TYPES]).toEqual(backend)
   })
 
-  it("names the eight tutoring types as the tail of that list", () => {
+  it("names the eight tutoring types as the eight before `billing`, the last type", () => {
     expect([...TUTORING_NOTIFICATION_TYPES]).toEqual([
       "booking_request",
       "booking_update",
@@ -238,7 +238,8 @@ describe("NOTIFICATION_TYPES", () => {
       "parent_link",
       "tutoring_report",
     ])
-    expect(NOTIFICATION_TYPES.slice(-8)).toEqual(TUTORING_NOTIFICATION_TYPES)
+    expect(NOTIFICATION_TYPES.slice(-9, -1)).toEqual(TUTORING_NOTIFICATION_TYPES)
+    expect(NOTIFICATION_TYPES.at(-1)).toBe("billing")
   })
 
   it("still lets an unknown type from a newer backend through as a plain notification", () => {

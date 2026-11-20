@@ -570,6 +570,7 @@ def test_a_sweeper_pass_runs_all_three_jobs_against_an_empty_database(
         "publish_due_announcements": 0,
         "warn_streaks": 0,
         "remind_study_plans": 0,
+        "admin.expire_manual_subscriptions": 0,
     }
 
 
@@ -599,6 +600,7 @@ def test_a_sweeper_with_storage_also_runs_the_purge_job(
         "publish_due_announcements": 0,
         "warn_streaks": 0,
         "remind_study_plans": 0,
+        "admin.expire_manual_subscriptions": 0,
         "purge_expired_papers": 0,
         "purge_expired_teacher_papers": 0,
     }
@@ -633,6 +635,7 @@ def test_sweep_once_without_provider_keeps_existing_job_set(
         "publish_due_announcements",
         "warn_streaks",
         "remind_study_plans",
+        "admin.expire_manual_subscriptions",
         "purge_expired_papers",
         "purge_expired_teacher_papers",
     ]
@@ -682,6 +685,7 @@ def test_sweep_once_runs_email_job_only_with_provider(
         "publish_due_announcements": 0,
         "warn_streaks": 0,
         "remind_study_plans": 0,
+        "admin.expire_manual_subscriptions": 0,
         "deliver_tutoring_email": 1,
     }
     assert len(provider.calls) == 1

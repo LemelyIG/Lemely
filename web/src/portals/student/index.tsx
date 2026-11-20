@@ -146,6 +146,18 @@ const NotificationSettingsSection = lazy(() =>
     default: m.NotificationSettingsSection,
   })),
 )
+const StudentBilling = lazy(() =>
+  import("@/portals/billing/BillingScreens").then((m) => ({ default: m.StudentBilling })),
+)
+const StudentPlans = lazy(() =>
+  import("@/portals/billing/PlansScreen").then((m) => ({ default: m.StudentPlans })),
+)
+const StudentUsageHistory = lazy(() =>
+  import("@/portals/billing/UsageHistory").then((m) => ({ default: m.StudentUsageHistory })),
+)
+const StudentReceipts = lazy(() =>
+  import("@/portals/billing/Receipts").then((m) => ({ default: m.StudentReceipts })),
+)
 const InstallSettingsSection = lazy(() =>
   import("@/portals/settings/InstallSettings").then((m) => ({
     default: m.InstallSettingsSection,
@@ -335,6 +347,26 @@ export const studentRoute: RouteObject = {
       path: "recently-deleted",
       element: <RecentlyDeleted />,
       handle: { title: "Recently deleted", skeleton: "list" },
+    },
+    {
+      path: "billing",
+      element: <StudentBilling />,
+      handle: { title: "Plan and billing", skeleton: "page-header" },
+    },
+    {
+      path: "billing/plans",
+      element: <StudentPlans />,
+      handle: { title: "Plans and credits", skeleton: "page-header" },
+    },
+    {
+      path: "billing/history",
+      element: <StudentUsageHistory />,
+      handle: { title: "Usage history", skeleton: "list" },
+    },
+    {
+      path: "billing/receipts",
+      element: <StudentReceipts />,
+      handle: { title: "Receipts", skeleton: "list" },
     },
     {
       // A dialog over the current page: PortalShell's ScreenOutlet overlay renders
