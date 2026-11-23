@@ -25,8 +25,8 @@ describe("useFlashcardApi.ts — useReviewCard retries", () => {
   })
 })
 
-describe("FlashcardReview.tsx — optimistic advance and capability imports", () => {
-  const source = readSource("src/portals/student/screens/flashcards/FlashcardReview.tsx")
+describe("ReviewScreen.tsx — optimistic advance and capability imports", () => {
+  const source = readSource("src/portals/student/screens/flashcards/ReviewScreen.tsx")
 
   it("imports applyGradeOutcome and haptic", () => {
     expect(source).toContain("applyGradeOutcome")
@@ -34,7 +34,7 @@ describe("FlashcardReview.tsx — optimistic advance and capability imports", ()
   })
 
   it("advances the index before the mutation is sent (optimistic advance)", () => {
-    expect(source).toMatch(/setIndex[\s\S]{0,200}reviewCard\.mutate/)
+    expect(source).toMatch(/setIndex[\s\S]{0,300}send\(/)
   })
 })
 

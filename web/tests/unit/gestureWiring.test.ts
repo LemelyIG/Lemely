@@ -22,23 +22,20 @@ function sourceOf(relative: string): string {
   return stripComments(fs.readFileSync(path.join(ROOT, relative), "utf8"))
 }
 
-describe("FlashcardReview.tsx — swipe reveal/grade is additive to the existing controls", () => {
-  const src = sourceOf("src/portals/student/screens/flashcards/FlashcardReview.tsx")
+describe("flashcard review — swipe is additive to buttons and keys", () => {
+  const card = sourceOf("src/portals/student/screens/flashcards/ReviewCard.tsx")
+  const screen = sourceOf("src/portals/student/screens/flashcards/ReviewScreen.tsx")
 
-  it("imports useDragGesture and flashcardSwipeAction", () => {
-    expect(src).toContain("useDragGesture")
-    expect(src).toContain("flashcardSwipeAction")
+  it("uses the drag gesture and swipe decision", () => {
+    expect(card).toContain("useDragGesture")
+    expect(card).toContain("flashcardSwipeAction")
   })
-
-  it("still has the Reveal answer button and isRevealKey's keyboard path", () => {
-    expect(src).toContain("Reveal answer")
-    expect(src).toContain("isRevealKey")
+  it("retains the answer button and keyboard path", () => {
+    expect(screen).toContain("Show answer")
+    expect(screen).toContain("reviewKeyAction")
   })
-
-  it("still has all four grade button labels", () => {
-    for (const label of ["Again", "Hard", "Good", "Easy"]) {
-      expect(src).toContain(label)
-    }
+  it("renders the four grades from gradeButtons", () => {
+    expect(screen).toContain("gradeButtons")
   })
 })
 
