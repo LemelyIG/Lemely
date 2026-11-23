@@ -12,10 +12,14 @@ import {
   cardSaveError,
   cardSaveLabel,
   cardSheetTitle,
+  clearsSelection,
+  deleteControls,
   deleteDeckConfirm,
+  firstConnected,
   failedDeckView,
   generationToast,
   keepCachedOnError,
+  renameControls,
   renameLabel,
   renameTitle,
   submitCard,
@@ -278,5 +282,57 @@ describe("failedDeckView", () => {
   it("offers Try again, and holds it while the retry is in flight", () => {
     expect(failedDeckView(false)).toEqual({ retryLabel: "Try again", retryDisabled: false })
     expect(failedDeckView(true)).toEqual({ retryLabel: "Trying again…", retryDisabled: true })
+  })
+})
+
+describe("deleteControls: nothing can be pressed while a delete is in flight or has landed", () => {
+  const labels = { confirm: "Delete card", pending: "Deleting…" }
+
+  it("idle: both buttons live, confirm says what it does", () => {
+    expect(deleteControls({ isPending: false, isSuccess: false }, labels))
+      .toEqual({ confirmDisabled: false, keepDisabled: false, confirmLabel: "Delete card" })
+  })
+
+  it("in flight: Keep it is held (a reset would not cancel the request) and confirm cannot send a second", () => {
+    expect(deleteControls({ isPending: true, isSuccess: false }, labels))
+      .toEqual({ confirmDisabled: true, keepDisabled: true, confirmLabel: "Deleting…" })
+  })
+
+  it("succeeded: confirm stays off through the exit animation, so no duplicate DELETE", () => {
+    const c = deleteControls({ isPending: false, isSuccess: true }, labels)
+    expect(c.confirmDisabled).toBe(true)
+    expect(c.keepDisabled).toBe(true)
+    expect(c.confirmLabel).toBe("Delete card")
+  })
+})
+
+describe("renameControls", () => {
+  it("Cancel is held while the rename is in flight, Save while it is invalid or in flight", () => {
+    expect(renameControls({ valid: true, pending: false })).toEqual({ saveDisabled: false, cancelDisabled: false, saveLabel: "Save" })
+    expect(renameControls({ valid: true, pending: true })).toEqual({ saveDisabled: true, cancelDisabled: true, saveLabel: "Saving…" })
+    expect(renameControls({ valid: false, pending: false }).saveDisabled).toBe(true)
+  })
+})
+
+describe("clearsSelection", () => {
+  it("the side panel gives way only when the deck that went is the one it shows", () => {
+    expect(clearsSelection("d1", "d1")).toBe(true)
+    expect(clearsSelection("d2", "d1")).toBe(false)
+    expect(clearsSelection("d2", null)).toBe(false)
+  })
+})
+
+describe("firstConnected", () => {
+  const live = { isConnected: true, name: "live" }
+  const gone = { isConnected: false, name: "gone" }
+  const other = { isConnected: true, name: "other" }
+
+  it("skips a detached trigger and null, and lands on the first element still on the page", () => {
+    expect(firstConnected(gone, null, undefined, live, other)).toBe(live)
+  })
+
+  it("is null when nothing is left", () => {
+    expect(firstConnected(gone, null)).toBeNull()
+    expect(firstConnected()).toBeNull()
   })
 })

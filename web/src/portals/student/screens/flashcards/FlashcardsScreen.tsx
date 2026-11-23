@@ -10,6 +10,7 @@ import { useReference } from "@/lib/hooks/useReferenceApi"
 import { useOverview } from "@/lib/hooks/useStudentApi"
 import { isOfflineFailure } from "@/lib/offlineFailure"
 import { subjectNameFor } from "@/lib/reference"
+import { clearsSelection } from "./deckActions"
 import { DecksError, DecksLoading, DecksRefreshNotice, EmptyShelf, SparseExtras } from "./DecksStates"
 import { DeckMenu } from "./DeckMenu"
 import { DeckPanel } from "./DeckBody"
@@ -101,7 +102,7 @@ export function FlashcardsScreen() {
     <div className="mx-auto flex w-full max-w-[640px] flex-col lg:max-w-none">
       <header className="flex items-center gap-2.5 px-4 pb-1.5 pt-3.5 lg:gap-5 lg:px-10 lg:pb-2 lg:pt-6">
         <div className="grid min-w-0 flex-1">
-          <h1 className="font-display text-[28px] font-extrabold leading-[1.1] tracking-[-0.03em] text-primary lg:text-[32px]">{header.title}</h1>
+          <h1 tabIndex={-1} data-fc-heading className="font-display text-[28px] font-extrabold leading-[1.1] tracking-[-0.03em] text-primary outline-none lg:text-[32px]">{header.title}</h1>
           {header.sub ? <span className="text-[13px] font-medium text-on-surface-variant">{header.sub}</span> : null}
         </div>
         {view.kind === "ready" && view.hero.reviewLabel ? (
@@ -184,7 +185,8 @@ export function FlashcardsScreen() {
 
       <NewDeckSheet seed={sheet} onClose={() => setSheet(null)}
         onStarted={() => setSheet(null)} />
-      <DeckMenu deckId={menuDeckId} onClose={() => setMenuDeckId(null)} />
+      <DeckMenu deckId={menuDeckId} onClose={() => setMenuDeckId(null)}
+        onDeleted={(id) => { if (clearsSelection(id, selectedId)) selectInPlace(null) }} />
     </div>
   )
 }

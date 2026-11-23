@@ -119,14 +119,24 @@ export function useRenameDeck(): UseMutationResult<DeckSummaryDTO, Error, { deck
   })
 }
 
+/**
+ * The cache once a deck is gone. It leaves every cached list first, so a screen told "deleted" cannot
+ * fall back to the deck that just went (`removeQueries` and the refetch both land after that), and
+ * then its own query goes. The lists are refetched to confirm.
+ */
+export function afterDeleteDeck(queryClient: QueryClient, deckId: string): void {
+  queryClient.setQueriesData<DeckSummaryDTO[]>({ queryKey: flashcardKeys.decksRoot }, (decks) =>
+    decks?.filter((d) => d.id !== deckId),
+  )
+  queryClient.removeQueries({ queryKey: flashcardKeys.deck(deckId) })
+  invalidateDeckLists(queryClient)
+}
+
 export function useDeleteDeck(): UseMutationResult<void, Error, string> {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (deckId) => flashcardApi.deleteDeck(deckId),
-    onSuccess: (_v, deckId) => {
-      queryClient.removeQueries({ queryKey: flashcardKeys.deck(deckId) })
-      invalidateDeckLists(queryClient)
-    },
+    onSuccess: (_v, deckId) => afterDeleteDeck(queryClient, deckId),
   })
 }
 

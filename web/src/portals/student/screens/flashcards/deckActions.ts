@@ -82,6 +82,24 @@ export const cardDeleteConfirm = (card: Pick<CardSource, "front">): CardDeleteCo
   keep: "Keep it",
 })
 
+/* ── Delete steps (card and deck) ────────────────────────────────────────── */
+
+export interface DeleteControls { confirmDisabled: boolean; keepDisabled: boolean; confirmLabel: string }
+
+/**
+ * What can be pressed on a delete step. While the request is in flight Keep it is held, because
+ * resetting the mutation does not cancel the DELETE and the card or deck would go anyway. Once it
+ * has succeeded both stay held through the exit animation: confirm would send a second DELETE, and
+ * Keep it would put a deleted card's form back on screen.
+ */
+export function deleteControls(
+  m: { isPending: boolean; isSuccess: boolean },
+  labels: { confirm: string; pending: string },
+): DeleteControls {
+  const held = m.isPending || m.isSuccess
+  return { confirmDisabled: held, keepDisabled: held, confirmLabel: m.isPending ? labels.pending : labels.confirm }
+}
+
 export type CardCloseOutcome = "dismissed" | "saved" | "deleted"
 
 /**
@@ -99,6 +117,12 @@ export const DECK_TITLE_MAX = 80
 export const RENAME_ERROR = "Couldn’t rename the deck. Try again."
 
 export const renameLabel = (pending: boolean): string => (pending ? "Saving…" : "Save")
+
+/** Save needs a valid new name and no request in flight; Cancel is held in flight so a failure is seen. */
+export const renameControls = (
+  m: { valid: boolean; pending: boolean },
+): { saveDisabled: boolean; cancelDisabled: boolean; saveLabel: string } =>
+  ({ saveDisabled: !m.valid || m.pending, cancelDisabled: m.pending, saveLabel: renameLabel(m.pending) })
 
 /** The title to send: trimmed, 1 to 80 characters, and different from the current one. */
 export function renameTitle(current: string, input: string): string | null {
@@ -146,6 +170,20 @@ export function submitDeleteDeck(
   done: { onClose: () => void; onDeleted: () => void },
 ): void {
   del(deckId, { onSuccess: () => { done.onClose(); done.onDeleted() } })
+}
+
+/**
+ * After a deck is deleted from the list's menu: the side panel gives way only when it was showing
+ * that deck. Any other deck going leaves the panel where it is.
+ */
+export const clearsSelection = (deletedId: string, selectedId: string | null): boolean => deletedId === selectedId
+
+/**
+ * Where focus can go when the element it should return to is gone (a deleted deck's menu button,
+ * a held row that left the list): the first candidate still on the page, or null.
+ */
+export function firstConnected<T extends { isConnected: boolean }>(...candidates: (T | null | undefined)[]): T | null {
+  return candidates.find((c): c is T => !!c && c.isConnected) ?? null
 }
 
 /* ── Deck menu ───────────────────────────────────────────────────────────── */

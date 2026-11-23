@@ -5,7 +5,7 @@ import { SubjectDot, subjectDotColor } from "@/components/redesign"
 import { QueryState } from "@/components/ui/query-state"
 import { SkeletonBlock } from "@/components/ui/skeleton"
 import { useToast } from "@/components/ui/toast"
-import { useFlashcardDeck, useGenerationStatus, useRetryGeneration, useRetryingDeckIds } from "@/lib/hooks/useFlashcardApi"
+import { useFlashcardDeck, useGenerationStatus, useRetryingDeckIds } from "@/lib/hooks/useFlashcardApi"
 import { useSubjectName } from "@/lib/hooks/useReferenceApi"
 import { useOverview } from "@/lib/hooks/useStudentApi"
 import { CardSheet } from "./CardSheet"
@@ -14,6 +14,8 @@ import { DeleteDeckSheet } from "./DeleteDeckSheet"
 import { DecksRefreshNotice } from "./DecksStates"
 import { cardFocusTarget, generationToast, keepCachedOnError, type CardCloseOutcome, type CardMode } from "./deckActions"
 import { deckDetailView, type CardRowView } from "./deckView"
+import { NewDeckSheet, type NewDeckSeed } from "./NewDeckSheet"
+import { failedDeckSeed } from "./newDeckView"
 import { DeckContent } from "./parts/DeckContent"
 
 /** FL-style loading: the header, the bar, three rows. One status line for the whole region. */
@@ -41,10 +43,9 @@ export function DeckBody({
   const subjectName = useSubjectName(deck.data?.subjectCode ?? "")
   const status = deck.data?.generationStatus
   const gen = useGenerationStatus(deckId, status === "writing" || status === "failed")
-  const retry = useRetryGeneration(() =>
-    toast({ variant: "error", title: "Couldn’t retry that deck", description: "Try again in a moment." }),
-  )
   const retrying = useRetryingDeckIds().has(deckId)
+  // FGX: Try again on a failed deck reopens the new-deck sheet for it; the sheet owns the retry.
+  const [retrySeed, setRetrySeed] = useState<NewDeckSeed | null>(null)
   const [cardSheet, setCardSheet] = useState<{ mode: CardMode; card: CardRowView | null } | null>(null)
   const [deleteFailed, setDeleteFailed] = useState(false)
   const [shortfall, setShortfall] = useState<string | null>(null)
@@ -121,7 +122,7 @@ export function DeckBody({
                 onReview={() => navigate(`/student/flashcards/review?deck=${deckId}`)}
                 onAdd={(from) => openCard("add", null, from)}
                 onEdit={(card, from) => openCard("edit", card, from)}
-                onRetry={() => retry.mutate(deckId)}
+                onRetry={() => setRetrySeed(failedDeckSeed(data, deckId))}
                 onDeleteFailed={() => setDeleteFailed(true)}
               />
               <DeleteDeckSheet deckId={deckId} title={v.title} cardCount={data.cards.length} open={deleteFailed}
@@ -132,6 +133,7 @@ export function DeckBody({
       </QueryState>
       <CardSheet deckId={deckId} mode={cardSheet?.mode ?? null} card={cardSheet?.card ?? null}
         onClose={() => setCardSheet(null)} restoreFocusTo={focusAfterCard} />
+      <NewDeckSheet seed={retrySeed} onClose={() => setRetrySeed(null)} onStarted={() => setRetrySeed(null)} onDiscarded={onDeleted} />
     </div>
   )
 }

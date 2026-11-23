@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H3 E4 S3 R5 V3 */
 import { useEffect, useState } from "react"
 import { useRenameDeck } from "@/lib/hooks/useFlashcardApi"
-import { DECK_TITLE_MAX, RENAME_ERROR, renameLabel, renameTitle, submitRename } from "./deckActions"
+import { DECK_TITLE_MAX, RENAME_ERROR, renameControls, renameTitle, submitRename } from "./deckActions"
 import { FcSheet } from "./parts/FcSheet"
 
 const FOCUS = "focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
@@ -24,6 +24,7 @@ export function RenameDeckSheet({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
   const valid = renameTitle(title, value) !== null
+  const controls = renameControls({ valid, pending: rename.isPending })
   const submit = () => { if (!rename.isPending) submitRename(deckId, title, value, rename.mutate, onClose) }
   return (
     <FcSheet open={open} onOpenChange={(o) => { if (!o && !rename.isPending) onClose() }} title="Rename deck" restoreFocusTo={restoreFocusTo}>
@@ -34,11 +35,12 @@ export function RenameDeckSheet({
           className="rounded-2xl bg-surface-container-lowest px-3.5 py-3 text-[16px] font-medium text-on-surface shadow-[inset_0_0_0_1.5px_var(--color-outline)] outline-none focus:shadow-[inset_0_0_0_2px_var(--color-primary)]" />
       </label>
       {rename.isError ? <div role="alert" className="rounded-xl bg-error-container px-3 py-2.5 text-[13.5px] font-semibold text-on-error-container">{RENAME_ERROR}</div> : null}
-      <button type="button" disabled={!valid || rename.isPending} onClick={submit}
+      <button type="button" disabled={controls.saveDisabled} onClick={submit}
         className={`min-h-[50px] w-full rounded-[18px] bg-primary px-7 text-[15.5px] font-bold text-on-primary disabled:bg-surface-container-high disabled:text-on-surface-variant ${FOCUS}`}>
-        {renameLabel(rename.isPending)}
+        {controls.saveLabel}
       </button>
-      <button type="button" onClick={onClose} className={`min-h-11 justify-self-center px-3.5 text-[15px] font-bold text-primary ${FOCUS}`}>Cancel</button>
+      <button type="button" disabled={controls.cancelDisabled} onClick={onClose}
+        className={`min-h-11 justify-self-center px-3.5 text-[15px] font-bold text-primary disabled:opacity-60 ${FOCUS}`}>Cancel</button>
     </FcSheet>
   )
 }

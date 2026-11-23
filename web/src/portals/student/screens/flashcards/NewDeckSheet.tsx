@@ -10,7 +10,7 @@ import { useCreateDeck, useDeleteDeck, useGenerateDeck, useRetryGeneration, useR
 import { CountStepper } from "./parts/CountStepper"
 import { FcSheet } from "./parts/FcSheet"
 import {
-  COUNT_DEFAULT, COUNT_MAX, COUNT_MIN, GENERATION_FAILED_TEXT, buildNewDeckRequest, clampCount, finishGeneration,
+  COUNT_DEFAULT, COUNT_MAX, COUNT_MIN, GENERATION_FAILED_TEXT, buildNewDeckRequest, clampCount, failedDeckToDiscard, finishGeneration,
   newDeckErrorMessage, newDeckOptions, resolveMode, selectChip, selectKind, selectSubject,
   submitLabel, topicChips, weaknessChips, type DeckSelection, type NewDeckMode,
 } from "./newDeckView"
@@ -59,14 +59,18 @@ function NoSubjects({ overview }: { overview: ReturnType<typeof useOverview> }) 
   )
 }
 
-export function NewDeckSheet({ seed, onClose, onStarted }: {
-  seed: NewDeckSeed | null; onClose: () => void; onStarted: (deckId: string) => void
+export function NewDeckSheet({ seed, onClose, onStarted, onDiscarded }: {
+  seed: NewDeckSeed | null
+  onClose: () => void
+  onStarted: (deckId: string) => void
+  /** A failed deck was deleted because its sheet closed without a retry. */
+  onDiscarded?: (deckId: string) => void
 }) {
-  return seed ? <NewDeckForm seed={seed} onClose={onClose} onStarted={onStarted} /> : null
+  return seed ? <NewDeckForm seed={seed} onClose={onClose} onStarted={onStarted} onDiscarded={onDiscarded} /> : null
 }
 
-function NewDeckForm({ seed, onClose, onStarted }: {
-  seed: NewDeckSeed; onClose: () => void; onStarted: (deckId: string) => void
+function NewDeckForm({ seed, onClose, onStarted, onDiscarded }: {
+  seed: NewDeckSeed; onClose: () => void; onStarted: (deckId: string) => void; onDiscarded?: (deckId: string) => void
 }) {
   const overview = useOverview()
   const subjects = overview.data?.subjects ?? []
@@ -107,7 +111,12 @@ function NewDeckForm({ seed, onClose, onStarted }: {
 
   function close() {
     if (pending) return
-    if (failedDeckId && !retryStarted.current && !retrying.has(failedDeckId)) discard.mutate(failedDeckId)
+    const discardId = failedDeckToDiscard({
+      failedDeckId, retryStarted: retryStarted.current, retrying: !!failedDeckId && retrying.has(failedDeckId),
+    })
+    // The promise, not `mutate`'s callback: `onClose` unmounts this form, and a callback passed to
+    // `mutate` does not fire once its component is gone. The screen behind it must hear the deck left.
+    if (discardId) void discard.mutateAsync(discardId).then(() => onDiscarded?.(discardId), () => {})
     onClose()
   }
 

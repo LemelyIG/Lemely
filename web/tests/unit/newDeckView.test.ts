@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest"
 import {
   buildNewDeckRequest,
   clampCount,
+  failedDeckSeed,
+  failedDeckToDiscard,
   finishGeneration,
   manualDeckRequest,
   newDeckErrorMessage,
@@ -201,5 +203,35 @@ describe("new deck outcome", () => {
       (id) => calls.push(`started:${id}`),
     )
     expect(calls).toEqual(["started:d1"])
+  })
+})
+
+describe("failedDeckSeed", () => {
+  const deck = { subjectCode: "0580", topic: "E7 Vectors" }
+
+  it("reopens the new-deck sheet for the failed deck, with its subject, topic and kind", () => {
+    expect(failedDeckSeed({ ...deck, origin: "weakness" }, "d1"))
+      .toEqual({ mode: "weakness", subjectCode: "0580", topic: "E7 Vectors", failedDeckId: "d1" })
+    expect(failedDeckSeed({ ...deck, origin: "topic" }, "d2").mode).toBe("topic")
+  })
+
+  it("leaves the kind open for a manual deck", () => {
+    expect(failedDeckSeed({ subjectCode: "0580", topic: null, origin: "manual" }, "d3"))
+      .toEqual({ mode: null, subjectCode: "0580", topic: null, failedDeckId: "d3" })
+  })
+})
+
+describe("failedDeckToDiscard", () => {
+  it("closing without retrying discards the failed deck, so Nothing was saved stays true", () => {
+    expect(failedDeckToDiscard({ failedDeckId: "d1", retryStarted: false, retrying: false })).toBe("d1")
+  })
+
+  it("keeps it once a retry started or is in flight", () => {
+    expect(failedDeckToDiscard({ failedDeckId: "d1", retryStarted: true, retrying: false })).toBeNull()
+    expect(failedDeckToDiscard({ failedDeckId: "d1", retryStarted: false, retrying: true })).toBeNull()
+  })
+
+  it("discards nothing when the sheet was not opened for a failed deck", () => {
+    expect(failedDeckToDiscard({ failedDeckId: undefined, retryStarted: false, retrying: false })).toBeNull()
   })
 })

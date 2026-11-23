@@ -8,6 +8,31 @@ export const COUNT_MAX = 50
 export const COUNT_DEFAULT = 12
 export const GENERATION_FAILED_TEXT = "Couldn't write the cards. Nothing was saved."
 
+/**
+ * FGX: the new-deck sheet reopened for a deck whose cards did not get written. It carries the deck's
+ * own subject, topic and kind (a manual deck has no kind to preselect) and the id to retry or discard.
+ */
+export function failedDeckSeed(
+  deck: { origin: NewDeckMode; subjectCode: string; topic: string | null },
+  deckId: string,
+): { mode: NewDeckMode | null; subjectCode: string; topic: string | null; failedDeckId: string } {
+  return {
+    mode: deck.origin === "manual" ? null : deck.origin,
+    subjectCode: deck.subjectCode,
+    topic: deck.topic,
+    failedDeckId: deckId,
+  }
+}
+
+/**
+ * The failed deck to delete when its sheet closes: any close that is not a retry, so "Nothing was
+ * saved" stays true. Null once a retry started or is running, or when the sheet is not for a failed deck.
+ */
+export function failedDeckToDiscard(c: { failedDeckId: string | undefined; retryStarted: boolean; retrying: boolean }): string | null {
+  if (!c.failedDeckId || c.retryStarted || c.retrying) return null
+  return c.failedDeckId
+}
+
 export function clampCount(n: number): number {
   return Math.min(COUNT_MAX, Math.max(COUNT_MIN, Math.round(n)))
 }

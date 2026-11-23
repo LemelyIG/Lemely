@@ -2,10 +2,11 @@
 import { useEffect, useRef, useState } from "react"
 import { useAddCard, useDeleteCard, useEditCard } from "@/lib/hooks/useFlashcardApi"
 import {
-  CARD_DELETE_ERROR, cardDeleteConfirm, cardDraftFor, cardSave, cardSaveError, cardSaveLabel, cardSheetTitle,
+  cardDeleteConfirm, cardDraftFor, cardSave, cardSaveError, cardSaveLabel, cardSheetTitle,
   submitCard, submitCardDelete, type CardCloseOutcome, type CardMode, type CardMutators,
 } from "./deckActions"
 import type { CardRowView } from "./deckView"
+import { CardDeleteStep } from "./parts/CardDeleteStep"
 import { FcSheet } from "./parts/FcSheet"
 
 const FOCUS = "focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
@@ -61,18 +62,11 @@ export function CardSheet({
   }
 
   if (confirming && shownCard) {
-    const confirm = cardDeleteConfirm(shownCard)
     return (
-      <FcSheet {...sheetProps} title={confirm.title} alert>
-        <p className="text-[14px] leading-[1.4] text-on-surface-variant">{confirm.body}</p>
-        {remove.isError ? <div role="alert" className={ERROR}>{CARD_DELETE_ERROR}</div> : null}
-        <button type="button" disabled={remove.isPending}
-          onClick={() => submitCardDelete(shownCard, mutators, finish("deleted"))}
-          className={`min-h-[50px] w-full rounded-[18px] bg-on-error-container px-7 text-[15.5px] font-bold text-on-primary disabled:opacity-60 ${FOCUS}`}>
-          {remove.isPending ? confirm.pending : confirm.confirm}
-        </button>
-        <button type="button" onClick={() => { remove.reset(); setConfirming(false) }}
-          className={`min-h-11 justify-self-center px-3.5 text-[15px] font-bold text-primary ${FOCUS}`}>{confirm.keep}</button>
+      <FcSheet {...sheetProps} title={cardDeleteConfirm(shownCard).title} alert>
+        <CardDeleteStep card={shownCard} state={remove}
+          onConfirm={() => submitCardDelete(shownCard, mutators, finish("deleted"))}
+          onKeep={() => { remove.reset(); setConfirming(false) }} />
       </FcSheet>
     )
   }

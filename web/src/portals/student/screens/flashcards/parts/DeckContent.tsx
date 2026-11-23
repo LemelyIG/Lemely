@@ -71,7 +71,7 @@ export function DeckContent({
         <OriginTag icon={view.originIcon}>{view.originLine}</OriginTag>
         <MasteryBar mastery={view.mastery} size="detail" />
         <MasteryLegend legend={view.legend} />
-        {shortfall ? <span role="status" className="text-[13px] font-medium text-on-surface-variant">{shortfall}</span> : null}
+        {shortfall ? <span className="text-[13px] font-medium text-on-surface-variant">{shortfall}</span> : null}
       </div>
       <button type="button" disabled={!view.review.enabled} onClick={onReview} className={PRIMARY_BTN}>{view.review.label}</button>
       <section className={variant === "panel" ? "grid min-h-0 grid-rows-[auto_minmax(0,1fr)]" : "grid"}>

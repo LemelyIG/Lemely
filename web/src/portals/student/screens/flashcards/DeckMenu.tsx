@@ -5,7 +5,7 @@ import { Popover } from "@/components/ui/popover"
 import { QueryState } from "@/components/ui/query-state"
 import { SkeletonBlock } from "@/components/ui/skeleton"
 import { useFlashcardDeck } from "@/lib/hooks/useFlashcardApi"
-import { DECK_MENU_ITEMS, keepCachedOnError } from "./deckActions"
+import { DECK_MENU_ITEMS, firstConnected, keepCachedOnError } from "./deckActions"
 import { DeleteDeckSheet } from "./DeleteDeckSheet"
 import { RenameDeckSheet } from "./RenameDeckSheet"
 import { FcSheet } from "./parts/FcSheet"
@@ -15,6 +15,15 @@ const ITEM = `block min-h-11 w-full rounded-md px-3 py-2 text-start text-[15px] 
 const itemTone = (destructive: boolean) => (destructive ? "text-on-error-container" : "text-on-surface")
 
 type Which = "rename" | "delete" | null
+
+/**
+ * Where focus lands when the element it should return to has left the page (a deleted deck's menu
+ * button, or the row that was held): the list's selected row, else its heading. Null off the list.
+ */
+const listAnchor = (): HTMLElement | null => firstConnected(
+  document.querySelector<HTMLElement>("[data-fc-selected-row]"),
+  document.querySelector<HTMLElement>("[data-fc-heading]"),
+)
 
 /**
  * The DOTS button in a deck header (fc.js `.icl.nd` on a page, plain `.icl` in the side panel) with
@@ -34,7 +43,8 @@ export function DeckOptionsButton({
   const [open, setOpen] = useState(false)
   const [which, setWhich] = useState<Which>(null)
   const trigger = useRef<HTMLElement | null>(null)
-  const back = () => trigger.current
+  // After a delete the deck's screen, and this button with it, can be gone by the time focus returns.
+  const back = () => firstConnected(trigger.current) ?? listAnchor()
   return (
     <>
       <Popover label="Deck options" open={open} onOpenChange={setOpen} align="end"
@@ -63,7 +73,12 @@ export function DeckOptionsButton({
  * retry if it cannot. The id is kept after the menu closes so the sheet it opened still has its deck.
  * Focus returns to the row that was held.
  */
-export function DeckMenu({ deckId, onClose, onDeleted }: { deckId: string | null; onClose: () => void; onDeleted?: () => void }) {
+export function DeckMenu({ deckId, onClose, onDeleted }: {
+  deckId: string | null
+  onClose: () => void
+  /** Told which deck went, so the screen can leave a panel that was showing it. */
+  onDeleted?: (deckId: string) => void
+}) {
   const lastId = useRef<string | null>(deckId)
   if (deckId) lastId.current = deckId
   const [which, setWhich] = useState<Which>(null)
@@ -77,7 +92,9 @@ export function DeckMenu({ deckId, onClose, onDeleted }: { deckId: string | null
     // A touch long-press may leave focus on body; then there is no row to give it back to.
     opener.current = active instanceof HTMLElement && active !== document.body ? active : null
   }, [deckId])
-  const back = () => (opener.current?.isConnected ? opener.current : null)
+  // No held row to return to (a touch hold leaves none) stays null; a held row that has since left
+  // the list, because its deck was deleted, hands focus to the list instead of dropping it on body.
+  const back = () => (opener.current ? firstConnected(opener.current) ?? listAnchor() : null)
   // Keep the last loaded deck so the sheets still have a name and a count while they slide out.
   const lastDeck = useRef(deck.data)
   if (deck.data) lastDeck.current = deck.data
@@ -105,7 +122,7 @@ export function DeckMenu({ deckId, onClose, onDeleted }: { deckId: string | null
         <>
           <RenameDeckSheet deckId={id} title={shownDeck.title} open={which === "rename"} onClose={() => setWhich(null)} restoreFocusTo={back} />
           <DeleteDeckSheet deckId={id} title={shownDeck.title} cardCount={shownDeck.cards.length} open={which === "delete"}
-            onClose={() => setWhich(null)} onDeleted={() => onDeleted?.()} restoreFocusTo={back} />
+            onClose={() => setWhich(null)} onDeleted={() => onDeleted?.(id)} restoreFocusTo={back} />
         </>
       ) : null}
     </>

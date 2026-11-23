@@ -55,6 +55,12 @@ describe("DeckContent states", () => {
     expect(render(deck(), { shortfall: "9 of 12 cards written" })).toContain("9 of 12 cards written")
   })
 
+  it("the short-generation line is plain text: the toast already announced it, so it is not a live region", () => {
+    const html = render(deck(), { shortfall: "9 of 12 cards written" })
+    expect(html).toContain("9 of 12 cards written")
+    expect(html).not.toContain('role="status"')
+  })
+
   it("failed: the reason, Try again and Delete deck, and no card list", () => {
     const html = render(deck({ generationStatus: "failed", cards: [] }))
     expect(html).toContain("Couldn&#x27;t write the cards. Nothing was saved.")
