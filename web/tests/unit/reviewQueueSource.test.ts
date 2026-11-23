@@ -92,6 +92,12 @@ describe("review screens source", () => {
     expect(screen).toMatch(/const wide = cleared \|\| \(state === "first-run" && !phone\)/)
     expect(screen).toMatch(/col-span-full[^\n]*\{column\}/)
   })
+  it("lays out the first-run walkthrough and preview in columns only in a wide container", () => {
+    const html = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(FirstRun, { phone: false, markHref: "/papers" })))
+    expect(html).toMatch(/class="[^"]*@container[^"]*"/)
+    expect(html).toMatch(/class="[^"]*grid-cols-1[^"]*shell-lg:@4xl:grid-cols-\[3fr_2fr\]/)
+    expect(html.indexOf("Nothing to review yet")).toBeLessThan(html.indexOf("Answers to check will look like this"))
+  })
   it("numbers the first-run steps, as the approved mock does", () => {
     for (const phone of [false, true]) {
       const html = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(FirstRun, { phone, markHref: "/papers" })))

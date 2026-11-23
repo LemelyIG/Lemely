@@ -63,7 +63,8 @@ export function FirstRun({ markHref, phone }: { markHref: string; phone: boolean
         { title: "You decide here", body: "Tick or change the mark. Usually under a minute each." },
       ]
   return (
-    <div className="grid gap-6">
+    <div className="@container">
+      <div className="grid grid-cols-1 items-start gap-6 shell-lg:@4xl:grid-cols-[3fr_2fr]">
       <section className="grid max-w-[820px] gap-[22px] rounded-card bg-surface-container-lowest p-7 shadow-[inset_0_0_0_1px_var(--color-outline-variant)] max-shell-sm:gap-4 max-shell-sm:p-5">
         <div className="flex items-center gap-4">
           <TeacherBinny mood="open" size={phone ? 48 : 56} />
@@ -92,6 +93,7 @@ export function FirstRun({ markHref, phone }: { markHref: string; phone: boolean
           <GhostRows rows={2} withLeading />
         </div>
       )}
+      </div>
       <SampleAnswer open={sampleOpen} onClose={() => setSampleOpen(false)} />
     </div>
   )
