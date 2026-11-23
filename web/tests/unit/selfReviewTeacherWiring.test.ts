@@ -23,14 +23,14 @@ function readSource(relativePath: string): string {
   return stripComments(readFileSync(join(ROOT, relativePath), "utf8"))
 }
 
-describe("Review.tsx — student_evidence_unjudged is labelled and filterable", () => {
+describe("review labels — student_evidence_unjudged is labelled and filterable", () => {
   it("REASON_LABEL carries a human label, not the raw enum string", () => {
     expect(REASON_LABEL.student_evidence_unjudged).toBe("Student challenged a mark")
     expect(reasonLabel("student_evidence_unjudged")).toBe("Student challenged a mark")
   })
 
   it("is not treated as an integrity reason (accept/adjust controls, not dismiss-only)", () => {
-    // `ReviewItem.tsx` renders dismiss-only for an integrity reason and
+    // The answer panel renders dismiss-only for an integrity reason and
     // accept/adjust-marks for everything else. A challenged mark is a
     // marking dispute, not an integrity signal — it must take the normal
     // resolve path, the one that can actually move the student's mark.
@@ -53,43 +53,33 @@ describe("Review.tsx — student_evidence_unjudged is labelled and filterable", 
   })
 })
 
-describe("ReviewItem.tsx — a challenged mark's points are readable, not just named", () => {
-  const source = readSource("src/portals/teacher/screens/ReviewItem.tsx")
+describe("answerView.ts — a challenged mark's points are readable, not just named", () => {
+  const source = readSource("src/portals/teacher/screens/review/answerView.ts")
 
-  it("renders SelfReviewPoints with the detail's own points, not a stand-in", () => {
-    expect(source).toContain("<SelfReviewPoints points={detail.points} />")
+  it("builds the self-review block from the detail's own points, not a stand-in", () => {
+    expect(source).toContain("d.points")
+    expect(source).toContain("selfReview:")
   })
 
-  it("SelfReviewPoints shows the student's claim, the marker's verdict, and the evidence text", () => {
-    const fnStart = source.indexOf("function SelfReviewPoints(")
-    expect(fnStart).toBeGreaterThan(-1)
-    const fnEnd = source.indexOf("function AwardedMarks", fnStart)
-    expect(fnEnd).toBeGreaterThan(fnStart)
-    const body = source.slice(fnStart, fnEnd)
-    // The marker's own verdict and the student's claim, both — a teacher
-    // adjudicating a disagreement needs both sides, not just one.
-    expect(body).toContain("point.awarded")
-    expect(body).toContain("point.studentSelfmark")
-    // The actual text the student wrote — the sentence the queue row
-    // exists to have a human read.
-    expect(body).toContain("point.studentEvidence")
-    // An unjudged point (the common `judge=None` case) must say so rather
-    // than silently rendering nothing where a verdict chip would go.
-    expect(body).toContain("Not yet judged")
+  it("shows the student's claim, the marker's verdict, and the evidence text", () => {
+    // The marker's own verdict and the student's claim, both: a teacher adjudicating a
+    // disagreement needs both sides, not just one.
+    expect(source).toContain("p.studentSelfmark")
+    // The actual text the student wrote, the sentence the queue row exists to have a human read.
+    expect(source).toContain("p.studentEvidence")
+    expect(source).toContain("p.evidenceVerdict")
+    // An unjudged point (the common `judge=None` case) must say so rather than render nothing.
+    expect(source).toContain("Not yet judged")
+  })
+
+  it("only includes points the student actually self-marked, not every scheme point on the question", () => {
+    expect(source).toContain("p.studentSelfmark !== null")
   })
 
   it("renders student-authored evidence as plain JSX text, never as markup", () => {
-    // No dangerouslySetInnerHTML anywhere in the file, and specifically not
-    // near the evidence render — a teacher-console exemption from
-    // student-facing sanitising is about withholding nothing, not about
-    // trusting the bytes as HTML.
+    // No dangerouslySetInnerHTML in the view model or the panel that draws it: a teacher-console
+    // exemption from student-facing sanitising is about withholding nothing, not trusting bytes as HTML.
     expect(source).not.toContain("dangerouslySetInnerHTML")
-  })
-
-  it("only renders points the student actually self-marked, not every scheme point on the question", () => {
-    const fnStart = source.indexOf("function SelfReviewPoints(")
-    const fnEnd = source.indexOf("function AwardedMarks", fnStart)
-    const body = source.slice(fnStart, fnEnd)
-    expect(body).toContain("p.studentSelfmark !== null")
+    expect(readSource("src/portals/teacher/screens/review/AnswerPanel.tsx")).not.toContain("dangerouslySetInnerHTML")
   })
 })

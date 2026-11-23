@@ -42,8 +42,8 @@ describe("TableOrList (brief decision 4)", () => {
     expect(nativeList).toContain('<p role="alert">ERR</p>')
     expect(nativeList).not.toContain("BULK")
   })
-  it("Review and ClassRoster use it", () => {
-    for (const f of ["portals/teacher/screens/Review.tsx", "portals/teacher/screens/ClassRoster.tsx"]) {
+  it("ClassRoster uses it", () => {
+    for (const f of ["portals/teacher/screens/ClassRoster.tsx"]) {
       expect(readFileSync(join(SRC, f), "utf8"), f).toContain("<TableOrList")
     }
   })
