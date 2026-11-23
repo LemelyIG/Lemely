@@ -21,6 +21,13 @@ const KEY = "11111111-1111-4111-8111-111111111111"
 beforeEach(() => request.mockReset())
 
 describe("review idempotency key", () => {
+  it("invalidates open deck details after grading", async () => {
+    request.mockResolvedValue({})
+    const qc = new QueryClient()
+    const invalidate = vi.spyOn(qc, "invalidateQueries")
+    await new MutationObserver(qc, reviewCardMutationOptions(qc)).mutate({ cardId: "c1", grade: "good", clientReviewId: KEY })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["flashcards", "deck"] })
+  })
   it("sends clientReviewId in the POST body", async () => {
     request.mockResolvedValue({})
     await flashcardApi.reviewCard("c1", "good", KEY)

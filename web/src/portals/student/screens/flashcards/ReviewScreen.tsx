@@ -48,6 +48,17 @@ export function ReviewScreen() {
   const [index, setIndex] = useState(0)
   const [revealed, setRevealed] = useState(false)
   const [session, setSession] = useState<FlashcardSessionState>(startSession)
+  const sessionRef = useRef(session)
+  function updateSession(update: (s: FlashcardSessionState) => FlashcardSessionState) {
+    const next = update(sessionRef.current)
+    sessionRef.current = next
+    setSession(next)
+  }
+  function leaveReview() {
+    const latest = sessionRef.current
+    if ((latest.failed.length > 0 || latest.inFlight > 0) && !window.confirm("Some ratings may not be saved yet. Leave review?")) return
+    navigate(backTo)
+  }
   const current = cards?.[index] ?? null
   const finished = cards !== null && cards.length > 0 && index >= cards.length
 
@@ -55,8 +66,8 @@ export function ReviewScreen() {
   const retrying = useRef(false)
   function send(entry: FailedGrade) {
     void reviewCard.mutateAsync({ cardId: entry.cardId, grade: entry.grade, clientReviewId: entry.clientReviewId })
-      .then((result) => setSession((s) => applyGradeOutcome(s, { kind: "settled", result })))
-      .catch(() => setSession((s) => applyGradeOutcome(s, { kind: "failed", ...entry })))
+      .then((result) => updateSession((s) => applyGradeOutcome(s, { kind: "settled", result })))
+      .catch(() => updateSession((s) => applyGradeOutcome(s, { kind: "failed", ...entry })))
   }
 
   // Advance immediately, but reserve this card synchronously against repeated input.
@@ -67,15 +78,15 @@ export function ReviewScreen() {
     const entry = { cardId: card.id, front: card.front, grade: g, clientReviewId: newClientReviewId() }
     setIndex((i) => i + 1)
     setRevealed(false)
-    setSession((s) => registerGrade(s, g))
+    updateSession((s) => registerGrade(s, g))
     send(entry)
   }
 
   function retryAll() {
     if (retrying.current) return
     retrying.current = true
-    const { state, retries } = beginRetry(session)
-    setSession(state)
+    const { state, retries } = beginRetry(sessionRef.current)
+    updateSession(() => state)
     for (const entry of retries) send(entry)
   }
   useEffect(() => { retrying.current = false }, [session.failed])
@@ -88,7 +99,7 @@ export function ReviewScreen() {
   // R7: Space/Enter flip; 1-4 rate after the flip.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (!current || finished) return
+      if (!current || finished || e.ctrlKey || e.metaKey || e.altKey || e.repeat) return
       const target = e.target as Element | null
       if (isEditableTarget(target)) return
       const action = reviewKeyAction(e.key, revealed)
@@ -111,23 +122,24 @@ export function ReviewScreen() {
   }, [index, revealed, cards])
 
   const bannerText = syncBannerText(session.failed.length)
+  const withStatus = (content: React.ReactNode) => <><div role="status" className="sr-only">{bannerText}</div>{content}</>
   const banner = bannerText ? (
-    <div role="status" className="mx-[22px] mt-2 flex items-center justify-between gap-2.5 rounded-xl bg-tertiary-container px-3 text-[13.5px] font-semibold text-on-tertiary-container">
+    <div className="mx-[22px] mt-2 flex items-center justify-between gap-2.5 rounded-xl bg-tertiary-container px-3 text-[13.5px] font-semibold text-on-tertiary-container">
       <span>{bannerText}</span>
       <button type="button" onClick={retryAll} className="min-h-11 font-bold text-primary">Retry</button>
     </div>
   ) : null
 
   if (!cards) {
-    return <QueryState query={due} srHeading="Review flashcards"
+    return withStatus(<QueryState query={due} srHeading="Review flashcards"
       skeleton={<div className="grid gap-4 p-5" aria-busy="true" aria-label="Loading your cards"><SkeletonBlock className="h-2 rounded" /><SkeletonBlock className="h-[360px] rounded-[28px]" /></div>}
       error={{ heading: "Couldn’t load your cards", secondaryAction: { label: "Back to decks", onClick: () => navigate(backTo) } }}>
       {() => null}
-    </QueryState>
+    </QueryState>)
   }
 
   if (cards.length === 0) {
-    return (
+    return withStatus(
       <div className="grid flex-1 content-center justify-items-center gap-3 px-6 text-center">
         <h1 className="font-display text-[28px] font-extrabold text-primary">Nothing due</h1>
         <p className="text-[15px] text-on-surface-variant">{comingBackLine(due.data?.upcoming ?? [], meta.nextDueAt, new Date())}</p>
@@ -145,19 +157,19 @@ export function ReviewScreen() {
       session, totalCards: cards.length, stillDue: Math.max(meta.totalDue - cards.length, 0),
       upcoming: due.data?.upcoming ?? [], now: new Date(), practice,
     })
-    return <ReviewDone view={view} onBack={() => navigate(backTo)} today={null} banner={banner} />
+    return withStatus(<ReviewDone view={view} onBack={leaveReview} today={null} banner={banner} />)
   }
 
   const progress = progressView(index, cards.length)
   const buttons = current ? gradeButtons(current, meta.againDelay) : []
   const deckLabel = deckId ? deck.data?.title : subjectCode ? subjectName : null
 
-  return (
+  return withStatus(
     <div className="flex min-h-[100dvh] flex-col lg:mx-auto lg:w-full lg:max-w-[640px] lg:pt-3">
       {/* `.prtop`: end, progress bar, count */}
       <div className="flex items-center gap-3 px-4 pb-1.5 pt-4">
-        <button type="button" aria-label="End review" onClick={() => navigate(backTo)} className="grid size-11 place-items-center rounded-[14px] bg-surface-container-high text-on-surface"><X size={20} aria-hidden /></button>
-        <div className="h-2 flex-1 overflow-hidden rounded bg-surface-container-high" role="progressbar" aria-valuemin={0} aria-valuemax={cards.length} aria-valuenow={index + 1} aria-label="Cards reviewed">
+        <button type="button" aria-label="End review" onClick={leaveReview} className="grid size-11 place-items-center rounded-[14px] bg-surface-container-high text-on-surface"><X size={20} aria-hidden /></button>
+        <div className="h-2 flex-1 overflow-hidden rounded bg-surface-container-high" role="progressbar" aria-valuemin={0} aria-valuemax={cards.length} aria-valuenow={index} aria-label="Cards reviewed">
           <i className="block h-full origin-left rounded bg-primary transition-transform duration-300 ease-out motion-reduce:transition-none" style={{ transform: `scaleX(${progress.fraction})` }} />
         </div>
         <span className="font-mono text-[13px] font-bold text-on-surface-variant">{progress.label}</span>

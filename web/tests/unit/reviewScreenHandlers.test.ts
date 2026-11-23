@@ -74,14 +74,14 @@ function start() {
   render()
   return render()
 }
-const press = (target: unknown, key: string) => {
+const press = (target: unknown, key: string, modifiers: Record<string, boolean> = {}) => {
   const preventDefault = vi.fn()
-  h.listeners.at(-1)?.({ key, target, preventDefault })
+  h.listeners.at(-1)?.({ key, target, preventDefault, ...modifiers })
   return preventDefault
 }
 const gradeButton = (tree: unknown, label: string) =>
   findAll(tree, (e) => e.type === "button" && JSON.stringify(e.props.children).includes(`"${label}`))[0]
-const banner = (tree: unknown) => findAll(tree, (e) => e.props.role === "status")[0]
+const banner = (tree: unknown) => findAll(tree, (e) => e.type === "div" && typeof e.props.className === "string" && e.props.className.includes("bg-tertiary-container"))[0]
 const focusable = (own: boolean) => ({
   closest: (sel: string) => (sel.startsWith("button") ? { hasAttribute: (n: string) => own && n === "data-review-primary" } : null),
 })
@@ -100,6 +100,47 @@ beforeEach(() => {
 })
 
 describe("review screen: grading", () => {
+  it("retries all failures even when another failure settles before render", async () => {
+    let rejectSecond!: (e: Error) => void
+    h.mutateAsync.mockRejectedValueOnce(new Error("offline"))
+      .mockReturnValueOnce(new Promise((_resolve, reject) => { rejectSecond = reject }))
+      .mockResolvedValue({ grade: "good", xpAwarded: 2, card: { id: "a" } })
+    start()
+    press(plainTarget, " ")
+    ;(gradeButton(render(), "Good").props.onClick as () => void)()
+    await Promise.resolve(); await Promise.resolve()
+    render()
+    press(plainTarget, " ")
+    const secondTree = render()
+    const staleRetry = findAll(banner(secondTree), (e) => e.type === "button")[0]
+    ;(gradeButton(secondTree, "Good").props.onClick as () => void)()
+    rejectSecond(new Error("offline"))
+    await Promise.resolve(); await Promise.resolve()
+    ;(staleRetry.props.onClick as () => void)()
+    expect(h.mutateAsync).toHaveBeenCalledTimes(4)
+    expect(h.mutateAsync.mock.calls.slice(2).map(([v]) => v.cardId)).toEqual(["a", "b"])
+  })
+
+  it("announces unsaved ratings in a persistent status and asks before leaving", async () => {
+    h.mutateAsync.mockRejectedValueOnce(new Error("offline"))
+    const confirm = vi.fn().mockReturnValue(false)
+    Object.assign(window, { confirm })
+    let tree = start()
+    expect(findAll(tree, (e) => e.props.role === "status")).toHaveLength(1)
+    press(plainTarget, " ")
+    ;(gradeButton(render(), "Good").props.onClick as () => void)()
+    await Promise.resolve(); await Promise.resolve()
+    tree = render()
+    const end = findAll(tree, (e) => e.props["aria-label"] === "End review")[0]
+    ;(end.props.onClick as () => void)()
+    expect(confirm).toHaveBeenCalled()
+    expect(h.navigate).not.toHaveBeenCalled()
+  })
+
+  it("reports completed cards as progress", () => {
+    const tree = start()
+    expect(findAll(tree, (e) => e.props.role === "progressbar")[0].props["aria-valuenow"]).toBe(0)
+  })
   it("sends one grade per card however many times it is pressed", () => {
     let tree = start()
     press(plainTarget, " ")
@@ -143,6 +184,46 @@ describe("review screen: grading", () => {
 })
 
 describe("review screen: keyboard", () => {
+  it("flips when the focused review card receives Space", () => {
+    start()
+    expect(press(focusable(true), " ")).toHaveBeenCalled()
+    expect(findAll(render(), (e) => e.type === ReviewCard)[0].props.revealed).toBe(true)
+    h.si = 0; h.ri = 0; h.effects = []
+    const tree = ReviewCard({ card: card("a") as never, revealed: false, onReveal: vi.fn(), onGrade: vi.fn() })
+    expect(findAll(tree, (e) => e.props.role === "button")[0].props).toHaveProperty("data-review-primary", "")
+  })
+
+  it("ignores modified and repeated grading keys", () => {
+    start()
+    press(plainTarget, " ")
+    render()
+    for (const modifier of ["ctrlKey", "metaKey", "altKey", "repeat"]) {
+      expect(press(plainTarget, "3", { [modifier]: true })).not.toHaveBeenCalled()
+    }
+    expect(h.mutateAsync).not.toHaveBeenCalled()
+  })
+
+  it("keys each ReviewCard by card id and marks Show answer as primary", () => {
+    const tree = start()
+    expect(findAll(tree, (e) => e.type === ReviewCard)[0].key).toBe("a")
+    expect(findAll(tree, (e) => e.type === "button" && e.props["data-review-primary"] === "")).toHaveLength(1)
+  })
+
+  it("focuses Show answer on entry and the card after reveal", () => {
+    start()
+    const focus = vi.fn()
+    const actionRef = h.refs.find((r) => r.current === null)
+    expect(actionRef).toBeDefined()
+    actionRef!.current = { focus }
+    render()
+    expect(focus).toHaveBeenCalled()
+    h.si = 0; h.ri = 0; h.refs = []; h.effects = []
+    ReviewCard({ card: card("a") as never, revealed: true, onReveal: vi.fn(), onGrade: vi.fn() })
+    const surfaceFocus = vi.fn()
+    h.refs[0].current = { focus: surfaceFocus }
+    h.effects.forEach((effect) => effect())
+    expect(surfaceFocus).toHaveBeenCalled()
+  })
   it("Space flips, then 1 to 4 rate", () => {
     start()
     expect(press(plainTarget, "1")).not.toHaveBeenCalled()

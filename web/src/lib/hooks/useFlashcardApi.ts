@@ -300,7 +300,10 @@ export function reviewCardMutationOptions(queryClient: QueryClient) {
     mutationFn: ({ cardId, grade, clientReviewId }: ReviewVariables) =>
       flashcardApi.reviewCard(cardId, grade, clientReviewId),
     retry: 0,
-    onSuccess: () => invalidateDeckLists(queryClient),
+    onSuccess: () => {
+      invalidateDeckLists(queryClient)
+      void queryClient.invalidateQueries({ queryKey: ["flashcards", "deck"] })
+    },
   }
 }
 

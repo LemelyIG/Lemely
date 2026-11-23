@@ -54,6 +54,7 @@ export function ReviewCard({
         key={card.id}
         ref={surface}
         role="button"
+        data-review-primary=""
         tabIndex={0}
         aria-label={revealed ? `${card.front}. Answer: ${card.back}` : `${card.front}. Tap to flip`}
         onClick={() => { if (!revealed) onReveal() }}
