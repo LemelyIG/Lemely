@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E3 S4 R4 V3 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
 import { Link } from "react-router-dom"
 import { Cards } from "@phosphor-icons/react"
 import { SectionHeading } from "./PathSection"

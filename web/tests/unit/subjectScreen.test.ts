@@ -1,7 +1,8 @@
-import { createElement, type ComponentType } from "react"
+import { createElement, isValidElement, type ComponentProps, type ComponentType, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { MemoryRouter } from "react-router-dom"
 import { describe, expect, it } from "vitest"
+import { TopicChips } from "@/components/redesign"
 import type { PaperBreakdown, Subject } from "@/lib/studentTypes"
 import { GhostSteps, SubjectSteps } from "@/portals/student/screens/subject/SubjectSteps"
 import { PathSection, nextPaperIndex } from "@/portals/student/screens/subject/PathSection"
@@ -9,11 +10,28 @@ import { TipSection } from "@/portals/student/screens/subject/TipSection"
 import { WinList } from "@/portals/student/screens/subject/WinList"
 import { TopicsSection } from "@/portals/student/screens/subject/TopicsSection"
 import { PapersList } from "@/portals/student/screens/subject/PapersList"
-import { buildSubjectView, firstRunTip, winRows, type SubjectView } from "@/portals/student/screens/subject/subjectModel"
+import { buildSubjectView, firstRunTip, winRows, type SubjectView, type TopicChipView } from "@/portals/student/screens/subject/subjectModel"
 import { MATHS, MATHS_ONE, MATHS_TOPICS, NOW } from "@/portals/student/screens/subject/fixtures"
 
 const html = <P extends object>(node: ComponentType<P>, props: P) =>
   renderToStaticMarkup(createElement(MemoryRouter, null, createElement(node, props)))
+
+/**
+ * What TopicsSection hands the kit's chips. The section holds no hooks, so calling it returns its
+ * element tree; the kit reports a click as the text it drew, which is `topic` on each item.
+ */
+function kitChips(props: ComponentProps<typeof TopicsSection>): ComponentProps<typeof TopicChips> {
+  let found: ComponentProps<typeof TopicChips> | null = null
+  const walk = (node: ReactNode): void => {
+    if (Array.isArray(node)) return node.forEach(walk)
+    if (!isValidElement<{ children?: ReactNode }>(node)) return
+    if (node.type === TopicChips) found = node.props as unknown as ComponentProps<typeof TopicChips>
+    walk(node.props.children)
+  }
+  walk(TopicsSection(props))
+  if (!found) throw new Error("TopicsSection drew no TopicChips")
+  return found
+}
 
 /** `buildSubjectView` is null only for the first-run screen, which these fixtures never are. */
 function build(data: Subject, mode: "full" | "sparse", requestedPaper: string | null = null): SubjectView {
@@ -272,6 +290,31 @@ describe("TopicsSection", () => {
   it("prints the legend once, from the kit", () => {
     const out = html(TopicsSection, { chips: full.chips, foldSecure: false, hint: null, onSelect: () => {} })
     expect(out.match(/rd-chip-legend/g)).toHaveLength(1)
+    // Each getting-state chip also says ", Getting there" to screen readers; only the legend says it bare.
+    expect(out.match(/(?<!, )Getting there/g)).toHaveLength(1)
+  })
+  it("sends each chip's own topic to onSelect, with the short name on screen", () => {
+    const clicked: string[] = []
+    const kit = kitChips({ chips: full.chips, foldSecure: false, hint: null, onSelect: (t) => clicked.push(t) })
+    expect(kit.topics.map((t) => t.topic)).toEqual(full.chips.map((c) => c.label))
+    for (const item of kit.topics) kit.onSelect?.(item.topic)
+    expect(clicked).toEqual(full.chips.map((c) => c.topic))
+    expect(clicked).toContain("C7 Vectors")
+  })
+  it("routes two topics that share a short name to their own topic, and tells them apart on screen", () => {
+    const chip = (topic: string, label: string, pct: number): TopicChipView => ({ topic, label, state: "work", pct })
+    const chips = [chip("C1 Number", "Number", 40), chip("E1 Number", "Number", 45), chip("C2 Algebra", "Algebra", 50)]
+    const clicked: string[] = []
+    const props = { chips, foldSecure: false, hint: null, onSelect: (t: string) => clicked.push(t) }
+    const kit = kitChips(props)
+    for (const item of kit.topics) kit.onSelect?.(item.topic)
+    expect(clicked).toEqual(["C1 Number", "E1 Number", "C2 Algebra"])
+    // The two Number chips show their full names; the unique one keeps its short name.
+    expect(kit.topics.map((t) => t.topic)).toEqual(["C1 Number", "E1 Number", "Algebra"])
+    const out = html(TopicsSection, props)
+    expect(out).toContain("C1 Number")
+    expect(out).toContain("E1 Number")
+    expect(out).not.toContain(">Number<")
   })
   it("prints the sparse hint", () => {
     const out = html(TopicsSection, { chips: sparse.chips, foldSecure: false, hint: "4 of 10 topics so far. Each paper fills in more.", onSelect: () => {} })
@@ -285,6 +328,9 @@ describe("TopicsSection", () => {
 })
 
 describe("PapersList", () => {
+  it("draws nothing, not an empty heading, when there are no papers", () => {
+    expect(html(PapersList, { rows: [], visible: 4, onShowAll: () => {} })).toBe("")
+  })
   it("shows the visible rows and an All N papers control", () => {
     const out = html(PapersList, { rows: full.papers, visible: 4, onShowAll: () => {} })
     expect(out).toContain("Papers")
