@@ -12,6 +12,11 @@ import { TipSection } from "@/portals/student/screens/subject/TipSection"
 import { WinList } from "@/portals/student/screens/subject/WinList"
 import { TopicsSection } from "@/portals/student/screens/subject/TopicsSection"
 import { PapersList, focusRowAfterExpand } from "@/portals/student/screens/subject/PapersList"
+import { SubjectHeader } from "@/portals/student/screens/subject/SubjectHeader"
+import { SubjectBody } from "@/portals/student/screens/subject/SubjectBody"
+import { SubjectFirstRun } from "@/portals/student/screens/subject/SubjectFirstRun"
+import { SubjectLoading } from "@/portals/student/screens/subject/SubjectLoading"
+import { SubjectError } from "@/portals/student/screens/subject/SubjectError"
 import { buildSubjectView, firstRunTip, winRows, type SubjectView, type TopicChipView } from "@/portals/student/screens/subject/subjectModel"
 import { MATHS, MATHS_ONE, MATHS_TOPICS, NOW } from "@/portals/student/screens/subject/fixtures"
 
@@ -456,5 +461,67 @@ describe("focusRowAfterExpand", () => {
     const source = readFileSync(join(WEB_ROOT, "src/portals/student/screens/subject/PapersList.tsx"), "utf8")
     expect(source).toContain("focusRowAfterExpand(")
     expect(source).toMatch(/\.focus\(\)/)
+  })
+})
+
+describe("SubjectHeader", () => {
+  it("names the page in an h1 with the subtitle (K3, K6)", () => {
+    const out = html(SubjectHeader, { title: "Mathematics", subtitle: "IGCSE · 0580 · Extended", examDate: null, planTo: "/student/plan/0580", now: NOW })
+    expect(out).toMatch(/<h1[^>]*>Mathematics<\/h1>/)
+    expect(out).toContain("IGCSE · 0580 · Extended")
+    expect(out).not.toContain('href="/student/plan/0580"')
+  })
+  it("links the countdown pill to the study plan when an exam is dated", () => {
+    const out = html(SubjectHeader, { title: "Mathematics", subtitle: "", examDate: "2025-05-27", planTo: "/student/plan/0580", now: NOW })
+    expect(out).toContain('href="/student/plan/0580"')
+    expect(out).toContain("rd-pill")
+  })
+  it("draws no pill once the exam has passed", () => {
+    const out = html(SubjectHeader, { title: "Mathematics", subtitle: "", examDate: "2024-01-05", planTo: "/student/plan/0580", now: NOW })
+    expect(out).not.toContain("rd-pill")
+  })
+})
+
+describe("SubjectBody", () => {
+  it("renders every full-screen section in phone order", () => {
+    const out = html(SubjectBody, { view: full, code: "0580", wide: false, twoCol: false, onSelectPaper: () => {} })
+    const order = ["Your path to A*", "7 marks to A*", "More marks to win", "Topics", "Papers"].map((s) => out.indexOf(s))
+    expect(order.every((i) => i >= 0)).toBe(true)
+    expect([...order].sort((a, b) => a - b)).toEqual(order)
+    expect(out.match(/class="sj-col"/g)).toHaveLength(2)
+  })
+  it("hides the win section when there is nothing to win", () => {
+    const empty = { ...full, win: { heading: "More marks to win", rows: [] } }
+    expect(html(SubjectBody, { view: empty, code: "0580", wide: false, twoCol: false, onSelectPaper: () => {} })).not.toContain("More marks to win")
+  })
+  it("draws the sparse screen with its own heading", () => {
+    const out = html(SubjectBody, { view: sparse, code: "0580", wide: false, twoCol: false, onSelectPaper: () => {} })
+    expect(out).toContain("Your path to A*")
+    expect(out.match(/class="sj-col"/g)).toHaveLength(2)
+  })
+})
+
+describe("first run, loading and error", () => {
+  it("walks a new student through the first scan (K2)", () => {
+    const out = html(SubjectFirstRun, { code: "0580", name: "Mathematics", wide: false, twoCol: false })
+    expect(out).toContain("Your path to A*")
+    expect(out).toContain("Let’s find your first step")
+    expect(out).toContain("Scan a Mathematics paper")
+    expect(out).toContain("Upload a PDF instead")
+    expect(out).toContain("Lemely marks it")
+    expect(out).toContain("Every Mathematics paper you mark lands here, newest first.")
+  })
+  it("marks the loading state busy and names it (K4)", () => {
+    const out = html(SubjectLoading, { name: "Mathematics" })
+    expect(out).toContain('aria-busy="true"')
+    expect(out).toContain('aria-label="Loading Mathematics"')
+  })
+  it("offers a retry and a way home on error (K5)", () => {
+    const out = html(SubjectError, { name: "Mathematics", onRetry: () => {} })
+    expect(out).toContain("We couldn’t load Mathematics")
+    expect(out).toContain("Check your connection, then try again. Your papers are safe.")
+    expect(out).toContain("Try again")
+    expect(out).toContain('href="/student"')
+    expect(out).toContain('role="alert"')
   })
 })
