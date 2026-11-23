@@ -1,8 +1,9 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S3 R4 V3 */
 /* L4 · Practice tab root (mock C, practice-hub-final.html). Thin: every decision is in hubModel. */
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { BinnyLine } from "@/components/redesign"
 import { PageHeading } from "@/components/ui/page-heading"
-// import { SetBuilderSheet } from "./builder/SetBuilderSheet" — enabled in Task 9
+import { SetBuilderSheet } from "./builder/SetBuilderSheet"
 import { HomeworkRow } from "./hub/HomeworkRow"
 import { practiceHubView } from "./hub/hubModel"
 import { HubLayout } from "./hub/HubLayout"
@@ -21,16 +22,15 @@ export function PracticeHub() {
   // One notice at a time keeps one live region: a failed profile is the more specific news.
   const notice = view.notice ?? (hub.refreshError ? "refresh" : null)
 
-  /* Task 9 re-enables these with the sheet below (needs useLocation, useNavigate, useParams, useSearchParams):
   const { subjectCode } = useParams<{ subjectCode?: string }>()
   const [search] = useSearchParams()
   const navigate = useNavigate()
   const location = useLocation()
+  // Opened from the hub, Close pops back to it; a deep link has nothing to pop to, so it replaces.
   const closeBuilder = () => {
     if ((location.state as { fromHub?: boolean } | null)?.fromHub) navigate(-1)
     else navigate("/student/practice", { replace: true })
   }
-  */
 
   // Binny mounts once: the top slot on desktop, after the tiles below it. The first run renders its own.
   const binny =
@@ -85,7 +85,6 @@ export function PracticeHub() {
         />
       )}
 
-      {/* Task 9:
       {subjectCode ? (
         <SetBuilderSheet
           key={subjectCode}
@@ -94,7 +93,7 @@ export function PracticeHub() {
           focusTopic={search.get("topic")}
           onClose={closeBuilder}
         />
-      ) : null} */}
+      ) : null}
     </div>
   )
 }
