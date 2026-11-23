@@ -5,8 +5,12 @@ import { describe, expect, it } from "vitest"
 import type { PaperBreakdown, Subject } from "@/lib/studentTypes"
 import { GhostSteps, SubjectSteps } from "@/portals/student/screens/subject/SubjectSteps"
 import { PathSection, nextPaperIndex } from "@/portals/student/screens/subject/PathSection"
-import { buildSubjectView, type SubjectView } from "@/portals/student/screens/subject/subjectModel"
-import { MATHS, MATHS_ONE, NOW } from "@/portals/student/screens/subject/fixtures"
+import { TipSection } from "@/portals/student/screens/subject/TipSection"
+import { WinList } from "@/portals/student/screens/subject/WinList"
+import { TopicsSection } from "@/portals/student/screens/subject/TopicsSection"
+import { PapersList } from "@/portals/student/screens/subject/PapersList"
+import { buildSubjectView, firstRunTip, winRows, type SubjectView } from "@/portals/student/screens/subject/subjectModel"
+import { MATHS, MATHS_ONE, MATHS_TOPICS, NOW } from "@/portals/student/screens/subject/fixtures"
 
 const html = <P extends object>(node: ComponentType<P>, props: P) =>
   renderToStaticMarkup(createElement(MemoryRouter, null, createElement(node, props)))
@@ -209,5 +213,88 @@ describe("nextPaperIndex", () => {
     for (const key of ["ArrowUp", "ArrowDown", "Enter", " ", "Tab", "Home", "End"]) {
       expect(nextPaperIndex(0, key, 2, false)).toBeNull()
     }
+  })
+})
+
+describe("TipSection", () => {
+  it("shows Binny's line and a button naming the action and its marks", () => {
+    const out = html(TipSection, { tip: full.tip, size: 60 })
+    expect(out).toContain("7 marks to A*")
+    expect(out).toContain('href="/student/practice/0580?topic=C7%20Vectors"')
+    expect(out).toContain("Practise Vectors")
+    expect(out).toContain("· +9 marks")
+  })
+  it("adds the secondary link on the first run", () => {
+    const out = html(TipSection, { tip: firstRunTip("0580", "Mathematics"), size: 60 })
+    expect(out).toContain("Upload a PDF instead")
+    expect(out).toContain('href="/student/correct?subject=0580&amp;source=file"')
+  })
+  it("has no secondary link once the student has papers", () => {
+    expect(html(TipSection, { tip: full.tip, size: 60 })).not.toContain("Upload a PDF instead")
+  })
+  it("never names A* when the paper has no goal", () => {
+    const out = html(TipSection, { tip: noGoal.tip, size: 60 })
+    expect(out).toContain("Next paper?")
+    expect(out).not.toContain("A*")
+  })
+})
+
+describe("WinList", () => {
+  const win = winRows("0580", MATHS_TOPICS, [{ id: "alg", subjectCode: "0580", topic: "C2 Algebra", title: "", description: null, origin: "topic", cardCount: 1, dueCount: 0, createdAt: "" }], "full")
+  it("lists each topic with its marks and a practice link, heading linked to practice", () => {
+    const out = html(WinList, { win, allTo: "/student/practice/0580" })
+    expect(out).toContain("More marks to win")
+    expect(out).toContain('href="/student/practice/0580"')
+    expect(out).toContain('href="/student/practice/0580?topic=C2%20Algebra"')
+    expect(out).toContain("+7")
+    expect(out.match(/<li/g)).toHaveLength(3)
+  })
+  it("offers flashcards only where a deck exists for the topic", () => {
+    const out = html(WinList, { win, allTo: "/student/practice/0580" })
+    expect(out).toContain('href="/student/flashcards/0580?deck=alg"')
+    expect(out).toContain('aria-label="Algebra flashcards"')
+    expect(out.match(/sj-fcx/g)).toHaveLength(2)
+  })
+  it("draws nothing when no topic has marks left to win", () => {
+    expect(html(WinList, { win: { heading: "Marks to win", rows: [] }, allTo: "/student/practice/0580" })).toBe("")
+  })
+})
+
+describe("TopicsSection", () => {
+  it("renders the chips, the legend and no hint on the full screen", () => {
+    const out = html(TopicsSection, { chips: full.chips, foldSecure: true, hint: null, onSelect: () => {} })
+    expect(out).toContain("Topics")
+    expect(out).toContain("Vectors")
+    expect(out).toContain("Work on")
+    expect(out).toContain("Getting there")
+    expect(out).toContain("Secure")
+  })
+  it("prints the legend once, from the kit", () => {
+    const out = html(TopicsSection, { chips: full.chips, foldSecure: false, hint: null, onSelect: () => {} })
+    expect(out.match(/rd-chip-legend/g)).toHaveLength(1)
+  })
+  it("prints the sparse hint", () => {
+    const out = html(TopicsSection, { chips: sparse.chips, foldSecure: false, hint: "4 of 10 topics so far. Each paper fills in more.", onSelect: () => {} })
+    expect(out).toContain("4 of 10 topics so far. Each paper fills in more.")
+  })
+  it("prints only the hint, with no chips or legend, when no topic has lost a mark yet", () => {
+    const out = html(TopicsSection, { chips: [], foldSecure: false, hint: "Topics show up once a paper loses a mark.", onSelect: () => {} })
+    expect(out).toContain("Topics show up once a paper loses a mark.")
+    expect(out).not.toContain("rd-chip")
+  })
+})
+
+describe("PapersList", () => {
+  it("shows the visible rows and an All N papers control", () => {
+    const out = html(PapersList, { rows: full.papers, visible: 4, onShowAll: () => {} })
+    expect(out).toContain("Papers")
+    expect(out.match(/href="\/student\/result\//g)).toHaveLength(4)
+    expect(out).toContain("All 7 papers")
+    expect(out).toContain("0580/42 · May/Jun 2024")
+    expect(out).toContain("61/80 · Apr")
+  })
+  it("drops the control once everything is visible", () => {
+    const out = html(PapersList, { rows: full.papers, visible: 7, onShowAll: () => {} })
+    expect(out).not.toContain("All 7 papers")
   })
 })
