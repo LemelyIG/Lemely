@@ -1,13 +1,15 @@
 /*
  * L9 · the small decisions the study plan screen makes that are not about what
  * the plan holds (that is `planModel`): which query state to act on, which
- * message a refused move gets, which url a filter or session lives at, and
- * where a tap on the day strip scrolls to. Pure, so they run without a DOM.
+ * message a refused move gets, which url a filter or session lives at, what
+ * each mutation does when it settles, and where a tap on the day strip scrolls
+ * to. Pure, so they run without a DOM and a test can fail them.
  */
 
 import type { QueryStateQuery } from "@/components/ui/query-state"
 import { ApiError } from "@/lib/api"
-import { COPY } from "./planCopy"
+import { studentActionFailureMessage } from "@/lib/studentOutcome"
+import { COPY, movedToast } from "./planCopy"
 import type { SessionVM } from "./planModel"
 
 /**
@@ -56,3 +58,148 @@ export function dayScrollTarget(
   if (day.some((s) => s.status === "missed")) return { id: "plan-missed", opensDone: false }
   return { id: `plan-day-${date}`, opensDone: false }
 }
+
+/** The toast the screen raises, so a test can stand in for it. */
+export type PlanToast = (toast: { title: string; variant: "success" | "error" }) => void
+
+/**
+ * Where opening a session goes. The url is the one place an open session lives: a wide screen
+ * rewrites it in place (the panel follows, and a push or inbox link can name a session too, K44),
+ * a narrow screen pushes it so the back gesture closes the sheet.
+ */
+export function openSessionNav(
+  wide: boolean,
+  filter: string | null,
+  sessionId: string,
+): { to: string; options: { replace: true } | { state: { fromList: true } } } {
+  return {
+    to: planSessionUrl(filter, sessionId),
+    options: wide ? { replace: true } : { state: { fromList: true } },
+  }
+}
+
+/**
+ * What the url asks for that the screen must correct. A session this week's plan does not hold
+ * is dropped with a note (K24/K25); a subject the student does not study falls back to all
+ * subjects (K18), keeping a session that does exist (a link with a stale subject still lands on
+ * its sheet). `missingNote`: true shows the note, false clears it (a session is open), null
+ * leaves it be.
+ */
+export function planRoute(p: {
+  subjectCode?: string
+  sessionId?: string
+  filter: string | null
+  sessionKnown: boolean
+}): { redirectTo: string | null; missingNote: boolean | null } {
+  if (p.sessionId && !p.sessionKnown) return { redirectTo: planListUrl(p.filter), missingNote: true }
+  if (p.subjectCode && p.filter === null) {
+    return p.sessionId
+      ? { redirectTo: planSessionUrl(null, p.sessionId), missingNote: false }
+      : { redirectTo: planListUrl(null), missingNote: null }
+  }
+  return { redirectTo: null, missingNote: p.sessionId ? false : null }
+}
+
+/**
+ * Every move button waits while any move runs: a second `mutate` would replace the first
+ * call's callbacks, and its error toast would be lost.
+ */
+export const moveBusy = (movePending: boolean, movingAll: boolean): boolean => movePending || movingAll
+
+/**
+ * What one move does when it settles: confirm with the day, close the sheet that was open, or
+ * say what the server refused. `closeSheet` is null when there is no sheet (the desktop panel
+ * stays where it is).
+ */
+export function moveCallbacks(p: {
+  date: string
+  today: string
+  toast: PlanToast
+  closeSheet: (() => void) | null
+}): { onSuccess: () => void; onError: (error: unknown) => void } {
+  return {
+    onSuccess: () => {
+      p.toast({ title: movedToast(p.date, p.today), variant: "success" })
+      p.closeSheet?.()
+    },
+    onError: (error) => p.toast({ title: moveFailureMessage(error), variant: "error" }),
+  }
+}
+
+/** Move the missed sessions one after another. Stops at the first refusal; the buttons are always freed. */
+export async function runMoveAll(p: {
+  ids: string[]
+  moveOne: (id: string) => Promise<unknown>
+  setBusy: (busy: boolean) => void
+  toast: PlanToast
+}): Promise<void> {
+  p.setBusy(true)
+  try {
+    for (const id of p.ids) await p.moveOne(id)
+    p.toast({ title: COPY.movedToday, variant: "success" })
+  } catch (error) {
+    p.toast({ title: moveFailureMessage(error), variant: "error" })
+  } finally {
+    p.setBusy(false)
+  }
+}
+
+/** Planning next week succeeded: the button settles, and a toast says so. */
+export function nextWeekCallbacks(p: { setReady: (ready: boolean) => void; toast: PlanToast }): { onSuccess: () => void } {
+  return {
+    onSuccess: () => {
+      p.setReady(true)
+      p.toast({ title: COPY.nextWeekReady, variant: "success" })
+    },
+  }
+}
+
+/** The confirm button of the rebuild dialog: rebuild what it was holding, and close either way. */
+export function confirmRebuild(
+  codes: string[] | null,
+  p: { run: (codes: string[]) => void; close: () => void },
+): void {
+  if (codes) p.run(codes)
+  p.close()
+}
+
+/**
+ * The sentence for a failed rebuild, or null. Planning next week uses the same mutation, so the
+ * wording follows the variables it was called with: a student who tapped "plan next week" is not
+ * told their plan could not be rebuilt.
+ */
+export function rebuildFailure(rebuild: {
+  isError: boolean
+  error: unknown
+  variables?: { subjectCodes: string[]; week?: "current" | "next" }
+}): string | null {
+  if (!rebuild.isError) return null
+  return studentActionFailureMessage(rebuild.error, rebuild.variables?.week === "next" ? "plan next week" : "rebuild your plan")
+}
+
+/**
+ * A rebuild failure belongs to the list it happened on, so another list starts clean. Only a
+ * failure is cleared: resetting a rebuild that is still running would drop its callbacks.
+ */
+export const shouldResetRebuild = (p: { previous: string | null; current: string | null; failed: boolean }): boolean =>
+  p.previous !== p.current && p.failed
+
+/** The notices above the plan. First run draws its own failure inside its card. */
+export function screenNotices(p: { kind: string; missingNote: boolean; rebuilding: boolean; rebuildError: string | null }): {
+  missing: boolean
+  rebuilding: boolean
+  actionError: string | null
+} {
+  return {
+    missing: p.missingNote,
+    rebuilding: p.rebuilding && p.kind === "plan",
+    actionError: p.kind === "firstRun" ? null : p.rebuildError,
+  }
+}
+
+/** The retry on the load error: fetch the week again. */
+export const retryWeek =
+  (week: Pick<QueryStateQuery<unknown>, "refetch">) =>
+  (): void => {
+    void week.refetch()
+  }

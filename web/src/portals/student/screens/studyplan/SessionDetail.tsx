@@ -15,6 +15,8 @@ export interface SessionActions {
   completeError: string | null
   /** The day a move is in flight to, or null. */
   movingTo: string | null
+  /** Any move is running (this session's, another's, or the missed batch): the day choices wait. */
+  moveBusy: boolean
   onStart: (path: string) => void
   onComplete: () => void
   onMove: (date: string) => void
@@ -32,6 +34,7 @@ export function SessionDetail({
   completing,
   completeError,
   movingTo,
+  moveBusy,
   onStart,
   onComplete,
   onMove,
@@ -98,29 +101,44 @@ export function SessionDetail({
         ) : null}
       </div>
 
-      {moveOpen && session.canMove ? (
-        <div id={`move-${session.id}`} role="group" aria-label="Move to" className="flex flex-wrap gap-2">
-          {session.moveDays.map((day) => (
-            <button
-              key={day.date}
-              type="button"
-              onClick={() => onMove(day.date)}
-              disabled={movingTo !== null}
-              aria-pressed={movingTo === day.date}
-              className={cn(
-                "min-h-11 flex-1 rounded-xl font-sans text-sm font-semibold focus-visible:outline-[2.5px] focus-visible:outline-primary focus-visible:outline-offset-2",
-                movingTo === day.date
-                  ? "bg-primary-container text-primary shadow-[inset_0_0_0_2px_var(--color-primary)]"
-                  : "bg-surface-container-lowest text-on-surface shadow-[inset_0_0_0_1.5px_var(--color-outline)]",
-              )}
-            >
-              {day.label}
-            </button>
-          ))}
-        </div>
-      ) : null}
+      {moveOpen && session.canMove ? <MoveChoices session={session} busy={moveBusy} movingTo={movingTo} onMove={onMove} /> : null}
 
       {footer}
+    </div>
+  )
+}
+
+/** The days a session can move to. All of them wait while any move runs, not only this session's. */
+export function MoveChoices({
+  session,
+  busy,
+  movingTo,
+  onMove,
+}: {
+  session: SessionVM
+  busy: boolean
+  movingTo: string | null
+  onMove: (date: string) => void
+}) {
+  return (
+    <div id={`move-${session.id}`} role="group" aria-label="Move to" className="flex flex-wrap gap-2">
+      {session.moveDays.map((day) => (
+        <button
+          key={day.date}
+          type="button"
+          onClick={() => onMove(day.date)}
+          disabled={busy}
+          aria-pressed={movingTo === day.date}
+          className={cn(
+            "min-h-11 flex-1 rounded-xl font-sans text-sm font-semibold focus-visible:outline-[2.5px] focus-visible:outline-primary focus-visible:outline-offset-2",
+            movingTo === day.date
+              ? "bg-primary-container text-primary shadow-[inset_0_0_0_2px_var(--color-primary)]"
+              : "bg-surface-container-lowest text-on-surface shadow-[inset_0_0_0_1.5px_var(--color-outline)]",
+          )}
+        >
+          {day.label}
+        </button>
+      ))}
     </div>
   )
 }

@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
 import { Sheet } from "@/components/ui/sheet"
 import type { SessionVM } from "@/portals/student/screens/studyplan/planModel"
-import { SessionDetail, SessionPanel, SessionSheet, type SessionActions } from "@/portals/student/screens/studyplan/SessionDetail"
+import { MoveChoices, SessionDetail, SessionPanel, SessionSheet, type SessionActions } from "@/portals/student/screens/studyplan/SessionDetail"
 
 const session: SessionVM = {
   id: "s1", subjectCode: "0580", subjectName: "Mathematics", dotIndex: 0,
@@ -12,7 +12,7 @@ const session: SessionVM = {
   status: "today", why: null, whyBody: "Work on vectors.", start: null,
   canMove: true, moveDays: [{ date: "2026-08-07", label: "Fri" }],
 }
-const actions: SessionActions = { completing: false, completeError: null, movingTo: null, onStart: () => {}, onComplete: () => {}, onMove: () => {} }
+const actions: SessionActions = { completing: false, completeError: null, movingTo: null, moveBusy: false, onStart: () => {}, onComplete: () => {}, onMove: () => {} }
 const detail = (over: Partial<SessionVM> = {}, extra: Partial<SessionActions> = {}) =>
   renderToStaticMarkup(createElement(SessionDetail, { session: { ...session, ...over }, ...actions, ...extra }))
 const panel = (s: SessionVM | null, binnyLine: string | null) =>
@@ -54,6 +54,33 @@ describe("session detail", () => {
   })
   it("keeps the move choice closed until asked", () => {
     expect(detail()).not.toContain('aria-label="Move to"')
+  })
+})
+
+describe("the move choice", () => {
+  const choices = (over: { busy: boolean; movingTo: string | null }) =>
+    renderToStaticMarkup(
+      createElement(MoveChoices, {
+        session: { ...session, moveDays: [{ date: "2026-08-07", label: "Fri" }, { date: "2026-08-08", label: "Sat" }] },
+        onMove: () => {},
+        ...over,
+      }),
+    )
+  const disabledCount = (html: string) => (html.match(/<button[^>]*\sdisabled/g) ?? []).length
+
+  it("offers every day, enabled, when nothing is moving", () => {
+    const html = choices({ busy: false, movingTo: null })
+    expect(html).toContain("Fri")
+    expect(html).toContain("Sat")
+    expect(disabledCount(html)).toBe(0)
+  })
+  it("waits while another session's move is in flight, which this session cannot see itself", () => {
+    expect(disabledCount(choices({ busy: true, movingTo: null }))).toBe(2)
+  })
+  it("marks the day this session is moving to", () => {
+    const html = choices({ busy: true, movingTo: "2026-08-08" })
+    expect(html).toMatch(/aria-pressed="true"[^>]*>Sat|>Sat<\/button>/)
+    expect(html.match(/aria-pressed="true"/g)).toHaveLength(1)
   })
 })
 

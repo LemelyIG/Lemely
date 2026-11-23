@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E3 S4 R4 V3 */
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useLocation, useNavigate, useParams } from "react-router-dom"
 import { ConfirmModal } from "@/components/ui/confirm-modal"
 import { QueryState } from "@/components/ui/query-state"
@@ -15,11 +15,25 @@ import {
 } from "@/lib/hooks/useStudyPlanApi"
 import { useXpProfile } from "@/lib/hooks/useXpApi"
 import { subjectNameFor } from "@/lib/reference"
-import { studentActionFailureMessage } from "@/lib/studentOutcome"
 import type { StudyPlanOverviewDTO } from "@/lib/studyPlanTypes"
 import { BasedOn } from "./BasedOn"
-import { COPY, movedToast, nextExamForSubject } from "./planCopy"
-import { dayScrollTarget, gateWeek, moveFailureMessage, planListUrl, planSessionUrl } from "./planFlow"
+import { COPY, nextExamForSubject } from "./planCopy"
+import {
+  confirmRebuild,
+  dayScrollTarget,
+  gateWeek,
+  moveBusy,
+  moveCallbacks,
+  nextWeekCallbacks,
+  openSessionNav,
+  planListUrl,
+  planRoute,
+  rebuildFailure,
+  retryWeek,
+  runMoveAll,
+  screenNotices,
+  shouldResetRebuild,
+} from "./planFlow"
 import { planScreen, resolveFilter, type SessionVM } from "./planModel"
 import { PlanHeader } from "./PlanHeader"
 import { PlanList } from "./PlanList"
@@ -56,7 +70,7 @@ export function StudyPlanScreen() {
         // The load failure is Binny's (PE), so it is drawn here; `QueryState` keeps pending, the loaded week and the empty response.
         <>
           <h1 className="sr-only">{COPY.title}</h1>
-          <PlanLoadError onRetry={() => void week.refetch()} />
+          <PlanLoadError onRetry={retryWeek(week)} />
         </>
       ) : (
         <QueryState
@@ -86,7 +100,6 @@ function PlanContent({ overview }: { overview: StudyPlanOverviewDTO }) {
   const move = useMoveStudyPlanSession()
   const rebuild = useRebuildStudyPlans()
   const { reset: resetComplete } = complete
-  const [panelId, setPanelId] = useState<string | null>(null)
   const [confirmCodes, setConfirmCodes] = useState<string[] | null>(null)
   const [nextWeekReady, setNextWeekReady] = useState(false)
   const [missingNote, setMissingNote] = useState(false)
@@ -113,21 +126,17 @@ function PlanContent({ overview }: { overview: StudyPlanOverviewDTO }) {
   const all: SessionVM[] = screen.kind === "plan" || screen.kind === "weekDone" ? screen.all : []
   const fromParam = sessionId ? (all.find((s) => s.id === sessionId) ?? null) : null
   const firstOpenId = screen.kind === "plan" ? screen.body.firstOpenId : null
-  const selected = wide ? (fromParam ?? all.find((s) => s.id === (panelId ?? firstOpenId)) ?? null) : null
+  // The url names the open session on every width; with none named, the wide panel follows the first open one.
+  const selected = wide ? (fromParam ?? all.find((s) => s.id === firstOpenId) ?? null) : null
   const sheetSession = wide ? null : fromParam
 
-  // An unknown subject in the URL falls back to all subjects (K18).
+  // The url may name a subject or a session this week does not hold: correct it (K18, K24/K25).
+  const sessionKnown = fromParam !== null
   useEffect(() => {
-    if (subjectCode && filter === null) navigate(planListUrl(null), { replace: true })
-  }, [subjectCode, filter, navigate])
-
-  // A session id this week's plan does not hold: say so, then drop it (K24/K25).
-  useEffect(() => {
-    if (sessionId && !fromParam) {
-      setMissingNote(true)
-      navigate(listUrl, { replace: true })
-    }
-  }, [sessionId, fromParam, listUrl, navigate])
+    const step = planRoute({ subjectCode, sessionId, filter, sessionKnown })
+    if (step.missingNote !== null) setMissingNote(step.missingNote)
+    if (step.redirectTo) navigate(step.redirectTo, { replace: true })
+  }, [subjectCode, sessionId, filter, sessionKnown, navigate])
 
   // A fresh session starts with a clean error.
   const activeId = (sheetSession ?? selected)?.id ?? null
@@ -136,8 +145,8 @@ function PlanContent({ overview }: { overview: StudyPlanOverviewDTO }) {
   }, [activeId, resetComplete])
 
   const openSession = (id: string) => {
-    if (wide) setPanelId(id)
-    else navigate(planSessionUrl(filter, id), { state: { fromList: true } })
+    const { to, options } = openSessionNav(wide, filter, id)
+    navigate(to, options)
   }
   const closeSheet = () => {
     if ((location.state as { fromList?: boolean } | null)?.fromList) navigate(-1)
@@ -145,35 +154,34 @@ function PlanContent({ overview }: { overview: StudyPlanOverviewDTO }) {
   }
   const onFilter = (code: string | null) => navigate(planListUrl(code), { replace: true })
 
+  // A rebuild failure belongs to the list it happened on: another subject's list starts clean.
+  const { reset: resetRebuild, isError: rebuildFailed } = rebuild
+  const previousFilter = useRef(filter)
+  useEffect(() => {
+    const previous = previousFilter.current
+    previousFilter.current = filter
+    if (shouldResetRebuild({ previous, current: filter, failed: rebuildFailed })) resetRebuild()
+  }, [filter, rebuildFailed, resetRebuild])
+
   const runMove = (s: SessionVM, date: string) =>
     move.mutate(
       { sessionId: s.id, subjectCode: s.subjectCode, date },
-      {
-        onSuccess: () => {
-          toast({ title: movedToast(date, overview.today), variant: "success" })
-          if (!wide && sheetSession) closeSheet()
-        },
-        onError: (e) => toast({ title: moveFailureMessage(e), variant: "error" }),
-      },
+      moveCallbacks({ date, today: overview.today, toast, closeSheet: !wide && sheetSession ? closeSheet : null }),
     )
   const moveToday = (id: string) => {
     const s = all.find((x) => x.id === id)
     if (s) runMove(s, overview.today)
   }
-  const moveAllToday = async (ids: string[]) => {
-    setMovingAll(true)
-    try {
-      for (const id of ids) {
+  const moveAllToday = (ids: string[]) =>
+    runMoveAll({
+      ids,
+      moveOne: async (id) => {
         const s = all.find((x) => x.id === id)
         if (s) await move.mutateAsync({ sessionId: s.id, subjectCode: s.subjectCode, date: overview.today })
-      }
-      toast({ title: COPY.movedToday, variant: "success" })
-    } catch (e) {
-      toast({ title: moveFailureMessage(e), variant: "error" })
-    } finally {
-      setMovingAll(false)
-    }
-  }
+      },
+      setBusy: setMovingAll,
+      toast,
+    })
 
   const runRebuild = (codes: string[]) => rebuild.mutate({ subjectCodes: codes })
   const askRebuild = (codes: string[]) => {
@@ -182,15 +190,7 @@ function PlanContent({ overview }: { overview: StudyPlanOverviewDTO }) {
     else runRebuild(codes)
   }
   const planNextWeek = (codes: string[]) =>
-    rebuild.mutate(
-      { subjectCodes: codes, week: "next" },
-      {
-        onSuccess: () => {
-          setNextWeekReady(true)
-          toast({ title: COPY.nextWeekReady, variant: "success" })
-        },
-      },
-    )
+    rebuild.mutate({ subjectCodes: codes, week: "next" }, nextWeekCallbacks({ setReady: setNextWeekReady, toast }))
 
   const onDay = (date: string) => {
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches
@@ -208,6 +208,7 @@ function PlanContent({ overview }: { overview: StudyPlanOverviewDTO }) {
     completing: !!s && complete.isPending && complete.variables?.sessionId === s.id,
     completeError: completeErrorFor(s),
     movingTo: s && move.isPending && move.variables?.sessionId === s.id ? move.variables.date : null,
+    moveBusy: moveBusy(move.isPending, movingAll),
     onStart: (path: string) => navigate(path),
     onComplete: () => s && complete.mutate({ sessionId: s.id, subjectCode: s.subjectCode }),
     onMove: (date: string) => s && runMove(s, date),
@@ -223,14 +224,15 @@ function PlanContent({ overview }: { overview: StudyPlanOverviewDTO }) {
   }
 
   const rebuilding = rebuild.isPending && rebuild.variables?.week !== "next"
-  const rebuildError = rebuild.isError ? studentActionFailureMessage(rebuild.error, "rebuild your plan") : null
+  const rebuildError = rebuildFailure(rebuild)
+  const notices = screenNotices({ kind: screen.kind, missingNote, rebuilding, rebuildError })
 
   return (
     <>
       <PlanHeader header={screen.header} wide={wide} now={now} onFilter={onFilter} />
-      {missingNote ? <NotInWeekNote /> : null}
-      {rebuilding && screen.kind === "plan" ? <RebuildingBanner /> : null}
-      {rebuildError && screen.kind !== "firstRun" ? <ActionError message={rebuildError} /> : null}
+      {notices.missing ? <NotInWeekNote /> : null}
+      {notices.rebuilding ? <RebuildingBanner /> : null}
+      {notices.actionError ? <ActionError message={notices.actionError} /> : null}
 
       {screen.kind === "firstRun" ? (
         <FirstRun building={rebuild.isPending} error={rebuildError} onBuild={() => runRebuild(screen.codesToBuild)} />
@@ -284,10 +286,7 @@ function PlanContent({ overview }: { overview: StudyPlanOverviewDTO }) {
         pendingLabel={COPY.rebuilding}
         cancelLabel={COPY.rebuildKeep}
         pending={rebuild.isPending}
-        onConfirm={() => {
-          if (confirmCodes) runRebuild(confirmCodes)
-          setConfirmCodes(null)
-        }}
+        onConfirm={() => confirmRebuild(confirmCodes, { run: runRebuild, close: () => setConfirmCodes(null) })}
         onCancel={() => setConfirmCodes(null)}
       />
     </>
