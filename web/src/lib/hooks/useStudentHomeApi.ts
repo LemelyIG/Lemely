@@ -8,7 +8,7 @@ export const STUDENT_HOME_KEY = ["student", "home"] as const
 export const MARKING_POLL_MS = 5_000
 
 export function homeRefetchInterval(data: StudentHome | undefined): number | false {
-  return data?.moments.some((m) => m.kind === "marking") ? MARKING_POLL_MS : false
+  return data?.moments.some((m) => m.kind === "marking" && !m.stale) ? MARKING_POLL_MS : false
 }
 
 export function useStudentHome(): UseQueryResult<StudentHome, Error> {

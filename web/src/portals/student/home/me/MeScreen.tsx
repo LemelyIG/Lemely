@@ -50,7 +50,7 @@ export function MeScreen() {
       </button>
     ) : (
       <div className={order}>
-        <GhostRows rows={2} />
+        <GhostRows rows={2} announce={false} />
       </div>
     )
 
@@ -61,6 +61,7 @@ export function MeScreen() {
           Me
         </PageHeading>
       </header>
+      {!home.data && !home.isError && xp.data ? <span className="sr-only" role="status">Loading</span> : null}
       <QueryState
         query={xp}
         skeleton={<MeSkeleton />}

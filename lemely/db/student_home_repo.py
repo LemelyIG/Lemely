@@ -70,7 +70,7 @@ class StudentHomeReads:
             )
             .join(Attempt, Attempt.id == ReviewQueueItem.attempt_id)
             .join(QuestionResult, QuestionResult.id == ReviewQueueItem.question_result_id)
-            .join(User, User.id == ReviewQueueItem.resolved_by)
+            .outerjoin(User, User.id == ReviewQueueItem.resolved_by)
             .where(
                 Attempt.user_id == student,
                 Attempt.deleted_at.is_(None),

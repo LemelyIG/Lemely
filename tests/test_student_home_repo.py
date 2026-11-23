@@ -179,6 +179,18 @@ def test_replies_older_than_since_are_left_out(pg_sessionmaker: sessionmaker[Ses
     assert rows == []
 
 
+def test_reply_with_no_resolver_uses_fallback(pg_sessionmaker: sessionmaker[Session]) -> None:
+    teacher, student, _attempt, item = _setup(pg_sessionmaker)
+    _resolve(pg_sessionmaker, teacher, item)
+    with pg_sessionmaker.begin() as session:
+        session.get_one(ReviewQueueItem, item).resolved_by = None
+    rows = StudentHomeReads(pg_sessionmaker).recent_teacher_replies(
+        student, since=datetime.now(UTC) - timedelta(days=1)
+    )
+    assert len(rows) == 1
+    assert rows[0].teacher_name == "Your teacher"
+
+
 def test_a_teacher_without_a_display_name_is_your_teacher(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:

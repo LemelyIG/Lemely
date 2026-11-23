@@ -30,5 +30,8 @@ describe("student home API", () => {
       ],
     })
     expect(homeRefetchInterval(marking)).toBe(MARKING_POLL_MS)
+    expect(homeRefetchInterval(makeHome({
+      moments: [{ kind: "marking", paperId: "u1", filename: null, startedAt: null, stale: true, questionsDone: null, questionsTotal: null }],
+    }))).toBe(false)
   })
 })
