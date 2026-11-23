@@ -389,7 +389,7 @@ describe("resolveCrumb", () => {
   it("still resolves the exact-match routes and the other dynamic arms", () => {
     expect(resolveCrumb("/student")).toBe("Home")
     expect(resolveCrumb("/student/correct")).toBe("Marking / Correct a paper")
-    expect(resolveCrumb("/student/practice/0625")).toBe("Home / Practice / 0625")
+    expect(resolveCrumb("/student/practice/0625")).toBe("Home / Practice")
     expect(resolveCrumb("/student/flashcards/0625")).toBe("Home / Flashcards / 0625")
   })
 

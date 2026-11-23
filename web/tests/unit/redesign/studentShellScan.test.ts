@@ -46,9 +46,9 @@ describe("student tab bar (mock h6.js TAB6, Plan in the Subjects slot by user ru
     expect(read("portals/student/shell.tsx")).toMatch(/label: "More"/)
   })
 
-  it("mounts /student/practice and /student/plan as the interim entries", () => {
+  it("mounts /student/practice as L4's hub and /student/plan as the interim entry", () => {
     const index = read("portals/student/index.tsx")
-    expect(index).toMatch(/path: "practice",\s*element: <SubjectEntry section="practice" \/>/)
+    expect(index).toMatch(/path: "practice",\s*element: <PracticeHub \/>/)
     expect(index).toMatch(/path: "plan",\s*element: <SubjectEntry section="plan" \/>/)
   })
 

@@ -89,7 +89,8 @@ export const navGroups: NavGroup[] = [
 export function currentSubjectCode(pathname: string): string | null {
   const exactArms = [
     /^\/student\/subject\/([^/]+)$/,
-    /^\/student\/practice\/([^/]+)$/,
+    // `papers` is the Past papers screen, not a syllabus code.
+    /^\/student\/practice\/(?!papers$)([^/]+)$/,
     /^\/student\/flashcards\/([^/]+)$/,
   ]
   for (const arm of exactArms) {
@@ -131,6 +132,8 @@ export const crumbs: Record<string, string> = {
   "/student/tutor-access": "Home / Tutors & your data",
   "/student/board": "Home / Standings",
   "/student/friends": "Home / Friends",
+  "/student/practice": "Home / Practice",
+  "/student/practice/papers": "Home / Practice / Past papers",
   "/student/profile": "Home / Your profile",
   // Absent until P3.1, and silently so: with no nav entry the only way onto
   // this route was a push deep link, and a wrong-but-valid breadcrumb ("Home")
@@ -189,8 +192,9 @@ export function resolveCrumb(pathname: string): string {
   // which an opaque paper id is not.
   if (/^\/student\/result\/[^/]+$/.test(pathname)) return "Home / This result"
 
-  const practiceGeneratorMatch = pathname.match(/^\/student\/practice\/([^/]+)$/)
-  if (practiceGeneratorMatch) return `Home / Practice / ${practiceGeneratorMatch[1]}`
+  // L4: the builder is a sheet over the Practice tab, so the page is "Practice".
+  // The exact `crumbs` lookup above runs first, so `/practice/papers` keeps its own crumb.
+  if (/^\/student\/practice\/[^/]+$/.test(pathname)) return "Home / Practice"
 
   if (pathname.match(/^\/student\/practice\/set\//)) return "Home / Practice / Set"
   if (pathname.match(/^\/student\/practice\/result\//)) return "Home / Practice / Result"
@@ -215,6 +219,9 @@ export function resolveCrumb(pathname: string): string {
   return "Home"
 }
 
+/** The leading crumbs that are real, mounted destinations. */
+const CRUMB_LINKS: Record<string, string> = { Home: "/student", Practice: "/student/practice" }
+
 /**
  * The same breadcrumb as a structured trail, for `<Breadcrumbs>` (P4.1).
  *
@@ -231,10 +238,10 @@ export function resolveCrumb(pathname: string): string {
  * into disagreeing about the same route. `resolveCrumb` keeps its exported
  * string contract and its existing tests.
  *
- * Only "Home" is linked. The other leading segments this map produces
- * ("Marking", "Practice", "Flashcards", "Study plan") are grouping labels with
- * no route of their own — `/student/practice` is not a mounted path, and
- * linking it would manufacture a dead end to fix a missing back path.
+ * "Home" and, since L4, "Practice" are linked: `/student/practice` is now a
+ * mounted tab root. The other leading segments this map produces ("Marking",
+ * "Flashcards", "Study plan") are grouping labels with no route of their own,
+ * and linking them would manufacture a dead end to fix a missing back path.
  * `Breadcrumbs` supports an unlinked intermediate crumb and collapses to the
  * nearest *linked* ancestor below `sm`, so those rows still get a working back
  * tap to Home.
@@ -245,7 +252,8 @@ export function resolveCrumbTrail(pathname: string): Crumb[] {
     // The page you are already on is never a link (`Breadcrumbs` renders the
     // final crumb as `aria-current`).
     if (i === parts.length - 1) return { label }
-    return label === "Home" ? { label, to: "/student" } : { label }
+    const to = CRUMB_LINKS[label]
+    return to ? { label, to } : { label }
   })
 }
 

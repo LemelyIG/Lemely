@@ -76,7 +76,9 @@ describe("studentShellTrail and studentPageTitle", () => {
     expect(studentPageTitle("/student/subject/0606")).toBe("0606")
   })
   it("keeps a trail when drilled in, so breadcrumbs render", () => {
-    expect(studentShellTrail("/student/practice/0580").map((c) => c.label)).toEqual(["Practice", "0580"])
+    expect(studentShellTrail("/student/practice/papers").map((c) => c.label)).toEqual(["Practice", "Past papers"])
+    // L4: the builder is a sheet over the hub, so its deep link is the Practice page itself.
+    expect(studentShellTrail("/student/practice/0580").map((c) => c.label)).toEqual(["Practice"])
   })
 })
 

@@ -25,10 +25,11 @@ export function isPlanSection(path: string): boolean {
  * L4 and L9 land real hubs: the subject-level page (`/student/practice/:code`, `/student/plan/:code`, one segment)
  * counts as the tab's root. Flashcards also light Practice but are deliberately NOT roots: they are a drill-in
  * from a subject, with a back chevron, and Practice's re-tap pops out of them. Deeper pages (practice sets,
- * plan sessions) are details.
+ * plan sessions) are details. L4: `/student/practice/papers` is the Past papers screen, a drill-in from the hub,
+ * so it is not a root and keeps its back path.
  */
 export function isStudentSubjectRoot(path: string): boolean {
-  return /^\/student\/(practice|plan)\/[^/]+\/?$/.test(path)
+  return /^\/student\/(practice(?!\/papers\/?$)|plan)\/[^/]+\/?$/.test(path)
 }
 
 /** The old sidebar rows minus Overview (Home is a tab): they become the sidebar's More group. */

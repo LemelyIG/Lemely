@@ -80,8 +80,11 @@ const PlacementResult = lazy(() =>
   import("./screens/placement/PlacementResult").then((m) => ({ default: m.PlacementResult })),
 )
 const SubjectEntry = lazy(() => import("./screens/SubjectEntry").then((m) => ({ default: m.SubjectEntry })))
-const PracticeGenerator = lazy(() =>
-  import("./screens/practice/PracticeGenerator").then((m) => ({ default: m.PracticeGenerator })),
+const PracticeHub = lazy(() =>
+  import("./screens/practice/PracticeHub").then((m) => ({ default: m.PracticeHub })),
+)
+const PastPapers = lazy(() =>
+  import("./screens/practice/papers/PastPapers").then((m) => ({ default: m.PastPapers })),
 )
 const PracticeSet = lazy(() =>
   import("./screens/practice/PracticeSet").then((m) => ({ default: m.PracticeSet })),
@@ -398,16 +401,23 @@ export const studentRoute: RouteObject = {
       element: <PlacementResult />,
       handle: { title: "Placement result", skeleton: "page-header" },
     },
-    // F1: the Practice tab's root. L4 swaps this element for the Practice hub.
+    // The Practice tab's root (L4's hub, which replaced F1's interim SubjectEntry).
     {
       path: "practice",
-      element: <SubjectEntry section="practice" />,
+      element: <PracticeHub />,
       handle: { title: "Practice", skeleton: "list" },
     },
     {
+      path: "practice/papers",
+      element: <PastPapers />,
+      handle: { title: "Past papers", skeleton: "list" },
+    },
+    {
+      // K1: the builder deep link. Same hub underneath, sheet open for this subject.
+      // Static segments (`papers`, `set`, `result`, `print`) outrank `:subjectCode`.
       path: "practice/:subjectCode",
-      element: <PracticeGenerator />,
-      handle: { title: "New practice set", skeleton: "page-header" },
+      element: <PracticeHub />,
+      handle: { title: "Practice", skeleton: "list" },
     },
     {
       path: "practice/set/:assignmentId",
