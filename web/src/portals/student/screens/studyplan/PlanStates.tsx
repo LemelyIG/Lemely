@@ -144,7 +144,7 @@ export function WeekDone({
   return (
     <StateStack mood="happy" motion="hop" size={110} title={COPY.weekDoneTitle} body={body} className="pt-3">
       {stats.length > 0 ? (
-        <div className="grid w-full text-center" style={{ gridTemplateColumns: `repeat(${stats.length}, minmax(0, 1fr))` }}>
+        <div className="grid w-full max-w-[360px] text-center" style={{ gridTemplateColumns: `repeat(${stats.length}, minmax(0, 1fr))` }}>
           {stats.map((s) => (
             <span key={s.label} className="grid justify-items-center gap-0.5">
               <b className={cn("font-mono text-2xl font-extrabold", s.tone === "ok" ? "text-success-text" : "text-primary")}>{s.value}</b>
