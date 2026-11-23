@@ -237,6 +237,7 @@ export const COPY = {
   rebuildingBody: "Using your latest papers.",
   completeError: "Couldn’t mark this done. Check your connection and try again.",
   moveError: "Couldn’t move it. Try again.",
+  movedToday: "Moved to today",
   moveSuperseded: "Your plan was rebuilt. Here’s the new one.",
   moveCompleted: "That one’s already done.",
   notInWeek: "That session isn’t in this week’s plan. Your plan was rebuilt.",
@@ -271,3 +272,8 @@ export const COPY = {
   rebuildConfirmCta: "Rebuild",
   rebuildKeep: "Keep this week",
 } as const
+
+/** The toast after one session moves: the day it went to, or "today". */
+export function movedToast(date: string, today: string): string {
+  return date === today ? COPY.movedToday : `Moved to ${weekdayShort(date)}`
+}
