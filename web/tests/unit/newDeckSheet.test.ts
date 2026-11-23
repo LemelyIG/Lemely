@@ -6,17 +6,36 @@ const state = vi.hoisted(() => ({
   topics: {} as object,
   weak: [] as object[],
   subjects: [{ code: "0580", name: "Mathematics" }] as object[],
+  overview: {} as object,
+  generated: {} as object,
+  toasts: [] as object[],
+  sheet: null as unknown,
+  setters: [] as { initial: unknown; next: unknown }[],
 }))
 
-vi.mock("@/components/ui/toast", () => ({ useToast: () => ({ toast: () => {} }) }))
-vi.mock("@/lib/hooks/useStudentApi", () => ({ useOverview: () => ({ data: { subjects: state.subjects } }) }))
+// Every state setter reports what it was given and the value it was given it for, so a test can
+// read what a tap asked the sheet to become. The server render ignores real setters.
+vi.mock("react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react")>()
+  return {
+    ...actual,
+    useState: (init: unknown) => {
+      const [value] = actual.useState(init)
+      return [value, (next: unknown) => { state.setters.push({ initial: value, next }) }]
+    },
+  }
+})
+vi.mock("@/components/ui/toast", () => ({ useToast: () => ({ toast: (o: object) => state.toasts.push(o) }) }))
+vi.mock("@/lib/hooks/useStudentApi", () => ({
+  useOverview: () => ({ data: { subjects: state.subjects }, ...state.overview }),
+}))
 vi.mock("@/lib/hooks/usePracticeApi", () => ({
   usePracticeTopics: () => ({
     status: "success", fetchStatus: "idle", error: null, refetch: () => {}, data: { topics: [{ topic: "algebra" }] }, ...state.topics,
   }),
 }))
 vi.mock("@/lib/hooks/useFlashcardApi", () => {
-  const mutation = () => ({ isPending: false, error: null, reset: () => {}, mutate: () => {}, mutateAsync: async () => ({}) })
+  const mutation = () => ({ isPending: false, error: null, reset: () => {}, mutate: () => {}, mutateAsync: async () => state.generated })
   return {
     useWeakTopics: () => ({ data: state.weak }),
     useCreateDeck: mutation, useGenerateDeck: mutation, useDeleteDeck: mutation,
@@ -26,7 +45,12 @@ vi.mock("@/lib/hooks/useFlashcardApi", () => {
 })
 vi.mock("@/portals/student/screens/flashcards/parts/FcSheet", async () => {
   const { createElement: el } = await import("react")
-  return { FcSheet: ({ open, children }: { open: boolean; children: never }) => open ? el("div", null, children) : null }
+  return {
+    FcSheet: ({ open, children }: { open: boolean; children: never }) => {
+      state.sheet = children
+      return open ? el("div", null, children) : null
+    },
+  }
 })
 vi.mock("@/components/redesign", async () => {
   const { createElement: el } = await import("react")
@@ -36,14 +60,33 @@ vi.mock("@/components/redesign", async () => {
 import { NewDeckSheet, type NewDeckSeed } from "@/portals/student/screens/flashcards/NewDeckSheet"
 import { WritingState } from "@/portals/student/screens/flashcards/WritingState"
 
-const render = (seed: NewDeckSeed | null) =>
-  renderToStaticMarkup(createElement(NewDeckSheet, { seed, onClose: () => {}, onStarted: () => {} }))
+const render = (seed: NewDeckSeed | null, onStarted: (deckId: string) => void = () => {}) =>
+  renderToStaticMarkup(createElement(NewDeckSheet, { seed, onClose: () => {}, onStarted }))
+
+type El = { type: unknown; props: Record<string, unknown> }
+/** Every element under the rendered sheet that matches, found without a DOM. */
+function findAll(node: unknown, match: (el: El) => boolean, found: El[] = []): El[] {
+  if (Array.isArray(node)) node.forEach((n) => findAll(n, match, found))
+  else if (node && typeof node === "object" && "props" in node) {
+    const el = node as El
+    if (match(el)) found.push(el)
+    findAll(el.props.children, match, found)
+  }
+  return found
+}
+const button = (label: string) => findAll(state.sheet, (el) => el.type === "button" && el.props.children === label)[0]
+const press = (label: string) => (button(label).props.onClick as () => void)()
 const seed: NewDeckSeed = { mode: null, subjectCode: "0580", topic: null }
 
 beforeEach(() => {
   state.topics = {}
   state.weak = []
   state.subjects = [{ code: "0580", name: "Mathematics" }]
+  state.overview = {}
+  state.generated = {}
+  state.toasts = []
+  state.sheet = null
+  state.setters = []
 })
 
 describe("new deck sheet", () => {
@@ -87,12 +130,32 @@ describe("new deck sheet", () => {
     expect(html).not.toContain("boom")
   })
 
-  it("asks for a subject, instead of loading forever, when there is none to load topics for", () => {
+  it("shows subject placeholders, not a form, while the subjects load", () => {
     state.subjects = []
+    state.overview = { status: "pending", fetchStatus: "fetching", data: undefined }
     state.topics = { status: "pending", fetchStatus: "idle", data: undefined }
     const html = render({ ...seed, subjectCode: "" })
-    expect(html).toContain("Pick a subject first")
-    expect(html).not.toContain('aria-label="Loading topics"')
+    expect(html).toContain('aria-label="Loading subjects"')
+    expect(html).not.toContain('role="radiogroup"')
+    expect(html).not.toContain("Pick a subject first")
+  })
+
+  it("says what failed, and offers a retry, when the subjects will not load", () => {
+    state.subjects = []
+    state.overview = { status: "error", data: undefined, error: new Error("boom") }
+    const html = render({ ...seed, subjectCode: "" })
+    expect(html).toContain("Couldn’t load your subjects")
+    expect(html).toContain("Try again")
+    expect(html).not.toContain("boom")
+    expect(html).not.toContain('role="radiogroup"')
+  })
+
+  it("says so when there are no subjects yet", () => {
+    state.subjects = []
+    state.overview = { status: "success", data: { subjects: [] } }
+    const html = render({ ...seed, subjectCode: "" })
+    expect(html).toContain("No subjects yet.")
+    expect(html).not.toContain('role="radiogroup"')
   })
 
   it("says there are no topics when the subject has none", () => {
@@ -113,6 +176,57 @@ describe("new deck sheet", () => {
     expect(html).toContain('role="alert"')
     expect(html).toContain("Try again")
     expect(html).not.toContain('role="radiogroup"')
+  })
+})
+
+describe("subject chips", () => {
+  const two = [{ code: "0580", name: "Mathematics" }, { code: "0625", name: "Physics" }]
+  const picked: NewDeckSeed = { mode: "manual", subjectCode: "0580", topic: "algebra" }
+  /** What the tap asked the selection to become, given the selection it was made on. */
+  const tapped = (label: string) => {
+    state.setters = []
+    press(label)
+    const { initial, next } = state.setters[0]
+    return { initial, result: typeof next === "function" ? next(initial) : next }
+  }
+
+  it("tapping another subject drops the picked kind and topic", () => {
+    state.subjects = two
+    render(picked)
+    expect(tapped("Physics").result).toEqual({ subject: "0625", chosenMode: null, topic: null })
+  })
+
+  it("tapping the subject already selected keeps the kind and topic", () => {
+    state.subjects = two
+    render(picked)
+    const { initial, result } = tapped("Mathematics")
+    expect(result).toBe(initial)
+    expect(result).toEqual({ subject: "0580", chosenMode: "manual", topic: "algebra" })
+  })
+})
+
+describe("starting a generated deck", () => {
+  const started = { mode: "topic" as const, subjectCode: "0580", topic: "algebra" }
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+  it("says how it went, then opens the deck", async () => {
+    state.generated = { deck: { id: "d9", generationStatus: "ready" }, requestedCount: 12, generatedCount: 9 }
+    const opened: string[] = []
+    render(started, (id) => opened.push(id))
+    press("Make 12 cards")
+    await settle()
+    expect(state.toasts).toEqual([{ variant: "info", title: "9 of 12 cards written" }])
+    expect(opened).toEqual(["d9"])
+  })
+
+  it("opens a deck that is still writing without a toast", async () => {
+    state.generated = { deck: { id: "d9", generationStatus: "writing" }, requestedCount: 12, generatedCount: 0 }
+    const opened: string[] = []
+    render(started, (id) => opened.push(id))
+    press("Make 12 cards")
+    await settle()
+    expect(state.toasts).toEqual([])
+    expect(opened).toEqual(["d9"])
   })
 })
 

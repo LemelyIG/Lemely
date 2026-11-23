@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   buildNewDeckRequest,
   clampCount,
+  finishGeneration,
   manualDeckRequest,
   newDeckErrorMessage,
   newDeckOptions,
@@ -125,9 +126,19 @@ describe("selection", () => {
   })
 
   it("a new subject drops the picked kind and topic, so a weakness pick cannot outlive its subject", () => {
-    expect(selectSubject("0606")).toEqual({ subject: "0606", chosenMode: null, topic: null })
-    const next = selectSubject("0606")
+    expect(selectSubject(picked, "0606", "0580")).toEqual({ subject: "0606", chosenMode: null, topic: null })
+    const next = selectSubject(picked, "0606", "0580")
     expect(resolveMode(next.chosenMode, newDeckOptions(weak, next.subject))).toBe("topic")
+  })
+
+  it("tapping the subject already in force keeps the kind and topic", () => {
+    expect(selectSubject(picked, "0580", "0580")).toBe(picked)
+  })
+
+  it("counts the on-screen fallback subject as in force while the pick is still empty", () => {
+    const open = { subject: "", chosenMode: null, topic: null }
+    expect(selectSubject(open, "0580", "0580")).toBe(open)
+    expect(selectSubject(open, "0625", "0580")).toEqual({ subject: "0625", chosenMode: null, topic: null })
   })
 
   it("a new kind clears the topic, since a topic belongs to one kind", () => {
@@ -170,5 +181,25 @@ describe("new deck outcome", () => {
 
   it("leaves a deck that is still writing to its own writing state", () => {
     expect(newDeckOutcome(response({ generationStatus: "writing", generatedCount: 0 }))).toBeNull()
+  })
+
+  it("finishing a generation toasts the outcome, then opens the deck", () => {
+    const calls: string[] = []
+    finishGeneration(
+      response({ generatedCount: 9 }),
+      (o) => calls.push(`toast:${o.variant}:${o.title}`),
+      (id) => calls.push(`started:${id}`),
+    )
+    expect(calls).toEqual(["toast:info:9 of 12 cards written", "started:d1"])
+  })
+
+  it("finishing a deck still writing opens it without a toast", () => {
+    const calls: string[] = []
+    finishGeneration(
+      response({ generationStatus: "writing", generatedCount: 0 }),
+      (o) => calls.push(`toast:${o.title}`),
+      (id) => calls.push(`started:${id}`),
+    )
+    expect(calls).toEqual(["started:d1"])
   })
 })

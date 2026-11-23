@@ -50,8 +50,13 @@ export function resolveMode(chosen: NewDeckMode | null, options: readonly NewDec
   return chosen ?? (options[0].disabled ? "topic" : "weakness")
 }
 
-/** A kind and a topic both belong to one subject, so a new subject drops both. */
-export function selectSubject(subject: string): DeckSelection {
+/**
+ * A kind and a topic both belong to one subject, so a new subject drops both. Tapping the subject
+ * already in force changes nothing and keeps the pick (`inForce` is the subject on screen, which can
+ * be the first-subject fallback while `sel.subject` is still empty).
+ */
+export function selectSubject(sel: DeckSelection, subject: string, inForce: string): DeckSelection {
+  if (subject === inForce) return sel
   return { subject, chosenMode: null, topic: null }
 }
 
@@ -181,6 +186,20 @@ export function newDeckOutcome(res: GenerateDeckResponseDTO): NewDeckOutcome | n
   })
   if (res.generatedCount === 0) return { variant: "error", title: text }
   return { variant: shortfall ? "info" : "success", title: text }
+}
+
+/**
+ * The tail of a generate submit: say how it went, then hand over to the deck. A deck still writing
+ * has nothing to report yet, so it goes straight through.
+ */
+export function finishGeneration(
+  res: GenerateDeckResponseDTO,
+  toast: (outcome: NewDeckOutcome) => unknown,
+  onStarted: (deckId: string) => void,
+): void {
+  const outcome = newDeckOutcome(res)
+  if (outcome) toast(outcome)
+  onStarted(res.deck.id)
 }
 
 /** Structural, so this file never imports `lib/api.ts` (which touches browser globals). */

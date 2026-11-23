@@ -10,8 +10,8 @@ import { useCreateDeck, useDeleteDeck, useGenerateDeck, useRetryGeneration, useR
 import { CountStepper } from "./parts/CountStepper"
 import { FcSheet } from "./parts/FcSheet"
 import {
-  COUNT_DEFAULT, COUNT_MAX, COUNT_MIN, GENERATION_FAILED_TEXT, buildNewDeckRequest, clampCount,
-  newDeckErrorMessage, newDeckOptions, newDeckOutcome, resolveMode, selectChip, selectKind, selectSubject,
+  COUNT_DEFAULT, COUNT_MAX, COUNT_MIN, GENERATION_FAILED_TEXT, buildNewDeckRequest, clampCount, finishGeneration,
+  newDeckErrorMessage, newDeckOptions, resolveMode, selectChip, selectKind, selectSubject,
   submitLabel, topicChips, weaknessChips, type DeckSelection, type NewDeckMode,
 } from "./newDeckView"
 
@@ -36,6 +36,26 @@ function TopicsSkeleton() {
     <div className="flex flex-wrap gap-1.5" role="status" aria-label="Loading topics">
       {["w-24", "w-32", "w-20"].map((w) => <SkeletonBlock key={w} className={`h-11 rounded-xl ${w}`} />)}
     </div>
+  )
+}
+
+/**
+ * With no subject in hand every kind of deck is a dead end, so the form gives way to the reason:
+ * the subjects are still loading, could not load, or the student has none yet.
+ */
+function NoSubjects({ overview }: { overview: ReturnType<typeof useOverview> }) {
+  return (
+    <QueryState
+      query={overview}
+      skeleton={<div className="grid gap-2" role="status" aria-label="Loading subjects">
+        {[0, 1, 2].map((i) => <SkeletonBlock key={i} className="h-[60px] rounded-2xl" />)}
+      </div>}
+      error={{ heading: "Couldn’t load your subjects", retryLabel: "Try again", compact: true }}
+      isEmpty={(data) => data.subjects.length === 0}
+      empty={<p className="text-[14px] leading-[1.4] text-on-surface-variant">No subjects yet.</p>}
+    >
+      {() => null}
+    </QueryState>
   )
 }
 
@@ -100,10 +120,7 @@ function NewDeckForm({ seed, onClose, onStarted }: {
     }
     try {
       if (req.kind === "generate") {
-        const res = await generate.mutateAsync(req.body)
-        const outcome = newDeckOutcome(res)
-        if (outcome) toast(outcome)
-        onStarted(res.deck.id)
+        finishGeneration(await generate.mutateAsync(req.body), toast, onStarted)
       } else if (req.kind === "create") onStarted((await create.mutateAsync(req.body)).id)
     } catch {
       // Mutation errors are rendered below the form.
@@ -116,13 +133,14 @@ function NewDeckForm({ seed, onClose, onStarted }: {
       {!failedDeckId && subjects.length > 1 ? (
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Subject">
           {subjects.map((s) => <button key={s.code} type="button" aria-pressed={s.code === subjectCode}
-            onClick={() => setSel(selectSubject(s.code))}
+            onClick={() => setSel((cur) => selectSubject(cur, s.code, subjectCode))}
             className={`min-h-11 rounded-xl px-3 text-[13.5px] font-semibold ${FOCUS} ${s.code === subjectCode ? "bg-primary-container text-primary shadow-[inset_0_0_0_2px_var(--color-primary)]" : "bg-surface-container-low text-on-surface shadow-[inset_0_0_0_1px_var(--color-outline-variant)]"}`}>
             {s.name}
           </button>)}
         </div>
       ) : null}
-      {!failedDeckId ? <>
+      {!failedDeckId && !subjectCode ? <NoSubjects overview={overview} /> : null}
+      {!failedDeckId && subjectCode ? <>
         <div className="grid gap-2" role="radiogroup" aria-label="Kind of deck">
           {options.map((o) => {
             const Icon = ICONS[o.mode]
@@ -146,7 +164,6 @@ function NewDeckForm({ seed, onClose, onStarted }: {
             <QueryState
               query={topics}
               skeleton={<TopicsSkeleton />}
-              idle={overview.isPending ? <TopicsSkeleton /> : <p className="text-[14px] leading-[1.4] text-on-surface-variant">Pick a subject first</p>}
               error={{ heading: "Couldn’t load topics", retryLabel: "Try again", compact: true }}
               isEmpty={(data) => data.topics.length === 0}
               empty={<p className="text-[14px] leading-[1.4] text-on-surface-variant">No topics for this subject yet.</p>}
