@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { createElement, isValidElement, type ComponentProps, type ComponentType, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { MemoryRouter } from "react-router-dom"
@@ -9,7 +11,7 @@ import { PathSection, nextPaperIndex } from "@/portals/student/screens/subject/P
 import { TipSection } from "@/portals/student/screens/subject/TipSection"
 import { WinList } from "@/portals/student/screens/subject/WinList"
 import { TopicsSection } from "@/portals/student/screens/subject/TopicsSection"
-import { PapersList } from "@/portals/student/screens/subject/PapersList"
+import { PapersList, focusRowAfterExpand } from "@/portals/student/screens/subject/PapersList"
 import { buildSubjectView, firstRunTip, winRows, type SubjectView, type TopicChipView } from "@/portals/student/screens/subject/subjectModel"
 import { MATHS, MATHS_ONE, MATHS_TOPICS, NOW } from "@/portals/student/screens/subject/fixtures"
 
@@ -257,6 +259,99 @@ describe("TipSection", () => {
   })
 })
 
+/* ── Contrast of the Tip button's detail text, measured from the real tokens ───────────────────── */
+
+const WEB_ROOT = join(import.meta.dirname, "..", "..")
+const subjectCss = readFileSync(join(WEB_ROOT, "src/portals/student/screens/subject/subject.css"), "utf8")
+const tokenCss = readFileSync(join(WEB_ROOT, "src/index.css"), "utf8")
+
+type Rgb = [number, number, number]
+
+/** The body of the first `header {` block in the token file, so each theme reads its own values. */
+function themeBlock(header: string): string {
+  const start = tokenCss.indexOf(`${header} {`)
+  if (start < 0) throw new Error(`no ${header} block in index.css`)
+  return tokenCss.slice(start, tokenCss.indexOf("\n}", start))
+}
+
+function hexToken(block: string, name: string): Rgb {
+  const m = new RegExp(`${name}:\\s*#([0-9a-fA-F]{6})`).exec(block)
+  if (!m) throw new Error(`${name} is not a hex colour in this block`)
+  return [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16)) as Rgb
+}
+
+const toLinear = (c: number) => ((c /= 255) <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+const luminance = ([r, g, b]: Rgb) => 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b)
+function contrast(a: Rgb, b: Rgb): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+  return (hi + 0.05) / (lo + 0.05)
+}
+
+function toOklab(rgb: Rgb): Rgb {
+  const [r, g, b] = rgb.map(toLinear)
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+  ]
+}
+
+function fromOklab([L, a, b]: Rgb): Rgb {
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3
+  const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3
+  const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3
+  const encode = (x: number) => {
+    const v = Math.min(1, Math.max(0, x))
+    return 255 * (v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055)
+  }
+  return [
+    encode(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+    encode(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+    encode(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s),
+  ]
+}
+
+/** Resolves `var(--tok)` or `color-mix(in oklab, var(--a) N%, var(--b))` against one theme's tokens. */
+function resolveColor(value: string, block: string): Rgb {
+  const plain = /^var\((--[\w-]+)\)$/.exec(value.trim())
+  if (plain) return hexToken(block, plain[1])
+  const mix = /^color-mix\(in oklab,\s*var\((--[\w-]+)\)\s+(\d+)%,\s*var\((--[\w-]+)\)\)$/.exec(value.trim())
+  if (!mix) throw new Error(`cannot resolve colour "${value}": use a token or a token mix in oklab`)
+  const [from, to] = [toOklab(hexToken(block, mix[1])), toOklab(hexToken(block, mix[3]))]
+  const p = Number(mix[2]) / 100
+  return fromOklab(from.map((v, i) => v * p + to[i] * (1 - p)) as Rgb)
+}
+
+describe("TipSection detail text", () => {
+  const rule = /\.sj-go span\s*\{([^}]*)\}/.exec(subjectCss)?.[1] ?? ""
+  it("does not dim the detail with opacity, which lets the button fill bleed into the text", () => {
+    expect(rule).not.toBe("")
+    expect(rule).not.toMatch(/opacity/)
+  })
+  it("takes its colour from the on-primary token", () => {
+    const color = /(?:^|[;\s])color:\s*([^;]+)/.exec(rule)?.[1]
+    expect(color).toBeDefined()
+    expect(color).toContain("var(--md-on-primary)")
+  })
+  for (const [theme, header] of [
+    ["light", ":root"],
+    ["dark", ':root[data-theme="dark"]'],
+  ] as const) {
+    it(`clears 4.5:1 on the primary fill, resting and hovered, in ${theme} mode`, () => {
+      const color = /(?:^|[;\s])color:\s*([^;]+)/.exec(rule)?.[1]
+      if (!color) throw new Error(".sj-go span sets no colour")
+      const block = themeBlock(header)
+      const text = resolveColor(color, block)
+      for (const fill of ["--md-primary", "--md-primary-hover"]) {
+        expect(contrast(text, hexToken(block, fill))).toBeGreaterThanOrEqual(4.5)
+      }
+    })
+  }
+})
+
 describe("WinList", () => {
   const win = winRows("0580", MATHS_TOPICS, [{ id: "alg", subjectCode: "0580", topic: "C2 Algebra", title: "", description: null, origin: "topic", cardCount: 1, dueCount: 0, createdAt: "" }], "full")
   it("lists each topic with its marks and a practice link, heading linked to practice", () => {
@@ -342,5 +437,24 @@ describe("PapersList", () => {
   it("drops the control once everything is visible", () => {
     const out = html(PapersList, { rows: full.papers, visible: 7, onShowAll: () => {} })
     expect(out).not.toContain("All 7 papers")
+  })
+})
+
+describe("focusRowAfterExpand", () => {
+  // The All N papers button unmounts when pressed, so keyboard focus has to land somewhere real.
+  it("lands on the first row the press revealed", () => {
+    expect(focusRowAfterExpand(4, 7)).toBe(4)
+    expect(focusRowAfterExpand(1, 2)).toBe(1)
+  })
+  it("never points past the last row", () => {
+    expect(focusRowAfterExpand(9, 7)).toBe(6)
+  })
+  it("has no target when there are no rows", () => {
+    expect(focusRowAfterExpand(0, 0)).toBeNull()
+  })
+  it("is what PapersList calls once the button has gone", () => {
+    const source = readFileSync(join(WEB_ROOT, "src/portals/student/screens/subject/PapersList.tsx"), "utf8")
+    expect(source).toContain("focusRowAfterExpand(")
+    expect(source).toMatch(/\.focus\(\)/)
   })
 })

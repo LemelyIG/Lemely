@@ -91,7 +91,10 @@
 /* ---- Binny tip ---------------------------------------------------------- */
 .sj-tip { display: grid; gap: 10px; }
 .sj-go { min-height: 50px; width: 100%; justify-content: center; border-radius: 18px; font: 700 15.5px/1 var(--font-sans); box-shadow: 0 14px 24px -16px color-mix(in oklch, var(--md-primary) 70%, transparent); }
-.sj-go span { opacity: 0.75; font-weight: 600; }
+/* Detail text sits a step back from the label, as in the mock. A mix of the on-primary and primary tokens
+   instead of opacity: 0.75 opacity measured 3.93:1 on the dark-mode fill. This mix is 4.95:1 resting and
+   6.06:1 hovered in dark, 10.06:1 and 8.26:1 in light (pinned in tests/unit/subjectScreen.test.ts). */
+.sj-go span { color: color-mix(in oklab, var(--md-on-primary) 85%, var(--md-primary)); font-weight: 600; }
 .sj-upl { justify-self: center; display: inline-flex; align-items: center; min-height: 44px; font: 600 14px var(--font-sans); color: var(--md-primary); }
 
 /* ---- Marks to win ------------------------------------------------------- */
