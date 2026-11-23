@@ -23,6 +23,7 @@ function StateStack({
   body,
   children,
   className,
+  role,
 }: {
   mood: BinnyMood
   motion?: BinnyMotion
@@ -31,9 +32,11 @@ function StateStack({
   body?: string
   children?: ReactNode
   className?: string
+  /** A failure the student did not ask for is announced as it appears. */
+  role?: "alert"
 }) {
   return (
-    <section className={cn("grid flex-1 content-center justify-items-center gap-3 px-2 py-6 text-center", className)}>
+    <section role={role} className={cn("grid flex-1 content-center justify-items-center gap-3 px-2 py-6 text-center", className)}>
       <Binny mood={mood} size={size} motion={motion} aria-hidden />
       <h2 className="mt-1.5 mb-0 font-display text-[28px] leading-[1.15] font-extrabold tracking-[-0.02em] text-balance text-primary">{title}</h2>
       {body ? <p className="m-0 mb-1.5 max-w-[30ch] font-sans text-[15px] leading-[1.4] font-medium text-on-surface-variant">{body}</p> : null}
@@ -63,7 +66,7 @@ export function PlanLoading() {
 /** PE. */
 export function PlanLoadError({ onRetry }: { onRetry: () => void }) {
   return (
-    <StateStack mood="sad" title={COPY.loadErrorTitle} body={COPY.loadErrorBody}>
+    <StateStack mood="sad" role="alert" title={COPY.loadErrorTitle} body={COPY.loadErrorBody}>
       <Button variant="primary" className={go} onClick={onRetry}>{COPY.tryAgain}</Button>
       <Link to="/student" className={quiet}>{COPY.backHome}</Link>
     </StateStack>
@@ -78,6 +81,8 @@ export function FirstRun({ building, error, onBuild }: { building: boolean; erro
         <Button variant="primary" className={go} loading={building} onClick={onBuild}>
           {building ? COPY.building : COPY.firstRunCta}
         </Button>
+        {/* The button only says "Building…", so the one announcement names the week. Present only while it builds. */}
+        {building ? <span role="status" className="sr-only">{COPY.buildingAnnounce}</span> : null}
         {error ? <ActionError message={error} /> : null}
       </StateStack>
       <Walkthrough
@@ -137,14 +142,16 @@ export function WeekDone({
 }) {
   return (
     <StateStack mood="happy" motion="hop" size={110} title={COPY.weekDoneTitle} body={body} className="pt-3">
-      <div className="grid w-full text-center" style={{ gridTemplateColumns: `repeat(${stats.length}, minmax(0, 1fr))` }}>
-        {stats.map((s) => (
-          <span key={s.label} className="grid justify-items-center gap-0.5">
-            <b className={cn("font-mono text-2xl font-extrabold", s.tone === "ok" ? "text-success-text" : "text-primary")}>{s.value}</b>
-            <small className="font-sans text-[12.5px] font-medium text-on-surface-variant">{s.label}</small>
-          </span>
-        ))}
-      </div>
+      {stats.length > 0 ? (
+        <div className="grid w-full text-center" style={{ gridTemplateColumns: `repeat(${stats.length}, minmax(0, 1fr))` }}>
+          {stats.map((s) => (
+            <span key={s.label} className="grid justify-items-center gap-0.5">
+              <b className={cn("font-mono text-2xl font-extrabold", s.tone === "ok" ? "text-success-text" : "text-primary")}>{s.value}</b>
+              <small className="font-sans text-[12.5px] font-medium text-on-surface-variant">{s.label}</small>
+            </span>
+          ))}
+        </div>
+      ) : null}
       <Button variant="primary" className={cn(go, settled)} loading={planning} disabled={nextWeekReady} onClick={onPlanNextWeek}>
         {nextWeekReady ? <Check weight="bold" size={18} aria-hidden /> : null}
         {nextWeekReady ? COPY.nextWeekReady : COPY.planNextWeek}

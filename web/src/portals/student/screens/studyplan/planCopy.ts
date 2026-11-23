@@ -244,6 +244,8 @@ export const COPY = {
   firstRunBody: "Lemely builds it from your papers and weak topics. Takes a second.",
   firstRunCta: "Build my week",
   building: "Building…",
+  /** Spoken only: the visible button says "Building…", which says nothing of what is being built. */
+  buildingAnnounce: "Building your week…",
   walk: [
     { title: "Short sessions", body: "10 minutes of practice, 5 of flashcards." },
     { title: "Weakest topics first", body: "The ones that cost you the most marks." },

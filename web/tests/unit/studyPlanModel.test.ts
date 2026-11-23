@@ -99,17 +99,18 @@ describe("state selection", () => {
     expect(s.kind).toBe("weekDone")
     if (s.kind === "weekDone") {
       expect(s.body).toBe("All 2 sessions, 55 min.")
+      // The body already says how many sessions and how long, so the stats carry only what it does not.
       expect(s.stats).toEqual([
-        { value: "2", label: "sessions", tone: "ok" },
         { value: "+260", label: "XP", tone: "primary" },
         { value: "7", label: "days in a row", tone: "ok" },
       ])
       expect(s.header.sub).toBe("2 of 2 done · 55 min")
     }
   })
-  it("weekDone without XP shows only what is known", () => {
+  it("weekDone without XP has no stats at all", () => {
     const s = planScreen(input(O([SUB("0625", P("0625", [S("a", "2026-08-04", { completedAt: DONE })]))]), { xp: null }))
-    expect(s.kind === "weekDone" && s.stats).toEqual([{ value: "1", label: "session", tone: "ok" }])
+    expect(s.kind).toBe("weekDone")
+    expect(s.kind === "weekDone" && s.stats).toEqual([])
   })
 })
 

@@ -256,7 +256,8 @@ export function planScreen(raw: PlanModelInput): PlanScreen {
   }
 
   if (all.every((v) => v.status === "done")) {
-    const stats: WeekDoneStat[] = [{ value: String(all.length), label: plural(all.length, "session", "sessions"), tone: "ok" }]
+    // The body already counts the sessions and the time, so the stats carry only what it does not. No XP, no row.
+    const stats: WeekDoneStat[] = []
     if (input.xp) {
       stats.push({ value: `+${input.xp.weekXp}`, label: "XP", tone: "primary" })
       stats.push({ value: String(input.xp.streak), label: plural(input.xp.streak, "day in a row", "days in a row"), tone: "ok" })
