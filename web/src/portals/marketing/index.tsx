@@ -8,6 +8,8 @@ import { DEFAULT_TITLE, DEFAULT_DESCRIPTION } from "@/lib/meta/documentMeta"
 import type { PageMeta } from "@/lib/meta/documentMeta"
 import { MarketingHeader } from "./MarketingHeader"
 import { MarketingFooter } from "./MarketingFooter"
+import { PublicPage } from "./PublicPage"
+import { publicPages } from "./publicPages"
 import { WaitlistProvider } from "./waitlist/WaitlistDialog"
 import "./marketing.css"
 import "./brand-tokens.css"
@@ -117,8 +119,7 @@ export const marketingRoute: RouteObject = {
 /**
  * The data page, in the same public frame as the landing page (P6.5, D6.8 A).
  *
- * In the marketing shell rather than standing alone because it is reached from
- * that shell's footer, and a reader who follows a footer link into a page with
+ * In the marketing shell because it is reached from the Privacy Policy, and a reader who follows a footer link into a page with
  * no header has been dropped somewhere rather than taken somewhere: the way
  * back has to still be there.
  */
@@ -154,6 +155,16 @@ export const dataHandlingRoute: RouteObject = {
     skeleton: "page-header",
   } satisfies PageMeta,
 }
+
+export const publicPageRoutes: RouteObject[] = publicPages.map((page) => ({
+  path: page.path,
+  element: <MarketingFrame><PublicPage page={page} /></MarketingFrame>,
+  handle: {
+    title: page.metaTitle ?? page.title,
+    description: page.description,
+    skeleton: "page-header",
+  } satisfies PageMeta,
+}))
 
 /** The page the waitlist confirmation email links to. Public, in the marketing frame, never gated. */
 export function MarketingWaitlistConfirm() {

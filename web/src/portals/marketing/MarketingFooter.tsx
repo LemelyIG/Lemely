@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { BrandLockup } from '@/components/ui/brand-lockup'
 import { marketingLinks } from './content'
 import { sectionLinks } from './MarketingHeader'
+import { publicPages } from './publicPages'
 
 export function MarketingFooter() {
   return (
@@ -27,12 +28,15 @@ export function MarketingFooter() {
           <nav aria-label="Contact">
             <span className="brand-label">CONTACT</span>
             <a href={marketingLinks.contact}>contact@lemelyig.com</a>
+            <a href={marketingLinks.phone}>+201067661974</a>
             <a href={marketingLinks.demo}>Book a Demo</a>
             <a href={marketingLinks.contact}>Support</a>
           </nav>
-          <nav aria-label="Data">
-            <span className="brand-label">YOUR DATA</span>
-            <Link to="/data">How your data is handled</Link>
+          <nav aria-label="About and policies">
+            <span className="brand-label">ABOUT &amp; POLICIES</span>
+            {publicPages.map(({ path, title }) => (
+              <Link key={path} to={path}>{title}</Link>
+            ))}
           </nav>
         </div>
         <div className="brand-footer-bottom">
