@@ -151,7 +151,7 @@ export function ReviewScreen() {
   const banner = bannerText ? (
     <div className="mx-[22px] mt-2 flex items-center justify-between gap-2.5 rounded-xl bg-tertiary-container px-3 text-[13.5px] font-semibold text-on-tertiary-container">
       <span>{bannerText}</span>
-      <button type="button" onClick={retryAll} className="min-h-11 font-bold text-primary">Retry</button>
+      <button type="button" onClick={retryAll} className="min-h-11 min-w-11 px-2 font-bold text-primary">Retry</button>
     </div>
   ) : null
 
@@ -191,6 +191,7 @@ export function ReviewScreen() {
 
   return withStatus(
     <div className="flex min-h-[100dvh] flex-col lg:mx-auto lg:w-full lg:max-w-[640px] lg:pt-3">
+      <h1 className="sr-only">Review flashcards</h1>
       {/* `.prtop`: end, progress bar, count */}
       <div className="flex items-center gap-3 px-4 pb-1.5 pt-4">
         <button type="button" aria-label="End review" onClick={leaveReview} className="grid size-11 place-items-center rounded-[14px] bg-surface-container-high text-on-surface"><X size={20} aria-hidden /></button>
@@ -209,9 +210,9 @@ export function ReviewScreen() {
       {revealed ? (
         <div className="grid grid-cols-4 gap-2 px-[18px] pb-[26px] pt-2" role="group" aria-label="How well did you know it?">
           {buttons.map((b) => (
-            <button key={b.grade} type="button" onClick={() => grade(b.grade)}
+            <button key={b.grade} type="button" aria-keyshortcuts={b.key} onClick={() => grade(b.grade)}
               className={`grid min-h-[62px] content-center justify-items-center gap-0.5 rounded-2xl transition-transform duration-150 ease-out active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100 focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary ${GRADE_TONE[b.tone]}`}>
-              <b className="text-[15px] font-bold">{b.label} <Kbd size="md" className="ml-1 hidden bg-black/10 text-current lg:inline">{b.key}</Kbd></b>
+              <b className="text-[15px] font-bold">{b.label} <Kbd size="md" aria-hidden className="ml-1 hidden bg-black/10 text-current lg:inline">{b.key}</Kbd></b>
               <span className="text-[12px] font-medium">{b.interval}</span>
             </button>
           ))}

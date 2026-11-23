@@ -123,6 +123,14 @@ describe("doneView", () => {
     })
   })
 
+  it("says “1 mark” in the singular in the practice link", () => {
+    const view = doneView({
+      session: { ...startSession(), results: [res("good", 1)] }, totalCards: 1, stillDue: 0, upcoming: [], now: NOW,
+      practice: { subjectCode: "0580", topicName: "Vectors", marksLost: 1 },
+    })
+    expect(view.practiceLink?.label).toBe("Practise Vectors · cost you 1 mark")
+  })
+
   it("drops the combo under 2, softens Binny on a rough run, and names unfinished work", () => {
     const session = { ...startSession(), results: [res("again", 0), res("again", 0), res("good", 1)], inFlight: 2 }
     const view = doneView({ session, totalCards: 3, stillDue: 4, upcoming: [], now: NOW, practice: null })

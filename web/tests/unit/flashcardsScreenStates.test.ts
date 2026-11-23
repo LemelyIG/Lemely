@@ -155,6 +155,15 @@ describe("the first load failing", () => {
   })
 })
 
+describe("the empty shelf", () => {
+  it("says “No decks yet” once, in the header, and gives the Binny heading its own line", () => {
+    h.decks = query({ status: "success", data: [] })
+    const html = render()
+    expect(html.split("No decks yet").length - 1).toBe(1)
+    expect(html).toContain("Your shelf is empty")
+  })
+})
+
 describe("retrying failed decks", () => {
   beforeEach(() => {
     h.decks = query({

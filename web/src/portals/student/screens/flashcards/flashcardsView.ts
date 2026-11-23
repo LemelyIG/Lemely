@@ -100,9 +100,9 @@ export function deckRowView(deck: DeckSummaryDTO): DeckRowView {
   const origin = originView(deck.origin)
   const statusLine =
     deck.generationStatus === "writing"
-      ? `Writing ${plural(deck.requestedCount ?? 0, "card")}…`
+      ? (deck.requestedCount ? `Writing ${plural(deck.requestedCount, "card")}…` : "Writing your cards…")
       : deck.generationStatus === "failed"
-        ? "Couldn't write the cards"
+        ? "Couldn’t write the cards"
         : null
   return {
     id: deck.id,
@@ -189,10 +189,10 @@ export interface DecksScreenInput {
 
 function hero(input: DecksScreenInput, decks: DeckSummaryDTO[]): HeroView {
   if (input.dueStatus === "pending" && !input.due) {
-    return { mood: "happy", headline: "Your cards", sub: "Checking what's due…", reviewLabel: null }
+    return { mood: "happy", headline: "Your cards", sub: "Checking what’s due…", reviewLabel: null }
   }
   if (input.dueStatus === "error" && !input.due) {
-    return { mood: "happy", headline: "Your cards", sub: "Couldn't check what's due", reviewLabel: null }
+    return { mood: "happy", headline: "Your cards", sub: "Couldn’t check what’s due", reviewLabel: null }
   }
   const due = input.due!
   // A subject filter scopes the hero to the visible decks; unfiltered keeps the session total.

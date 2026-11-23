@@ -21,6 +21,7 @@ vi.mock("@/lib/hooks/useFlashcardApi", () => ({
 vi.mock("@/portals/student/screens/flashcards/parts/FcSheet", async () => {
   const { createElement: el } = await import("react")
   return {
+    ALERT_BODY_ID: "fc-alert-body",
     FcSheet: ({ open, children }: { open: boolean; children: never }) => {
       state.sheet = children
       return open ? el("div", null, children) : null
@@ -98,6 +99,18 @@ describe("DeleteDeckSheet", () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  it("focus lands on Keep it, the safe choice, not on Delete deck", () => {
+    render()
+    expect(button(state.sheet, "Keep it").props.autoFocus).toBe(true)
+    expect(button(state.sheet, "Delete deck").props.autoFocus).toBeUndefined()
+  })
+
+  it("the consequence paragraph carries the id the alert sheet is described by", () => {
+    render()
+    const body = findAll(state.sheet, (el) => el.type === "p")[0]
+    expect(body.props.id).toBe("fc-alert-body")
+  })
+
   it("in flight: Keep it and the confirm are both held", () => {
     state.del.isPending = true
     render()
@@ -165,6 +178,10 @@ describe("CardDeleteStep", () => {
   it("focus lands on Keep it when the step opens, the safe choice, not on the button that just went", () => {
     expect(button(step(), "Keep it").props.autoFocus).toBe(true)
     expect(button(step(), "Delete card").props.autoFocus).toBeUndefined()
+  })
+
+  it("the consequence paragraph carries the id the alert sheet is described by", () => {
+    expect(findAll(step(), (el) => el.type === "p")[0].props.id).toBe("fc-alert-body")
   })
 
   it("the buttons forward to what the sheet passed", () => {

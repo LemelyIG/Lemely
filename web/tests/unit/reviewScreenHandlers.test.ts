@@ -45,6 +45,7 @@ vi.mock("@/lib/hooks/useFlashcardApi", () => ({
 vi.stubGlobal("window", { addEventListener: (_t: string, f: (e: unknown) => void) => { h.listeners.push(f) }, removeEventListener: () => {}, matchMedia: () => ({ matches: false }), confirm: h.confirm })
 
 import { ConfirmModal } from "@/components/ui/confirm-modal"
+import { Kbd } from "@/components/ui/kbd"
 import { ReviewCard } from "@/portals/student/screens/flashcards/ReviewCard"
 import { ReviewDone } from "@/portals/student/screens/flashcards/ReviewDone"
 import { ReviewScreen } from "@/portals/student/screens/flashcards/ReviewScreen"
@@ -375,5 +376,40 @@ describe("review screen: keyboard", () => {
     expect(press(focusable(false), "Enter")).not.toHaveBeenCalled()
     expect(press(focusable(false), " ")).not.toHaveBeenCalled()
     expect(press(focusable(true), "Enter")).toHaveBeenCalled()
+  })
+})
+
+describe("review screen: accessibility", () => {
+  it("names the active review with one heading, since the immersive shell has none", () => {
+    const tree = start()
+    const headings = findAll(tree, (e) => e.type === "h1")
+    expect(headings).toHaveLength(1)
+    expect(headings[0].props.children).toBe("Review flashcards")
+  })
+
+  it("the sync banner's Retry is at least 44px in both directions", async () => {
+    h.mutateAsync.mockRejectedValueOnce(new Error("offline"))
+    start()
+    rateCurrentGood()
+    await settle()
+    const retry = findAll(banner(render()), (e) => e.type === "button")[0]
+    const classes = String(retry.props.className).split(/\s+/)
+    expect(classes).toContain("min-h-11")
+    expect(classes).toContain("min-w-11")
+    expect(classes).toContain("px-2")
+  })
+
+  it("each grade button announces its label alone and names its key as a shortcut", () => {
+    start()
+    press(plainTarget, " ")
+    const tree = render()
+    const group = findAll(tree, (e) => e.props.role === "group")[0]
+    const buttons = findAll(group, (e) => e.type === "button")
+    expect(buttons.map((b) => b.props["aria-keyshortcuts"])).toEqual(["1", "2", "3", "4"])
+    for (const b of buttons) {
+      const kbd = findAll(b, (e) => e.type === Kbd)
+      expect(kbd).toHaveLength(1)
+      expect(kbd[0].props["aria-hidden"]).toBe(true)
+    }
   })
 })

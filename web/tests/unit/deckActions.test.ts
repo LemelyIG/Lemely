@@ -204,7 +204,7 @@ describe("delete deck", () => {
       pending: "Deleting…",
       keep: "Keep it",
     })
-    expect(deleteDeckConfirm({ title: "V", cardCount: 1 }).body).toBe("All 1 card and its progress go. This can’t be undone.")
+    expect(deleteDeckConfirm({ title: "V", cardCount: 1 }).body).toBe("The card and its progress go. This can’t be undone.")
     expect(deleteDeckConfirm({ title: "V", cardCount: 0 }).body).toBe("This deck has no cards. This can’t be undone.")
   })
 

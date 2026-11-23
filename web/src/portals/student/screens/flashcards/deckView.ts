@@ -74,7 +74,7 @@ export function writingView(deck: { topic: string | null; origin: DeckOrigin; re
     // No count from the server means no number on screen.
     title: deck.requestedCount ? `Writing ${plural(deck.requestedCount, "card")}…` : "Writing your cards…",
     body: deck.origin === "weakness" ? `On ${topic}, from the questions that cost you marks.` : `On ${topic}.`,
-    hint: "You can leave. The deck shows up when it's ready.",
+    hint: "You can leave. The deck shows up when it’s ready.",
   }
 }
 

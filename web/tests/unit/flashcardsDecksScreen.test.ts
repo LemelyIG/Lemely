@@ -84,7 +84,7 @@ function findRetry(node: ReactNode): ReactElement<{ onClick?: () => void }> | nu
 }
 
 describe("DeckRow Retry", () => {
-  const failed = row({ id: "d1", title: "Algebra", status: "failed", canRetry: true, statusLine: "Couldn't write the cards" })
+  const failed = row({ id: "d1", title: "Algebra", status: "failed", canRetry: true, statusLine: "Couldn’t write the cards" })
   const props = { row: failed, onOpen: () => {}, onLongPress: () => {} }
 
   it("ignores a second tap while the first retry is in flight", () => {

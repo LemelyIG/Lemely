@@ -63,7 +63,7 @@ describe("DeckContent states", () => {
 
   it("failed: the reason, Try again and Delete deck, and no card list", () => {
     const html = render(deck({ generationStatus: "failed", cards: [] }))
-    expect(html).toContain("Couldn&#x27;t write the cards. Nothing was saved.")
+    expect(html).toContain("Couldn’t write the cards. Nothing was saved.")
     expect(html).toContain("Try again")
     expect(html).toContain("Delete deck")
     expect(html).not.toContain("Add card")

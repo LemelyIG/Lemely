@@ -107,14 +107,19 @@ describe("count, labels, requests", () => {
 })
 
 describe("newDeckErrorMessage", () => {
+  it("never lets a backend reason code reach the student", () => {
+    expect(newDeckErrorMessage({ status: 409, detail: { reason: "topic_has_no_questions" } })).toBe("That deck can’t be made right now.")
+    expect(newDeckErrorMessage({ status: 409 })).toBe("That deck can’t be made right now.")
+  })
+
   it("maps each refusal to short, specific copy", () => {
     expect(newDeckErrorMessage({ status: 409, detail: { reason: "no_weaknesses" } })).toBe(
       "No weak topics yet. Mark a paper first.",
     )
     expect(newDeckErrorMessage({ status: 503 })).toBe("Card writing is off right now.")
     expect(newDeckErrorMessage({ status: 422 })).toBe("Pick a topic from the list.")
-    expect(newDeckErrorMessage({ status: 500 })).toBe("Couldn't make the deck. Try again.")
-    expect(newDeckErrorMessage(null)).toBe("Couldn't make the deck. Try again.")
+    expect(newDeckErrorMessage({ status: 500 })).toBe("Couldn’t make the deck. Try again.")
+    expect(newDeckErrorMessage(null)).toBe("Couldn’t make the deck. Try again.")
   })
 })
 

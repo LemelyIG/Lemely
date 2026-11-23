@@ -6,7 +6,7 @@ export type NewDeckMode = "weakness" | "topic" | "manual"
 export const COUNT_MIN = 1
 export const COUNT_MAX = 50
 export const COUNT_DEFAULT = 12
-export const GENERATION_FAILED_TEXT = "Couldn't write the cards. Nothing was saved."
+export const GENERATION_FAILED_TEXT = "Couldn’t write the cards. Nothing was saved."
 
 /**
  * FGX: the new-deck sheet reopened for a deck whose cards did not get written. It carries the deck's
@@ -232,9 +232,9 @@ export function newDeckErrorMessage(err: { status?: number; detail?: unknown } |
   if (err?.status === 409) {
     const reason = (err.detail as { reason?: string } | undefined)?.reason
     if (reason === "no_weaknesses") return "No weak topics yet. Mark a paper first."
-    return reason ? `That deck can't be made right now (${reason}).` : "That deck can't be made right now."
+    return "That deck can’t be made right now."
   }
   if (err?.status === 503) return "Card writing is off right now."
   if (err?.status === 422) return "Pick a topic from the list."
-  return "Couldn't make the deck. Try again."
+  return "Couldn’t make the deck. Try again."
 }

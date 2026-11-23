@@ -120,6 +120,8 @@ describe("new deck sheet", () => {
     const html = render(seed)
     expect(html).toContain('aria-label="Loading topics"')
     expect(html).not.toContain('aria-label="Topic"')
+    // One announcement for the group; its blocks stay silent.
+    expect(html.match(/role="status"/g)).toHaveLength(1)
   })
 
   it("says what failed and offers a retry when topics will not load", () => {
@@ -137,6 +139,7 @@ describe("new deck sheet", () => {
     const html = render({ ...seed, subjectCode: "" })
     expect(html).toContain('aria-label="Loading subjects"')
     expect(html).not.toContain('role="radiogroup"')
+    expect(html.match(/role="status"/g)).toHaveLength(1)
     expect(html).not.toContain("Pick a subject first")
   })
 

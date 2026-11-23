@@ -109,8 +109,15 @@ describe("deckRowView", () => {
         .statusLine,
     ).toBe("Writing 12 cards…")
     expect(deckRowView(deck({ id: "F", generationStatus: "failed" })).statusLine).toBe(
-      "Couldn't write the cards",
+      "Couldn’t write the cards",
     )
+  })
+
+  it("never prints a count it was not given while writing", () => {
+    for (const requestedCount of [null, 0]) {
+      expect(deckRowView(deck({ id: "W", generationStatus: "writing", requestedCount, cardCount: 0 })).statusLine)
+        .toBe("Writing your cards…")
+    }
   })
 })
 
@@ -190,8 +197,8 @@ describe("decksScreenView", () => {
     const pending = decksScreenView(input({ decks: [deck({ id: "A" })], due: undefined, dueStatus: "pending" }))
     const failed = decksScreenView(input({ decks: [deck({ id: "A" })], due: undefined, dueStatus: "error" }))
     if (pending.kind !== "ready" || failed.kind !== "ready") throw new Error("not ready")
-    expect(pending.hero.sub).toBe("Checking what's due…")
-    expect(failed.hero.sub).toBe("Couldn't check what's due")
+    expect(pending.hero.sub).toBe("Checking what’s due…")
+    expect(failed.hero.sub).toBe("Couldn’t check what’s due")
     expect(failed.hero.reviewLabel).toBeNull()
   })
 

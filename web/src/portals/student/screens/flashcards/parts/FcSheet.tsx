@@ -2,6 +2,10 @@
 import type { ReactNode } from "react"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 
+/** The id of the consequence paragraph on an alert sheet. Only one sheet is open at a time, so one
+ * id serves both (Delete deck, Delete card). An alertdialog is described by what will be lost. */
+export const ALERT_BODY_ID = "fc-alert-body"
+
 /** pr.css `.rvl.leave.ssh`: white, r28 top, 22px 20px 26px padding, 12px gap, grabber (kit).
  * `SheetContent` renders `nativeHeader` first in the content when the frame is not native, so the
  * title is rendered once, there, in both frames. */
@@ -23,7 +27,7 @@ export function FcSheet({
       <SheetContent
         side="adaptive"
         role={alert ? "alertdialog" : "dialog"}
-        aria-describedby={undefined}
+        aria-describedby={alert ? ALERT_BODY_ID : undefined}
         showCloseButton={false}
         nativeHeader={heading}
         nativeBodyClassName="px-5 pb-[26px] pt-3"

@@ -156,7 +156,9 @@ export function deleteDeckConfirm(deck: { title: string; cardCount: number }): D
     title: `Delete ${deck.title}?`,
     body: deck.cardCount === 0
       ? "This deck has no cards. This can’t be undone."
-      : `All ${plural(deck.cardCount, "card")} and ${deck.cardCount === 1 ? "its" : "their"} progress go. This can’t be undone.`,
+      : deck.cardCount === 1
+        ? "The card and its progress go. This can’t be undone."
+        : `All ${plural(deck.cardCount, "card")} and their progress go. This can’t be undone.`,
     confirm: "Delete deck",
     pending: "Deleting…",
     keep: "Keep it",

@@ -60,7 +60,7 @@ describe("writing", () => {
     expect(writingView({ topic: "E7 Vectors", origin: "weakness", requestedCount: 12 })).toEqual({
       title: "Writing 12 cards…",
       body: "On Vectors, from the questions that cost you marks.",
-      hint: "You can leave. The deck shows up when it's ready.",
+      hint: "You can leave. The deck shows up when it’s ready.",
     })
     expect(writingView({ topic: "1 Motion", origin: "topic", requestedCount: 1 }).body).toBe("On Motion.")
   })
