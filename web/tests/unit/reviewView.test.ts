@@ -119,7 +119,7 @@ describe("doneView", () => {
       stillDueLine: null,
       savingLine: null,
       comingBack: [{ title: "Nothing due this week", sub: null }],
-      practiceLink: { label: "Practise Vectors · +9 marks", to: "/student/practice/0580" },
+      practiceLink: { label: "Practise Vectors · cost you 9 marks", to: "/student/practice/0580" },
     })
   })
 

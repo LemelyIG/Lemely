@@ -125,7 +125,7 @@ export function FlashcardsScreen() {
           query={shelfQuery}
           skeleton={<DecksLoading />}
           error={{
-            heading: "We couldn’t load your decks",
+            heading: "Couldn’t load your decks",
             secondaryAction: { label: "Back to Home", onClick: () => navigate("/student") },
           }}
         >

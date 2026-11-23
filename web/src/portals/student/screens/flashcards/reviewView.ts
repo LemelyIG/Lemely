@@ -131,7 +131,7 @@ export function doneView(input: DoneInput): DoneView {
     comingBack: comingBackRows(input.upcoming, input.now, session.results.filter((r) => r.grade === "again").length),
     practiceLink: input.practice
       ? {
-          label: `Practise ${input.practice.topicName} · +${input.practice.marksLost} marks`,
+          label: `Practise ${input.practice.topicName} · cost you ${plural(input.practice.marksLost, "mark")}`,
           to: `/student/practice/${input.practice.subjectCode}`,
         }
       : null,

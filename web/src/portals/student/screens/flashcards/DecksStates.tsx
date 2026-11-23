@@ -32,7 +32,7 @@ export function DecksError({ onRetry }: { onRetry: () => void }) {
     <div className="grid flex-1 content-center justify-items-center gap-3 px-2 py-6 text-center" role="alert">
       <Binny mood="sad" size={96} />
       <h2 className="mt-1.5 font-display text-[26px] font-extrabold leading-[1.15] tracking-[-0.02em] text-balance text-primary">
-        We couldn’t load your decks
+        Couldn’t load your decks
       </h2>
       <p className="mb-1.5 max-w-[30ch] text-[15px] leading-[1.4] text-on-surface-variant">Check your connection, then try again.</p>
       <button type="button" onClick={onRetry} className={`min-h-[50px] w-full max-w-[320px] rounded-[18px] bg-primary px-7 text-[15.5px] font-bold text-on-primary ${FOCUS}`}>
@@ -77,7 +77,7 @@ export function EmptyShelf({ weakHint, onPick }: { weakHint: string | null; onPi
     <div className="mx-auto flex w-full max-w-[520px] flex-col gap-6">
       <div className="grid justify-items-center gap-3 pt-3 text-center">
         <Binny mood="open" size={96} />
-        <h2 className="mt-1.5 font-display text-[26px] font-extrabold leading-[1.15] tracking-[-0.02em] text-balance text-primary">Nothing on the shelf yet</h2>
+        <h2 className="mt-1.5 font-display text-[26px] font-extrabold leading-[1.15] tracking-[-0.02em] text-balance text-primary">No decks yet</h2>
         <p className="max-w-[30ch] text-[15px] leading-[1.4] text-on-surface-variant">Make a deck from what cost you marks. Lemely writes the cards.</p>
       </div>
       <div className="grid gap-2">

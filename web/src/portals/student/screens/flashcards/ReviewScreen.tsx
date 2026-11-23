@@ -211,7 +211,7 @@ export function ReviewScreen() {
           {buttons.map((b) => (
             <button key={b.grade} type="button" onClick={() => grade(b.grade)}
               className={`grid min-h-[62px] content-center justify-items-center gap-0.5 rounded-2xl transition-transform duration-150 ease-out active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100 focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary ${GRADE_TONE[b.tone]}`}>
-              <b className="text-[15px] font-bold">{b.label} <Kbd className="ml-1 hidden bg-black/10 text-current lg:inline">{b.key}</Kbd></b>
+              <b className="text-[15px] font-bold">{b.label} <Kbd size="md" className="ml-1 hidden bg-black/10 text-current lg:inline">{b.key}</Kbd></b>
               <span className="text-[12px] font-medium">{b.interval}</span>
             </button>
           ))}
@@ -225,7 +225,7 @@ export function ReviewScreen() {
         </>
       )}
       <p className="hidden pb-6 text-center text-[13px] font-medium text-on-surface-variant lg:block">
-        Press <Kbd>Space</Kbd> to flip · <Kbd>1</Kbd>–<Kbd>4</Kbd> to rate
+        Press <Kbd size="md">Space</Kbd> to flip · <Kbd size="md">1</Kbd>–<Kbd size="md">4</Kbd> to rate
       </p>
     </div>
   )
