@@ -67,17 +67,17 @@ export function QueueColumn(p: QueueColumnProps) {
         <>
           <QueueHeader left={p.left} done={p.done} />
           <div className="flex items-center gap-2">
-            <button type="button" onClick={p.onToggleSelect} aria-pressed={p.selecting} className="rounded-[14px] bg-surface-container-lowest px-3.5 py-[9px] text-[13px] font-bold shadow-[inset_0_0_0_1.5px_var(--color-outline)] active:scale-[.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:min-h-11">
+            <button type="button" onClick={p.onToggleSelect} aria-pressed={p.selecting} className="rounded-button bg-surface-container-lowest px-3.5 py-[9px] text-dense font-bold shadow-[inset_0_0_0_1.5px_var(--color-outline)] transition-transform duration-150 motion-reduce:transition-none active:scale-[.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:min-h-11">
               {p.selecting ? "Cancel" : "Select"}
             </button>
             <span className="flex-1" />
-            <button type="button" onClick={p.onBulk} disabled={p.bulk.disabled} className="rounded-[14px] bg-primary px-3.5 py-[9px] text-[13px] font-bold text-on-primary active:scale-[.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:bg-surface-container-high disabled:text-on-surface-variant disabled:shadow-[inset_0_0_0_1.5px_var(--color-outline)] pointer-coarse:min-h-11">
+            <button type="button" onClick={p.onBulk} disabled={p.bulk.disabled} className="rounded-button bg-primary px-3.5 py-[9px] text-dense font-bold text-on-primary transition-transform duration-150 motion-reduce:transition-none active:scale-[.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:bg-surface-container-high disabled:text-on-surface-variant disabled:shadow-[inset_0_0_0_1.5px_var(--color-outline)] pointer-coarse:min-h-11">
               {p.bulk.label}
             </button>
           </div>
-          {p.bulkError ? <div role="alert" className="text-[13px] text-error">Couldn't approve: {p.bulkError}</div> : null}
+          {p.bulkError ? <div role="alert" className="text-dense text-error">Couldn't approve: {p.bulkError}</div> : null}
           {p.bulkSkips && p.bulkSkips.length > 0 ? (
-            <div role="status" className="grid gap-1.5 rounded-[14px] bg-surface-container px-3.5 py-2.5 text-[13px]">
+            <div role="status" className="grid gap-1.5 rounded-button bg-surface-container px-3.5 py-2.5 text-dense">
               <div className="flex items-center justify-between gap-3">
                 <b>Some answers were skipped</b>
                 <button type="button" onClick={p.onDismissSkips} className="text-primary focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11">Dismiss</button>
@@ -109,10 +109,10 @@ export function QueueColumn(p: QueueColumnProps) {
             </ul>
           )}
           {p.state === "sparse" ? <SparseNote markHref={p.markHref} /> : null}
-          <div role="status" aria-live="polite" className="text-center text-[13px] text-on-surface-variant">{p.loadingMore ? "Loading more answers…" : p.moreFailed ? "Couldn't load more answers." : ""}</div>
+          <div role="status" aria-live="polite" className="text-center text-dense text-on-surface-variant">{p.loadingMore ? "Loading more answers…" : p.moreFailed ? "Couldn't load more answers." : ""}</div>
           {p.hasMore || p.moreFailed ? (
             <div className="flex justify-center">
-              <button ref={moreButton} data-review-more type="button" onClick={() => { if (!p.loadingMore) { if (p.moreFailed) void p.query.refetch(); else p.onLoadMore() } }} aria-disabled={p.loadingMore} className="rounded-[14px] px-3.5 py-2 text-[13px] font-bold text-primary focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11">{p.loadingMore ? "Loading…" : p.moreFailed ? "Try again" : "Load more"}</button>
+              <button ref={moreButton} data-review-more type="button" onClick={() => { if (!p.loadingMore) { if (p.moreFailed) void p.query.refetch(); else p.onLoadMore() } }} aria-disabled={p.loadingMore} className="rounded-button px-3.5 py-2 text-dense font-bold text-primary focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11">{p.loadingMore ? "Loading…" : p.moreFailed ? "Try again" : "Load more"}</button>
             </div>
           ) : null}
         </>

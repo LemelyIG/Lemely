@@ -525,7 +525,7 @@ export const teacherRoute: RouteObject = {
       element: <ReviewQueue />,
       handle: { title: "Review queue", skeleton: "list" },
       children: [
-        { index: true, element: <></> },
+        { index: true, element: <></>, handle: { title: "Review queue", skeleton: "list" } },
         { path: ":itemId", element: <></>, handle: { title: "Review a mark", skeleton: "list", immersive: true } },
       ],
     },

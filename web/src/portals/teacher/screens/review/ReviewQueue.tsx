@@ -28,7 +28,7 @@ import "./review.css"
 /** Where "Mark papers" and "Mark another class set" go until L6/L8 settle the class-set upload route. */
 const MARK_HREF = "/teacher/grading"
 
-const BTN = "rounded-[14px] px-[18px] py-[11px] text-[14px] font-bold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:min-h-11"
+const BTN = "rounded-button px-[18px] py-[11px] text-sm font-bold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:min-h-11"
 
 /** The primary failure retains the page heading and the shared offline/retry behavior. */
 export function QueueLoadError({ query }: { query: QueryStateQuery<unknown> }) {
@@ -241,7 +241,7 @@ export function ReviewQueue() {
   const ErrorHeading = phone ? "h1" : "h2"
   const detailError = detail.isError ? (
     <div role="alert" className="grid justify-items-start gap-2.5 py-7">
-      <ErrorHeading className="text-[24px] font-extrabold tracking-[-0.02em]">Couldn't load this answer.</ErrorHeading>
+      <ErrorHeading className="text-2xl font-extrabold tracking-[-0.02em]">Couldn't load this answer.</ErrorHeading>
       <p className="text-on-surface-variant">{teacherLoadFailureMessage(detail.error)}</p>
       <div className="flex gap-2">
         <button type="button" onClick={() => void detail.refetch()} className={`${BTN} bg-primary text-on-primary`}>Try again</button>
@@ -254,7 +254,7 @@ export function ReviewQueue() {
   if (phone && itemId) {
     return (
       <>
-        {detailError ?? (panelProps ? <AnswerPage {...panelProps} onBack={() => go(null, { replace: false })} /> : <div className="lm-rq-skel m-4 h-[60vh] rounded-[18px] bg-surface-container-high" role="status" aria-label="Loading the answer" />)}
+        {detailError ?? (panelProps ? <AnswerPage {...panelProps} onBack={() => go(null, { replace: false })} /> : <div className="rq-skel m-4 h-[60vh] rounded-inner bg-surface-container-high" role="status" aria-label="Loading the answer" />)}
         <UndoBar notice={decisions.state.notice} onUndo={decisions.undo} onClose={decisions.clearNotice} placement="viewport" />
       </>
     )
@@ -312,7 +312,7 @@ export function ReviewQueue() {
           {column}
           {phone ? null : (
             <div className="flex min-h-0 flex-col px-6 pt-5 shell-lg:px-9 shell-lg:pt-6">
-              {state === "loading" ? <div className="lm-rq-skel h-[min(420px,60vh)] rounded-[18px] bg-surface-container-high" role="status" aria-label="Loading the answer" /> : null}
+              {state === "loading" ? <div className="rq-skel h-[min(420px,60vh)] rounded-inner bg-surface-container-high" role="status" aria-label="Loading the answer" /> : null}
               {state !== "loading" && state !== "error" ? (detailError ?? (panelProps ? <AnswerPanel {...panelProps} /> : null)) : null}
             </div>
           )}

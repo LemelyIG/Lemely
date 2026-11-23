@@ -1,32 +1,32 @@
 /* L5 review queue: motion and the ruled answer card, from review-r1/final2.css.
    No colours are defined here; every colour is a design token. */
 :root {
-  --lm-rq-menu-shadow: 0 12px 32px -8px oklch(0.3 0.06 242 / 0.45), inset 0 0 0 1px var(--color-outline-variant);
+  --rq-menu-shadow: 0 12px 32px -8px oklch(0.3 0.06 242 / 0.45), inset 0 0 0 1px var(--color-outline-variant);
 }
-@keyframes lm-rq-bump {
+@keyframes rq-bump {
   0% { transform: translateY(8px) scale(0.9); opacity: 0.4; }
   60% { transform: scale(1.08); }
   100% { transform: none; opacity: 1; }
 }
-@keyframes lm-rq-skel {
+@keyframes rq-skel {
   50% { opacity: 0.55; }
 }
-.lm-rq-bump { animation: lm-rq-bump 0.35s var(--ease-expo); }
-.lm-rq-bump-lg { animation: lm-rq-bump 0.6s var(--ease-expo); }
-.lm-rq-skel { animation: lm-rq-skel 1.6s ease-in-out infinite; }
-.lm-rq-li {
+.rq-bump { animation: rq-bump 0.35s var(--ease-expo); }
+.rq-bump-lg { animation: rq-bump 0.6s var(--ease-expo); }
+.rq-skel { animation: rq-skel 1.6s ease-in-out infinite; }
+.rq-li {
   display: grid;
   grid-template-rows: 1fr;
   transition: grid-template-rows 0.35s var(--ease-out);
 }
-.lm-rq-li:has(> [data-gone]) { grid-template-rows: 0fr; }
-.lm-rq-row {
+.rq-li:has(> [data-gone]) { grid-template-rows: 0fr; }
+.rq-row {
   transition: opacity 0.3s var(--ease-out), transform 0.3s var(--ease-out),
     background-color 0.15s;
 }
 /* The gold arc needs contrast against both the row and its track. */
-.lm-rq-row .rd-ring-tone-gold { stroke: var(--color-on-tertiary-container); }
-.lm-rq-row[data-gone] {
+.rq-row .rd-ring-tone-gold { stroke: var(--color-on-tertiary-container); }
+.rq-row[data-gone] {
   opacity: 0;
   transform: translateX(24px);
   overflow: hidden;
@@ -38,11 +38,11 @@
 /* The global coarse-pointer floor (index.css) would stretch every chip to 44px and stack them
    one per row. Chips keep their visual height; the 44px hit area is the ::after on each button. */
 @media (pointer: coarse) {
-  .lm-rq-chips button { min-block-size: 0; min-inline-size: 0; }
+  .rq-chips button { min-block-size: 0; min-inline-size: 0; }
 }
 /* The rule sits on the last pixel of each line box (1lh tracks the figure's own line-height), so it
    runs under the text and never through it. Padding-top is the same as the text's first line box. */
-.lm-rq-ruled {
+.rq-ruled {
   background-image: repeating-linear-gradient(
     transparent 0 calc(1lh - 1px),
     var(--color-primary-container) calc(1lh - 1px) 1lh
@@ -50,11 +50,11 @@
   background-origin: content-box;
   background-clip: content-box;
 }
-.lm-rq-toast {
+.rq-toast {
   transition: opacity 0.25s var(--ease-out), transform 0.25s var(--ease-out);
 }
 @media (prefers-reduced-motion: reduce) {
-  .lm-rq-bump, .lm-rq-bump-lg, .lm-rq-skel { animation: none; }
-  .lm-rq-li, .lm-rq-row, .lm-rq-toast { transition: none; }
-  .lm-rq-toast { transform: none !important; }
+  .rq-bump, .rq-bump-lg, .rq-skel { animation: none; }
+  .rq-li, .rq-row, .rq-toast { transition: none; }
+  .rq-toast { transform: none !important; }
 }

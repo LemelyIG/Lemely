@@ -20,7 +20,7 @@ describe("review screens source", () => {
   it("gives every animation a reduced-motion fallback", () => {
     const css = readFileSync(join(DIR, "review.css"), "utf8")
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)/)
-    for (const name of ["lm-rq-bump", "lm-rq-skel"]) {
+    for (const name of ["rq-bump", "rq-skel"]) {
       expect(css).toContain(`@keyframes ${name}`)
     }
     expect(css).toMatch(/prefers-reduced-motion: reduce\)[\s\S]*animation: none/)
@@ -59,7 +59,7 @@ describe("review screens source", () => {
   it("keeps ring ink legible on review rows", () => {
     const css = readFileSync(join(DIR, "review.css"), "utf8")
     const row = readFileSync(join(DIR, "QueueRow.tsx"), "utf8")
-    expect(css).toMatch(/\.lm-rq-row \.rd-ring-tone-gold\s*\{\s*stroke: var\(--color-on-tertiary-container\)/)
+    expect(css).toMatch(/\.rq-row \.rd-ring-tone-gold\s*\{\s*stroke: var\(--color-on-tertiary-container\)/)
     expect(row).not.toMatch(/text-\[12px\] opacity-70/)
   })
   it("keeps ruled lines between text lines, tied to the line height", () => {
@@ -103,7 +103,8 @@ describe("review screens source", () => {
     for (const fn of ["QueueLoading", "FirstRun", "NothingWaiting", "Cleared"]) {
       const start = states.indexOf(`export function ${fn}`)
       const body = states.slice(start, states.indexOf("\nexport function", start + 1))
-      expect(body, fn).toMatch(/<h1\b/)
+      // QueueLoading carries a hidden h1; the others use PageHeading, which renders the h1.
+      expect(body, fn).toMatch(/<(?:h1|PageHeading)\b/)
     }
     const screen = readFileSync(join(DIR, "ReviewQueue.tsx"), "utf8")
     // The phone answer page shows the detail error alone, so its heading is the page's h1.
