@@ -181,6 +181,21 @@ const ALLOWLIST: { path: string; reason: string }[] = [
       "loads data, but it is a redirect-only interim tab root: RouteSkeleton while pending, then a Navigate (to the first subject, or Home when there is none), so there is no content an error panel could stand in for. A failed overview fetch is not pending and has no subjects, so it also sends the student Home silently; accepted for an interim root that L4 and L9 replace",
   },
   {
+    path: "src/portals/student/screens/flashcards/CardSheet.tsx",
+    reason:
+      "loads no data: `useAddCard`/`useEditCard`/`useDeleteCard` are mutations and the card arrives as a prop from DeckBody, which loads the deck behind <QueryState>; the sheet's own pending and error lines are the mutations' states",
+  },
+  {
+    path: "src/portals/student/screens/flashcards/DeleteDeckSheet.tsx",
+    reason:
+      "loads no data: `useDeleteDeck` is a mutation and the deck's title and card count arrive as props from DeckBody or DeckMenu, which load the deck behind <QueryState>",
+  },
+  {
+    path: "src/portals/student/screens/flashcards/RenameDeckSheet.tsx",
+    reason:
+      "loads no data: `useRenameDeck` is a mutation and the current title arrives as a prop from DeckOptionsButton or DeckMenu, which load the deck behind <QueryState>",
+  },
+  {
     path: "src/portals/teacher/screens/ClassRoster.tsx",
     reason:
       "loads no data: renders the class detail from `useClassDetailContext()`, which its parent layout fetches and gates; imports only the enrol/remove mutations",

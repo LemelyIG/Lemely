@@ -49,10 +49,10 @@ export function DecksError({ onRetry }: { onRetry: () => void }) {
  * away by itself when a refetch succeeds. Same warm strip as the review screen's unsaved-ratings
  * line (fc.css `.syncb`), so a quiet poll failure never takes the decks away.
  */
-export function DecksRefreshNotice({ onRetry }: { onRetry: () => void }) {
+export function DecksRefreshNotice({ onRetry, label = "Couldn’t refresh your decks" }: { onRetry: () => void; label?: string }) {
   return (
     <div role="status" className="flex items-center justify-between gap-2.5 rounded-xl bg-tertiary-container px-3 text-[13.5px] font-semibold text-on-tertiary-container">
-      <span>Couldn’t refresh your decks</span>
+      <span>{label}</span>
       <button type="button" onClick={onRetry} className={`min-h-11 flex-none px-1 font-bold underline decoration-1 underline-offset-2 ${FOCUS}`}>
         Try again
       </button>

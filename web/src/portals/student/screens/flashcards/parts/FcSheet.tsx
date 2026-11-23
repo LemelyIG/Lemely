@@ -6,8 +6,17 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
  * `SheetContent` renders `nativeHeader` first in the content when the frame is not native, so the
  * title is rendered once, there, in both frames. */
 export function FcSheet({
-  open, onOpenChange, title, alert = false, children,
-}: { open: boolean; onOpenChange: (open: boolean) => void; title: string; alert?: boolean; children: ReactNode }) {
+  open, onOpenChange, title, alert = false, restoreFocusTo, children,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  title: string
+  alert?: boolean
+  /** Where focus goes on close when the opener is not a Radix trigger and may be gone (a menu item,
+   * a deleted card's pencil). Null or absent keeps the sheet's own return to the opener. */
+  restoreFocusTo?: () => HTMLElement | null
+  children: ReactNode
+}) {
   const heading = <SheetTitle className="font-sans text-[22px] font-extrabold text-on-surface">{title}</SheetTitle>
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -19,6 +28,12 @@ export function FcSheet({
         nativeHeader={heading}
         nativeBodyClassName="px-5 pb-[26px] pt-3"
         className="sm:max-w-[420px]"
+        onCloseAutoFocus={(event) => {
+          const target = restoreFocusTo?.()
+          if (!target) return
+          event.preventDefault()
+          target.focus()
+        }}
       >
         <div className="grid gap-3">{children}</div>
       </SheetContent>

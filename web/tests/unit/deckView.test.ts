@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
   cardSourceLabel,
-  deckActionConfirm,
   deckDetailView,
   writingProgress,
   writingView,
@@ -82,25 +81,4 @@ describe("writing", () => {
 it("keeps the two source labels distinct", () => {
   expect(cardSourceLabel("ai")).toBe("AI-generated")
   expect(cardSourceLabel("manual")).toBe("Your card")
-})
-
-describe("deckActionConfirm", () => {
-  it("asks before renaming and before deleting, with no exclamation marks", () => {
-    const rename = deckActionConfirm("rename", { title: "Vectors", next: "  Vector drills " })
-    expect(rename).toEqual({
-      title: "Rename this deck?",
-      body: "“Vectors” will be called “Vector drills”.",
-      confirm: "Rename",
-      destructive: false,
-    })
-    const del = deckActionConfirm("delete", { title: "Vectors", cardCount: 2 })
-    expect(del).toEqual({
-      title: "Delete this deck?",
-      body: "“Vectors” and its 2 cards will be deleted. This can't be undone.",
-      confirm: "Delete deck",
-      destructive: true,
-    })
-    expect(deckActionConfirm("delete", { title: "V", cardCount: 1 }).body).toContain("its 1 card will")
-    expect(JSON.stringify([rename, del])).not.toContain("!")
-  })
 })
