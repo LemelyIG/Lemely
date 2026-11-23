@@ -35,6 +35,7 @@ from lemely.web.deps import (
     AuthContext,
     TeamActor,
     get_auth_context,
+    get_settings,
     team_lead_unavailable_error,
     team_permission_denied_error,
 )
@@ -149,6 +150,24 @@ def test_a_study_plan_request_carries_its_target_week_to_the_payer_decision(
 # --- R5: enforcement -------------------------------------------------------------------
 
 
+@pytest.fixture
+def _isolated_settings_cache() -> Iterator[None]:
+    """Keep the process-wide ``get_settings()`` cache out of an env-editing test.
+
+    ``get_usage_meter`` builds its sessionmaker from ``get_settings()`` (the ``lru_cache``
+    singleton), not from the settings it is handed. A test that deletes
+    ``LEMELY_USAGE__ENFORCE`` and calls it would otherwise leave enforcing settings cached
+    after ``monkeypatch`` restores the env, so every later ``create_app()`` request in the
+    worker (the study-plan POST routes) would meter on the default database, which has no
+    ledger tables. Clearing on both sides of the test fixes that without hiding a schema
+    error: the cache is rebuilt from the real, restored environment on its next use.
+    """
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+@pytest.mark.usefixtures("_isolated_settings_cache")
 def test_enforce_is_on_by_default_and_off_under_the_suite(monkeypatch: pytest.MonkeyPatch) -> None:
     """R5: the shipped default enforces; only the suite's env var turns it off."""
     assert UsageSettings().enforce is True
@@ -161,6 +180,16 @@ def test_enforce_is_on_by_default_and_off_under_the_suite(monkeypatch: pytest.Mo
     # ...and the suite's settings give a meter that meters nobody.
     monkeypatch.setenv("LEMELY_USAGE__ENFORCE", "0")
     assert get_usage_meter(Settings())._exempt(_req(uuid.uuid4())) is True
+
+
+def test_the_enforce_test_leaves_no_enforcing_settings_cached() -> None:
+    """Regression: the test above must not leave the suite's process-wide settings enforcing.
+
+    Placed straight after it on purpose: without ``_isolated_settings_cache`` the cache then
+    holds the enforcing settings built while the env var was deleted, and the study-plan POST
+    routes fail with ``relation "credit_packs" does not exist``.
+    """
+    assert get_settings().usage.enforce is False
 
 
 def test_a_non_enforcing_meter_never_touches_the_database() -> None:
