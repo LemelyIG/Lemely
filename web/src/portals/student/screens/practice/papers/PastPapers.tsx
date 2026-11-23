@@ -69,6 +69,13 @@ export function PastPapers() {
           {level ? <p className="-mb-3 text-[13px] font-medium text-on-surface-variant">{level}</p> : null}
           {subjects.length > 1 ? <SubjectChoice subjects={subjects} value={subject.code} onChange={setChosen} /> : null}
 
+          {refreshFailed ? (
+            <ErrorState compact heading="Couldn’t refresh past papers" body="Showing your last loaded list.">
+              <Button variant="ghost" size="sm" className="min-h-11 self-start" loading={query.isFetching} onClick={() => void query.refetch()}>
+                Try again
+              </Button>
+            </ErrorState>
+          ) : null}
           <QueryState
             query={gated}
             skeleton={<GhostRows rows={4} withLeading />}
@@ -85,13 +92,6 @@ export function PastPapers() {
           >
             {(data) => (
               <>
-                {refreshFailed ? (
-                  <ErrorState compact heading="Couldn’t refresh past papers" body="Showing your last loaded list.">
-                    <Button variant="ghost" size="sm" className="min-h-11 self-start" loading={query.isFetching} onClick={() => void query.refetch()}>
-                      Try again
-                    </Button>
-                  </ErrorState>
-                ) : null}
                 <div className="grid gap-6 lg:grid-cols-2 lg:items-start lg:gap-x-10">
                   {paperGroups(data.papers).map((group) => (
                     <section key={group.paperNumber} aria-label={group.heading} className="grid gap-1">

@@ -24,7 +24,25 @@ const api = vi.hoisted(() => ({
   creating: false,
   createError: null as unknown,
   retry: () => {},
+  create: vi.fn(async () => ({ assignmentId: "a-9" })),
+  navigate: vi.fn(),
+  printClick: undefined as (() => void) | undefined,
 }))
+
+vi.mock("react-router-dom", async (importOriginal) => ({
+  ...await importOriginal<typeof import("react-router-dom")>(),
+  useNavigate: () => api.navigate,
+}))
+vi.mock("@/components/ui/button", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/components/ui/button")>()
+  return {
+    ...actual,
+    Button: (props: React.ComponentProps<typeof actual.Button>) => {
+      if (props.children === "Print paper") api.printClick = props.onClick as () => void
+      return createElement(actual.Button, props)
+    },
+  }
+})
 
 vi.mock("@/components/ui/sheet", async () => {
   const { createElement: h } = await import("react")
@@ -45,7 +63,7 @@ vi.mock("@/lib/hooks/usePracticeHubApi", () => ({
     isPending: api.creating,
     isError: api.createError !== null,
     error: api.createError,
-    mutateAsync: async () => undefined,
+    mutateAsync: api.create,
   }),
 }))
 vi.mock("@/portals/student/screens/practice/hub/usePracticeHubData", () => ({
@@ -125,6 +143,9 @@ beforeEach(() => {
   api.subjectLevel = "igcse"
   api.creating = false
   api.createError = null
+  api.create.mockClear()
+  api.navigate.mockClear()
+  api.printClick = undefined
 })
 
 describe("PastPapers (PP): the list", () => {
@@ -261,6 +282,16 @@ describe("PastPapers: loading, error and empty", () => {
     expect(button(out, "Try again")).not.toBe("")
   })
 
+  it("shows the refresh notice and retry alongside a cached empty list", () => {
+    api.papersStatus = "error"
+    api.papersError = new Error("boom")
+    api.papers = { subjectCode: "0580", papers: [] }
+    const out = page()
+    expect(text(out)).toContain("No Maths papers to print yet")
+    expect(text(out)).toContain("Couldn’t refresh past papers")
+    expect(button(out, "Try again")).not.toBe("")
+  })
+
   it("shows the retry working while the refresh is in flight", () => {
     api.papersStatus = "error"
     api.papersError = new Error("boom")
@@ -292,6 +323,14 @@ describe("PastPapers: loading, error and empty", () => {
 })
 
 describe("PastPaperSheet (PQ)", () => {
+  it("prints the selected paper and navigates after creation", async () => {
+    sheet()
+    expect(api.printClick).toBeTypeOf("function")
+    api.printClick?.()
+    await vi.waitFor(() => expect(api.navigate).toHaveBeenCalledWith("/student/practice/print/a-9"))
+    expect(api.create).toHaveBeenCalledWith({ paperId: "p42", timed: true })
+  })
+
   it("names the paper and where it sits, with the subject dot and the marks", () => {
     const out = sheet()
     expect(out).toMatch(/<h2[^>]*>0580\/42 · May\/June 2025<\/h2>/)
