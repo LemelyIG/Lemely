@@ -5,12 +5,17 @@ import {
   manualDeckRequest,
   newDeckErrorMessage,
   newDeckOptions,
+  newDeckOutcome,
+  resolveMode,
+  selectChip,
+  selectKind,
+  selectSubject,
   showSubjectChips,
   submitLabel,
   topicChips,
   weaknessChips,
 } from "@/portals/student/screens/flashcards/newDeckView"
-import type { WeakTopicDTO } from "@/lib/flashcardTypes"
+import type { DeckSummaryDTO, GenerateDeckResponseDTO, WeakTopicDTO } from "@/lib/flashcardTypes"
 
 const weak: WeakTopicDTO[] = [
   { subjectCode: "0580", topic: "E7 Vectors", marksLost: 9, accuracyPct: 41 },
@@ -107,5 +112,63 @@ describe("newDeckErrorMessage", () => {
     expect(newDeckErrorMessage({ status: 422 })).toBe("Pick a topic from the list.")
     expect(newDeckErrorMessage({ status: 500 })).toBe("Couldn't make the deck. Try again.")
     expect(newDeckErrorMessage(null)).toBe("Couldn't make the deck. Try again.")
+  })
+})
+
+describe("selection", () => {
+  const picked = { subject: "0580", chosenMode: "weakness" as const, topic: "E7 Vectors" }
+
+  it("falls back to weakness when one exists, else topic, and keeps the student's own pick", () => {
+    expect(resolveMode(null, newDeckOptions(weak, "0580"))).toBe("weakness")
+    expect(resolveMode(null, newDeckOptions(weak, "0606"))).toBe("topic")
+    expect(resolveMode("manual", newDeckOptions(weak, "0580"))).toBe("manual")
+  })
+
+  it("a new subject drops the picked kind and topic, so a weakness pick cannot outlive its subject", () => {
+    expect(selectSubject("0606")).toEqual({ subject: "0606", chosenMode: null, topic: null })
+    const next = selectSubject("0606")
+    expect(resolveMode(next.chosenMode, newDeckOptions(weak, next.subject))).toBe("topic")
+  })
+
+  it("a new kind clears the topic, since a topic belongs to one kind", () => {
+    expect(selectKind(picked, "topic")).toEqual({ subject: "0580", chosenMode: "topic", topic: null })
+  })
+
+  it("picking a chip locks the kind in force, so weaknesses arriving late cannot flip it", () => {
+    const open = { subject: "0580", chosenMode: null, topic: null }
+    expect(selectChip(open, "topic", "1 Motion")).toEqual({ subject: "0580", chosenMode: "topic", topic: "1 Motion" })
+    expect(selectChip(open, "weakness", "E7 Vectors").chosenMode).toBe("weakness")
+  })
+})
+
+describe("new deck outcome", () => {
+  const response = (over: { generationStatus?: DeckSummaryDTO["generationStatus"]; requestedCount?: number; generatedCount?: number }): GenerateDeckResponseDTO => ({
+    deck: { id: "d1", generationStatus: over.generationStatus ?? "ready" } as DeckSummaryDTO,
+    requestedCount: over.requestedCount ?? 12,
+    generatedCount: over.generatedCount ?? 12,
+  })
+
+  it("reports the real count when the deck is whole", () => {
+    expect(newDeckOutcome(response({}))).toEqual({ variant: "success", title: "12 cards ready" })
+  })
+
+  it("names a shortfall instead of the requested count", () => {
+    expect(newDeckOutcome(response({ generatedCount: 9 }))).toEqual({ variant: "info", title: "9 of 12 cards written" })
+  })
+
+  it("says so when a deck came back with no cards", () => {
+    expect(newDeckOutcome(response({ generatedCount: 0 }))).toEqual({ variant: "error", title: "0 of 12 cards written" })
+  })
+
+  it("never closes silently on a failed deck", () => {
+    expect(newDeckOutcome(response({ generationStatus: "failed", generatedCount: 0 }))).toEqual({
+      variant: "error",
+      title: "Couldn’t write the cards",
+      description: "Nothing was saved.",
+    })
+  })
+
+  it("leaves a deck that is still writing to its own writing state", () => {
+    expect(newDeckOutcome(response({ generationStatus: "writing", generatedCount: 0 }))).toBeNull()
   })
 })

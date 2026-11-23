@@ -11,7 +11,8 @@ import { CountStepper } from "./parts/CountStepper"
 import { FcSheet } from "./parts/FcSheet"
 import {
   COUNT_DEFAULT, COUNT_MAX, COUNT_MIN, GENERATION_FAILED_TEXT, buildNewDeckRequest, clampCount,
-  newDeckErrorMessage, newDeckOptions, submitLabel, topicChips, weaknessChips, type NewDeckMode,
+  newDeckErrorMessage, newDeckOptions, newDeckOutcome, resolveMode, selectChip, selectKind, selectSubject,
+  submitLabel, topicChips, weaknessChips, type DeckSelection, type NewDeckMode,
 } from "./newDeckView"
 
 export interface NewDeckSeed {
@@ -49,10 +50,9 @@ function NewDeckForm({ seed, onClose, onStarted }: {
 }) {
   const overview = useOverview()
   const subjects = overview.data?.subjects ?? []
-  const [subject, setSubject] = useState(seed.subjectCode)
-  const subjectCode = subject || subjects[0]?.code || ""
-  const [chosenMode, setMode] = useState<NewDeckMode | null>(seed.mode)
-  const [topic, setTopic] = useState(seed.topic)
+  const [sel, setSel] = useState<DeckSelection>({ subject: seed.subjectCode, chosenMode: seed.mode, topic: seed.topic })
+  const { topic } = sel
+  const subjectCode = sel.subject || subjects[0]?.code || ""
   const [count, setCount] = useState(COUNT_DEFAULT)
   const [title, setTitle] = useState("")
   const weak = useWeakTopics()
@@ -65,7 +65,7 @@ function NewDeckForm({ seed, onClose, onStarted }: {
   const retrying = useRetryingDeckIds()
   const retryStarted = useRef(false)
   const options = newDeckOptions(weak.data ?? [], subjectCode)
-  const mode = chosenMode ?? (options[0].disabled ? "topic" : "weakness")
+  const mode = resolveMode(sel.chosenMode, options)
   const subjectName = subjects.find((s) => s.code === subjectCode)?.name ?? subjectCode
   const chips = mode === "weakness" ? weaknessChips(weak.data ?? [], subjectCode)
     : mode === "topic" ? topicChips((topics.data?.topics ?? []).map((t) => t.topic)) : []
@@ -75,11 +75,10 @@ function NewDeckForm({ seed, onClose, onStarted }: {
   // ApiError carries `status` and `detail`; newDeckErrorMessage reads them structurally.
   const requestError = (create.error ?? generate.error) as { status?: number; detail?: unknown } | null
   const failedDeckId = seed.failedDeckId
-  // Picking a chip fixes the mode, so weaknesses arriving late cannot flip it under the student.
   const chipGroup = (
     <div className="flex flex-wrap gap-1.5" role="group" aria-label="Topic">
       {chips.map((c) => <button key={c.topic} type="button" aria-pressed={c.topic === topic}
-        onClick={() => { setMode(mode); setTopic(c.topic) }}
+        onClick={() => setSel((s) => selectChip(s, mode, c.topic))}
         className={`inline-flex min-h-11 items-center gap-2 rounded-xl px-3 text-[13.5px] font-semibold ${FOCUS} ${mode === "weakness" ? "bg-error-container text-on-error-container" : "bg-surface-container-low text-on-surface"} ${c.topic === topic ? mode === "weakness" ? "shadow-[inset_0_0_0_2px_var(--color-on-error-container)]" : "shadow-[inset_0_0_0_2px_var(--color-primary)]" : ""}`}>
         <span>{c.label}</span>{c.badge ? <b className="font-mono text-xs">{c.badge}</b> : null}
       </button>)}
@@ -100,8 +99,12 @@ function NewDeckForm({ seed, onClose, onStarted }: {
       return
     }
     try {
-      if (req.kind === "generate") onStarted((await generate.mutateAsync(req.body)).deck.id)
-      else if (req.kind === "create") onStarted((await create.mutateAsync(req.body)).id)
+      if (req.kind === "generate") {
+        const res = await generate.mutateAsync(req.body)
+        const outcome = newDeckOutcome(res)
+        if (outcome) toast(outcome)
+        onStarted(res.deck.id)
+      } else if (req.kind === "create") onStarted((await create.mutateAsync(req.body)).id)
     } catch {
       // Mutation errors are rendered below the form.
     }
@@ -113,7 +116,7 @@ function NewDeckForm({ seed, onClose, onStarted }: {
       {!failedDeckId && subjects.length > 1 ? (
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Subject">
           {subjects.map((s) => <button key={s.code} type="button" aria-pressed={s.code === subjectCode}
-            onClick={() => { setSubject(s.code); setTopic(null) }}
+            onClick={() => setSel(selectSubject(s.code))}
             className={`min-h-11 rounded-xl px-3 text-[13.5px] font-semibold ${FOCUS} ${s.code === subjectCode ? "bg-primary-container text-primary shadow-[inset_0_0_0_2px_var(--color-primary)]" : "bg-surface-container-low text-on-surface shadow-[inset_0_0_0_1px_var(--color-outline-variant)]"}`}>
             {s.name}
           </button>)}
@@ -125,7 +128,7 @@ function NewDeckForm({ seed, onClose, onStarted }: {
             const Icon = ICONS[o.mode]
             const selected = o.mode === mode
             return <button key={o.mode} type="button" role="radio" aria-checked={selected} disabled={o.disabled}
-              onClick={() => { setMode(o.mode); setTopic(null) }}
+              onClick={() => setSel((s) => selectKind(s, o.mode))}
               className={`grid min-h-[60px] grid-cols-[40px_minmax(0,1fr)] items-center gap-3 rounded-2xl px-3 py-2.5 text-start text-on-surface disabled:opacity-60 ${FOCUS} ${selected ? "bg-primary-container shadow-[inset_0_0_0_2px_var(--color-primary)]" : "bg-surface-container-lowest shadow-[inset_0_0_0_1.5px_var(--color-outline-variant)]"}`}>
               <span className={`grid size-10 place-items-center rounded-xl ${TONES[o.mode]}`}><Icon size={14} weight="bold" aria-hidden /></span>
               <span className="grid"><b className="text-[15px] font-bold">{o.title}</b><span className="text-[13px] text-on-surface-variant">{o.sub}</span></span>
@@ -143,6 +146,7 @@ function NewDeckForm({ seed, onClose, onStarted }: {
             <QueryState
               query={topics}
               skeleton={<TopicsSkeleton />}
+              idle={overview.isPending ? <TopicsSkeleton /> : <p className="text-[14px] leading-[1.4] text-on-surface-variant">Pick a subject first</p>}
               error={{ heading: "Couldn’t load topics", retryLabel: "Try again", compact: true }}
               isEmpty={(data) => data.topics.length === 0}
               empty={<p className="text-[14px] leading-[1.4] text-on-surface-variant">No topics for this subject yet.</p>}

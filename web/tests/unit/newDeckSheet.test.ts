@@ -87,6 +87,14 @@ describe("new deck sheet", () => {
     expect(html).not.toContain("boom")
   })
 
+  it("asks for a subject, instead of loading forever, when there is none to load topics for", () => {
+    state.subjects = []
+    state.topics = { status: "pending", fetchStatus: "idle", data: undefined }
+    const html = render({ ...seed, subjectCode: "" })
+    expect(html).toContain("Pick a subject first")
+    expect(html).not.toContain('aria-label="Loading topics"')
+  })
+
   it("says there are no topics when the subject has none", () => {
     state.topics = { data: { topics: [] } }
     expect(render(seed)).toContain("No topics for this subject yet.")

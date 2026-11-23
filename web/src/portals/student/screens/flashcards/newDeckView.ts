@@ -1,5 +1,6 @@
-import type { CreateDeckRequest, GenerateDeckRequest, WeakTopicDTO } from "@/lib/flashcardTypes"
+import type { CreateDeckRequest, GenerateDeckRequest, GenerateDeckResponseDTO, WeakTopicDTO } from "@/lib/flashcardTypes"
 import { topicName } from "./flashcardsView"
+import { generationOutcome } from "./reviewView"
 
 export type NewDeckMode = "weakness" | "topic" | "manual"
 export const COUNT_MIN = 1
@@ -35,6 +36,33 @@ export function newDeckOptions(weak: readonly WeakTopicDTO[], subjectCode: strin
     { mode: "topic", title: "For a topic", sub: "Pick any syllabus topic", disabled: false },
     { mode: "manual", title: "Write my own", sub: "Type your own cards", disabled: false },
   ]
+}
+
+/** What the student has picked so far. `chosenMode` stays null until they pick, so the default can follow the data. */
+export interface DeckSelection {
+  subject: string
+  chosenMode: NewDeckMode | null
+  topic: string | null
+}
+
+/** The kind in force: the student's own pick, else weakness when one exists, else topic. */
+export function resolveMode(chosen: NewDeckMode | null, options: readonly NewDeckOptionView[]): NewDeckMode {
+  return chosen ?? (options[0].disabled ? "topic" : "weakness")
+}
+
+/** A kind and a topic both belong to one subject, so a new subject drops both. */
+export function selectSubject(subject: string): DeckSelection {
+  return { subject, chosenMode: null, topic: null }
+}
+
+/** A topic belongs to one kind, so a new kind clears it. */
+export function selectKind(sel: DeckSelection, mode: NewDeckMode): DeckSelection {
+  return { ...sel, chosenMode: mode, topic: null }
+}
+
+/** Picking a chip fixes the kind in force, so weaknesses arriving late cannot flip it under the student. */
+export function selectChip(sel: DeckSelection, resolved: NewDeckMode, topic: string): DeckSelection {
+  return { ...sel, chosenMode: resolved, topic }
 }
 
 export interface ChipView {
@@ -127,6 +155,32 @@ export function buildNewDeckRequest(input: {
       title: input.title.trim() || null,
     },
   }
+}
+
+export interface NewDeckOutcome {
+  variant: "success" | "info" | "error"
+  title: string
+  description?: string
+}
+
+/**
+ * What to tell the student when a generated deck comes back. Generation is synchronous: the 201 is
+ * already ready or failed, so the sheet closing is no answer. Reports the real count, never the
+ * requested one (P4.9 rule 2, K11). `null` means the deck is still writing and its own page says so.
+ */
+export function newDeckOutcome(res: GenerateDeckResponseDTO): NewDeckOutcome | null {
+  const status = res.deck.generationStatus
+  if (status === "writing") return null
+  if (status === "failed") return { variant: "error", title: "Couldn’t write the cards", description: "Nothing was saved." }
+  const { text, shortfall } = generationOutcome({
+    deckId: res.deck.id,
+    status,
+    requestedCount: res.requestedCount,
+    generatedCount: res.generatedCount,
+    error: null,
+  })
+  if (res.generatedCount === 0) return { variant: "error", title: text }
+  return { variant: shortfall ? "info" : "success", title: text }
 }
 
 /** Structural, so this file never imports `lib/api.ts` (which touches browser globals). */
