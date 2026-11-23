@@ -69,9 +69,9 @@ test.describe("F1 student shell", () => {
     await page.keyboard.press("Escape")
     await expect(sheet).toBeHidden()
 
-    // Practice redirects to the first subject's practice and stays lit.
+    // Practice opens the practice hub and stays lit.
     await nav.getByRole("link", { name: "Practice", exact: true }).click()
-    await expect(page).toHaveURL(/\/student\/practice\/[^/]+$/, { timeout: 15_000 })
+    await expect(page).toHaveURL(/\/student\/practice$/, { timeout: 15_000 })
     await expect(nav.getByRole("link", { name: "Practice", exact: true })).toHaveAttribute("aria-current", "page")
 
     // Plan redirects to the first subject's study plan and stays lit.
