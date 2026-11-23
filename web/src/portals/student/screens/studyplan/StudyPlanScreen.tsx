@@ -65,7 +65,8 @@ export function StudyPlanScreen() {
   // A refetch that fails keeps the week it already has; only a week that never loaded is an error.
   const week = gateWeek(useStudyPlanWeek())
   return (
-    <div className="flex flex-col gap-6 md:mx-auto md:w-full md:max-w-[640px] xl:max-w-none">
+    // The bottom clearance is the mock's `.sjpad` 100px: the shell's own pad stops short of the tab bar, so the "Built from" line would sit under it.
+    <div className="flex flex-col gap-6 max-sidebar:pb-12 md:mx-auto md:w-full md:max-w-[640px] xl:max-w-none">
       {week.status === "error" ? (
         // The load failure is Binny's (PE), so it is drawn here; `QueryState` keeps pending, the loaded week and the empty response.
         <>

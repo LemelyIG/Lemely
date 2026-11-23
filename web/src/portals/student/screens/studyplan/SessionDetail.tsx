@@ -72,7 +72,7 @@ export function SessionDetail({
         <Button
           variant="primary"
           onClick={() => session.start && onStart(session.start.path)}
-          className="min-h-[50px] w-full rounded-[18px] text-[15.5px] shadow-[0_14px_24px_-16px_oklch(0.3_0.07_242/0.7)]"
+          className="min-h-[50px] w-full rounded-[18px] text-[15.5px] font-bold shadow-[0_14px_24px_-16px_oklch(0.3_0.07_242/0.7)]"
         >
           {session.start.label}
         </Button>
@@ -162,7 +162,13 @@ export function SessionSheet({ session, onClose, ...actions }: { session: Sessio
   return (
     <Sheet open={session !== null} onOpenChange={(open) => !open && onClose()}>
       {session ? (
-        <SheetContent side="adaptive" showCloseButton={false} aria-describedby={undefined} className="gap-3 pt-3">
+        // The mock's `.rvl`: on a phone the sheet is full width with a 28px top radius and 20/26px padding (the primitive's floating inset has no radius). From `sm` it floats and takes the desktop panel's 22px.
+        <SheetContent
+          side="adaptive"
+          showCloseButton={false}
+          aria-describedby={undefined}
+          className="gap-3 bg-surface-container-lowest px-5 pt-3 pb-[calc(26px+env(safe-area-inset-bottom))] max-sm:inset-x-0 max-sm:bottom-0 max-sm:rounded-t-[28px] sm:rounded-[22px]"
+        >
           <PhoneGrabber />
           {/* SheetTitle's own font-semibold would sit beside the heading's font-extrabold and win on stylesheet order, so the weight is passed through it. */}
           <SessionDetail

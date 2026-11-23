@@ -36,7 +36,8 @@ function StateStack({
   role?: "alert"
 }) {
   return (
-    <section role={role} className={cn("grid flex-1 content-center justify-items-center gap-3 px-2 py-6 text-center", className)}>
+    // `min-h` stands in for the mock's `flex: 1`: the shell's page has no fixed height, so the stack is centred in a viewport-sized band instead of hugging the top.
+    <section role={role} className={cn("grid min-h-[56dvh] flex-1 content-center justify-items-center gap-3 px-2 py-6 text-center", className)}>
       <Binny mood={mood} size={size} motion={motion} aria-hidden />
       <h2 className="mt-1.5 mb-0 font-display text-[28px] leading-[1.15] font-extrabold tracking-[-0.02em] text-balance text-primary">{title}</h2>
       {body ? <p className="m-0 mb-1.5 max-w-[30ch] font-sans text-[15px] leading-[1.4] font-medium text-on-surface-variant">{body}</p> : null}
@@ -77,7 +78,7 @@ export function PlanLoadError({ onRetry }: { onRetry: () => void }) {
 export function FirstRun({ building, error, onBuild }: { building: boolean; error: string | null; onBuild: () => void }) {
   return (
     <>
-      <StateStack mood="open" title={COPY.firstRunTitle} body={COPY.firstRunBody} className="pt-5">
+      <StateStack mood="open" title={COPY.firstRunTitle} body={COPY.firstRunBody} className="min-h-0 pt-5">
         <Button variant="primary" className={go} loading={building} onClick={onBuild}>
           {building ? COPY.building : COPY.firstRunCta}
         </Button>

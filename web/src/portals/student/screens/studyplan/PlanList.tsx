@@ -73,7 +73,7 @@ export function PlanList(p: PlanListProps) {
         </p>
       ) : null}
 
-      <section id={`plan-day-${body.today.date}`} aria-labelledby={TODAY_HEADING_ID} className="flex flex-col">
+      <section id={`plan-day-${body.today.date}`} aria-labelledby={TODAY_HEADING_ID} className="flex flex-col gap-6 xl:gap-[22px]">
         <div className="flex items-center gap-3">
           <GoldRing parts={body.ring} size={32} label={body.ringLabel} />
           <div>
