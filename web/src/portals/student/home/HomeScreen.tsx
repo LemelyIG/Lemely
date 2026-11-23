@@ -26,17 +26,17 @@ export function HomeScreen({ home }: { home: StudentHome }) {
 
   return (
     <div className="flex flex-col gap-[22px] pb-24 max-md:not-in-data-[platform=ios]:-mx-3.5 max-md:in-data-[platform=ios]:-mx-4 max-md:px-5 max-md:pt-3.5 max-md:bg-[linear-gradient(180deg,color-mix(in_oklch,var(--md-primary-container)_45%,var(--md-surface))_0%,var(--md-surface)_46%)] md:pb-8">
-      <header className="flex items-center gap-5 @[1040px]/home:pt-2">
+      <header className="flex items-center gap-5 @[900px]/home:pt-2">
         <PageHeading
           repeatsTitle={false}
-          className="sr-only @[1040px]/home:not-sr-only @[1040px]/home:flex-1 @[1040px]/home:font-display @[1040px]/home:text-[32px] @[1040px]/home:font-extrabold @[1040px]/home:leading-[1.1] @[1040px]/home:tracking-[-0.03em] @[1040px]/home:text-primary"
+          className="sr-only @[900px]/home:not-sr-only @[900px]/home:flex-1 @[900px]/home:font-display @[900px]/home:text-[32px] @[900px]/home:font-extrabold @[900px]/home:leading-[1.1] @[900px]/home:tracking-[-0.03em] @[900px]/home:text-primary"
         >
           {vm.heading}
         </PageHeading>
         <HomeTopRow pill={vm.streakPill} exam={vm.exam} examTo={vm.today.planTo} localDate={home.localDate} />
       </header>
 
-      <div className="flex flex-col gap-[22px] md:grid md:grid-cols-2 md:items-start md:gap-x-9 md:gap-y-6 @[1040px]/home:grid-cols-[minmax(0,.95fr)_minmax(0,1.1fr)_minmax(364px,.95fr)]">
+      <div className="flex flex-col gap-[22px] md:grid md:grid-cols-2 md:items-start md:gap-x-9 md:gap-y-6 @[900px]/home:grid-cols-[minmax(0,.95fr)_minmax(0,1.1fr)_minmax(0,.95fr)]">
         <section aria-label="Binny" className="flex flex-col gap-[18px] md:pt-2">
           <HomeStage stage={vm.stage} onNotNow={notNow} />
           {vm.also.desktop.length > 0 ? (
@@ -56,7 +56,7 @@ export function HomeScreen({ home }: { home: StudentHome }) {
           week={vm.week}
           planTo={vm.today.planTo}
           allPapersTo={vm.allPapersTo}
-          className="hidden md:col-span-2 md:grid md:grid-cols-2 md:gap-x-10 md:gap-y-6 md:border-t md:border-outline-variant md:pt-6 @[1040px]/home:col-span-1 @[1040px]/home:grid-cols-1 @[1040px]/home:gap-6 @[1040px]/home:border-s @[1040px]/home:border-t-0 @[1040px]/home:ps-8 @[1040px]/home:pt-4"
+          className="hidden md:col-span-2 md:grid md:grid-cols-2 md:gap-x-10 md:gap-y-6 md:border-t md:border-outline-variant md:pt-6 @[900px]/home:col-span-1 @[900px]/home:grid-cols-1 @[900px]/home:gap-6 @[900px]/home:border-s @[900px]/home:border-t-0 @[900px]/home:ps-8 @[900px]/home:pt-4"
         />
         {/* Mock H6: on the phone the also rows close the page, after the win-back list. */}
         <MomentRows rows={vm.also.phone} label="For you" className="md:hidden" />

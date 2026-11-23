@@ -24,9 +24,9 @@ export function HomeBand({
 }) {
   return (
     <section aria-label="This week and your class" className={className}>
-      <div className="grid content-start gap-1.5 md:col-span-2 @[1040px]/home:col-span-1">
+      <div className="grid content-start gap-1.5 md:col-span-2 @[900px]/home:col-span-1">
         <SectionLink id="home-week" title="This week" to={planTo} />
-        <WeekStrip days={week} className="md:max-w-[26rem] @[1040px]/home:max-w-none" />
+        <WeekStrip days={week} className="md:max-w-[26rem] @[900px]/home:max-w-none" />
         {band.weekNext.length > 0 ? (
           <p className="mt-1.5 text-[13px] text-on-surface-variant">
             {band.weekNext.map((w, i) => (

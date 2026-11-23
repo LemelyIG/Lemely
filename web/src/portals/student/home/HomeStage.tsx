@@ -17,17 +17,17 @@ export function HomeStage({ stage, onNotNow }: { stage: StageVm; onNotNow: () =>
       <style>{STAGE_IN}</style>
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 top-[118px] mx-auto h-[30px] w-[210px] rounded-[50%] bg-[radial-gradient(closest-side,color-mix(in_oklch,var(--md-primary-container)_80%,transparent),transparent)] @[1040px]/home:top-[150px] @[1040px]/home:w-[260px]"
+        className="pointer-events-none absolute inset-x-0 top-[118px] mx-auto h-[30px] w-[210px] rounded-[50%] bg-[radial-gradient(closest-side,color-mix(in_oklch,var(--md-primary-container)_80%,transparent),transparent)] @[900px]/home:top-[150px] @[900px]/home:w-[260px]"
       />
       {/* The kit's .rd-binny sets its own display, so the size swap hides wrappers, not the svg. */}
-      <div className="relative z-base @[1040px]/home:hidden">
+      <div className="relative z-base @[900px]/home:hidden">
         <Binny mood={stage.mood} motion={stage.motion} size={150} aria-hidden />
       </div>
-      <div className="relative z-base hidden @[1040px]/home:block">
+      <div className="relative z-base hidden @[900px]/home:block">
         <Binny mood={stage.mood} motion={stage.motion} size={200} aria-hidden />
       </div>
-      <p className="max-w-[26ch] text-balance text-[20px] font-bold leading-[1.38] tracking-[-0.01em] text-on-surface @[1040px]/home:max-w-[22ch] @[1040px]/home:text-[22px]">
-        {stage.greeting ? <span className="@[1040px]/home:hidden">{stage.greeting} </span> : null}
+      <p className="max-w-[26ch] text-balance text-[20px] font-bold leading-[1.38] tracking-[-0.01em] text-on-surface @[900px]/home:max-w-[22ch] @[900px]/home:text-[22px]">
+        {stage.greeting ? <span className="@[900px]/home:hidden">{stage.greeting} </span> : null}
         {stage.line}
       </p>
       <div className="grid w-full justify-items-center gap-0.5">
