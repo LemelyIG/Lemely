@@ -4,6 +4,7 @@ export const marketingLinks = {
   login: '/login',
   demo: 'mailto:contact@lemelyig.com?subject=Book%20a%20Lemely%20demo',
   contact: 'mailto:contact@lemelyig.com',
+  phone: 'tel:+201067661974',
 } as const
 
 export const proofMetrics = [
