@@ -19,7 +19,7 @@ export function SectionLink({ id, title, to, className }: { id: string; title: s
         )}
       >
         {title}
-        <CaretRight size={16} weight="bold" className="text-on-surface-variant group-hover:text-primary" aria-hidden="true" />
+        <CaretRight size={16} weight="bold" className="text-on-surface-variant transition-colors group-hover:text-primary" aria-hidden="true" />
       </Link>
     </h2>
   )

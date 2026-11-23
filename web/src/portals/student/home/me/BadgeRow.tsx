@@ -24,7 +24,7 @@ export function BadgeRow({ badges, onAll }: { badges: ReturnType<typeof deriveBa
           className={cn("group inline-flex min-h-11 items-center gap-1 rounded-row font-display text-[17px] font-extrabold tracking-[-0.01em] text-on-surface", HIT, PRESS, LINK_FEEDBACK, FOCUS)}
         >
           Badges
-          <CaretRight size={16} weight="bold" className="text-on-surface-variant group-hover:text-primary" aria-hidden="true" />
+          <CaretRight size={16} weight="bold" className="text-on-surface-variant transition-colors group-hover:text-primary" aria-hidden="true" />
         </button>
       </h2>
       <ul className="relative -mx-3.5 flex gap-2.5 overflow-x-auto px-3.5 [scrollbar-width:none] md:-mx-1 md:-my-1 md:justify-between md:gap-1 md:px-1 md:py-1">
