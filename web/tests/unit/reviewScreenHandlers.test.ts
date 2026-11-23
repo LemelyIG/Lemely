@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
   mutateAsync: vi.fn(),
   navigate: vi.fn(),
   haptic: vi.fn(),
+  confirm: vi.fn(),
 }))
 
 vi.mock("react", async (importOriginal) => ({
@@ -33,15 +34,19 @@ vi.mock("react", async (importOriginal) => ({
 }))
 vi.mock("react-router-dom", () => ({ useNavigate: () => h.navigate, useSearchParams: () => [new URLSearchParams("deck=d1")] }))
 vi.mock("@/lib/haptics", () => ({ haptic: h.haptic }))
+// The screen is rendered as a function with no DOM, so the dialog is a stub whose props the tests read.
+vi.mock("@/components/ui/confirm-modal", () => ({ ConfirmModal: () => null }))
 vi.mock("@/lib/hooks/useReferenceApi", () => ({ useSubjectName: () => "Maths" }))
 vi.mock("@/lib/hooks/useFlashcardApi", () => ({
   useDueSession: () => h.due,
   useFlashcardDeck: () => ({ data: { title: "Vectors", origin: "manual", topic: null, marksLost: null, subjectCode: "0580" } }),
   useReviewCard: () => ({ mutateAsync: h.mutateAsync }),
 }))
-vi.stubGlobal("window", { addEventListener: (_t: string, f: (e: unknown) => void) => { h.listeners.push(f) }, removeEventListener: () => {}, matchMedia: () => ({ matches: false }) })
+vi.stubGlobal("window", { addEventListener: (_t: string, f: (e: unknown) => void) => { h.listeners.push(f) }, removeEventListener: () => {}, matchMedia: () => ({ matches: false }), confirm: h.confirm })
 
+import { ConfirmModal } from "@/components/ui/confirm-modal"
 import { ReviewCard } from "@/portals/student/screens/flashcards/ReviewCard"
+import { ReviewDone } from "@/portals/student/screens/flashcards/ReviewDone"
 import { ReviewScreen } from "@/portals/student/screens/flashcards/ReviewScreen"
 
 type El = { type: unknown; key?: string | null; props: Record<string, unknown> }
@@ -86,6 +91,17 @@ const focusable = (own: boolean) => ({
   closest: (sel: string) => (sel.startsWith("button") ? { hasAttribute: (n: string) => own && n === "data-review-primary" } : null),
 })
 const plainTarget = { closest: () => null }
+const exitModal = (tree: unknown) => findAll(tree, (e) => e.type === ConfirmModal)[0]
+const endButton = (tree: unknown) => findAll(tree, (e) => e.props["aria-label"] === "End review")[0]
+const click = (el: El) => (el.props.onClick as () => void)()
+const settle = async () => { await Promise.resolve(); await Promise.resolve() }
+/** Reveal the current card and rate it Good; returns the tree rendered after the rating. */
+function rateCurrentGood() {
+  press(plainTarget, " ")
+  click(gradeButton(render(), "Good"))
+  return render()
+}
+const BACK_TO = "/student/flashcards/deck/d1"
 
 beforeEach(() => {
   h.slots = []
@@ -93,6 +109,7 @@ beforeEach(() => {
   h.mutateAsync = vi.fn().mockResolvedValue({ grade: "good", xpAwarded: 2, card: { id: "a" } })
   h.navigate.mockClear()
   h.haptic.mockClear()
+  h.confirm.mockReset()
   h.due = {
     data: { cards: [card("a"), card("b")], totalDue: 2, nextDueAt: null, againDelayMinutes: 10, upcoming: [] },
     status: "success", error: null, refetch: vi.fn(),
@@ -121,20 +138,15 @@ describe("review screen: grading", () => {
     expect(h.mutateAsync.mock.calls.slice(2).map(([v]) => v.cardId)).toEqual(["a", "b"])
   })
 
-  it("announces unsaved ratings in a persistent status and asks before leaving", async () => {
+  it("announces unsaved ratings in a persistent status", async () => {
     h.mutateAsync.mockRejectedValueOnce(new Error("offline"))
-    const confirm = vi.fn().mockReturnValue(false)
-    Object.assign(window, { confirm })
-    let tree = start()
+    const first = start()
+    expect(findAll(first, (e) => e.props.role === "status")).toHaveLength(1)
+    rateCurrentGood()
+    await settle()
+    const tree = render()
     expect(findAll(tree, (e) => e.props.role === "status")).toHaveLength(1)
-    press(plainTarget, " ")
-    ;(gradeButton(render(), "Good").props.onClick as () => void)()
-    await Promise.resolve(); await Promise.resolve()
-    tree = render()
-    const end = findAll(tree, (e) => e.props["aria-label"] === "End review")[0]
-    ;(end.props.onClick as () => void)()
-    expect(confirm).toHaveBeenCalled()
-    expect(h.navigate).not.toHaveBeenCalled()
+    expect(JSON.stringify(findAll(tree, (e) => e.props.role === "status")[0].props.children)).toContain("1 rating not saved yet")
   })
 
   it("reports completed cards as progress", () => {
@@ -180,6 +192,125 @@ describe("review screen: grading", () => {
     ;(retry.props.onClick as () => void)()
     expect(h.mutateAsync).toHaveBeenCalledTimes(2)
     expect(h.mutateAsync.mock.calls[1][0]).toEqual(first)
+  })
+})
+
+describe("review screen: leaving", () => {
+  it("is closed on entry and never uses window.confirm", () => {
+    const modal = exitModal(start())
+    expect(modal.props.open).toBe(false)
+    expect(modal.props).toMatchObject({ title: "Leave review?", confirmLabel: "Leave review", cancelLabel: "Keep reviewing" })
+    expect(h.confirm).not.toHaveBeenCalled()
+  })
+
+  it("leaves at once, with no dialog, when every rating is saved", async () => {
+    start()
+    rateCurrentGood()
+    await settle()
+    const tree = render()
+    click(endButton(tree))
+    expect(h.navigate).toHaveBeenCalledWith(BACK_TO)
+    expect(exitModal(render()).props.open).toBe(false)
+    expect(h.confirm).not.toHaveBeenCalled()
+  })
+
+  it("leaves at once on a fresh session", () => {
+    click(endButton(start()))
+    expect(h.navigate).toHaveBeenCalledWith(BACK_TO)
+    expect(exitModal(render()).props.open).toBe(false)
+  })
+
+  it("opens the dialog instead of leaving while a rating is still in flight", () => {
+    h.mutateAsync.mockReturnValue(new Promise(() => {}))
+    start()
+    const tree = rateCurrentGood()
+    click(endButton(tree))
+    expect(h.navigate).not.toHaveBeenCalled()
+    expect(exitModal(render()).props.open).toBe(true)
+    expect(h.confirm).not.toHaveBeenCalled()
+  })
+
+  it("opens the dialog instead of leaving while a rating has failed", async () => {
+    h.mutateAsync.mockRejectedValueOnce(new Error("offline"))
+    start()
+    rateCurrentGood()
+    await settle()
+    const tree = render()
+    expect(JSON.stringify(banner(tree).props.children)).toContain("1 rating not saved yet")
+    click(endButton(tree))
+    expect(h.navigate).not.toHaveBeenCalled()
+    expect(exitModal(render()).props.open).toBe(true)
+    expect(h.confirm).not.toHaveBeenCalled()
+  })
+
+  it("reads the latest session, so a stale End handler still asks", () => {
+    h.mutateAsync.mockReturnValue(new Promise(() => {}))
+    const staleEnd = endButton(start())
+    rateCurrentGood()
+    click(staleEnd)
+    expect(h.navigate).not.toHaveBeenCalled()
+    expect(exitModal(render()).props.open).toBe(true)
+  })
+
+  it("asks from the done screen too while a rating is in flight", () => {
+    h.mutateAsync.mockReturnValue(new Promise(() => {}))
+    start()
+    rateCurrentGood()
+    const done = findAll(rateCurrentGood(), (e) => e.type === ReviewDone)[0]
+    expect(done).toBeDefined()
+    ;(done.props.onBack as () => void)()
+    expect(h.navigate).not.toHaveBeenCalled()
+    const tree = render()
+    expect(exitModal(tree).props.open).toBe(true)
+    expect(findAll(tree, (e) => e.type === ReviewDone)).toHaveLength(1)
+  })
+
+  it("leaves from the done screen at once when everything is saved", async () => {
+    start()
+    rateCurrentGood()
+    const done = findAll(rateCurrentGood(), (e) => e.type === ReviewDone)[0]
+    await settle()
+    ;(done.props.onBack as () => void)()
+    expect(h.navigate).toHaveBeenCalledWith(BACK_TO)
+    expect(exitModal(render()).props.open).toBe(false)
+  })
+
+  it("confirming navigates away and closes the dialog", () => {
+    h.mutateAsync.mockReturnValue(new Promise(() => {}))
+    start()
+    click(endButton(rateCurrentGood()))
+    const modal = exitModal(render())
+    expect(modal.props.open).toBe(true)
+    ;(modal.props.onConfirm as () => void)()
+    expect(h.navigate).toHaveBeenCalledTimes(1)
+    expect(h.navigate).toHaveBeenCalledWith(BACK_TO)
+    expect(exitModal(render()).props.open).toBe(false)
+  })
+
+  it("cancelling closes the dialog and keeps the student in the review", () => {
+    h.mutateAsync.mockReturnValue(new Promise(() => {}))
+    start()
+    click(endButton(rateCurrentGood()))
+    ;(exitModal(render()).props.onCancel as () => void)()
+    const tree = render()
+    expect(exitModal(tree).props.open).toBe(false)
+    expect(h.navigate).not.toHaveBeenCalled()
+    expect((findAll(tree, (e) => e.type === ReviewCard)[0].props.card as { id: string }).id).toBe("b")
+  })
+
+  it("ignores rating keys while the dialog is open", () => {
+    h.mutateAsync.mockReturnValue(new Promise(() => {}))
+    start()
+    press(plainTarget, " ")
+    click(gradeButton(render(), "Good"))
+    render()
+    press(plainTarget, " ")
+    render()
+    click(endButton(render()))
+    render()
+    expect(h.mutateAsync).toHaveBeenCalledTimes(1)
+    expect(press(plainTarget, "3")).not.toHaveBeenCalled()
+    expect(h.mutateAsync).toHaveBeenCalledTimes(1)
   })
 })
 

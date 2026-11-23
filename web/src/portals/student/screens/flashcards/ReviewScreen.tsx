@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowRight, X } from "@phosphor-icons/react"
 import { useEffect, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { ComboChip } from "@/components/redesign"
+import { ConfirmModal } from "@/components/ui/confirm-modal"
 import { Kbd } from "@/components/ui/kbd"
 import { SkeletonBlock } from "@/components/ui/skeleton"
 import { applyGradeOutcome, beginRetry, newClientReviewId, registerGrade, startSession, type FlashcardSessionState, type FailedGrade } from "@/lib/flashcardSession"
@@ -54,9 +55,19 @@ export function ReviewScreen() {
     sessionRef.current = next
     setSession(next)
   }
+  // C-24: leaving with unsaved ratings asks in the product's own dialog, never window.confirm.
+  const [exitModalOpen, setExitModalOpen] = useState(false)
   function leaveReview() {
+    // Read the ref, not state: a grade can settle between the last render and this press.
     const latest = sessionRef.current
-    if ((latest.failed.length > 0 || latest.inFlight > 0) && !window.confirm("Some ratings may not be saved yet. Leave review?")) return
+    if (latest.failed.length > 0 || latest.inFlight > 0) {
+      setExitModalOpen(true)
+      return
+    }
+    navigate(backTo)
+  }
+  function confirmLeave() {
+    setExitModalOpen(false)
     navigate(backTo)
   }
   const current = cards?.[index] ?? null
@@ -99,7 +110,7 @@ export function ReviewScreen() {
   // R7: Space/Enter flip; 1-4 rate after the flip.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (!current || finished || e.ctrlKey || e.metaKey || e.altKey || e.repeat) return
+      if (!current || finished || exitModalOpen || e.ctrlKey || e.metaKey || e.altKey || e.repeat) return
       const target = e.target as Element | null
       if (isEditableTarget(target)) return
       const action = reviewKeyAction(e.key, revealed)
@@ -112,7 +123,7 @@ export function ReviewScreen() {
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [current, revealed, finished])
+  }, [current, revealed, finished, exitModalOpen])
 
   // Focus follows the review: the primary action on each new card, then the card itself once flipped.
   // (ReviewCard focuses itself on the flip, so a second Space never lands on a grade button.)
@@ -122,7 +133,21 @@ export function ReviewScreen() {
   }, [index, revealed, cards])
 
   const bannerText = syncBannerText(session.failed.length)
-  const withStatus = (content: React.ReactNode) => <><div role="status" className="sr-only">{bannerText}</div>{content}</>
+  const withStatus = (content: React.ReactNode) => (
+    <>
+      <div role="status" className="sr-only">{bannerText}</div>
+      {content}
+      <ConfirmModal
+        open={exitModalOpen}
+        title="Leave review?"
+        consequence="Some ratings may not be saved yet."
+        confirmLabel="Leave review"
+        cancelLabel="Keep reviewing"
+        onConfirm={confirmLeave}
+        onCancel={() => setExitModalOpen(false)}
+      />
+    </>
+  )
   const banner = bannerText ? (
     <div className="mx-[22px] mt-2 flex items-center justify-between gap-2.5 rounded-xl bg-tertiary-container px-3 text-[13.5px] font-semibold text-on-tertiary-container">
       <span>{bannerText}</span>
