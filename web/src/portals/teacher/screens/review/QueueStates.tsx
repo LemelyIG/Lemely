@@ -1,8 +1,10 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
+import { useState } from "react"
 import { Link } from "react-router-dom"
 import { Binny, GhostRows, Walkthrough, type BinnyMood } from "@/components/redesign"
 import "./review.css"
 import { clearedSummary, type Tally } from "./reviewQueueModel"
+import { SampleAnswer } from "./SampleAnswer"
 
 const PRIMARY_BTN = "rounded-[14px] bg-primary px-[18px] py-[11px] text-[14px] font-bold text-on-primary active:scale-[.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:min-h-11"
 
@@ -46,6 +48,7 @@ export function SparseNote({ markHref }: { markHref: string }) {
 }
 
 export function FirstRun({ markHref, phone }: { markHref: string; phone: boolean }) {
+  const [sampleOpen, setSampleOpen] = useState(false)
   // Numbered, not iconed: the order is the point (states-r1 RQ1/RQ3).
   const steps = phone
     ? [
@@ -70,7 +73,17 @@ export function FirstRun({ markHref, phone }: { markHref: string; phone: boolean
         </div>
         {phone ? <p className="text-[14.5px] text-on-surface-variant">When Lemely isn't sure about a mark, the answer lands here for you.</p> : null}
         <Walkthrough steps={steps} />
-        <Link to={markHref} className={`${PRIMARY_BTN} justify-self-start`}>Mark papers</Link>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <Link to={markHref} className={PRIMARY_BTN}>Mark papers</Link>
+          <button
+            type="button"
+            aria-haspopup="dialog"
+            // Focus the link first: Safari does not focus a clicked button, and the dialog hands focus back to
+            // whatever held it when it opened.
+            onClick={(e) => { e.currentTarget.focus(); setSampleOpen(true) }}
+            className="inline-flex min-h-11 items-center rounded-[14px] px-3.5 text-[14px] font-bold text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          >See a sample answer</button>
+        </div>
       </section>
       {phone ? null : (
         <div className="grid max-w-[820px] gap-2.5 opacity-75" aria-hidden="true">
@@ -78,6 +91,7 @@ export function FirstRun({ markHref, phone }: { markHref: string; phone: boolean
           <GhostRows rows={2} withLeading />
         </div>
       )}
+      <SampleAnswer open={sampleOpen} onClose={() => setSampleOpen(false)} />
     </div>
   )
 }
