@@ -1,11 +1,22 @@
 import { describe, expect, it } from "vitest"
+import { ApiError } from "@/lib/api"
+import { practiceHubKeys } from "@/lib/practiceHubKeys"
 import type { PracticePreview, PracticeTopics } from "@/lib/practiceTypes"
+import { runCreate, type CreateIo } from "@/portals/student/screens/practice/builder/runCreate"
 import {
   COUNT_DEFAULT,
   COUNT_MAX,
   COUNT_MIN,
+  applyCreateOutcome,
+  beginCreate,
   builderView,
+  createOutcome,
   createdToast,
+  editSession,
+  newSession,
+  radioStep,
+  seedSession,
+  switchSubject,
   draftToFilters,
   initialDraft,
   setSource,
@@ -252,5 +263,228 @@ describe("unavailableText / createdToast", () => {
     const created = { assignmentId: "a", quizId: "q", questionCount: 7, requestedCount: 10, topics: [], reason: "insufficient_pool" }
     expect(createdToast(created, 10)).toBe("Made a set of 7. That's all that matched.")
     expect(createdToast(created, 7)).toBeNull()
+  })
+})
+
+const MATHS: PracticeTopics = {
+  subjectCode: "0580",
+  topics: [{ topic: "Vectors", availableCount: 14, syllabusGroup: "Vectors", marksLost: 9 }],
+  weakTopics: ["Vectors"],
+  untopicedCount: 0,
+}
+
+describe("builder session", () => {
+  it("seeds once per subject and a later refetch never reverts a choice", () => {
+    const seeded = seedSession(newSession("0625"), TOPICS, "0625", null)
+    expect(seeded.seededFor).toBe("0625")
+    expect(seeded.draft?.subjectCode).toBe("0625")
+    const edited = editSession(seeded, { ...seeded.draft!, count: 25 })
+    expect(seedSession(edited, TOPICS, "0625", null)).toBe(edited)
+  })
+
+  it("waits for topics before seeding", () => {
+    const s = newSession("0625")
+    expect(seedSession(s, undefined, "0625", null)).toBe(s)
+  })
+
+  it("A to B to A seeds A again: a return trip is not a stale blank draft", () => {
+    const a = seedSession(newSession("0625"), TOPICS, "0625", null)
+    const b = switchSubject(a, "0580")
+    expect(b).toMatchObject({ subjectCode: "0580", draft: null, dropped: [], seededFor: null })
+    const bSeeded = seedSession(b, MATHS, "0625", null)
+    expect(bSeeded.draft?.subjectCode).toBe("0580")
+    const back = switchSubject(bSeeded, "0625")
+    expect(back.draft).toBeNull()
+    const again = seedSession(back, TOPICS, "0625", null)
+    expect(again.draft?.subjectCode).toBe("0625")
+    expect(again.draft?.selected).toEqual(weakServableTopics(TOPICS))
+  })
+
+  it("A to B and back before B's topics arrive still seeds A: the old seed mark must not survive the switch", () => {
+    const a = seedSession(newSession("0625"), TOPICS, "0625", null)
+    const back = switchSubject(switchSubject(a, "0580"), "0625")
+    expect(back.seededFor).toBeNull()
+    expect(seedSession(back, TOPICS, "0625", null).draft?.subjectCode).toBe("0625")
+  })
+
+  it("a deep-link focus topic only applies to the subject the sheet opened on", () => {
+    const opened = seedSession(newSession("0625"), TOPICS, "0625", "3 Waves")
+    expect(opened.draft?.selected).toEqual(["3 Waves"])
+    const other = seedSession(switchSubject(opened, "0580"), MATHS, "0625", "Vectors")
+    expect(other.draft?.weakOnly).toBe(true)
+  })
+
+  it("switching subject retires a refusal and a failure banner; the same subject is a no-op", () => {
+    const stale = { ...newSession("0625"), race: preview({ available: false }), createFailed: true }
+    expect(switchSubject(stale, "0625")).toBe(stale)
+    expect(switchSubject(stale, "0580")).toMatchObject({ race: null, createFailed: false })
+  })
+
+  it("editing a filter retires a refusal and a failure banner", () => {
+    const seeded = seedSession(newSession("0625"), TOPICS, "0625", null)
+    const stale = { ...seeded, race: preview({ available: false }), createFailed: true }
+    expect(editSession(stale, { ...seeded.draft!, count: 5 })).toMatchObject({ race: null, createFailed: false })
+  })
+})
+
+describe("create outcome", () => {
+  const created = { assignmentId: "a-1", quizId: "q", questionCount: 10, requestedCount: 10, topics: [], reason: null }
+
+  it("success opens the set, refreshes the runs list, and stays quiet when nothing was cut", () => {
+    expect(createOutcome({ ok: true, created }, "set", 10)).toEqual({
+      kind: "created",
+      invalidate: practiceHubKeys.runsAll,
+      toast: null,
+      to: "/student/practice/set/a-1",
+    })
+  })
+
+  it("Print instead lands on the print view of the same set", () => {
+    const out = createOutcome({ ok: true, created }, "print", 10)
+    expect(out).toMatchObject({ kind: "created", to: "/student/practice/print/a-1" })
+  })
+
+  it("a short set carries the toast that says why", () => {
+    const out = createOutcome({ ok: true, created: { ...created, questionCount: 6 } }, "set", 10)
+    expect(out).toMatchObject({ kind: "created", toast: "Made a set of 6. That's all that matched." })
+  })
+
+  it("a 409 with a payload is the refusal, not a failure", () => {
+    const race = preview({ available: false, reason: "no_questions", availableCount: 0 })
+    expect(createOutcome({ ok: false, error: new ApiError(409, "conflict", race) }, "set", 10)).toEqual({ kind: "refused", race })
+  })
+
+  it("a 409 without a payload, another status, or a non-API error is the CB4 failure and re-checks the preview", () => {
+    const failed = { kind: "failed", refetchPreview: true }
+    expect(createOutcome({ ok: false, error: new ApiError(409, "conflict") }, "set", 10)).toEqual(failed)
+    expect(createOutcome({ ok: false, error: new ApiError(500, "boom", preview({})) }, "set", 10)).toEqual(failed)
+    expect(createOutcome({ ok: false, error: new Error("offline") }, "set", 10)).toEqual(failed)
+  })
+
+  it("a refusal reaches the view as the refusal line with a disabled start", () => {
+    const race = preview({ available: false, reason: "no_questions", availableCount: 0 })
+    const s = applyCreateOutcome(newSession("0625"), { kind: "refused", race })
+    const v = builderView(vin({ race: s.race, createFailed: s.createFailed }))
+    expect(v.line?.tone).toBe("none")
+    expect(v.cta.disabled).toBe(true)
+    expect(v.errorBanner).toBeNull()
+  })
+
+  it("a failure reaches the view as the banner with Try again, and a new attempt clears it", () => {
+    const s = applyCreateOutcome(newSession("0625"), { kind: "failed", refetchPreview: true })
+    expect(builderView(vin({ race: s.race, createFailed: s.createFailed })).errorBanner).toBe("Couldn't make this set. Try again.")
+    const next = beginCreate(s)
+    expect(next).toMatchObject({ race: null, createFailed: false })
+    expect(builderView(vin({ race: next.race, createFailed: next.createFailed })).errorBanner).toBeNull()
+  })
+
+  it("success leaves the session alone: the sheet is about to navigate away", () => {
+    const s = newSession("0625")
+    const out = createOutcome({ ok: true, created }, "set", 10)
+    expect(applyCreateOutcome(s, out)).toBe(s)
+  })
+})
+
+describe("radioStep", () => {
+  it("moves forward and back with wrap, in reading order", () => {
+    expect(radioStep("ArrowRight", 0, 3, false)).toBe(1)
+    expect(radioStep("ArrowRight", 2, 3, false)).toBe(0)
+    expect(radioStep("ArrowLeft", 0, 3, false)).toBe(2)
+    expect(radioStep("ArrowLeft", 2, 3, false)).toBe(1)
+  })
+
+  it("Down and Up follow Right and Left; Home and End jump", () => {
+    expect(radioStep("ArrowDown", 0, 3, false)).toBe(1)
+    expect(radioStep("ArrowUp", 0, 3, false)).toBe(2)
+    expect(radioStep("Home", 2, 3, false)).toBe(0)
+    expect(radioStep("End", 0, 3, false)).toBe(2)
+  })
+
+  it("an RTL row swaps the horizontal arrows only", () => {
+    expect(radioStep("ArrowLeft", 0, 3, true)).toBe(1)
+    expect(radioStep("ArrowRight", 0, 3, true)).toBe(2)
+    expect(radioStep("ArrowDown", 0, 3, true)).toBe(1)
+  })
+
+  it("leaves other keys and an empty group alone", () => {
+    expect(radioStep("Tab", 0, 3, false)).toBeNull()
+    expect(radioStep("Enter", 0, 3, false)).toBeNull()
+    expect(radioStep("ArrowRight", 0, 0, false)).toBeNull()
+  })
+})
+
+describe("runCreate: the steps around the outcome", () => {
+  const created = { assignmentId: "a-9", quizId: "q", questionCount: 10, requestedCount: 10, topics: [], reason: null }
+  const draft = seedSession(newSession("0625"), TOPICS, "0625", null).draft!
+
+  function harness(mutate: CreateIo["mutate"], start = newSession("0625")) {
+    const calls: string[] = []
+    let session = start
+    const seen: BuilderSessionSnapshot[] = []
+    const io: CreateIo = {
+      mutate: (f) => {
+        calls.push(`mutate:${f.subjectCode}:${f.count}`)
+        return mutate(f)
+      },
+      update: (change) => {
+        session = change(session)
+        seen.push({ race: session.race, createFailed: session.createFailed })
+      },
+      invalidate: (key) => calls.push(`invalidate:${key.join("/")}`),
+      toast: (title) => calls.push(`toast:${title}`),
+      navigate: (to) => calls.push(`navigate:${to}`),
+      refetchPreview: () => calls.push("refetch"),
+    }
+    return { io, calls, seen, session: () => session }
+  }
+  type BuilderSessionSnapshot = { race: PracticePreview | null; createFailed: boolean }
+
+  it("success: sends the draft's filters, refreshes runs, then navigates to the set", async () => {
+    const h = harness(async () => created)
+    await runCreate(h.io, draft, "set", 10)
+    expect(h.calls).toEqual(["mutate:0625:10", "invalidate:practice/runs", "navigate:/student/practice/set/a-9"])
+  })
+
+  it("print: the same steps end on the print view", async () => {
+    const h = harness(async () => created)
+    await runCreate(h.io, draft, "print", 10)
+    expect(h.calls.at(-1)).toBe("navigate:/student/practice/print/a-9")
+  })
+
+  it("a short set toasts before it navigates", async () => {
+    const h = harness(async () => ({ ...created, questionCount: 4 }))
+    await runCreate(h.io, draft, "set", 10)
+    expect(h.calls.slice(1)).toEqual([
+      "invalidate:practice/runs",
+      "toast:Made a set of 4. That's all that matched.",
+      "navigate:/student/practice/set/a-9",
+    ])
+  })
+
+  it("409: the refusal lands in the session, and nothing navigates, refetches or invalidates", async () => {
+    const race = preview({ available: false, reason: "no_questions", availableCount: 0 })
+    const h = harness(async () => {
+      throw new ApiError(409, "conflict", race)
+    })
+    const out = await runCreate(h.io, draft, "set", 10)
+    expect(out.kind).toBe("refused")
+    expect(h.calls).toEqual(["mutate:0625:10"])
+    expect(h.session()).toMatchObject({ race, createFailed: false })
+  })
+
+  it("failure: CB4 lands in the session and the preview is re-checked, with no navigation", async () => {
+    const h = harness(async () => {
+      throw new Error("offline")
+    })
+    await runCreate(h.io, draft, "set", 10)
+    expect(h.calls).toEqual(["mutate:0625:10", "refetch"])
+    expect(h.session()).toMatchObject({ race: null, createFailed: true })
+  })
+
+  it("clears the last attempt's refusal or banner before it runs", async () => {
+    const stale = { ...newSession("0625"), race: preview({ available: false }), createFailed: true }
+    const h = harness(async () => created, stale)
+    await runCreate(h.io, draft, "set", 10)
+    expect(h.seen[0]).toEqual({ race: null, createFailed: false })
   })
 })

@@ -3,6 +3,8 @@
  * JSX. Pure; no `.tsx` imports. See the plan for the "Weak topics only"
  * semantics. The pressed chips are always exactly what is sent.
  */
+import { ApiError } from "@/lib/api"
+import { practiceHubKeys } from "@/lib/practiceHubKeys"
 import type {
   CreatePracticeResponse,
   PracticeFilterSet,
@@ -218,4 +220,99 @@ export function builderView(i: BuilderViewInput): BuilderView {
 
 export function createdToast(created: CreatePracticeResponse, expected: number): string | null {
   return created.questionCount < expected ? `Made a set of ${created.questionCount}. That's all that matched.` : null
+}
+
+/*
+ * Sheet session: everything the sheet remembers between renders, as pure
+ * transitions so the subject switch, the once-per-subject seed and the create
+ * outcome are tested here rather than through JSX.
+ */
+export interface BuilderSession {
+  subjectCode: string
+  draft: BuilderDraft | null
+  dropped: string[]
+  /** The subject whose topics were last seeded into `draft`. */
+  seededFor: string | null
+  /** The 409 payload from create, which overrides the preview until a filter changes. */
+  race: PracticePreview | null
+  createFailed: boolean
+}
+
+export function newSession(initialSubject: string): BuilderSession {
+  return { subjectCode: initialSubject, draft: null, dropped: [], seededFor: null, race: null, createFailed: false }
+}
+
+/** K11: prefill once per subject, the moment its topics arrive; a refetch never reverts a choice. */
+export function seedSession(
+  s: BuilderSession,
+  topics: PracticeTopics | undefined,
+  initialSubject: string,
+  focusTopic: string | null,
+): BuilderSession {
+  if (!topics || s.seededFor === s.subjectCode) return s
+  const seed = initialDraft(s.subjectCode, topics, s.subjectCode === initialSubject ? focusTopic : null)
+  return { ...s, seededFor: s.subjectCode, draft: seed.draft, dropped: seed.dropped }
+}
+
+/** Clearing `seededFor` lets a return trip to an already-seeded subject seed again. */
+export function switchSubject(s: BuilderSession, code: string): BuilderSession {
+  if (code === s.subjectCode) return s
+  return { ...s, subjectCode: code, draft: null, dropped: [], seededFor: null, race: null, createFailed: false }
+}
+
+/** Any filter change retires a stale refusal or failure banner. */
+export function editSession(s: BuilderSession, draft: BuilderDraft): BuilderSession {
+  return { ...s, draft, race: null, createFailed: false }
+}
+
+export type CreateResult = { ok: true; created: CreatePracticeResponse } | { ok: false; error: unknown }
+export type CreateDestination = "set" | "print"
+
+export type CreateOutcome =
+  | { kind: "created"; invalidate: readonly string[]; toast: string | null; to: string }
+  | { kind: "refused"; race: PracticePreview }
+  | { kind: "failed"; refetchPreview: true }
+
+/** Success goes to the set or its print view, 409 shows the refusal (K22), anything else is CB4. */
+export function createOutcome(result: CreateResult, dest: CreateDestination, expected: number): CreateOutcome {
+  if (result.ok) {
+    const { created } = result
+    return {
+      kind: "created",
+      invalidate: practiceHubKeys.runsAll,
+      toast: createdToast(created, expected),
+      to: dest === "set" ? `/student/practice/set/${created.assignmentId}` : `/student/practice/print/${created.assignmentId}`,
+    }
+  }
+  const { error } = result
+  if (error instanceof ApiError && error.status === 409 && error.detail) {
+    return { kind: "refused", race: error.detail as PracticePreview }
+  }
+  return { kind: "failed", refetchPreview: true }
+}
+
+/** A new attempt clears the last one's refusal or banner before it runs. */
+export function beginCreate(s: BuilderSession): BuilderSession {
+  return { ...s, race: null, createFailed: false }
+}
+
+export function applyCreateOutcome(s: BuilderSession, outcome: CreateOutcome): BuilderSession {
+  if (outcome.kind === "refused") return { ...s, race: outcome.race }
+  if (outcome.kind === "failed") return { ...s, createFailed: true }
+  return s
+}
+
+/**
+ * Roving focus for a radiogroup of chips: the index an arrow key lands on, or
+ * null for a key that is not ours. In an RTL row the arrows swap sides.
+ */
+export function radioStep(key: string, index: number, count: number, rtl: boolean): number | null {
+  if (count <= 0) return null
+  const forward = rtl ? "ArrowLeft" : "ArrowRight"
+  const back = rtl ? "ArrowRight" : "ArrowLeft"
+  if (key === forward || key === "ArrowDown") return (index + 1) % count
+  if (key === back || key === "ArrowUp") return (index - 1 + count) % count
+  if (key === "Home") return 0
+  if (key === "End") return count - 1
+  return null
 }

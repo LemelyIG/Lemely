@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E3 S4 R4 V3 */
 /* L4 · set builder sheet (mock PS, CB1-CB4). Replaces PracticeGenerator.tsx; every generator feature is on the keep-list. */
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
@@ -9,28 +9,30 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { SkeletonBlock } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { useToast } from "@/components/ui/toast"
-import { ApiError } from "@/lib/api"
-import { practiceHubKeys } from "@/lib/practiceHubKeys"
 import { useCreatePractice, usePracticePreview, usePracticeTopics } from "@/lib/hooks/usePracticeApi"
 import { useReference } from "@/lib/hooks/useReferenceApi"
-import type { PracticeFilterSet, PracticePreview } from "@/lib/practiceTypes"
+import type { PracticeFilterSet } from "@/lib/practiceTypes"
 import { PrintIcon } from "../practiceIcons"
 import { AvailabilityLine } from "./AvailabilityLine"
 import {
   builderView,
-  createdToast,
   draftToFilters,
-  initialDraft,
+  editSession,
+  newSession,
+  seedSession,
   setSource,
   setWeakOnly,
   toggleBand,
+  switchSubject,
   toggleTopic,
   visibleTopicGroups,
   weakServableTopics,
   type BuilderDraft,
+  type CreateDestination,
 } from "./builderModel"
 import { CountStepper } from "./CountStepper"
 import { MoreFilters } from "./MoreFilters"
+import { runCreate } from "./runCreate"
 import { SubjectChoice } from "./SubjectChoice"
 import { TopicChips } from "./TopicChips"
 
@@ -70,80 +72,56 @@ export function SetBuilderSheet({
   const allSubjects = subjects.some((s) => s.code === initialSubject)
     ? subjects
     : [{ code: initialSubject, name: initialSubject }, ...subjects]
-  const [subjectCode, setSubjectCode] = useState(initialSubject)
+  const [session, setSession] = useState(() => newSession(initialSubject))
+  // K11: seeding is a state update during render, which React replays safely; a ref write is not.
+  const topicsQuery = usePracticeTopics(session.subjectCode)
+  const seeded = seedSession(session, topicsQuery.data, initialSubject, focusTopic)
+  if (seeded !== session) setSession(seeded)
+  const { subjectCode, draft, dropped } = session
   const subjectName = allSubjects.find((s) => s.code === subjectCode)?.name ?? subjectCode
-
-  const topicsQuery = usePracticeTopics(subjectCode)
-  const [draft, setDraft] = useState<BuilderDraft | null>(null)
-  const [dropped, setDropped] = useState<string[]>([])
-  // K11: prefill once per subject, the moment its topics arrive; a refetch never reverts a choice.
-  // State, not a ref: an update during render is replayed safely, a ref write is not.
-  const [seededFor, setSeededFor] = useState<string | null>(null)
-  if (topicsQuery.data && seededFor !== subjectCode) {
-    const seed = initialDraft(subjectCode, topicsQuery.data, subjectCode === initialSubject ? focusTopic : null)
-    setSeededFor(subjectCode)
-    setDraft(seed.draft)
-    setDropped(seed.dropped)
-  }
 
   const filters = draft && draft.subjectCode === subjectCode ? draftToFilters(draft) : NO_FILTERS
   const previewQuery = usePracticePreview(filters)
   const create = useCreatePractice()
-  const [race, setRace] = useState<PracticePreview | null>(null)
-  const [createFailed, setCreateFailed] = useState(false)
 
   const view = builderView({
     topicsStatus: topicsQuery.status,
     topics: topicsQuery.data,
     previewStatus: previewQuery.status,
     preview: previewQuery.data,
-    race,
+    race: session.race,
     creating: create.isPending,
-    createFailed,
+    createFailed: session.createFailed,
     subjectName,
     otherSubjectNames: allSubjects.filter((s) => s.code !== subjectCode).map((s) => s.name),
     dropped,
   })
 
-  function edit(next: BuilderDraft) {
-    setRace(null)
-    setCreateFailed(false)
-    setDraft(next)
-  }
+  // CB4: the banner appears after the busy button (and Print) unmounted, so keyboard focus would fall to the body.
+  const ctaRef = useRef<HTMLButtonElement>(null)
+  const failed = view.errorBanner !== null
+  useEffect(() => {
+    if (failed) ctaRef.current?.focus()
+  }, [failed])
 
-  function chooseSubject(code: string) {
-    if (code === subjectCode) return
-    setRace(null)
-    setCreateFailed(false)
-    setDraft(null)
-    setDropped([])
-    // Clearing this too lets a return trip to an already-seeded subject seed again.
-    setSeededFor(null)
-    setSubjectCode(code)
-  }
+  const edit = (next: BuilderDraft) => setSession((s) => editSession(s, next))
+  const chooseSubject = (code: string) => setSession((s) => switchSubject(s, code))
 
-  async function make(dest: "set" | "print") {
-    if (!draft) return
-    setRace(null)
-    setCreateFailed(false)
-    try {
-      const created = await create.mutateAsync(draftToFilters(draft))
-      void queryClient.invalidateQueries({ queryKey: practiceHubKeys.runsAll })
-      const note = createdToast(created, view.startCount ?? draft.count)
-      if (note) toast({ title: note })
-      navigate(
-        dest === "set" ? `/student/practice/set/${created.assignmentId}` : `/student/practice/print/${created.assignmentId}`,
-        { replace: true },
-      )
-    } catch (err) {
-      // K22: a 409 carries the preview payload; show that refusal, not a generic failure.
-      if (err instanceof ApiError && err.status === 409 && err.detail) {
-        setRace(err.detail as PracticePreview)
-      } else {
-        setCreateFailed(true)
-        void previewQuery.refetch()
-      }
-    }
+  async function make(dest: CreateDestination) {
+    if (!draft || create.isPending) return
+    await runCreate(
+      {
+        mutate: (f) => create.mutateAsync(f),
+        update: setSession,
+        invalidate: (queryKey) => void queryClient.invalidateQueries({ queryKey }),
+        toast: (title) => toast({ title }),
+        navigate: (to) => navigate(to, { replace: true }),
+        refetchPreview: () => void previewQuery.refetch(),
+      },
+      draft,
+      dest,
+      view.startCount ?? draft.count,
+    )
   }
 
   return (
@@ -210,6 +188,7 @@ export function SetBuilderSheet({
             variant="primary"
             size="lg"
             className={GO}
+            ref={ctaRef}
             disabled={view.cta.disabled}
             loading={create.isPending}
             onClick={() => void make("set")}

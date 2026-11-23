@@ -15,7 +15,7 @@ export function HomeworkRow({ homework }: { homework: HomeworkView }) {
         <HomeworkIcon />
       </span>
       <span className="grid min-w-0 gap-0.5">
-        <b className="truncate text-[15px] font-bold group-hover:text-primary">{homework.title}</b>
+        <b className="truncate text-[15px] font-bold transition-colors group-hover:text-primary">{homework.title}</b>
         <span className="truncate text-[13px] text-on-surface-variant"><MonoNumbers text={homework.sub} /></span>
       </span>
       <ChevronIcon className="text-on-surface-variant" />

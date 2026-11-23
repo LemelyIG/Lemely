@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs"
 import { createElement, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -239,6 +240,7 @@ describe("SetBuilderSheet: the other states", () => {
     api.creating = true
     const out = render()
     expect(isDisabled(button(out, "Making your set…"))).toBe(true)
+    expect(button(out, "Making your set…")).toContain('aria-busy="true"')
     expect(out).not.toContain("Print instead")
   })
 })
@@ -301,6 +303,62 @@ describe("builder pieces", () => {
   it("subject choice: every chip is at least 44px tall", () => {
     const out = html(createElement(SubjectChoice, { subjects: SUBJECTS, value: "0580", onChange: () => {} }))
     expect(count(out, "min-h-11")).toBe(3)
+  })
+
+  it("subject choice is one Tab stop: only the checked chip is tabbable", () => {
+    const out = html(createElement(SubjectChoice, { subjects: SUBJECTS, value: "0625", onChange: () => {} }))
+    expect(count(out, 'tabindex="0"')).toBe(1)
+    expect(count(out, 'tabindex="-1"')).toBe(2)
+    expect(out).toMatch(/aria-checked="true" tabindex="0"[^>]*>(?:<i[^>]*><\/i>)?Physics</)
+  })
+
+  it("source choice is one Tab stop, and falls back to the first when nothing matches", () => {
+    const props = { bands: [], availableBands: [], onToggleBand: () => {}, onSource: () => {} }
+    const radios = (out: string) => out.match(/<button[^>]*role="radio"[^>]*>/g) ?? []
+    const past = radios(html(createElement(MoreFilters, { ...props, source: "past_paper" })))
+    expect(past.filter((t) => t.includes('tabindex="0"'))).toHaveLength(1)
+    expect(past.find((t) => t.includes('tabindex="0"'))).toContain('aria-checked="true"')
+    const stray = radios(html(createElement(MoreFilters, { ...props, source: "unknown" })))
+    expect(stray.filter((t) => t.includes('tabindex="0"'))).toHaveLength(1)
+    expect(stray[0]).toContain('tabindex="0"')
+  })
+
+  it("both radiogroups route arrow keys through the shared roving handler", () => {
+    for (const f of ["SubjectChoice", "MoreFilters"]) {
+      const src = readFileSync(`${import.meta.dirname}/../../src/portals/student/screens/practice/builder/${f}.tsx`, "utf8")
+      expect(src).toMatch(/onKeyDown=\{\(e\) => radioKeyDown\(e,/)
+    }
+  })
+
+  it("CB4: the sheet hands keyboard focus to the start button when the failure banner appears", () => {
+    // An effect cannot run under renderToStaticMarkup (node env, no jsdom), so pin its shape.
+    const src = readFileSync(`${import.meta.dirname}/../../src/portals/student/screens/practice/builder/SetBuilderSheet.tsx`, "utf8")
+    expect(src).toMatch(/ref=\{ctaRef\}/)
+    expect(src).toMatch(/const failed = view\.errorBanner !== null/)
+    expect(src).toMatch(/useEffect\(\(\) => \{\s*if \(failed\) ctaRef\.current\?\.focus\(\)\s*\}, \[failed\]\)/)
+  })
+
+  it("the sheet feeds the session's refusal and failure to the view, and each button makes its own destination", () => {
+    const src = readFileSync(`${import.meta.dirname}/../../src/portals/student/screens/practice/builder/SetBuilderSheet.tsx`, "utf8")
+    expect(src).toMatch(/race: session\.race,/)
+    expect(src).toMatch(/createFailed: session\.createFailed,/)
+    expect(src).toMatch(/onClick=\{\(\) => void make\("set"\)\}/)
+    expect(src).toMatch(/onClick=\{\(\) => void make\("print"\)\}/)
+    expect(src).toMatch(/onClick=\{\(\) => void make\("print"\)\}[\s\S]*Print instead/)
+  })
+
+  it("the sheet lends runCreate the real invalidate, navigate, toast and preview re-check", () => {
+    const src = readFileSync(`${import.meta.dirname}/../../src/portals/student/screens/practice/builder/SetBuilderSheet.tsx`, "utf8")
+    expect(src).toMatch(/invalidate: \(queryKey\) => void queryClient\.invalidateQueries\(\{ queryKey \}\)/)
+    expect(src).toMatch(/navigate: \(to\) => navigate\(to, \{ replace: true \}\)/)
+    expect(src).toMatch(/toast: \(title\) => toast\(\{ title \}\)/)
+    expect(src).toMatch(/refetchPreview: \(\) => void previewQuery\.refetch\(\)/)
+    expect(src).toMatch(/update: setSession/)
+  })
+
+  it("make() ignores a second press while a create is in flight", () => {
+    const src = readFileSync(`${import.meta.dirname}/../../src/portals/student/screens/practice/builder/SetBuilderSheet.tsx`, "utf8")
+    expect(src).toMatch(/if \(!draft \|\| create\.isPending\) return/)
   })
 
   it("availability line: tick when it matches, spinner while waiting, plain error text", () => {
