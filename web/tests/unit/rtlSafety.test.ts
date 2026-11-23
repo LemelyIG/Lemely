@@ -135,7 +135,7 @@ const RTL_CLEAN_FILES_CURATED = [
   "src/components/ui/slider.tsx",
   "src/portals/student/screens/flashcards/FlashcardDecks.tsx",
   "src/portals/student/screens/flashcards/FlashcardReview.tsx",
-  "src/portals/student/screens/practice/PracticeGenerator.tsx",
+  "src/portals/student/screens/practice/builder/SetBuilderSheet.tsx",
   "src/portals/student/screens/practice/PracticePrint.tsx",
   "src/portals/student/screens/practice/PracticeResult.tsx",
   "src/portals/student/screens/practice/PracticeSet.tsx",

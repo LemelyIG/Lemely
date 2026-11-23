@@ -13,7 +13,7 @@ import { relativeTo, sourceFiles } from "./support/jsxSource"
  * surface**, with every axis at 3 or better, and names the reviewer subagent as
  * its enforcer. A human reading a diff was the whole mechanism. Nothing in the
  * repo ever checked it, so the gate could report green while surfaces shipped
- * without one, and two did: `Quizzes.tsx` (surface 5) and `PracticeGenerator`
+ * without one, and two did: `Quizzes.tsx` (surface 5) and `SetBuilderSheet`
  * (surface 3), both listed DONE in the surface ledger.
  *
  * ── The part that makes this worth a gate rather than two edits ────────────
