@@ -63,6 +63,22 @@ export function masteryView(c: { newCount: number; learningCount: number; knownC
   }
 }
 
+/** One legend entry: the count is set in mono, the label is plain text. Structured so the
+ * view never has to split a sentence back into number and word. */
+export interface MasteryLegendItem {
+  key: "known" | "learning" | "new"
+  count: number
+  label: string
+}
+
+export function masteryLegend(m: Pick<MasteryView, "known" | "learning" | "fresh">): readonly MasteryLegendItem[] {
+  return [
+    { key: "known", count: m.known, label: "known" },
+    { key: "learning", count: m.learning, label: "learning" },
+    { key: "new", count: m.fresh, label: "new" },
+  ]
+}
+
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`
 
 export interface DeckRowView {

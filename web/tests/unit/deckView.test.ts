@@ -28,7 +28,11 @@ describe("deckDetailView", () => {
     expect(v.title).toBe("Vectors")
     expect(v.sub).toBe("Maths · 2 cards")
     expect(v.originLine).toBe("From a weakness · cost you 9 marks")
-    expect(v.legend).toEqual(["6 known", "8 learning", "4 new"])
+    expect(v.legend).toEqual([
+      { key: "known", count: 6, label: "known" },
+      { key: "learning", count: 8, label: "learning" },
+      { key: "new", count: 4, label: "new" },
+    ])
     expect(v.review).toEqual({ label: "Review 9 due", enabled: true })
     expect(v.cards.map((c) => [c.id, c.ai])).toEqual([["1", true], ["2", false]])
     expect(v.emptyCards).toBe(false)

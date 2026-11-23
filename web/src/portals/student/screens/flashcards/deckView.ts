@@ -1,5 +1,13 @@
 import type { CardSource, DeckDetailDTO, DeckOrigin } from "@/lib/flashcardTypes"
-import { masteryView, originView, topicName, type MasteryView, type OriginIcon } from "./flashcardsView"
+import {
+  masteryLegend,
+  masteryView,
+  originView,
+  topicName,
+  type MasteryLegendItem,
+  type MasteryView,
+  type OriginIcon,
+} from "./flashcardsView"
 
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`
 
@@ -23,7 +31,7 @@ export interface DeckDetailView {
   originIcon: OriginIcon
   originLine: string
   mastery: MasteryView
-  legend: [string, string, string]
+  legend: readonly MasteryLegendItem[]
   review: { label: string; enabled: boolean }
   cards: CardRowView[]
   emptyCards: boolean
@@ -40,7 +48,7 @@ export function deckDetailView(deck: DeckDetailDTO, subjectName: string, dot: st
     originIcon: origin.icon,
     originLine: deck.marksLost ? `${origin.label} · cost you ${plural(deck.marksLost, "mark")}` : origin.label,
     mastery,
-    legend: [`${mastery.known} known`, `${mastery.learning} learning`, `${mastery.fresh} new`],
+    legend: masteryLegend(mastery),
     review: deck.dueCount > 0 ? { label: `Review ${deck.dueCount} due`, enabled: true } : { label: "Nothing due", enabled: false },
     cards: deck.cards.map((c) => ({
       id: c.id,
