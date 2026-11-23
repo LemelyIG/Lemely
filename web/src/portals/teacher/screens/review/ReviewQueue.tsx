@@ -19,7 +19,7 @@ import { QueueColumn } from "./QueueColumn"
 import { Cleared } from "./QueueStates"
 import { UndoBar } from "./UndoBar"
 import { mergeReviewPages } from "./reviewLabels"
-import { SKIP_LINE, bulkButton, focusAfterDecision, isClearItem, isLoadingMore, nextFocusAfter, overlayOpen, pageableCursor, positionOf, queueLoad, queueScreenState, questionLabel, reconcileCursor, shownLine, type PagingCursor } from "./reviewQueueModel"
+import { SKIP_LINE, removeDecidedRows, bulkButton, focusAfterDecision, isClearItem, isLoadingMore, nextFocusAfter, overlayOpen, pageableCursor, positionOf, queueLoad, queueScreenState, questionLabel, reconcileCursor, shownLine, type PagingCursor } from "./reviewQueueModel"
 import { useAnswerImages } from "./useAnswerImages"
 import { useFillViewport } from "./useFillViewport"
 import { usePendingDecisions } from "./usePendingDecisions"
@@ -89,6 +89,7 @@ export function ReviewQueue() {
   const decisions = usePendingDecisions(
     (d, o) => postReviewDecision(d, o),
     (d, row) => {
+      setPages((prev) => ({ ...prev, items: removeDecidedRows(prev.items, [d.itemId]) }))
       if (d.kind === "resolve") invalidateAfterResolve(queryClient, row as ReviewQueueItem)
       else queryClient.invalidateQueries({ queryKey: ["teacher", "review"] })
     },
@@ -172,6 +173,7 @@ export function ReviewQueue() {
     const snapshot = rows
     bulk.mutate(ids, {
       onSuccess: (res) => {
+        setPages((prev) => ({ ...prev, items: removeDecidedRows(prev.items, res.approved) }))
         decisions.bulkApproved(res.approved, res.skipped.length)
         setSkips(res.skipped.length ? res.skipped.map((s) => {
           const r = snapshot.find((x) => x.itemId === s.itemId)
@@ -239,7 +241,7 @@ export function ReviewQueue() {
 
   // The phone answer page shows this error alone, so its heading is the page's h1.
   const ErrorHeading = phone ? "h1" : "h2"
-  const detailError = detail.isError ? (
+  const detailError = detail.isError && !detail.data ? (
     <div role="alert" className="grid justify-items-start gap-2.5 py-7">
       <ErrorHeading className="text-2xl font-extrabold tracking-[-0.02em]">Couldn't load this answer.</ErrorHeading>
       <p className="text-on-surface-variant">{teacherLoadFailureMessage(detail.error)}</p>
@@ -313,7 +315,7 @@ export function ReviewQueue() {
           {phone ? null : (
             <div className="flex min-h-0 flex-col px-6 pt-5 shell-lg:px-9 shell-lg:pt-6">
               {state === "loading" ? <div className="rq-skel h-[min(420px,60vh)] rounded-inner bg-surface-container-high" role="status" aria-label="Loading the answer" /> : null}
-              {state !== "loading" && state !== "error" ? (detailError ?? (panelProps ? <AnswerPanel {...panelProps} /> : null)) : null}
+              {state !== "loading" && state !== "error" ? (detailError ?? (panelProps && view ? <AnswerPanel key={view.key} {...panelProps} /> : null)) : null}
             </div>
           )}
         </>

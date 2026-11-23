@@ -420,3 +420,9 @@ export const SKIP_LINE: Record<string, string> = {
   forbidden: "outside your classes",
   already_closed: "already decided",
 }
+
+/** Drop successful decisions so a refreshed server total is not reduced twice. */
+export function removeDecidedRows<T extends { itemId: string }>(rows: T[], ids: readonly string[]): T[] {
+  const removed = new Set(ids)
+  return rows.filter((row) => !removed.has(row.itemId))
+}

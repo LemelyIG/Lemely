@@ -21,7 +21,7 @@ export function QueueRow({ item, focused, gone, selecting, picked, onOpen, onPic
   const tone = ringTone(item.confidenceScore)
   const canPick = selectable(item)
   return (
-    <li className="rq-li">
+    <li className="rq-li" inert={gone}>
       <button
         type="button"
         data-review-row={item.itemId}

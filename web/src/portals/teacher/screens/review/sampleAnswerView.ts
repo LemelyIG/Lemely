@@ -20,7 +20,7 @@ const point = (n: number, code: string, text: string, awarded: boolean, note: st
 export const SAMPLE_VIEW: AnswerView = {
   key: "sample",
   title: "Sample student · Q8",
-  subtitle: "Class 10B · 0580/42 · Paper 4",
+  subtitle: "Class 10B · 0625/42 · Paper 4",
   studentHref: null,
   pageLabel: null,
   hasScan: false,

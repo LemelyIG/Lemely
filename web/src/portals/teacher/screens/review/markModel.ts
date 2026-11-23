@@ -230,15 +230,23 @@ export function poolHeader(points: readonly MarkPoint[], index: number): string 
 /** The method/accuracy/other split the old adjust form asked for, read off the ticks. */
 export function breakdownOf(points: readonly MarkPoint[], s: MarkState): ReviewBreakdown | undefined {
   if (points.length === 0) return undefined
-  const on = points.filter((p) => s.ticked.includes(p.markPointId))
-  const sum = (pred: (p: MarkPoint) => boolean) => on.filter(pred).reduce((x, p) => x + p.tariff, 0)
-  const type = (p: MarkPoint) => p.code.replace(/\d+$/, "")
-  return {
-    methodMarks: sum((p) => type(p) === "M" || type(p) === "C"),
-    accuracyMarks: sum((p) => type(p) === "A"),
-    otherMarks: sum((p) => !["M", "C", "A"].includes(type(p))),
-    notes: null,
+  const on = new Set(s.ticked)
+  let methodMarks = 0
+  let accuracyMarks = 0
+  let otherMarks = 0
+  for (const group of groupPoints(points)) {
+    let remaining = group.maxMarks
+    for (const point of group.points) {
+      if (!on.has(point.markPointId)) continue
+      const marks = Math.min(remaining, point.tariff)
+      remaining -= marks
+      const type = point.code.replace(/\d+$/, "")
+      if (type === "M" || type === "C") methodMarks += marks
+      else if (type === "A") accuracyMarks += marks
+      else otherMarks += marks
+    }
   }
+  return { methodMarks, accuracyMarks, otherMarks, notes: null }
 }
 
 export function resolveBody(a: {

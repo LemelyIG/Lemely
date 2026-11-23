@@ -376,3 +376,10 @@ describe("fix round 1", () => {
     expect(clampNote(9, null)).toBeNull()
   })
 })
+
+
+it("caps breakdown contributions within each mark group", () => {
+  const points = markPointsFrom([wire({ markPointId: "a", markType: "M", tariff: 2, groupKey: "pool:1", groupMaxMarks: 2 }), wire({ markPointId: "b", markType: "A", tariff: 2, groupKey: "pool:1", groupMaxMarks: 2 })])
+  const result = breakdownOf(points, { ticked: ["a", "b"], touched: true, raw: 0, anchored: false })
+  expect((result?.methodMarks ?? 0) + (result?.accuracyMarks ?? 0) + (result?.otherMarks ?? 0)).toBe(2)
+})

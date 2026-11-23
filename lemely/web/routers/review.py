@@ -141,6 +141,13 @@ def _decode_cursor(cursor: str, sort: ReviewSort) -> SortKey:
     try:
         raw = base64.urlsafe_b64decode(cursor.encode()).decode()
         parts = raw.split(_CURSOR_SEP)
+
+        def aware_datetime(value: str) -> datetime:
+            parsed = datetime.fromisoformat(value)
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                raise ValueError("cursor timestamp must have a timezone")
+            return parsed
+
         if parts[0] == _CURSOR_V2:
             _, cursor_sort, flag, value, created_at_str, item_id_str = parts
             if cursor_sort != sort:
@@ -151,13 +158,13 @@ def _decode_cursor(cursor: str, sort: ReviewSort) -> SortKey:
             return (
                 int(flag),
                 sort_value,
-                datetime.fromisoformat(created_at_str),
+                aware_datetime(created_at_str),
                 uuid.UUID(item_id_str),
             )
         if sort != "oldest":
             raise ValueError("cursor belongs to another sort")
         created_at_str, item_id_str = raw.split(_CURSOR_SEP, 1)
-        return (0, 0.0, datetime.fromisoformat(created_at_str), uuid.UUID(item_id_str))
+        return (0, 0.0, aware_datetime(created_at_str), uuid.UUID(item_id_str))
     except (ValueError, UnicodeDecodeError, binascii.Error) as exc:
         raise HTTPException(status_code=422, detail="Malformed cursor") from exc
 
