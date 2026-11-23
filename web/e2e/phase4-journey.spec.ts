@@ -27,9 +27,10 @@ import { injectSession, readSeed, type SeedAccount } from "./seed"
  * the S-02 drive are deliberately inherited from that registry rather than
  * re-derived, including the three traps it already paid for:
  *
- *   1. `sessions? done` is a REGEX with an optional plural against
- *      `StudyPlanWeek.tsx`'s `{sessionCount === 1 ? "" : "s"} done`. It is
- *      not a literal `?`; a literal-string port silently never matches.
+ *   1. `· N sessions? ·` is a REGEX with an optional plural against the
+ *      filtered plan header `planModel.ts` builds
+ *      (`Physics · N session(s) · 30 min`). It is not a literal `?`; a
+ *      literal-string port silently never matches.
  *   2. S-05 must NOT be identified by "starting picture" — that phrase also
  *      renders on `PlacementInvite`, so the assertion would pass without the
  *      result screen ever loading. The registry caught exactly that vacuous
@@ -245,9 +246,11 @@ test("S-24 · the student receives a study plan with concrete sessions", async (
 
   await page.goto(`/student/plan/${seed.studyPlan.subjectCode}`)
 
-  // Trap 1: a regex with the plural optional, mirroring the registry.
+  // Trap 1: a regex with the plural optional, mirroring the registry. Not
+  // pinned to 0 done: study-plan.spec.ts marks a session done on this same
+  // seeded account and runs in the same suite.
   await expect(
-    page.getByText(new RegExp(`0 of ${seed.studyPlan.activeSessionCount} sessions? done`)),
+    page.getByText(new RegExp(`· ${seed.studyPlan.activeSessionCount} sessions? ·`)).first(),
   ).toBeVisible({ timeout: 15_000 })
 
   // MISSION §4 asks for "concrete sessions (topic, activity, duration), not
@@ -257,8 +260,8 @@ test("S-24 · the student receives a study plan with concrete sessions", async (
 
   // Neither of the two honest not-a-plan states, which are real product
   // behaviour on other accounts and would otherwise satisfy a laxer check.
-  await expect(page.getByText("Not enough to plan from yet")).toHaveCount(0)
-  await expect(page.getByText("No plan for this week yet")).toHaveCount(0)
+  await expect(page.getByText("I need a paper first")).toHaveCount(0)
+  await expect(page.getByText("Let’s plan your week")).toHaveCount(0)
 
   expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
 })
