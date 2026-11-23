@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
 import { useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { CaretRight } from "@phosphor-icons/react"

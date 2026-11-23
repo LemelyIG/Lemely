@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P5 H5 E4 S5 R4 V4 */
 import type { CSSProperties } from "react"
 import { Link } from "react-router-dom"
 import { GHOST_PATH_HEIGHTS, type StepsView } from "./subjectModel"
