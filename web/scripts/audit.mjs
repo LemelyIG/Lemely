@@ -1995,6 +1995,7 @@ function buildRouteRegistry(seed) {
       // L4 · Practice tab root (mock C), `active` session: tiles, win marks back, Recent.
       screenId: "S-20",
       slug: "student-practice-hub",
+      state: "hub",
       path: "/student/practice",
       session: practiceActiveSession,
       ready: (page) => waitForText(page, "Win marks back"),

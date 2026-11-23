@@ -30,10 +30,28 @@ test("Practice tab · hub, builder sheet and a started set", async ({ page }) =>
   await page.getByText("Practice set", { exact: true }).click()
   const sheet = page.getByRole("dialog", { name: "Practice set" })
   await expect(sheet).toBeVisible()
-  await expect(sheet.getByRole("status")).toHaveText(/questions? match/, { timeout: 15_000 })
+  // The seed has six questions in each topic; one weak topic is preselected.
+  await expect(sheet.getByRole("status")).toHaveText("Only 6 questions match. Add a topic or ask for fewer.", { timeout: 15_000 })
 
+  const morePreview = page.waitForResponse((response) => {
+    const url = new URL(response.url())
+    return url.pathname === `/api/student/practice/${seed.practice.subjectCode}/preview` && url.searchParams.get("count") === "15"
+  })
   await sheet.getByRole("button", { name: "More" }).click()
-  await expect(sheet.getByRole("status")).toHaveText(/questions? match/, { timeout: 15_000 })
+  expect((await morePreview).ok()).toBeTruthy()
+  await expect(sheet.getByRole("group", { name: "Questions" })).toContainText("15")
+
+  // Changing the requested size alone does not change the matching pool.
+  // Add a second seeded topic to prove the live match count changes from 6 to 12.
+  await sheet.getByRole("switch", { name: "Weak topics only" }).click()
+  const expandedPreview = page.waitForResponse((response) => {
+    const url = new URL(response.url())
+    return url.pathname === `/api/student/practice/${seed.practice.subjectCode}/preview` &&
+      url.searchParams.get("count") === "15" && url.searchParams.getAll("topics").length === 2
+  })
+  await sheet.getByRole("group", { name: "Topics" }).locator('button[aria-pressed="false"]').first().click()
+  expect((await expandedPreview).ok()).toBeTruthy()
+  await expect(sheet.getByRole("status")).toHaveText("Only 12 questions match. Add a topic or ask for fewer.", { timeout: 15_000 })
 
   await sheet.getByRole("button", { name: /^Start/ }).click()
   await expect(page).toHaveURL(/\/student\/practice\/set\/[0-9a-f-]+$/, { timeout: 15_000 })
