@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 */
 import { Check } from "@phosphor-icons/react"
 
 /** fc.css `.due`: Mono 800 18px primary over a 12px "due"; zero shows a success tick. */

@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H3 E3 S3 R5 V3 */
 import { Sparkle } from "@phosphor-icons/react"
 
 /** Marks an AI-written card (P4.9 honesty rule 1). Visible glyph + "AI", full label for AT. */

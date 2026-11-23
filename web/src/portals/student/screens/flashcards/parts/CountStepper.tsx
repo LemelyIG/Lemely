@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S3 R4 V3 */
 import { Minus, Plus } from "@phosphor-icons/react"
 import { useId } from "react"
 

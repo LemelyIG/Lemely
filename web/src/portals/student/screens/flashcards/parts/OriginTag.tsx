@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H3 E4 S3 R5 V3 */
 import { PencilSimple, Sparkle, Target } from "@phosphor-icons/react"
 import type { ReactNode } from "react"
 import type { OriginIcon } from "../flashcardsView"
