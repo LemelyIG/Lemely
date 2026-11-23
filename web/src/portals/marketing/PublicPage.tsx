@@ -4,12 +4,30 @@ import { marketingLinks } from './content'
 import type { PublicPageCopy } from './publicPages'
 import './public-page.css'
 
+/* A calendar date has no time or zone, so format it as UTC to keep the day the page states. */
+const updatedFormat = new Intl.DateTimeFormat('en-GB', {
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+  timeZone: 'UTC',
+})
+
 export function PublicPage({ page }: { page: PublicPageCopy }) {
   return (
     <article className="brand-public-page px-page-mobile py-section md:px-page-tablet md:py-section-lg lg:px-page-desktop">
       <div className="lm-read flex flex-col gap-7 md:gap-9">
         <header className="flex flex-col gap-3">
-          <h1 className="text-on-surface">{page.title}</h1>
+          <div className="flex flex-col gap-2">
+            <h1 className="text-on-surface">{page.title}</h1>
+            {page.lastUpdated && (
+              <p className="text-sm text-on-surface-variant">
+                Last updated{' '}
+                <time dateTime={page.lastUpdated}>
+                  {updatedFormat.format(new Date(page.lastUpdated))}
+                </time>
+              </p>
+            )}
+          </div>
           <p className="brand-public-intro lm-prose text-on-surface-variant">{page.description}</p>
         </header>
         <div>

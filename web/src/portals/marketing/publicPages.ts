@@ -3,8 +3,13 @@ export interface PublicPageCopy {
   title: string
   metaTitle?: string
   description: string
+  /** Calendar date (YYYY-MM-DD) the page was last revised. Set on policy pages; omitted on About. */
+  lastUpdated?: string
   sections: { heading: string; paragraphs: string[] }[]
 }
+
+/** The date these policies were last revised together. */
+const POLICIES_UPDATED = '2026-11-19'
 
 export const publicPages: PublicPageCopy[] = [
   {
@@ -54,6 +59,7 @@ export const publicPages: PublicPageCopy[] = [
     path: '/terms',
     title: 'Terms & Conditions',
     description: 'The rules for using Lemely, submitting work, managing subscriptions and credits, and getting help with your account or a purchase.',
+    lastUpdated: POLICIES_UPDATED,
     sections: [
       {
         heading: 'When these terms apply',
@@ -66,29 +72,29 @@ export const publicPages: PublicPageCopy[] = [
         heading: 'Your account',
         paragraphs: [
           'Give us accurate information when you sign up and keep your contact details up to date so you can receive account and payment notices. Keep your sign-in details private and contact us if you suspect someone has accessed your account.',
-          'If you are under 18, ask your parent or legal guardian for permission before using Lemely. If you use Lemely for a class or link a parent account to a student, use the access that has been granted to you and tell us if you can see work you should not have access to.',
+          'If you are under 18, ask your parent or legal guardian for permission before using Lemely. If a teacher gives you access to Lemely or you link a parent account to a student, use only the access that has been granted to you and tell us if you can see work you should not have access to.',
         ],
       },
       {
         heading: 'Papers, answers and other material you share',
         paragraphs: [
-          'You keep any rights you have in the work you submit. By uploading work, you give Lemely permission to use it to provide the service. This includes reading and marking submissions, producing feedback and showing results to people who have access through your account, class or school.',
-          'Only upload material you have permission to share. This applies to student scripts, worksheets and mark schemes. When you upload work on behalf of someone else, follow your school’s rules and any duties you have to that person. Leave out personal details that are unnecessary for marking.',
+          'You keep any rights you have in the work you submit. By uploading work, you give Lemely permission to use it to provide the service. This includes reading and marking submissions, producing feedback and showing results to the people who have access through your account, such as your teacher or a linked parent.',
+          'Only upload material you have permission to share. This applies to student scripts, worksheets and mark schemes. When you upload work on behalf of someone else, such as a student you teach, make sure you are allowed to and follow any duties you owe that person. Leave out personal details that are unnecessary for marking.',
           'Rights in third-party exam papers and mark schemes remain with their owners. Follow any conditions those owners place on copying or sharing their materials.',
         ],
       },
       {
         heading: 'Using Lemely responsibly',
         paragraphs: [
-          'Use Lemely for learning, teaching and other purposes you are authorised to carry out. Follow the rules of your school and examination centre about what help you can use during an assessment. Take responsibility for any work you submit as your own.',
-          'Do not impersonate someone, access an account or class without permission, harass other users, submit unlawful material or interfere with the service. Tell us if you find content or behaviour that puts another user at risk.',
+          'Use Lemely for learning, teaching and other purposes you are authorised to carry out. Follow the rules of your examination centre and your teacher about what help you can use during an assessment. Take responsibility for any work you submit as your own.',
+          'Do not impersonate someone, access an account or a student’s work without permission, harass other users, submit unlawful material or interfere with the service. Tell us if you find content or behaviour that puts another user at risk.',
         ],
       },
       {
         heading: 'Marks, grade estimates and study advice',
         paragraphs: [
-          'Lemely is independent of Cambridge. Marks, grade estimates and study recommendations are for practice and revision. An exam board or school decides official results under its own rules.',
-          'Automated feedback can misread handwriting or give the wrong mark. Check the mark scheme and ask a teacher if a result matters for a school decision or if you are relying on the feedback to prepare for an exam. A study plan can help you decide where to spend time. Your final grade will depend on your exam performance and how it is assessed.',
+          'Lemely is independent of Cambridge. Marks, grade estimates and study recommendations are for practice and revision. An exam board decides official results under its own rules.',
+          'Automated feedback can misread handwriting or give the wrong mark. Check the mark scheme and ask a teacher if a result matters for an important decision or if you are relying on the feedback to prepare for an exam. A study plan can help you decide where to spend time. Your final grade will depend on your exam performance and how it is assessed.',
         ],
       },
       {
@@ -131,6 +137,7 @@ export const publicPages: PublicPageCopy[] = [
     path: '/refund-policy',
     title: 'Refund Policy',
     description: 'How to ask about a Lemely payment and what happens if we issue a refund.',
+    lastUpdated: POLICIES_UPDATED,
     sections: [
       {
         heading: 'New subscriptions and renewals',
@@ -161,6 +168,7 @@ export const publicPages: PublicPageCopy[] = [
     path: '/privacy',
     title: 'Privacy Policy',
     description: 'What Lemely collects, who can see it and how to ask about your personal information.',
+    lastUpdated: POLICIES_UPDATED,
     sections: [
       {
         heading: 'Information we collect',
@@ -173,7 +181,7 @@ export const publicPages: PublicPageCopy[] = [
       {
         heading: 'Who can see your information',
         paragraphs: [
-          'Linked parents can see results and progress for their own linked students. Class teachers and school administrators can see student work where their role gives them access. Lemely staff may access information needed to manage the service, respond to a request or look into a report.',
+          'Linked parents can see results and progress for their own linked students. Teachers can see the work of students they teach, within the access granted to them. Administrators with the appropriate access can see student work in the classes they manage and papers uploaded by teachers they oversee. Lemely staff may access information needed to manage the service, respond to a request or look into a report.',
           'We use outside providers for services such as sign-in, email and file storage. We send uploaded scans or answer text to Google when needed to read handwriting, mark work or generate study materials.',
           'If you use tutoring, we use booking details, messages and reports to manage sessions and respond to safety concerns. Tutor profiles and approved reviews can appear in the directory. Tutors can see progress a student has shared with them through tutoring.',
         ],

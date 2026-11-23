@@ -144,7 +144,7 @@ export const dataHandlingSections: DataHandlingSection[] = [
      * first sentence: a parent screen that lists children is not the same claim
      * as a parent who can look up any student.
      */
-    body: "A parent who is linked to a student account can see that student's marks, weak topics and at-risk flags, and only for a student they are linked to. A teacher can see the work of students in their own classes. A school administrator can see the work of students in classes at their school, and the papers their school's teachers upload. Lemely's own platform administrators can open papers uploaded to the grading console, for support. When Lemely is unsure about a paper it marked, that paper is put in a queue for a teacher to look at.",
+    body: "A parent who is linked to a student account can see that student's marks, weak topics and at-risk flags, and only for a student they are linked to. A teacher can see the work of the students they teach. Administrators with the appropriate access can see student work in the classes they manage and papers uploaded by teachers they oversee. Lemely's own platform administrators can open papers uploaded to the grading console, for support. When Lemely is unsure about a paper it marked, that paper is put in a queue for a teacher to look at.",
   },
   {
     heading: "What this site does not do",
@@ -326,7 +326,7 @@ export const tutoringSections: DataHandlingSection[] = [
      * teacher holds a tutor profile sends the student's linked parents a
      * notice. These notices are information, not approvals.
      */
-    body: "A student can remove a parent link at any time. The parent is told once, when it happens, and nothing after that. A child can have at most 4 linked parents, and parents already linked are told when another links. When a student joins a class that has no school and is taught by someone who is also a tutor, the student's linked parents are told. These notices are not approvals, and a parent cannot stop the join.",
+    body: "A student can remove a parent link at any time. The parent is told once, when it happens, and nothing after that. A child can have at most 4 linked parents, and parents already linked are told when another links. When a student joins an eligible class taught by someone who is also a tutor, the student's linked parents are told. These notices are not approvals, and a parent cannot stop the join.",
   },
   {
     heading: "Sharing your progress with a tutor",
@@ -384,7 +384,7 @@ export const tutoringSections: DataHandlingSection[] = [
      * lets a student leave a class that has no school. A class at a school is
      * left through the school, so the screen says to ask the school.
      */
-    body: "If a student is in a class taught by a teacher who is also a tutor, that teacher can see the student's progress through the class, as any class teacher can, even when the student has not shared anything as a tutoring student. A student can leave a class that has no school from the tutoring data screen. A class at a school is left through the school.",
+    body: "If a student is in a class taught by a teacher who is also a tutor, that teacher can see the student's progress through the class, as any class teacher can, even when the student has not shared anything as a tutoring student. A student can leave a class from the tutoring data screen if that option is available.",
   },
 ]
 
