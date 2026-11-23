@@ -738,6 +738,10 @@ jobs:
   smoke-test:
     needs: [resolve-env, deploy-backend, deploy-frontend]
     runs-on: ubuntu-latest
+    env:
+      # An empty --header value leaves the request unchanged.
+      SMOKE_TEST_HEADER: >-
+        ${{ needs.resolve-env.outputs.environment == 'staging' && secrets.SMOKE_TEST_TOKEN != '' && format('X-Lemely-Smoke-Token: {0}', secrets.SMOKE_TEST_TOKEN) || '' }}
     steps:
       - id: domain
         run: |
@@ -756,10 +760,14 @@ jobs:
       # left in this pipeline. Costs nothing on a healthy deploy: curl stops at
       # the first success.
       - name: Frontend responds
-        run: curl --fail --silent --show-error --retry 30 --retry-delay 10 --retry-all-errors "https://${{ steps.domain.outputs.host }}/"
+        run: >-
+          curl --fail --silent --show-error --retry 30 --retry-delay 10 --retry-all-errors
+          --header "$SMOKE_TEST_HEADER" "https://${{ steps.domain.outputs.host }}/"
 
       - name: API health through the same-origin proxy
-        run: curl --fail --silent --show-error --retry 30 --retry-delay 10 --retry-all-errors "https://${{ steps.domain.outputs.host }}/api/health"
+        run: >-
+          curl --fail --silent --show-error --retry 30 --retry-delay 10 --retry-all-errors
+          --header "$SMOKE_TEST_HEADER" "https://${{ steps.domain.outputs.host }}/api/health"
 
       # The checks above prove that SOMETHING answers behind the public domain.
       # This one proves WHICH backend: /api/health reports the Cloud Run revision
@@ -783,7 +791,8 @@ jobs:
           fi
           ACTUAL=""
           for attempt in $(seq 1 18); do
-            BODY="$(curl --fail --silent --show-error -H 'Cache-Control: no-cache' "https://$HOST/api/health" || true)"
+            BODY="$(curl --fail --silent --show-error -H 'Cache-Control: no-cache' \
+              --header "$SMOKE_TEST_HEADER" "https://$HOST/api/health" || true)"
             ACTUAL="$(printf '%s' "$BODY" | jq -r '.revision // empty' 2>/dev/null || true)"
             if [ "$ACTUAL" = "$EXPECTED" ]; then
               echo "https://$HOST/api/health reports revision $ACTUAL, the revision just deployed."

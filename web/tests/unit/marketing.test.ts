@@ -71,6 +71,12 @@ describe("the marketing lane is public — P4.9", () => {
     expect(containsComponent(route!.element, "RequireAuth")).toBe(false)
   })
 
+  it.each(["/terms", "/refund-policy", "/privacy", "/about"])("makes %s public", (path) => {
+    const route = topLevelRoutes.find((entry) => entry.path === path)
+    expect(route).toBeDefined()
+    expect(containsComponent(route!.element, "RequireAuth")).toBe(false)
+  })
+
   it.each(["teacher", "student", "parent"])("keeps the %s portal guarded", (portal) => {
     const route = topLevelRoutes.find((r) => r.path === portal)
     expect(route).toBeDefined()
