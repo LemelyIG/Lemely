@@ -43,7 +43,7 @@ export interface ShellTopBarProps {
   /** Where the native back chevron goes when there is no history (portal root). */
   backFallback: string
   account: Omit<AccountPanelProps, "triggerClassName">
-  /** Teacher only: the lead teacher being worked for. The bar carries the cue too: an amber ring at every width, and the name from `lg` up. */
+  /** Teacher only: the lead teacher being worked for. The bar carries the cue too: a primary ring, inset so the full-bleed phone bar does not clip it, at every width, and the name from `lg` up. */
   actingAs?: string
 }
 
@@ -107,7 +107,7 @@ export function ShellTopBar({
         data-title-level={level}
         data-collapsed={collapsed}
         data-acting={actingAs ? "true" : undefined}
-        className={cn(BAR, "lm-native-bar", actingAs && "ring-2 ring-tertiary")}
+        className={cn(BAR, "lm-native-bar", actingAs && "ring-2 ring-inset ring-primary")}
       >
         {level === "detail" ? (
           <NativeBack fallback={backFallback} label={backLabel} />
@@ -149,7 +149,7 @@ export function ShellTopBar({
         {actingAs ? (
           <span
             data-testid="acting-chip"
-            className="me-auto hidden min-w-0 flex-none items-center gap-1.5 truncate rounded-chip bg-tertiary-container px-2.5 py-1 text-label text-on-tertiary-container lg:inline-flex lg:max-w-60"
+            className="me-auto hidden min-w-0 flex-none items-center gap-1.5 truncate rounded-chip bg-primary-container px-2.5 py-1 text-label text-on-primary-container lg:inline-flex lg:max-w-60"
           >
             <span className="truncate">Working as {actingAs}</span>
           </span>

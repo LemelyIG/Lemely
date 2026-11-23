@@ -329,6 +329,12 @@ class UsageRequest:
     input_count: int = 0
     assistant_member_id: uuid.UUID | None = None
     subject_pending: bool = False
+    next_week: bool = False
+    """A study plan generated for the week after the meter's clock, not the current one.
+
+    The payer decision asks whether a plan already exists for the week being generated, so a
+    student's first next-week plan is a first plan, not a regeneration of this week's.
+    """
 
 
 @dataclass(frozen=True)
@@ -890,6 +896,7 @@ class UsageMeter:
                 subject_code=subject,
                 assistant_member_id=request.assistant_member_id,
                 now=now,
+                next_week=request.next_week,
             )
         except AssistantUnavailable as exc:
             raise _assistant_refusal(exc) from exc
@@ -1038,6 +1045,7 @@ def request_from_auth(
     input_count: int = 0,
     assistant_member_id: uuid.UUID | None = None,
     subject_pending: bool = False,
+    next_week: bool = False,
 ) -> UsageRequest:
     """A :class:`UsageRequest` for the authenticated caller."""
     return UsageRequest(
@@ -1048,6 +1056,7 @@ def request_from_auth(
         input_count=input_count,
         assistant_member_id=assistant_member_id,
         subject_pending=subject_pending,
+        next_week=next_week,
     )
 
 

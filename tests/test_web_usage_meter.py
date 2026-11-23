@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextvars
 import threading
 import uuid
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Annotated
 
@@ -20,6 +20,7 @@ from structlog.testing import capture_logs
 from lemely.core.metered_actions import MeteredAction, UsageTarget
 from lemely.core.payer_chain import UsageBlockReason
 from lemely.db.models.enums import Role
+from lemely.db.models.study_plan import StudyPlan
 from lemely.db.models.usage import (
     GrantKind,
     UsageDebt,
@@ -74,6 +75,7 @@ def _req(
     subject_code: str | None = None,
     assistant_member_id: uuid.UUID | None = None,
     subject_pending: bool = False,
+    next_week: bool = False,
 ) -> UsageRequest:
     return UsageRequest(
         actor_user_id=actor,
@@ -82,6 +84,7 @@ def _req(
         subject_code=subject_code,
         assistant_member_id=assistant_member_id,
         subject_pending=subject_pending,
+        next_week=next_week,
     )
 
 
@@ -90,6 +93,57 @@ def _funded_student(sm: sessionmaker[Session], units: int = 1000) -> uuid.UUID:
     student = seed_user(sm)
     give(sm, student, units=units)
     return student
+
+
+# --- study plans: the request's target week decides the payer ----------------------------
+
+
+def test_a_study_plan_request_carries_its_target_week_to_the_payer_decision(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    seed_catalogue(sm)
+    student, teacher = seed_user(sm), seed_user(sm, Role.teacher)
+    member = seat(
+        sm,
+        teacher=teacher,
+        student=student,
+        subjects=["0580"],
+        actions=[MeteredAction.STUDY_PLAN],
+    )
+    seat_grant(sm, student=student, member_id=member, units=500)
+    give(sm, student, units=500)
+
+    def plan(week: date) -> None:
+        with sm.begin() as session:
+            session.add(
+                StudyPlan(
+                    user_id=student,
+                    subject_code="0580",
+                    week_start=week,
+                    weekly_hours=4.0,
+                    available=True,
+                    generated_at=NOW,
+                )
+            )
+
+    meter = enforcing_meter(sm)
+    current = _req(student, MeteredAction.STUDY_PLAN, subject_code="0580")
+    upcoming = _req(student, MeteredAction.STUDY_PLAN, subject_code="0580", next_week=True)
+    assert current.next_week is False
+
+    # Nothing generated yet: the first plan of either week goes to the seat.
+    assert meter.authorize(current).teacher_member_id == member
+    assert meter.authorize(upcoming).teacher_member_id == member
+
+    # This week has a plan: regenerating it is the student's own, but next week is still first.
+    plan(date(2026, 11, 2))
+    assert meter.authorize(current).teacher_member_id is None
+    assert meter.authorize(upcoming).teacher_member_id == member
+
+    # Next week has one too: regenerating it is the student's own as well.
+    plan(date(2026, 11, 9))
+    assert meter.authorize(upcoming).teacher_member_id is None
 
 
 # --- R5: enforcement -------------------------------------------------------------------

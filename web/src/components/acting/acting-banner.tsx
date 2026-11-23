@@ -10,9 +10,9 @@
  *   way out sits in it.
  * H · hierarchy — 4. Bold lead clause names the lead and the role; a second, quieter line says
  *   what the role cannot do (only when that is true); "Switch back to me" is the one action.
- * E · execution — 4. Tertiary-container ground (amber, the kit's "pay attention, nothing is
- *   wrong" colour, not error red) with on-tertiary-container text, role="status" so it never
- *   interrupts a reader, `flex-wrap` so the action drops under the text at 380, 44px target on
+ * E · execution — 4. Primary-container ground (navy: acting is a fact about the session, so it is
+ *   neither gold, which is for what was earned, nor error red) with on-primary-container text,
+ *   role="status" so it never interrupts a reader, `flex-wrap` so the action drops under the text at 380, 44px target on
  *   coarse pointers. One withheld: the compact "Working as" chip in the sticky top bar repeats
  *   the lead's name, and both must be kept in step.
  * S · specificity — 5. Names the person, the role, and the consequence ("done on their account").
@@ -24,7 +24,7 @@
  * Revision pass, from looking at the 380px capture: the glyph was centred against a four-line
  * block, so it floated beside the middle of the text; it now sits on the first line below `sm`.
  * The top-bar chip that repeats the lead's name was crowding the page title to "A..." at 768, so
- * it now shows from `lg` and the amber ring carries the cue below that.
+ * it now shows from `lg` and the primary ring carries the cue below that.
  */
 import { UserSwitch, X } from "@phosphor-icons/react"
 import { lackedSummary } from "@/lib/actingModel"
@@ -33,7 +33,7 @@ import { ROLE_COPY } from "@/lib/assistantRoles"
 import { useActingTeacher } from "./acting-state"
 
 const ACTION =
-  "shrink-0 rounded-sm text-body-sm font-medium text-on-tertiary-container underline decoration-1 underline-offset-2 transition-[color,transform] hover:text-on-surface active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:flex pointer-coarse:min-h-11 pointer-coarse:items-center"
+  "shrink-0 rounded-sm text-body-sm font-medium text-on-primary-container underline decoration-1 underline-offset-2 transition-[color,transform] hover:text-on-surface active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:flex pointer-coarse:min-h-11 pointer-coarse:items-center"
 
 /** The banner's markup, with no hooks, so the kit preview and the tests can render each state. */
 export function ActingBannerView({
@@ -52,7 +52,7 @@ export function ActingBannerView({
     <div
       role="status"
       data-testid="acting-banner"
-      className="mb-6 flex flex-wrap items-start gap-x-3 gap-y-1 rounded-md sm:items-center border border-outline-variant bg-tertiary-container px-3.5 py-2.5 text-on-tertiary-container"
+      className="mb-6 flex flex-wrap items-start gap-x-3 gap-y-1 rounded-md sm:items-center border border-outline-variant bg-primary-container px-3.5 py-2.5 text-on-primary-container"
     >
       <UserSwitch size={18} className="mt-0.5 flex-none sm:mt-0" aria-hidden="true" />
       <div className="min-w-0 flex-1 basis-60">

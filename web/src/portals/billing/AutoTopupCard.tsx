@@ -221,6 +221,7 @@ function PayerCard({ beneficiaryId, audience, packsHref }: { beneficiaryId: stri
           // The C-11 compact failure (neutral tone, polite), with a retry for whichever read failed.
           <ErrorState
             compact
+            tone="neutral"
             heading="Couldn't load your auto top-up settings"
             body="Nothing has changed on your account."
             action={{

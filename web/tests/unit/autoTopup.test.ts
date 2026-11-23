@@ -16,7 +16,7 @@ import {
   type AutoTopupState,
 } from "@/lib/autoTopupForm"
 import { fx } from "./support/billingFixtures"
-import { fakeMutation, okQuery, renderStatic } from "./support/billingRender"
+import { errorQuery, fakeMutation, okQuery, renderStatic } from "./support/billingRender"
 
 const s = vi.hoisted(() => ({
   settings: null as unknown,
@@ -140,6 +140,14 @@ describe("AutoTopupCard", () => {
   it("asks for a new pack when the saved one left the catalogue", () => {
     s.settings = okQuery({ ...fx.autoTopup, creditPackId: "gone", thresholdUnits: 100 })
     expect(card()).toContain("no longer available")
+  })
+
+  it("shows a failed settings read in the neutral tone, not the gold warn tone", () => {
+    s.settings = errorQuery(new ApiError(500, "x", {}))
+    const html = card()
+    expect(html).toContain("Couldn&#x27;t load your auto top-up settings")
+    expect(html).toMatch(/bg-surface-container-low(?![\w-])/)
+    expect(html).not.toContain("tertiary")
   })
 
   it("makes no payer queries path for a non-payer", () => {

@@ -336,17 +336,21 @@ def test_0043_merge_heads_joins_the_develop_and_branch_chains() -> None:
 
 
 def test_migration_chain_has_one_head_joining_billing_and_waitlist() -> None:
-    """``0060_merge_heads`` joins the billing and waitlist chains into the single head.
+    """``0060_merge_heads`` joins the billing and waitlist chains below the single head.
 
     Both forked from ``0051_tutor_evidence_uploads``. Two heads would make every
     ``alembic upgrade head`` (CI, the deploy ``migrate`` job, the container entrypoint)
-    refuse to run, so the join must exist and must be the only head.
+    refuse to run, so there must be exactly one head and the join must sit in its
+    ancestry. The head is not pinned to ``0060``: later migrations extend the chain.
     """
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
     script_dir = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert script_dir.get_heads() == ["0060_merge_heads"]
+    heads = script_dir.get_heads()
+    assert len(heads) == 1, f"expected exactly one Alembic head, found {len(heads)}: {heads}"
+    ancestry = {r.revision for r in script_dir.iterate_revisions(heads[0], "base")}
+    assert "0060_merge_heads" in ancestry
     revision = script_dir.get_revision("0060_merge_heads")
     assert revision is not None
     assert set(revision.down_revision) == {

@@ -600,6 +600,125 @@ def test_study_plan_week_is_per_user(migrated_sessionmaker: sessionmaker[Session
         )
 
 
+# -- study plan target week ---------------------------------------------------------
+
+# NOW falls in the ISO week of Monday 2026-11-02; the next one starts here.
+NEXT_WEEK = date(2026, 11, 9)
+
+
+def _study_plan_chain(
+    sm: sessionmaker[Session], student: uuid.UUID, *, next_week: bool
+) -> list[Payer]:
+    with sm() as session:
+        ctx = load_chain_context(
+            session,
+            actor_user_id=student,
+            action=MeteredAction.STUDY_PLAN,
+            subject_code="0580",
+            assistant_member_id=None,
+            now=NOW,
+            next_week=next_week,
+        )
+    return build_payer_chain(ctx)
+
+
+def test_study_plan_week_can_target_next_week(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    student = seed_user(sm)
+    _plan(sm, student, subject="0580", week=date(2026, 11, 2), superseded=False)
+
+    def seen(*, next_week: bool) -> bool:
+        with sm() as session:
+            return study_plan_generated_this_week(
+                session, user_id=student, subject_code="0580", now=NOW, next_week=next_week
+            )
+
+    assert seen(next_week=False)
+    assert not seen(next_week=True)
+    _plan(sm, student, subject="0580", week=NEXT_WEEK, superseded=True)
+    assert seen(next_week=True)
+    assert seen(next_week=False)
+
+
+def test_a_next_week_plan_is_the_first_of_its_week_even_when_this_week_has_one(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    student, teacher = seed_user(sm), seed_user(sm, Role.teacher)
+    member = seat(
+        sm,
+        teacher=teacher,
+        student=student,
+        subjects=["0580"],
+        actions=[MeteredAction.STUDY_PLAN],
+    )
+    _plan(sm, student, subject="0580", week=date(2026, 11, 2), superseded=False)
+
+    chain = _study_plan_chain(sm, student, next_week=True)
+
+    assert (chain[0].owner_user_id, chain[0].scope, chain[0].teacher_member_id) == (
+        student,
+        GrantScope.SEAT,
+        member,
+    )
+
+
+def test_regenerating_in_the_target_week_is_still_a_regeneration(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    student, teacher = seed_user(sm), seed_user(sm, Role.teacher)
+    seat(
+        sm,
+        teacher=teacher,
+        student=student,
+        subjects=["0580"],
+        actions=[MeteredAction.STUDY_PLAN],
+    )
+    _plan(sm, student, subject="0580", week=date(2026, 11, 2), superseded=False)
+    _plan(sm, student, subject="0580", week=NEXT_WEEK, superseded=False)
+
+    chain = _study_plan_chain(sm, student, next_week=True)
+
+    assert all(payer.teacher_member_id is None for payer in chain)
+    assert all(payer.owner_user_id == student for payer in chain)
+
+
+def test_a_request_without_a_target_week_checks_the_current_week(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    student, teacher = seed_user(sm), seed_user(sm, Role.teacher)
+    member = seat(
+        sm,
+        teacher=teacher,
+        student=student,
+        subjects=["0580"],
+        actions=[MeteredAction.STUDY_PLAN],
+    )
+    # Only next week has a plan: the current week is still open, so the seat pays.
+    _plan(sm, student, subject="0580", week=NEXT_WEEK, superseded=False)
+
+    def first_payer_member() -> uuid.UUID | None:
+        with sm() as session:
+            ctx = load_chain_context(
+                session,
+                actor_user_id=student,
+                action=MeteredAction.STUDY_PLAN,
+                subject_code="0580",
+                assistant_member_id=None,
+                now=NOW,
+            )
+        return build_payer_chain(ctx)[0].teacher_member_id
+
+    assert first_payer_member() == member
+    # Once the current week has a plan too, the same request is a regeneration.
+    _plan(sm, student, subject="0580", week=date(2026, 11, 2), superseded=False)
+    assert first_payer_member() is None
+
+
 # -- candidate_subjects -------------------------------------------------------------
 
 

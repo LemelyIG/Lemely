@@ -131,16 +131,24 @@ def _assistant_view(
 
 
 def study_plan_generated_this_week(
-    session: Session, *, user_id: uuid.UUID, subject_code: str, now: datetime
+    session: Session,
+    *,
+    user_id: uuid.UUID,
+    subject_code: str,
+    now: datetime,
+    next_week: bool = False,
 ) -> bool:
     """A plan (live or superseded) already exists for this ISO week (§2.2 study plans).
 
     The week is Monday to Sunday in UTC, keyed on ``study_plans.week_start``, the same
-    Monday the plan repository writes.
+    Monday the plan repository writes. ``next_week`` checks the week after ``now``'s instead,
+    for a plan generated ahead of time.
     """
     _require_aware(now)
     today = now.astimezone(UTC).date()
     week_start = today - timedelta(days=today.weekday())
+    if next_week:
+        week_start += timedelta(weeks=1)
     return bool(
         session.scalar(
             select(
@@ -162,12 +170,13 @@ def load_chain_context(
     subject_code: str | None,
     assistant_member_id: uuid.UUID | None,
     now: datetime,
+    next_week: bool = False,
 ) -> ChainContext:
     """Read every fact ``build_payer_chain`` needs for one action.
 
     At most three queries however many seats the actor holds: seats (or the assistant
     confirmation), the debtors among every owner the chain may touch, and the study-plan
-    week.
+    week (``next_week`` reads the week after ``now``'s, for a plan generated ahead).
 
     Raises ``AssistantUnavailable`` when ``assistant_member_id`` is given and cannot be
     confirmed; the caller maps it to a 403 with ``.code``.
@@ -199,7 +208,11 @@ def load_chain_context(
         action is MeteredAction.STUDY_PLAN
         and subject_code is not None
         and study_plan_generated_this_week(
-            session, user_id=actor_user_id, subject_code=subject_code, now=now
+            session,
+            user_id=actor_user_id,
+            subject_code=subject_code,
+            now=now,
+            next_week=next_week,
         )
     )
     return ChainContext(

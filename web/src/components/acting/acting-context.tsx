@@ -124,11 +124,19 @@ export function ActingTeacherProvider({ children }: { children: ReactNode }) {
     }
   }, [checked, actingLead, membershipsQuery.isSuccess, teams, queryClient, navigate])
 
+  // Which identity the person asked for, set by `choose` only. The effect below moves focus when
+  // the identity it lands on is that one; a restore or a membership ending never sets it.
+  const focusAfterSwitch = useRef<string | null>(null)
+  const identityKey = actingLead?.leadId ?? "self"
+
   const choose = useCallback(
     (teacherId: string | null) => {
       const target = teacherId === null ? null : teams.find((t) => t.teacherId === teacherId)
       // Not on the list, or a lead assistants cannot reach right now: nothing to switch to.
       if (teacherId !== null && !target?.available) return
+      // Choosing who you already are changes nothing, so there is no tree to lose focus with.
+      const nextKey = target ? target.teacherId : "self"
+      focusAfterSwitch.current = nextKey === identityKey ? null : nextKey
       // Cancel, switch, purge the other identities' entries: see `switchActingLead`.
       switchActingLead(queryClient, target ? { leadId: target.teacherId, leadName: target.teacherName } : null)
       storeLeadId(target ? target.teacherId : null)
@@ -136,7 +144,7 @@ export function ActingTeacherProvider({ children }: { children: ReactNode }) {
       // A deep link into one teacher's class means nothing to the other.
       navigate("/teacher")
     },
-    [teams, queryClient, navigate],
+    [teams, queryClient, navigate, identityKey],
   )
 
   const dismissNotice = useCallback(() => setNotice(null), [])
@@ -156,12 +164,13 @@ export function ActingTeacherProvider({ children }: { children: ReactNode }) {
     [teams, lead, actingLead, choose, notice, dismissNotice],
   )
 
-  // After a change of identity the control that had focus is gone with the old tree.
-  const identityKey = actingLead?.leadId ?? "self"
-  const firstKey = useRef(identityKey)
+  // After the person's own switch the control that had focus is gone with the old tree, so focus
+  // goes to `<main>`. Not after a restore on page load (nothing had focus, and a programmatic focus
+  // makes `:focus-visible` match `<main>` and ring the page before anyone has touched it), and not
+  // when a membership ends: that one carries its own notice.
   useEffect(() => {
-    if (firstKey.current === identityKey) return
-    firstKey.current = identityKey
+    if (focusAfterSwitch.current !== identityKey) return
+    focusAfterSwitch.current = null
     document.getElementById(MAIN_CONTENT_ID)?.focus()
   }, [identityKey])
 

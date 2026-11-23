@@ -9,7 +9,7 @@
  *   (spec §2.3, §7). A person who has just switched to a lead could reasonably expect the
  *   lead's invoices; this says, once, at the top of the page, that they are not looking at them.
  * H · hierarchy — 4. One sentence, quieter than the page title it sits under, louder than a
- *   footnote. Not a banner: the amber ground belongs to "you are acting".
+ *   footnote. Not a banner: the primary-container ground belongs to "you are acting".
  * E · execution — 4. Neutral low surface, tokens only, wraps at 380 without a fixed height.
  * S · specificity — 5. Names the lead and says what does not change.
  * R · restraint — 5. One line, no action, no icon.
