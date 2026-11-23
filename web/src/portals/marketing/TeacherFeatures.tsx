@@ -53,14 +53,13 @@ export function TeacherFeatures() {
         </div>
         <div className="brand-school">
           <p>
-            Running a school or department?{' '}
+            Teaching your own students?{' '}
             <span>
-              Lemely scales to whole year groups, with admin controls and
-              reporting.
+              See how Lemely can help you mark papers and support your students.
             </span>
           </p>
           <a href={marketingLinks.demo}>
-            Book a school demo <ArrowRight aria-hidden="true" />
+            Book a demo <ArrowRight aria-hidden="true" />
           </a>
         </div>
       </div>

@@ -21,12 +21,11 @@ exploratory piece):
 
 ## Users
 
-Five confirmed roles. Every surface is designed for the role it actually serves — student and teacher are the two portals built today (`web/src/portals/`), parent lands in Phase 3, and the two admin roles are real accounts with real screens, not implementation details.
+Four confirmed roles. Every surface is designed for the role it actually serves — student and teacher are the two portals built today (`web/src/portals/`), parent lands in Phase 3, and platform admins manage the service.
 
-- **Students (IGCSE / O-Level / AS / A-Level, launching in Egypt).** Photograph or upload an attempted past paper, get it marked, find out what to study next. Personal context — phone or laptop, often at home, often anxious about the result. A student may hold a school seat, a personal subscription, or both.
+- **Students (IGCSE / O-Level / AS / A-Level, launching in Egypt).** Photograph or upload an attempted past paper, get it marked, find out what to study next. Personal context — phone or laptop, often at home, often anxious about the result. A student may use a seat leased by a teacher, a personal subscription, or both.
 - **Teachers / tutors** marking CAIE papers at their desk. Independent, employed by a school, or both. They need speed and defensible accuracy: parse a mark scheme, correct a paper, see where a class struggled, override a marking the system got wrong. Desktop, focus mode, task-oriented.
 - **Parents** checking on a linked child, linked when the child shares an invite code or link. Email + password account, read-only performance and weakness views, notification preferences. Lowest tolerance for jargon, least frequent visits, mobile-first.
-- **School admins** managing a school's seats, invited student accounts, and school-wide announcements.
 - **Platform admins** activating accounts (activation is a manual toggle while payments are out of scope) and holding cross-tenant visibility.
 
 Both students and teachers care deeply about accuracy. A wrong grade or unfair marking is worse than slow software.
@@ -63,7 +62,7 @@ Three things a neighboring product could not truthfully copy:
 
 **Not yet built:** teacher class management, at-risk flagging, review override flow, teacher quiz builder, parent portal (Phase 3); content generation, placement test, onboarding questionnaire, adaptive study plans (Phase 4); XP, streaks, leaderboards, announcements, web push (Phase 5).
 
-**Engagement mechanics are real product, restrained in expression.** XP, daily streaks with streak-freeze, and leaderboards (friends / class / school / global / per-subject) are non-negotiable Phase 5 mechanics. The consumer-edtech anti-reference below governs how they look and sound, not whether they exist — they must not be designed as a Duolingo pastiche, and must not be quietly dropped either.
+**Engagement mechanics are real product, restrained in expression.** XP, daily streaks with streak-freeze, and leaderboards (friends / class / global / per-subject) are non-negotiable Phase 5 mechanics. The consumer-edtech anti-reference below governs how they look and sound, not whether they exist — they must not be designed as a Duolingo pastiche, and must not be quietly dropped either.
 
 **Hard product rules:**
 - Leaderboards rank XP (effort), never grades. Grades are private to the student, their parents, and their teachers.
@@ -139,7 +138,7 @@ paper, marginalia, pastel stickers) is retired. Tokens and rules live in `DESIGN
 - WCAG AA as baseline (contrast ratios ≥ 4.5:1 for text).
 - Students under exam stress: avoid red-heavy error states; prefer amber/neutral for "needs attention."
 - Light mode as default — varied ambient environments (classrooms, home desks, libraries).
-- Mobile-first for students and parents; desktop density for teachers and school admins.
+- Mobile-first for students and parents; desktop density for teachers and platform admins.
 - English-only for v1; Arabic UI is explicitly deferred. The layouts must still survive a
   future `dir="rtl"` flip: new and edited styles use logical properties
   (`margin-inline-start`, `padding-inline`, `inset-inline-end`, `text-align: start`), never
