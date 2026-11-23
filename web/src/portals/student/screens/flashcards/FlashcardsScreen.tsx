@@ -183,7 +183,7 @@ export function FlashcardsScreen() {
       </div>
 
       <NewDeckSheet seed={sheet} onClose={() => setSheet(null)}
-        onStarted={(deckId) => { setSheet(null); openDeck(deckId) }} />
+        onStarted={() => setSheet(null)} />
       <DeckMenu deckId={menuDeckId} onClose={() => setMenuDeckId(null)} />
     </div>
   )
