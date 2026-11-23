@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import {
+  queryOptions,
   useMutation,
   useQuery,
   useQueryClient,
@@ -551,16 +552,24 @@ export function useReviewItemCrop(itemId: string | undefined, enabled: boolean):
  * `class_id`/`reason`/`subject`, `q`, `sort`, `limit`, `cursor`). The key starts
  * `["teacher", "review", ...]` so every resolve/dismiss/bulk invalidation that
  * already targets `["teacher", "review"]` refreshes it too.
+ *
+ * `placeholderData: previous` keeps the last page on screen while the next one
+ * loads, but a page that then fails has no data of its own, so the screen holds
+ * the merged rows itself (see `queueLoad`).
  */
-export function useReviewQueuePage(
-  filters: ReviewQueueFilters,
-  cursor: string | undefined,
-): UseQueryResult<ReviewQueueList, Error> {
-  return useQuery({
+export function reviewQueuePageOptions(filters: ReviewQueueFilters, cursor: string | undefined) {
+  return queryOptions({
     queryKey: ["teacher", "review", "queue-page", filterKey(filters), cursor ?? null],
     queryFn: () => request<ReviewQueueList>(reviewQueuePath(filters, { limit: 50, cursor })),
     placeholderData: (previous) => previous,
   })
+}
+
+export function useReviewQueuePage(
+  filters: ReviewQueueFilters,
+  cursor: string | undefined,
+): UseQueryResult<ReviewQueueList, Error> {
+  return useQuery(reviewQueuePageOptions(filters, cursor))
 }
 
 /** Everything a resolved mark can change (B6). Shared by `useResolveReviewItem`

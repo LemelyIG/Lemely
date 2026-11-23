@@ -2,13 +2,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
+import { QueryState, type QueryStateQuery } from "@/components/ui/query-state"
 import { invalidateAfterResolve, useBulkApproveReview, useReviewItem, useReviewQueuePage, useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import { useReference } from "@/lib/hooks/useReferenceApi"
 import { subjectNameFor } from "@/lib/reference"
 import { filterKey, filtersActive, filtersFromSearch, filtersToSearch, type ReviewQueueFilters } from "@/lib/reviewQueueQuery"
 import { postReviewDecision, type ReviewDecision } from "@/lib/reviewApi"
 import { teacherLoadFailureMessage, teacherMutationFailureMessage } from "@/lib/teacherOutcome"
-import type { ReviewQueueItem } from "@/lib/teacherTypes"
+import type { ReviewQueueItem, ReviewQueueList } from "@/lib/teacherTypes"
 import { useNativeFrame } from "@/lib/useNativeFrame"
 import { AnswerPage } from "./AnswerPage"
 import { AnswerPanel } from "./AnswerPanel"
@@ -18,7 +19,7 @@ import { QueueColumn } from "./QueueColumn"
 import { Cleared } from "./QueueStates"
 import { UndoBar } from "./UndoBar"
 import { mergeReviewPages } from "./reviewLabels"
-import { SKIP_LINE, bulkButton, focusAfterDecision, isClearItem, nextFocusAfter, overlayOpen, positionOf, queueScreenState, questionLabel, shownLine } from "./reviewQueueModel"
+import { SKIP_LINE, bulkButton, focusAfterDecision, isClearItem, isLoadingMore, nextFocusAfter, overlayOpen, pageableCursor, positionOf, queueLoad, queueScreenState, questionLabel, reconcileCursor, shownLine, type PagingCursor } from "./reviewQueueModel"
 import { useAnswerImages } from "./useAnswerImages"
 import { useFillViewport } from "./useFillViewport"
 import { usePendingDecisions } from "./usePendingDecisions"
@@ -28,6 +29,15 @@ import "./review.css"
 const MARK_HREF = "/teacher/grading"
 
 const BTN = "rounded-[14px] px-[18px] py-[11px] text-[14px] font-bold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:min-h-11"
+
+/** The primary failure retains the page heading and the shared offline/retry behavior. */
+export function QueueLoadError({ query }: { query: QueryStateQuery<unknown> }) {
+  return (
+    <QueryState query={query} srHeading="Review" skeleton={null} error={{ heading: "Couldn't load the review queue.", body: teacherLoadFailureMessage }}>
+      {() => null}
+    </QueryState>
+  )
+}
 
 /** The teacher review queue: the element for both `review` and `review/:itemId`. */
 export function ReviewQueue() {
@@ -47,23 +57,33 @@ export function ReviewQueue() {
   const [skips, setSkips] = useState<{ label: string; reason: string }[] | null>(null)
 
   // Load more, merged and deduped; reset on any filter change.
-  const [cursor, setCursor] = useState<string | undefined>(undefined)
+  // The cursor is read only under the filter that made it and dropped on the render the filter changes, so
+  // the previous filter's placeholder page can never lend its cursor to the new filter.
+  const [cursorState, setCursorState] = useState<PagingCursor | null>(null)
+  const live = reconcileCursor(cursorState, key)
+  if (live !== cursorState) setCursorState(live)
+  const cursor = live?.cursor
   const [pages, setPages] = useState<{ key: string; items: ReviewQueueItem[] }>({ key: "", items: [] })
   const [merged, setMerged] = useState<unknown>(undefined)
+  // The last good page for this filter. A page that fails has no data of its own, so its cursor, total and
+  // subjects are read from here while its rows stay on screen.
+  const [held, setHeld] = useState<{ key: string; data: ReviewQueueList } | null>(null)
   const queue = useReviewQueuePage(filters, cursor)
-  if (queue.data && queue.data !== merged) {
+  if (queue.data && !queue.isPlaceholderData && queue.data !== merged) {
     setMerged(queue.data)
     setPages((prev) => mergeReviewPages(prev, { key, items: queue.data!.items }))
+    setHeld({ key, data: queue.data })
   }
-  useEffect(() => { setCursor(undefined) }, [key])
+  const rows = pages.key === key ? pages.items : []
+  const load = queueLoad(queue, held, key, rows.length)
 
   const classes = useTeacherClasses()
   const reference = useReference()
   const options = useMemo(() => ({
     classes: (classes.data?.classes ?? []).map((c) => ({ id: c.id, label: c.label })),
-    subjects: queue.data?.subjectCodes ?? [],
+    subjects: load.page?.subjectCodes ?? [],
     subjectName: (code: string) => subjectNameFor(reference.data, code),
-  }), [classes.data, queue.data?.subjectCodes, reference.data])
+  }), [classes.data, load.page?.subjectCodes, reference.data])
 
   // Owns the deferred commit: its pagehide and unmount flush (keepalive) live in the hook.
   const decisions = usePendingDecisions(
@@ -74,18 +94,28 @@ export function ReviewQueue() {
     },
   )
   const hidden = useMemo(() => new Set(decisions.state.hidden), [decisions.state.hidden])
-  const rows = pages.key === key ? pages.items : []
   const open = rows.filter((r) => !hidden.has(r.itemId))
   const openIds = open.map((r) => r.itemId)
-  const total = Math.max(0, (queue.data?.total ?? 0) - rows.filter((r) => hidden.has(r.itemId)).length)
+  const total = Math.max(0, (load.page?.total ?? 0) - rows.filter((r) => hidden.has(r.itemId)).length)
 
+  // Minimal structural query for QueryState: spreading the tracked react-query result would subscribe to every field.
+  // Raw status on purpose: the error views only render for a real failure, and `load.status` decides when.
+  const queueQuery = {
+    status: queue.status,
+    data: queue.data,
+    error: queue.error,
+    fetchStatus: queue.fetchStatus,
+    refetch: () => queue.refetch(),
+  }
   const state = queueScreenState({
-    status: queue.isPending && !queue.data ? "pending" : queue.isError && !queue.data ? "error" : "success",
+    status: load.status,
     visibleCount: open.length,
     openTotal: total,
     filtersActive: filtersActive(filters),
-    hasHistory: queue.data?.hasHistory ?? true,
+    hasHistory: load.page?.hasHistory ?? true,
     decidedThisSession: decisions.state.tally.decided,
+    moreRemain: !!load.page?.nextCursor,
+    moreFailed: load.moreFailed,
   })
 
   // Focus: the URL item, else (desktop) the first open row.
@@ -250,9 +280,11 @@ export function ReviewQueue() {
       bulk={bulkButton({ selecting, picked: picked.size, clearCount: clearIds.length, pending: bulk.isPending })}
       bulkSkips={skips}
       bulkError={bulk.isError ? teacherMutationFailureMessage(bulk.error) : null}
-      hasMore={!!queue.data?.nextCursor}
-      loadingMore={queue.isFetching && !!cursor}
-      errorMessage={queue.error ? teacherLoadFailureMessage(queue.error) : "Check your connection and try again."}
+      hasMore={!!load.page?.nextCursor}
+      loadingMore={isLoadingMore(queue, cursor)}
+      errorView={<QueueLoadError query={queueQuery} />}
+      query={queueQuery}
+      moreFailed={load.moreFailed}
       phone={phone}
       markHref={MARK_HREF}
       searchRef={searchRef}
@@ -262,8 +294,10 @@ export function ReviewQueue() {
       onBulk={runBulk}
       onDismissSkips={() => setSkips(null)}
       onFilters={setFilters}
-      onLoadMore={() => setCursor(queue.data?.nextCursor ?? undefined)}
-      onRetry={() => void queue.refetch()}
+      onLoadMore={() => {
+        const next = pageableCursor(queue, load.page)
+        if (next) setCursorState({ key, cursor: next })
+      }}
     />
   )
 

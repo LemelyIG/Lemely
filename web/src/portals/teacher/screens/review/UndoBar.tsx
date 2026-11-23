@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 */
+/* Hallmark · pre-emit critique: P4 H4 E3 S4 R5 V3 */
 import { useLayoutEffect, useState, type CSSProperties } from "react"
 import { createPortal } from "react-dom"
 import type { DecisionNotice } from "./pendingDecisions"
@@ -15,7 +15,8 @@ function useColumnBox(active: boolean): CSSProperties | undefined {
       const el = document.querySelector("[data-review-column]")
       if (!el) return setBox(undefined)
       const r = el.getBoundingClientRect()
-      setBox({ left: r.left + 16, maxWidth: Math.max(0, r.width - 32) })
+      const rtl = getComputedStyle(el).direction === "rtl"
+      setBox({ insetInlineStart: (rtl ? document.documentElement.clientWidth - r.right : r.left) + 16, maxWidth: Math.max(0, r.width - 32) })
     }
     measure()
     window.addEventListener("resize", measure)
@@ -35,7 +36,7 @@ export function UndoBar({ notice, onUndo, onClose, placement }: { notice: Decisi
   const on = notice !== null
   const box = useColumnBox(placement === "column")
   const place = placement === "viewport" || !box
-    ? "inset-x-4 mx-auto w-fit max-w-[calc(100vw-32px)] max-sidebar:bottom-[calc(var(--bottom-nav-height)+16px)] shell-lg:left-[calc(var(--shell-sidebar-width)+16px)]"
+    ? "inset-x-4 mx-auto w-fit max-w-[calc(100vw-32px)] max-sidebar:bottom-[calc(var(--bottom-nav-height)+16px)] shell-lg:start-[calc(var(--shell-sidebar-width)+16px)]"
     : ""
   return createPortal(
     <div

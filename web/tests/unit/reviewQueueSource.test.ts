@@ -1,4 +1,8 @@
 import { readdirSync, readFileSync } from "node:fs"
+import { createElement } from "react"
+import { renderToStaticMarkup } from "react-dom/server"
+import { MemoryRouter } from "react-router-dom"
+import { FirstRun } from "@/portals/teacher/screens/review/QueueStates"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 
@@ -52,6 +56,12 @@ describe("review screens source", () => {
     expect(css).not.toMatch(/max-height/)
     expect(css).toMatch(/grid-template-rows/)
   })
+  it("keeps ring ink legible on review rows", () => {
+    const css = readFileSync(join(DIR, "review.css"), "utf8")
+    const row = readFileSync(join(DIR, "QueueRow.tsx"), "utf8")
+    expect(css).toMatch(/\.lm-rq-row \.rd-ring-tone-gold\s*\{\s*stroke: var\(--color-on-tertiary-container\)/)
+    expect(row).not.toMatch(/text-\[12px\] opacity-70/)
+  })
   it("keeps ruled lines between text lines, tied to the line height", () => {
     const css = readFileSync(join(DIR, "review.css"), "utf8")
     expect(css).toMatch(/1lh/)
@@ -70,7 +80,8 @@ describe("review screens source", () => {
     const bar = readFileSync(join(DIR, "UndoBar.tsx"), "utf8")
     expect(bar).toMatch(/placement/)
     // Viewport placement centres on the main column, not on the window with the rail in it.
-    expect(bar).toMatch(/shell-lg:left-\[calc\(var\(--shell-sidebar-width\)\+16px\)\]/)
+    expect(bar).toMatch(/shell-lg:start-\[calc\(var\(--shell-sidebar-width\)\+16px\)\]/)
+    expect(bar).not.toMatch(/shell-lg:(?:left|right)-/)
     const screen = readFileSync(join(DIR, "ReviewQueue.tsx"), "utf8")
     expect(screen).toMatch(/placement=/)
     expect(screen).toMatch(/overlayOpen\(document\)/)
@@ -82,13 +93,14 @@ describe("review screens source", () => {
     expect(screen).toMatch(/col-span-full[^\n]*\{column\}/)
   })
   it("numbers the first-run steps, as the approved mock does", () => {
-    const states = readFileSync(join(DIR, "QueueStates.tsx"), "utf8")
-    const firstRun = states.slice(states.indexOf("export function FirstRun"), states.indexOf("export function NothingWaiting"))
-    expect(firstRun).not.toMatch(/icon:/)
+    for (const phone of [false, true]) {
+      const html = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(FirstRun, { phone, markHref: "/papers" })))
+      expect([...html.matchAll(/<span class="rd-walk-n" aria-hidden="true">([^<]+)<\/span>/g)].map((match) => match[1])).toEqual(["1", "2", "3"])
+    }
   })
   it("gives every whole-screen state its own h1", () => {
     const states = readFileSync(join(DIR, "QueueStates.tsx"), "utf8")
-    for (const fn of ["QueueLoading", "QueueError", "FirstRun", "NothingWaiting", "Cleared"]) {
+    for (const fn of ["QueueLoading", "FirstRun", "NothingWaiting", "Cleared"]) {
       const start = states.indexOf(`export function ${fn}`)
       const body = states.slice(start, states.indexOf("\nexport function", start + 1))
       expect(body, fn).toMatch(/<h1\b/)

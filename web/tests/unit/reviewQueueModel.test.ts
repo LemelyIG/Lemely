@@ -17,11 +17,13 @@ import {
   nextFocusAfter,
   overlayOpen,
   focusAfterDecision,
+  focusAfterPagingEnds,
   paperLine,
   plainWhy,
   positionOf,
   progressOf,
   queueScreenState,
+  queueQueryStatus,
   removeFilter,
   ringLabel,
   ringText,
@@ -176,6 +178,12 @@ describe("screen state", () => {
     hasHistory: true,
     decidedThisSession: 0,
   }
+  it("keeps cached queue data visible after a failed refetch", () => {
+    expect(queueQueryStatus("error", { items: [] })).toBe("success")
+    expect(queueQueryStatus("error", undefined)).toBe("error")
+    expect(queueQueryStatus("pending", undefined)).toBe("pending")
+    expect(queueQueryStatus("success", { items: [] })).toBe("success")
+  })
   it("loads, errors, then picks the queue", () => {
     expect(queueScreenState({ ...base, status: "pending" })).toBe("loading")
     expect(queueScreenState({ ...base, status: "error" })).toBe("error")
@@ -305,5 +313,34 @@ describe("shortcuts and focus helpers", () => {
     expect(focusAfterDecision(root, null)).toBe(true)
     expect(focusAfterDecision(root, "zz")).toBe(false)
     expect(calls).toEqual(["row", "heading"])
+  })
+
+  describe("focusAfterPagingEnds", () => {
+    const BODY = { name: "body" }
+    const calls: string[] = []
+    const el = (name: string) => ({ name, focus: (o?: FocusOptions) => calls.push(`${name}${o?.preventScroll ? ":noscroll" : ""}`) })
+    const column = (rows: ReturnType<typeof el>[], self = el("column")) => ({
+      ...self,
+      querySelectorAll: ((sel: string) => (sel === "[data-review-row]:not([data-gone])" ? rows : [])) as unknown as ParentNode["querySelectorAll"],
+    })
+    it("moves focus to the last open row when the control that held it unmounts", () => {
+      calls.length = 0
+      const col = column([el("r1"), el("r2")])
+      expect(focusAfterPagingEnds({ activeElement: BODY, body: BODY }, col, true)).toBe(true)
+      expect(calls).toEqual(["r2:noscroll"])
+    })
+    it("falls back to the column when no row is open", () => {
+      calls.length = 0
+      expect(focusAfterPagingEnds({ activeElement: BODY, body: BODY }, column([]), true)).toBe(true)
+      expect(calls).toEqual(["column:noscroll"])
+    })
+    it("does not steal focus that went elsewhere, or that was never on the control", () => {
+      calls.length = 0
+      const col = column([el("r1")])
+      expect(focusAfterPagingEnds({ activeElement: { name: "search" }, body: BODY }, col, true)).toBe(false)
+      expect(focusAfterPagingEnds({ activeElement: BODY, body: BODY }, col, false)).toBe(false)
+      expect(focusAfterPagingEnds({ activeElement: BODY, body: BODY }, null, true)).toBe(false)
+      expect(calls).toEqual([])
+    })
   })
 })

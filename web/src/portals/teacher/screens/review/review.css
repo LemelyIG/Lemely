@@ -24,6 +24,8 @@
   transition: opacity 0.3s var(--ease-out), transform 0.3s var(--ease-out),
     background-color 0.15s;
 }
+/* The gold arc needs contrast against both the row and its track. */
+.lm-rq-row .rd-ring-tone-gold { stroke: var(--color-on-tertiary-container); }
 .lm-rq-row[data-gone] {
   opacity: 0;
   transform: translateX(24px);

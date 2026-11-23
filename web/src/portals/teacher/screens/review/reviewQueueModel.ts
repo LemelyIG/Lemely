@@ -153,6 +153,72 @@ export type QueueScreenState =
   | "sparse"
   | "queue"
 
+export type QueueQueryStatus = "pending" | "error" | "success"
+
+/**
+ * A failure only takes the whole screen when there is nothing to show. Cached `data` (a refetch that
+ * failed) or `heldRows` for the current filter (a later page that failed) both keep the list up.
+ */
+export function queueQueryStatus(status: QueueQueryStatus, data: unknown, heldRows = 0): QueueQueryStatus {
+  return status === "error" && (data !== undefined || heldRows > 0) ? "success" : status
+}
+
+/**
+ * What the screen reads from the queue query. A page past the first has its own query key, so when it
+ * fails it has no data of its own (react-query drops the placeholder) while the merged rows are still
+ * held. `held` is the last good page for `key`, `heldRows` the rows on screen for `key`.
+ * - `page`: where total, cursor, subjects and history come from: the live page, else the held one.
+ * - `status`: what `queueScreenState` sees.
+ * - `moreFailed`: the query failed with rows on screen, so keep them and retry beside Load more.
+ */
+export function queueLoad<T>(
+  query: { status: QueueQueryStatus; data: T | undefined; isPlaceholderData?: boolean },
+  held: { key: string; data: T } | null,
+  key: string,
+  heldRows: number,
+): { page: T | undefined; status: QueueQueryStatus; moreFailed: boolean } {
+  const currentHeld = held?.key === key ? held.data : undefined
+  const data = query.isPlaceholderData ? currentHeld : query.data
+  return {
+    page: data ?? currentHeld,
+    status: query.isPlaceholderData && !currentHeld ? "pending" : queueQueryStatus(query.status, data, heldRows),
+    moreFailed: query.status === "error" && query.data === undefined && heldRows > 0,
+  }
+}
+
+/** The Load more cursor and the filter it belongs to. */
+export interface PagingCursor {
+  key: string
+  cursor: string
+}
+
+/**
+ * A cursor is only ever read under the filter that produced it. Run on every render and written back when it
+ * changes, so a filter change drops the cursor in the same render (no effect in between) and returning to an
+ * earlier filter starts again at its first page instead of resuming at a page the rows no longer include.
+ */
+export function reconcileCursor(state: PagingCursor | null, key: string): PagingCursor | null {
+  return state?.key === key ? state : null
+}
+
+/**
+ * The cursor Load more may use, or nothing. Only real data pages: while the query shows a placeholder (the
+ * previous filter's page, or this filter's own next page still loading) the cursor on screen is not the one
+ * to advance from, and using it could skip the first page of a new filter.
+ */
+export function pageableCursor(query: { isPlaceholderData?: boolean }, page: { nextCursor: string | null } | undefined): string | undefined {
+  return query.isPlaceholderData ? undefined : (page?.nextCursor ?? undefined)
+}
+
+/**
+ * Load more is in flight: this filter's next page is loading (shown as the held page, so a placeholder) or a
+ * failed one is being retried. A background refetch of a page already on screen (the invalidation a resolve
+ * schedules) is neither, so it must not flip the control to "Loading…" or announce it.
+ */
+export function isLoadingMore(query: { isFetching: boolean; isPlaceholderData?: boolean; isError?: boolean }, cursor: string | undefined): boolean {
+  return !!cursor && query.isFetching && (!!query.isPlaceholderData || !!query.isError)
+}
+
 export function queueScreenState(s: {
   status: "pending" | "error" | "success"
   visibleCount: number
@@ -160,10 +226,15 @@ export function queueScreenState(s: {
   filtersActive: boolean
   hasHistory: boolean
   decidedThisSession: number
+  moreFailed?: boolean
+  /** The server has a next page. With every loaded row resolved the list is empty, not cleared. */
+  moreRemain?: boolean
 }): QueueScreenState {
   if (s.status === "pending") return "loading"
   if (s.status === "error") return "error"
+  if (s.moreFailed) return "queue"
   if (s.visibleCount === 0) {
+    if (s.moreRemain) return "queue"
     if (s.filtersActive) return "no-match"
     if (s.decidedThisSession > 0) return "cleared"
     return s.hasHistory ? "nothing-waiting" : "first-run"
@@ -322,6 +393,23 @@ export function focusAfterDecision(root: Pick<ParentNode, "querySelector">, next
   el.focus()
   return true
 }
+/**
+ * When paging ends the Load more control unmounts, and a control that held focus drops it to the page body.
+ * Put it back on the last open row (where the teacher was working, no scroll) or, with none, the column.
+ * Only when focus really was on the control and is now lost: focus the teacher moved elsewhere stays.
+ */
+export function focusAfterPagingEnds(
+  doc: { activeElement: unknown; body: unknown },
+  column: (Pick<ParentNode, "querySelectorAll"> & { focus(options?: FocusOptions): void }) | null,
+  hadFocus: boolean,
+): boolean {
+  if (!hadFocus || !column || doc.activeElement !== doc.body) return false
+  const rows = column.querySelectorAll<HTMLElement>("[data-review-row]:not([data-gone])")
+  const target = rows.length > 0 ? rows[rows.length - 1] : column
+  target.focus({ preventScroll: true })
+  return true
+}
+
 export function positionOf(ids: string[], id: string | null): { pos: number; total: number } {
   return { pos: id ? ids.indexOf(id) + 1 : 0, total: ids.length }
 }

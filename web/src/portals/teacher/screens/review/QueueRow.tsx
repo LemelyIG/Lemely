@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
+/* Hallmark · pre-emit critique: P4 H4 E3 S5 R4 V4 */
 import { KeyRing } from "@/components/redesign"
 import type { ReviewQueueItem } from "@/lib/teacherTypes"
 import "./review.css"
@@ -41,7 +41,7 @@ export function QueueRow({ item, focused, gone, selecting, picked, onOpen, onPic
           size={52}
           tone={tone === "gold" ? "gold" : tone === "neutral" ? "neutral" : "warn"}
           label={ringLabel(item.confidenceScore)}
-          center={<span className="font-mono text-[14px] font-semibold tabular-nums tracking-[-0.02em]">{ringText(item.confidenceScore)}{item.confidenceScore != null ? <small className="text-[12px] opacity-70">%</small> : null}</span>}
+          center={<span className="font-mono text-[14px] font-semibold tabular-nums tracking-[-0.02em]">{ringText(item.confidenceScore)}{item.confidenceScore != null ? <small className="text-[12px]">%</small> : null}</span>}
         />
         <span className="grid min-w-0 gap-[3px]">
           <span className="flex min-w-0 flex-wrap items-baseline gap-x-1.5"><b className="max-w-full truncate text-[15px] font-bold leading-[1.25] tracking-[-0.005em]">{item.studentDisplayName}</b><span className="text-[13px] text-on-surface-variant">{rowSubtitle(item)}</span></span>

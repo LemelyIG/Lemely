@@ -26,16 +26,6 @@ export function QueueLoading() {
   )
 }
 
-export function QueueError({ message, onRetry }: { message: string; onRetry: () => void }) {
-  return (
-    <div role="alert" className="grid justify-items-start gap-2.5 px-1 py-7">
-      <h1 className="text-[24px] font-extrabold leading-[1.2] tracking-[-0.02em]">Couldn't load the review queue.</h1>
-      <p className="text-on-surface-variant">{message}</p>
-      <button type="button" onClick={onRetry} className={PRIMARY_BTN}>Try again</button>
-    </div>
-  )
-}
-
 export function NoMatch({ onClear }: { onClear: () => void }) {
   return (
     <div role="status" className="grid justify-items-center gap-3 px-3 py-7 text-center text-on-surface-variant">
