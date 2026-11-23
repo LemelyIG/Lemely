@@ -63,6 +63,43 @@ const SUBJECT_DETAIL = {
   paperHistory: [],
 }
 
+/** A subject with one graded paper: the sparse screen, whose paper row links to /student/result/paper-1. Fields mirror SubjectDTO. */
+export const SUBJECT_ONE_PAPER = {
+  ...SUBJECT_DETAIL,
+  papersBreakdown: [
+    {
+      title: "Paper 12",
+      sub: "80 marks",
+      mean: "65%",
+      boundary: "A line 56/80",
+      position: "52/80 - B",
+      positionOk: true,
+      bars: [],
+      paperNumber: 12,
+      outOf: 80,
+      goal: { grade: "A", marks: 56, outOf: 80, source: "exact", sourceLabel: "Oct/Nov 2025 boundary" },
+      attempts: [{ id: "paper-1", recordedAt: "2025-10-15T10:00:00+00:00", grade: "B", awarded: 52, maximum: 80, label: "0606/12 · Oct 2025" }],
+    },
+  ],
+  paperHistory: [
+    {
+      id: "paper-1",
+      paper: "0606/12 · Oct 2025",
+      note: "Attempt 1",
+      marks: "52/80",
+      pct: "65%",
+      grade: "B",
+      gradeColor: "primary",
+      tab: "p12",
+      awarded: 52,
+      maximum: 80,
+      recordedAt: "2025-10-15T10:00:00+00:00",
+      paperNumber: 12,
+      label: "0606/12 · Oct 2025",
+    },
+  ],
+}
+
 export const NATIVE_SUBJECT = {
   path: "/student/subject/0606",
   profile: STUDENT_PROFILE,
@@ -3628,13 +3665,8 @@ const NAVCOV_VT_PROBE = () => {
 
 const NAVCOV_SUBJECT_MOCKS = async (page) => {
   await NATIVE_SUBJECT.mocks(page)
-  // Overview lists the subjects; the subject page lists a paper so its history row can be tapped.
-  await page.route(/\/api\/student\/subject\/0606(\?|$)/, (route) =>
-    jsonRoute(route, {
-      ...SUBJECT_DETAIL,
-      paperHistory: [{ id: "paper-1", paper: "0606/12 · Oct 2025", note: "Attempt 1", marks: "52/80", pct: "65%", grade: "B", gradeColor: "primary", tab: "history" }],
-    }),
-  )
+  // Overview lists the subjects; the subject page lists a paper so its row link can be followed.
+  await page.route(/\/api\/student\/subject\/0606(\?|$)/, (route) => jsonRoute(route, SUBJECT_ONE_PAPER))
 }
 const NAVCOV_APP = (path) => ({ ...NATIVE_HOME, path, init: NAVCOV_VT_PROBE, mocks: NAVCOV_SUBJECT_MOCKS })
 
@@ -3671,7 +3703,7 @@ const NAVCOV_CASES = {
     path: "/student/subject/0606",
     to: "/student/result/paper-1",
     async act(page) {
-      await page.getByRole("button", { name: /0606\/12/ }).first().evaluate((el) => el.click())
+      await page.getByRole("link", { name: /0606\/12/ }).first().evaluate((el) => el.click())
     },
   },
   notification: {

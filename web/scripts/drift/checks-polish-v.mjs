@@ -1,4 +1,4 @@
-import { NATIVE_HOME, NATIVE_SUBJECT, NATIVE_TEACHER_HOME, reviewApp } from "./checks-native.mjs"
+import { NATIVE_HOME, NATIVE_SUBJECT, NATIVE_TEACHER_HOME, SUBJECT_ONE_PAPER, reviewApp } from "./checks-native.mjs"
 import { teacherShellMocks } from "./mocks.mjs"
 
 /*
@@ -482,14 +482,7 @@ POLISH_V_CHECKS.push(
       mocks: async (page) => {
         await NATIVE_SUBJECT.mocks(page)
         const json = (route, body) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) })
-        await page.route(/\/api\/student\/subject\/0606(\?|$)/, (route) =>
-          json(route, {
-            header: { name: "Add Maths", code: "0606", qualificationLevel: "IGCSE", intro: "x", forecast: "B", weightedMean: "62", weightedMeanDelta: "+4" },
-            papersBreakdown: [],
-            topicMap: [],
-            paperHistory: [{ id: "paper-1", paper: "0606/12 \u00b7 Oct 2025", note: "Attempt 1", marks: "52/80", pct: "65%", grade: "B", gradeColor: "primary", tab: "history" }],
-          }),
-        )
+        await page.route(/\/api\/student\/subject\/0606(\?|$)/, (route) => json(route, SUBJECT_ONE_PAPER))
         await page.route(/\/api\/student\/result\/paper-1/, (route) =>
           json(route, {
             code: "0606", paper: "Paper 12", session: "Oct 2025", markerLabel: "Marked by Lemely", headline: "52 out of 80, a grade B on this paper.",
@@ -500,7 +493,7 @@ POLISH_V_CHECKS.push(
       },
     },
     async run(page) {
-      const row = page.getByRole("button", { name: /0606\/12/ }).first()
+      const row = page.getByRole("link", { name: /0606\/12/ }).first()
       await row.waitFor()
       await page.evaluate(() => {
         window.__starts = []

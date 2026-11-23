@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
 import { links } from "./subjectModel"
 import "./subject.css"
 
-/** Mock E_P. Any failure except 404 (which is the first run). Binny says nothing: the heading does. */
+/** Mock E_P. Any failed first load except the two absence 404s, which go to first run. Binny says nothing: the heading does. */
 export function SubjectError({ name, onRetry }: { name: string; onRetry: () => void }) {
   return (
     <div className="sj-err" role="alert">
