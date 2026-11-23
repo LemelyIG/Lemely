@@ -37,31 +37,6 @@ export function useStudyPlanWeek(): UseQueryResult<StudyPlanOverviewDTO, Error> 
   })
 }
 
-/** `GET /api/student/study-plan/{subjectCode}`. Deleted in Task 14 once no screen reads it. */
-export function useCurrentStudyPlan(subjectCode: string): UseQueryResult<CurrentStudyPlanDTO, Error> {
-  return useQuery({
-    queryKey: studyPlanKeys.current(subjectCode),
-    queryFn: () => request<CurrentStudyPlanDTO>(`/student/study-plan/${subjectCode}`),
-    enabled: !!subjectCode,
-  })
-}
-
-/** Single-subject rebuild used by the old week screen. Deleted in Task 14. */
-export function useRebuildStudyPlan(): UseMutationResult<StudyPlanWeekDTO, Error, CreateStudyPlanRequest> {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (body: CreateStudyPlanRequest) =>
-      request<StudyPlanWeekDTO>("/student/study-plan", { method: "POST", body: JSON.stringify(body) }),
-    onSuccess: (plan) => {
-      queryClient.setQueryData<CurrentStudyPlanDTO>(studyPlanKeys.current(plan.subjectCode), {
-        generated: true,
-        plan,
-      })
-      return queryClient.invalidateQueries({ queryKey: studyPlanKeys.week })
-    },
-  })
-}
-
 /**
  * Build or rebuild several subjects' plans, one POST each, in order.
  *

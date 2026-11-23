@@ -63,7 +63,7 @@ export function PlanList(p: PlanListProps) {
   return (
     <div id="plan-list" aria-busy={p.rebuilding || undefined} className={cn("flex flex-col gap-6 xl:gap-[22px]", p.rebuilding && "opacity-50")}>
       {body.subjectTop ? (
-        <p className="m-0 flex flex-wrap gap-x-3.5 font-sans text-[13.5px] font-medium text-on-surface-variant [&>span+span]:before:mr-3.5 [&>span+span]:before:text-outline [&>span+span]:before:content-['·']">
+        <p className="m-0 flex flex-wrap gap-x-3.5 font-sans text-[13.5px] font-medium text-on-surface-variant [&>span+span]:before:me-3.5 [&>span+span]:before:text-outline [&>span+span]:before:content-['·']">
           {body.subjectTop.targetGrade ? (
             <span>
               <b className="font-sans text-[15px] font-extrabold text-grade-a-star">{body.subjectTop.targetGrade}</b> target

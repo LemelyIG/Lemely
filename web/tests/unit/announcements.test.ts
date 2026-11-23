@@ -67,7 +67,7 @@ function page(announcements: StudentAnnouncement[]): StudentAnnouncementsPage {
 }
 
 // `daysUntil`/`formatCountdown` moved to `lib/countdown.ts` (C3b, so
-// `StudyPlanWeek.tsx` could share them without importing across screens) —
+// `planCopy.ts` could share them without importing across screens) —
 // their tests moved with them, to `tests/unit/countdown.test.ts`.
 
 describe("nextExam", () => {

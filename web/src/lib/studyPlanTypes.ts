@@ -23,8 +23,8 @@ export type ActivityType = "practice" | "flashcards" | "past_paper" | "review"
  * `focus` is `f"{activity label}: {topic}"` server-side — a restatement of
  * `activityType` and `topic`, **not** a rationale. Nothing on this type records
  * which of the planner's three signals (weakness / placement / confidence)
- * produced the session; see `sessionRationale` in `studyPlanData.ts` for the
- * one provable statement available, and do not render `focus` as a "why".
+ * produced the session; use the separately supplied reason when available,
+ * and do not render `focus` as a "why".
  *
  * `completedAt` is the P5 XP seam and nothing more — there is no points or
  * streak field here, and inventing one on the completion affordance is exactly
