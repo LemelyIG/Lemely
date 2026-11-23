@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
+/* Hallmark · pre-emit critique: P4 H4 E3 S4 R4 V4 */
 import { useState } from "react"
 import { Link } from "react-router-dom"
 import { Binny, GhostRows, Walkthrough, type BinnyMood } from "@/components/redesign"

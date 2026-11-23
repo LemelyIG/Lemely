@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R3 V3 */
+/* Hallmark · pre-emit critique: P4 H4 E3 S4 R3 V3 */
 import { useState } from "react"
 import { Modal } from "@/components/ui/modal"
 import { AnswerPanel, type AnswerImages } from "./AnswerPanel"
