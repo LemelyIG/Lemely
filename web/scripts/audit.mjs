@@ -2491,14 +2491,15 @@ function buildRouteRegistry(seed) {
     // `useSubject` hook. It was excluded by a header note claiming it was
     // "still on mock data", which was never true. Audited under the declining
     // student because that account has three real 0625 attempts, so the
-    // populated state renders; the probe targets the "Forecast grade" label
-    // rather than a number, which would move with the fixture.
+    // populated state renders; the probe targets the "Your path" heading
+    // rather than a number, which would move with the fixture. (Redesign L2
+    // replaced the stat-card screen; the heading is on every populated state.)
     {
       screenId: "S-08",
       slug: "student-subject",
       path: `/student/subject/${subjectCode}`,
       session: decliningStudentSession,
-      ready: (page) => waitForText(page, "Forecast grade"),
+      ready: (page) => waitForText(page, "Your path"),
       authed: true,
     },
     // ── G-01 · Landing / marketing (added P5.11) ──────────────────────────

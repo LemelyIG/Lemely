@@ -181,6 +181,11 @@ const ALLOWLIST: { path: string; reason: string }[] = [
       "loads data, but it is a redirect-only interim tab root: RouteSkeleton while pending, then a Navigate (to the first subject, or Home when there is none), so there is no content an error panel could stand in for. A failed overview fetch is not pending and has no subjects, so it also sends the student Home silently; accepted for an interim root that L4 and L9 replace",
   },
   {
+    path: "src/portals/student/screens/Subject.tsx",
+    reason:
+      "loads data, but `<QueryState>` cannot draw it: it renders the error panel for any `status: \"error\"`, so a failed refetch over a subject already on screen would swap a readable body for an error, and it has no way to turn the endpoint's 404 into the first-run screen. The container owns both states through `subjectModel.selectScreenState` (with `hasData`) and `refreshFailed`, proved against a real QueryObserver in `subjectContainer.test.ts`",
+  },
+  {
     path: "src/portals/teacher/screens/ClassRoster.tsx",
     reason:
       "loads no data: renders the class detail from `useClassDetailContext()`, which its parent layout fetches and gates; imports only the enrol/remove mutations",

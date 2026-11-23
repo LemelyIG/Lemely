@@ -167,10 +167,6 @@ describe("native class and data-lines hooks stay on the shared components", () =
     expect(src).toContain('data-lines="2"')
     expect(src).toContain('"lm-native-row flex items-center')
   })
-  it("Subject stat tiles opt out of the native bleed so they stay side by side", () => {
-    const src = readFileSync(join(SRC, "portals/student/screens/Subject.tsx"), "utf8")
-    expect(src.match(/<Card data-native-bleed="off" className="min-w-33/g)).toHaveLength(2)
-  })
   it("PortalShell: the main column carries lm-native-main and the page class is gone", () => {
     const src = read("components/shell/PortalShell.tsx")
     expect(src).not.toContain("lm-native-page")

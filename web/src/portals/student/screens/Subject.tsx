@@ -1,288 +1,120 @@
-/* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 */
-import { useNavigate, useParams } from "react-router-dom"
-import { Card } from "@/components/ui/card"
-import { SubjectGlyph } from "@/components/ui/subject-glyph"
-import { EmptyState } from "@/components/ui/state-views"
-import { QueryState } from "@/components/ui/query-state"
-import { PageHeaderSkeleton, CardGridSkeleton } from "@/components/ui/loading-shapes"
-import { ApiError } from "@/lib/api"
-import { studentLoadFailureMessage } from "@/lib/studentOutcome"
-import { subjectIdentifier } from "@/lib/subjectIdentifier"
-import { useReference } from "@/lib/hooks/useReferenceApi"
-import { useSubject } from "@/lib/hooks/useStudentApi"
-import { cn } from "@/lib/utils"
-import { vizText } from "../components/colors"
-import { PageHeading } from "@/components/ui/page-heading"
-
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 /*
- * Subject (isSubject). Wired to `GET /student/subject/{code}` via
- * useSubject(code), code taken from the `subject/:code` route param. Header
- * with forecast/weighted-mean stat cards, two per-paper breakdown cards (bar
- * strips + boundary/position), then a paper history ledger and a topic map
- * grid — every section is backed by the `Subject` DTO.
+ * Subject (redesign L2, mock `.impeccable/mocks/student-r2/final.html`).
+ * Wired to `GET /student/subject/{code}` via `useSubject(code)`. Thin on
+ * purpose: `subject/subjectModel.ts` makes every decision (state, copy, Binny,
+ * links, bar heights) and the `subject/*` files draw it. The endpoint's
+ * explicit no-history and no-papers responses render the first run (K2).
  *
- * ── P4.10, and a topic map that printed an impossible fraction ────────────
+ * react-query v5 reports `status: "error"` for a failed refetch yet keeps the
+ * last good `data`. `hasData` tells the model which of the two failures this is:
+ * a failed first load is the error screen with a real retry; a failed refetch
+ * over a subject already on screen keeps that body and adds a quiet notice.
  *
- * **Every tile read "73% / of 24 marks".** The section was titled "Marks
- * earned / marks available, per syllabus unit", each tile printed `t.acc`, and
- * under it a hardcoded "of 24 marks". Two things are wrong and they compound:
- *
- *   - `acc` is not a mark count. `routers/student.py:364` builds it as
- *     `f"{round(area.accuracy * 100.0)}%"` — a percentage. So the pair read as
- *     a numerator of 73 over a denominator of 24.
- *   - **There is no denominator on the wire at all.** `TopicTileDTO` carries
- *     `name`, `acc`, `color`, `weak` and nothing else, so the 24 was not a
- *     stale value or a rounding of something real; it was invented, and it was
- *     the same 24 on every tile of every subject.
- *
- * The fix is to say what the number is. The tiles show accuracy per syllabus
- * unit, the heading now says that, and no denominator is rendered because none
- * exists (UI spec §1.4: an absent figure beats an invented one).
- *
- * **The weighted-mean delta was green whatever it said.** `weightedMeanDelta`
- * is built as `f"{'+' if delta >= 0 else ''}{delta} since first paper"`, so it
- * is "-8 since first paper" for a student who has got worse — and it was
- * rendered in `text-success-text` unconditionally. A student sliding backwards was shown
- * their decline in the product's success colour. This is D4.1's "+0 in teal"
- * finding on a different screen, and the tone is derived from the sign now.
- *
- * **The whole screen was arbitrary values.** ~40 `text-[13.5px]`-class
- * literals, three raw `oklch()` backgrounds bypassing the token block
- * entirely (§3.2 item 13), and `font-serif`/`font-mono` paired with a size
- * literal rather than the rungs that name their own face.
+ * This screen is not routed through `<QueryState>` (see its entry on the
+ * queryStateGate allowlist): that component renders one treatment per query
+ * status, which would replace a readable body with an error panel on a failed
+ * refresh and cannot turn a 404 into the first-run screen.
  */
-export function Subject() {
-  const navigate = useNavigate()
-  const { code } = useParams<{ code: string }>()
-  // `useSubject` is `enabled: !!code`, so it would park at `fetchStatus:
-  // "idle"` on an empty code and never resolve — but the only route here is
-  // `subject/:code`, which cannot match without one, so no `idle` branch is
-  // reachable. Said out loud because six sibling screens in this sweep do
-  // carry `idle` for the same hook shape, and silence here would read as an
-  // oversight rather than a checked decision.
-  const query = useSubject(code ?? "")
-  const { data: reference } = useReference()
+import { useParams, useSearchParams } from "react-router-dom"
+import { ApiError } from "@/lib/api"
+import { useExamCalendar } from "@/lib/hooks/useAnnouncementApi"
+import { useFlashcardDecks } from "@/lib/hooks/useFlashcardApi"
+import { useReference, useSubjectName } from "@/lib/hooks/useReferenceApi"
+import { useSubject } from "@/lib/hooks/useStudentApi"
+import { subjectIdentifier } from "@/lib/subjectIdentifier"
+import { SubjectBody } from "./subject/SubjectBody"
+import { SubjectError } from "./subject/SubjectError"
+import { SubjectFirstRun } from "./subject/SubjectFirstRun"
+import { SubjectHeader } from "./subject/SubjectHeader"
+import { SubjectLoading } from "./subject/SubjectLoading"
+import { SubjectRefreshNotice } from "./subject/SubjectRefreshNotice"
+import {
+  buildSubjectView,
+  links,
+  nextExamDate,
+  refreshFailed,
+  selectScreenState,
+  subtitleFor,
+  tierLabel,
+  type QueryFacts,
+} from "./subject/subjectModel"
+import { useMinWidth } from "./subject/useMinWidth"
+import "./subject/subject.css"
 
-  /*
-   * A 404 here is not a failure: it is a subject with no corrected papers yet,
-   * which is every subject on a new account. It is handled before
-   * `<QueryState>` rather than through its `error` prop: that prop renders one
-   * treatment per query (a heading, a body, and a retry that calls
-   * `query.refetch()`), and this case needs a different heading, a different
-   * body and an action that navigates to `/student/correct` rather than
-   * retrying a request that will 404 again. `EmptyState`, not `ErrorState`,
-   * for the same reason the original branch used it: nothing is broken.
-   */
-  if (query.status === "error" && query.error instanceof ApiError && query.error.status === 404) {
-    return (
-      <div className="flex flex-col gap-6">
-        {/* The page must identify itself in every state, not only the populated
-            one — see the same heading inside `<QueryState>` below for the
-            pending/generic-error cases this mirrors. */}
-        <h1 className="sr-only">Subject {code}</h1>
-        <EmptyState
-          heading={`Nothing recorded for ${code} yet`}
-          body="Once you correct a paper in this subject, your grade forecast, per-paper breakdown and topic map all appear here."
-          action={{ label: "Correct a paper", onClick: () => navigate("/student/correct") }}
-        />
-      </div>
-    )
+export function Subject() {
+  // The only route here is `subject/:code`, which cannot match without a code,
+  // so `useSubject`'s `enabled: !!code` never parks this screen at idle.
+  const { code = "" } = useParams<{ code: string }>()
+  const query = useSubject(code)
+  const fallbackName = useSubjectName(code)
+  const { data: reference } = useReference()
+  const { data: calendar } = useExamCalendar()
+  const { data: decks = [] } = useFlashcardDecks(code)
+  const [params, setParams] = useSearchParams()
+  const wide = useMinWidth(1280)
+  const twoCol = useMinWidth(768)
+  const now = new Date()
+
+  const catalogue = reference?.subjects.find((s) => s.code === code)
+  const name = query.data?.header.name ?? fallbackName
+  // Only the subject endpoint's two explicit absence responses supersede cached data.
+  const absent = query.error instanceof ApiError && query.error.status === 404 &&
+    (query.error.detail === `No history for subject ${code}` || query.error.detail === `No papers for subject ${code}`)
+  const facts: QueryFacts = {
+    status: query.status,
+    errorStatus: absent ? 404 : null,
+    paperCount: query.data?.paperHistory.length ?? 0,
+    hasData: !absent && query.data !== undefined,
   }
+  const state = selectScreenState(facts)
+  const examDate = nextExamDate(calendar, code, now)
+  const view =
+    (state === "full" || state === "sparse") && query.data
+      ? buildSubjectView({
+          data: query.data,
+          catalogue,
+          decks,
+          examDate,
+          now,
+          requestedPaper: params.get("paper"),
+          mode: state,
+        })
+      : null
+
+  const { primary, secondary } = subjectIdentifier(
+    reference?.qualificationLevels,
+    name,
+    code,
+    query.data?.header.qualificationLevel ?? catalogue?.qualificationLevel,
+  )
+
+  const selectPaper = (paperNumber: number) =>
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        next.set("paper", String(paperNumber))
+        return next
+      },
+      { replace: true },
+    )
 
   return (
-    <div className="flex flex-col gap-6">
-      <QueryState
-        query={query}
-        srHeading={`Subject ${code}`}
-        skeleton={
-          <>
-            <PageHeaderSkeleton />
-            <CardGridSkeleton count={2} />
-          </>
-        }
-        error={{ heading: "We couldn't load this subject", body: studentLoadFailureMessage }}
-      >
-        {(data) => {
-          const { header: subjectHeader, papersBreakdown, topicMap, paperHistory } = data
-          const { primary, secondary } = subjectIdentifier(
-            reference?.qualificationLevels,
-            subjectHeader.name,
-            subjectHeader.code,
-            subjectHeader.qualificationLevel,
-          )
-
-          // The backend renders the sign into the string ("+4 since first paper" /
-          // "-8 since first paper"), so the sign is what decides the tone. Neither
-          // arm is the accent: on this palette accent is the alert register, and a
-          // decline is disappointing news rather than an error the student can act on.
-          const declining = subjectHeader.weightedMeanDelta.trimStart().startsWith("-")
-
-          return (
-            <>
-              <div className="flex flex-wrap items-start gap-6">
-                {/* `basis-80` + `min-w-0`, not `min-w-80` (P6.1). The intent is "keep
-                    this column beside the cards until there is no longer room for
-                    both", and a flex BASIS says that without also forbidding the column
-                    from ever being narrower than 320px. `min-w-80` forbade it: at the
-                    320px viewport §6.1 requires, 320px of column plus the screen's own
-                    horizontal padding is wider than the screen, so the header ran off
-                    the side. It did not show up as a scrollbar either, because html and
-                    body clip — the title simply had its end cut off. */}
-                <div className="min-w-0 flex-1 basis-80">
-                  {/* Rendered only when there is something to show: an unregistered
-                      subject code resolves `name === code` and `secondary` collapses
-                      to "" (see `subjectIdentifier`'s docstring), and an empty
-                      eyebrow `<div>` would still take up a line of vertical rhythm. */}
-                  {secondary ? (
-                    <div className="text-data-sm text-on-surface-variant">{secondary}</div>
-                  ) : null}
-                  <div className="mt-1 flex items-center gap-3">
-                    <SubjectGlyph subject={subjectHeader.name} className="mt-0.5" />
-                    <PageHeading repeatsTitle={true} className="text-display-lg text-on-surface">{primary}</PageHeading>
-                  </div>
-                  <div className="mt-2 max-w-[62ch] text-pretty text-body-md text-on-surface-variant">
-                    {subjectHeader.intro}
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-3">
-                  <Card data-native-bleed="off" className="min-w-33 px-5 py-4 text-center">
-                    <div className="text-eyebrow text-on-surface-variant">Forecast grade</div>
-                    {/* The data face for both figures: §4.2 puts grades, scores and
-                        percentages on the tabular rung, not the display face. They
-                        were `font-serif text-[44px]`, which is the display face wearing
-                        a literal size. */}
-                    <div className="text-data-lg text-on-surface">{subjectHeader.forecast}</div>
-                    <div className="text-body-sm text-on-surface-variant">at current trajectory</div>
-                  </Card>
-                  <Card data-native-bleed="off" className="min-w-33 px-5 py-4 text-center">
-                    <div className="text-eyebrow text-on-surface-variant">Weighted mean</div>
-                    <div className="text-data-lg text-on-surface">
-                      {subjectHeader.weightedMean}
-                      <span className="text-data-md">%</span>
-                    </div>
-                    <div className={cn("text-body-sm", declining ? "text-on-surface-variant" : "text-success-text")}>
-                      {subjectHeader.weightedMeanDelta}
-                    </div>
-                  </Card>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-5 min-[1180px]:grid-cols-2">
-                {papersBreakdown.map((p) => (
-                  <Card key={p.title} className="p-5">
-                    <div className="flex items-baseline gap-2.5">
-                      <div className="text-body-md font-semibold text-on-surface">{p.title}</div>
-                      <div className="text-body-sm text-on-surface-variant">{p.sub}</div>
-                      <div className="flex-1" />
-                      <div className="text-data-md text-on-surface">{p.mean}</div>
-                    </div>
-                    <div className="my-5 mb-2.5 flex h-24 items-end gap-1.5">
-                      {p.bars.map((b) => (
-                        <div
-                          key={b.label}
-                          className="flex h-full flex-1 flex-col items-center justify-end gap-1.5"
-                        >
-                          {/* Two fixes in one element. `bg-outline` for the
-                              resting bar, not a raw `oklch()` literal (§3.2 item 13:
-                              every colour comes from the token block, and this one
-                              bypassed it).
-
-                              And `bg-inverse-surface` for the highlighted bar, not `bg-primary`.
-                              `highlight` marks the most recent paper, which is
-                              emphasis; the row directly beneath it uses accent to mean
-                              "you are short of the boundary". Having one colour carry
-                              both in the same card is how a student reads "your latest
-                              paper" as "your latest paper is a problem" on the card
-                              where it isn't. */}
-                          <div
-                            className={cn(
-                              "w-full rounded-t-sm",
-                              b.highlight ? "bg-inverse-surface" : "bg-outline",
-                            )}
-                            style={{ height: `${b.value}%` }}
-                          />
-                          <div className="text-data-sm text-on-surface-variant">{b.label}</div>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="flex gap-5 border-t border-outline-variant pt-3">
-                      <div>
-                        <div className="text-eyebrow text-on-surface-variant">Predicted boundary</div>
-                        <div className="mt-0.5 text-data-sm text-on-surface">{p.boundary}</div>
-                      </div>
-                      <div>
-                        <div className="text-eyebrow text-on-surface-variant">Your position</div>
-                        <div
-                          className={cn(
-                            "mt-0.5 text-data-sm",
-                            p.positionOk ? "text-success-text" : "text-on-primary-container",
-                          )}
-                        >
-                          {p.position}
-                        </div>
-                      </div>
-                    </div>
-                  </Card>
-                ))}
-              </div>
-
-              <div className="grid grid-cols-1 items-start gap-5 min-[1180px]:grid-cols-[1.3fr_1fr]">
-                <Card className="overflow-hidden">
-                  <div className="flex items-baseline gap-2.5 px-5 pt-4 pb-3">
-                    <div className="text-body-md font-semibold text-on-surface">Paper history</div>
-                    <div className="text-body-sm text-on-surface-variant">newest first</div>
-                  </div>
-                  {paperHistory.map((h) => (
-                    <button
-                      key={h.id}
-                      onClick={() => navigate(`/student/result/${h.id}`)}
-                      className="grid w-full cursor-pointer grid-cols-[150px_1fr_90px_70px_44px] items-center gap-3 border-0 border-t border-outline-variant bg-transparent px-5 py-3 text-start transition-colors hover:bg-surface-container-low focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-                    >
-                      <span className="text-data-sm text-on-surface">{h.paper}</span>
-                      <span className="text-body-sm text-on-surface-variant">{h.note}</span>
-                      <span className="text-data-sm text-on-surface-variant">{h.marks}</span>
-                      <span className="text-data-sm text-on-surface">{h.pct}</span>
-                      {/* `text-end`, not `text-right`: this column follows `dir`. */}
-                      <span className={cn("text-data-md text-end", vizText(h.gradeColor))}>
-                        {h.grade}
-                      </span>
-                    </button>
-                  ))}
-                </Card>
-
-                <Card className="p-5">
-                  <div className="text-body-md font-semibold text-on-surface">Topic map</div>
-                  {/* Says what the number is. It used to promise "marks earned /
-                      marks available", which no field on this DTO supplies. */}
-                  <div className="mb-4 text-body-sm text-on-surface-variant">
-                    Your accuracy in each syllabus unit, across every paper you've corrected
-                  </div>
-                  <div className="grid grid-cols-1 gap-2 min-[1180px]:grid-cols-2">
-                    {topicMap.map((t) => (
-                      <div
-                        key={t.name}
-                        className={cn(
-                          "rounded-lg border border-outline-variant px-3 py-2.5",
-                          t.weak ? "bg-primary-container" : "bg-surface-container-low",
-                        )}
-                      >
-                        <div className="text-body-sm font-medium text-on-surface">{t.name}</div>
-                        <div className="mt-1.5 flex items-baseline gap-1.5">
-                          <div className={cn("text-data-md", vizText(t.color))}>{t.acc}</div>
-                          {/* No denominator: `TopicTileDTO` carries none, and the one
-                              that used to be here was a hardcoded 24 on every tile of
-                              every subject. `acc` is already a percentage. */}
-                          <div className="text-body-sm text-on-surface-variant">accuracy</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </Card>
-              </div>
-            </>
-          )
-        }}
-      </QueryState>
+    <div className="flex flex-col gap-4">
+      <SubjectHeader
+        title={primary}
+        subtitle={subtitleFor(secondary, tierLabel(catalogue, view?.path.selected ?? null))}
+        examDate={examDate}
+        planTo={links.plan(code)}
+        now={now}
+      />
+      {refreshFailed(facts) ? (
+        <SubjectRefreshNotice name={name} pending={query.isFetching} onRetry={() => void query.refetch()} />
+      ) : null}
+      {state === "loading" ? <SubjectLoading name={name} /> : null}
+      {state === "error" ? <SubjectError name={name} onRetry={() => void query.refetch()} /> : null}
+      {state === "first-run" ? <SubjectFirstRun code={code} name={name} wide={wide} twoCol={twoCol} /> : null}
+      {view ? <SubjectBody view={view} code={code} wide={wide} twoCol={twoCol} onSelectPaper={selectPaper} /> : null}
     </div>
   )
 }

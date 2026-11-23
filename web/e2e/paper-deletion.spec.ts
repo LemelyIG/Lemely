@@ -96,11 +96,21 @@ async function reviewAttemptIds(
   return body.items.map((r) => r.attemptId).filter((id): id is string => id !== null)
 }
 
-/** The Subject page's paper-history row for one paper (identified by its
- * `_paper_label`-format text, e.g. "0625/21"). Scoped to the "Paper history"
- * card so it can never match the sidebar's unrelated subject-code chips. */
+/** The Subject page's paper row for one paper (identified by its
+ * `_paper_label`-format text, e.g. "0625/21"). Scoped to the "Papers, newest
+ * first" list so it can never match the sidebar's unrelated subject-code chips. */
 function paperHistoryRow(page: Page, codeFragment: string) {
-  return page.getByRole("button").filter({ hasText: codeFragment })
+  return paperRows(page).filter({ hasText: codeFragment })
+}
+
+/** Every row of the Subject screen's "Papers, newest first" list (a link to that paper's result). */
+function paperRows(page: Page) {
+  return page.getByRole("list", { name: "Papers, newest first" }).getByRole("link")
+}
+
+/** The Subject path's paper switch: one tab per paper that has a marked attempt. */
+function paperTab(page: Page, paperNumber: number) {
+  return page.getByRole("tablist", { name: "Choose a paper" }).getByRole("tab", { name: `Paper ${paperNumber}`, exact: true })
 }
 
 async function deleteFromResultScreen(page: Page): Promise<void> {
@@ -142,8 +152,8 @@ test.describe.serial("paper deletion (Task 18)", () => {
     // presence now.
     await expect(paperHistoryRow(page, P1)).toBeVisible()
     await expect(paperHistoryRow(page, P4)).toBeVisible()
-    await expect(page.getByRole("button").filter({ hasText: "0625/" })).toHaveCount(4)
-    const weightedMeanBefore = await page.getByText("Weighted mean").locator("..").innerText()
+    await expect(paperRows(page)).toHaveCount(4)
+    await expect(paperTab(page, 1)).toBeVisible()
 
     await paperHistoryRow(page, P1).click()
     await expect(page).toHaveURL(/\/student\/result\//)
@@ -154,13 +164,12 @@ test.describe.serial("paper deletion (Task 18)", () => {
 
     // Gone from the list — proven absent against the proven-present set above.
     await expect(paperHistoryRow(page, P1)).toHaveCount(0)
-    await expect(page.getByRole("button").filter({ hasText: "0625/" })).toHaveCount(3)
+    await expect(paperRows(page)).toHaveCount(3)
 
-    // The grade moved: the weighted mean over {P2,P3,P4} differs from the
-    // one over all four papers captured above (60/68/74/81 — no coincidental
-    // tie is possible across the two overlapping sets).
-    const weightedMeanAfter = await page.getByText("Weighted mean").locator("..").innerText()
-    expect(weightedMeanAfter).not.toEqual(weightedMeanBefore)
+    // The path was recomputed from the new payload, not served from a stale
+    // cache: Paper 1 had a tab above and has none now.
+    await expect(paperTab(page, 1)).toHaveCount(0)
+    await expect(paperTab(page, 4)).toBeVisible()
 
     expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
   })
@@ -174,7 +183,7 @@ test.describe.serial("paper deletion (Task 18)", () => {
 
     // Exactly three papers now (P1 went in scenario 1): newest-first, so
     // position 1/2/3 are P4/P3/P2.
-    const rows = page.getByRole("button").filter({ hasText: "0625/" })
+    const rows = paperRows(page)
     await expect(rows).toHaveCount(3)
 
     // Prove the "second" position really is P3 before touching anything —
@@ -193,7 +202,7 @@ test.describe.serial("paper deletion (Task 18)", () => {
     // the live-browser proof that invalidation actually reaches the network,
     // not just the unit-level source-text gate `recentlyDeletedWiring.test.ts`
     // already pins.
-    const rowsAfter = page.getByRole("button").filter({ hasText: "0625/" })
+    const rowsAfter = paperRows(page)
     await expect(rowsAfter).toHaveCount(2)
     await expect(rowsAfter.nth(0)).toContainText(P4)
     // The new "second" row: must be P2 — the paper actually at that position
@@ -211,18 +220,14 @@ test.describe.serial("paper deletion (Task 18)", () => {
     const errors = watchConsole(page)
     await injectSession(page, { ...student, role: "student" })
 
-    // The header's own paper count before restore ("2 papers corrected." —
-    // P2, P4 survive scenarios 1/2) — captured so restore's effect on the
-    // grade context is proven the same way scenario 1 proves delete's, not
-    // just asserted by the paper reappearing in the history list below.
-    // Not the weighted-mean text itself: the two-paper mean {P2,P4}=68,81
-    // and the three-paper mean {P2,P3,P4}=68,74,81 round to the same
-    // displayed percentage, so an inequality check on that text would be a
-    // coincidental, not a real, proof — the paper count cannot tie the same
-    // way.
+    // The path's paper switch before restore: P2 and P4 survive scenarios 1/2,
+    // so it offers two tabs and none for Paper 3 — captured so restore's effect
+    // on the grade context is proven the same way scenario 1 proves delete's,
+    // not just asserted by the paper reappearing in the history list below.
     await page.goto("/student/subject/0625")
-    const introBefore = await page.getByText(/papers corrected\.$/).innerText()
-    expect(introBefore).toContain("2 papers")
+    await expect(paperTab(page, 4)).toBeVisible()
+    await expect(paperTab(page, 2)).toBeVisible()
+    await expect(paperTab(page, 3)).toHaveCount(0)
 
     await page.goto("/student/recently-deleted")
 
@@ -241,16 +246,14 @@ test.describe.serial("paper deletion (Task 18)", () => {
 
     await page.goto("/student/subject/0625")
     // Back to three papers: P4, P3, P2.
-    const rows = page.getByRole("button").filter({ hasText: "0625/" })
+    const rows = paperRows(page)
     await expect(rows).toHaveCount(3)
     await expect(paperHistoryRow(page, P3)).toBeVisible()
 
     // The grade context came back too: a real third paper counted again, not
     // just its row reappearing in the list above.
-    const introAfter = await page.getByText(/papers corrected\.$/).innerText()
-    expect(introAfter).toContain("3 papers")
-    expect(introAfter).not.toEqual(introBefore)
-    await expect(page.getByText("Weighted mean")).toBeVisible()
+    await expect(paperTab(page, 3)).toBeVisible()
+    await expect(page.getByRole("heading", { level: 2, name: /^Your path to / })).toBeVisible()
 
     expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
   })
@@ -401,7 +404,7 @@ test.describe.serial("paper deletion (Task 18)", () => {
 
     // Both attempts share one upload, so the paper-history table shows two
     // rows for the same "0625/11" paper — present, before either is touched.
-    const rows = page.getByRole("button").filter({ hasText: "0625/" })
+    const rows = paperRows(page)
     await expect(rows).toHaveCount(2)
 
     await rows.first().click()
@@ -409,8 +412,10 @@ test.describe.serial("paper deletion (Task 18)", () => {
     await deleteFromResultScreen(page)
 
     // The upload is gone, and with it every attempt marked from it (R7) —
-    // the subject has nothing left to show at all, not one row.
-    await expect(page.getByText("Nothing recorded for 0625 yet")).toBeVisible({ timeout: 15_000 })
+    // the subject has nothing left to show at all, not one row: the endpoint
+    // now answers 404 and the screen is the first run.
+    await expect(page.getByText("Find your first step")).toBeVisible({ timeout: 15_000 })
+    await expect(paperRows(page)).toHaveCount(0)
 
     expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
   })

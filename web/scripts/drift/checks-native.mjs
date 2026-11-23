@@ -595,29 +595,7 @@ NATIVE_CHECKS.push({
     },
   },
 );
-NATIVE_CHECKS.push({
-    id: "native-android-subject-stats-side-by-side",
-    platform: "android",
-    width: 390,
-    app: NATIVE_SUBJECT,
-    async run(page) {
-      await page.getByText("Forecast grade").waitFor()
-      const tiles = await page.evaluate(() => {
-        const cards = [...document.querySelectorAll(".lm-native-main .lm-native-card")].filter((c) =>
-          /Forecast grade|Weighted mean/.test(c.textContent ?? ""),
-        )
-        return cards.map((c) => {
-          const r = c.getBoundingClientRect()
-          return { top: r.top, left: r.left, right: r.right, vw: window.innerWidth }
-        })
-      })
-      if (tiles.length !== 2) throw new Error(`expected 2 stat tiles, found ${tiles.length}`)
-      if (Math.abs(tiles[0].top - tiles[1].top) > 0.5)
-        throw new Error(`stat tiles stacked: tops ${tiles[0].top}px / ${tiles[1].top}px`)
-      for (const t of tiles)
-        if (t.left < -0.5 || t.right > t.vw + 0.5) throw new Error(`stat tile overflows viewport: ${t.left}..${t.right} of ${t.vw}`)
-    },
-  },
+NATIVE_CHECKS.push(
   {
     id: "native-android-review-list-and-table",
     platform: "android",

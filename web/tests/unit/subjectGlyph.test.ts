@@ -93,10 +93,6 @@ describe("SubjectTag gains a leading-icon prop (source)", () => {
 })
 
 describe("SubjectGlyph consumers (source)", () => {
-  it("the student Subject page's header renders SubjectGlyph beside the subject name", () => {
-    expect(sourceOf("src/portals/student/screens/Subject.tsx")).toContain("<SubjectGlyph")
-  })
-
   it("the student sidebar's subject rows render design A's grade ring", () => {
     expect(sourceOf("src/portals/student/shell.tsx")).toContain("<GradeRing")
   })

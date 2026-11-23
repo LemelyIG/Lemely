@@ -50,6 +50,18 @@ import { relativeTo, sourceFiles, stripComments } from "./support/jsxSource"
 const SCANNED_FILES_CURATED = [
   // Phase 4, surface 10 — 404 / misc, and the settings lane no surface owned.
   "src/portals/student/screens/Subject.tsx",
+  "src/portals/student/screens/subject/SubjectSteps.tsx",
+  "src/portals/student/screens/subject/PathSection.tsx",
+  "src/portals/student/screens/subject/TipSection.tsx",
+  "src/portals/student/screens/subject/WinList.tsx",
+  "src/portals/student/screens/subject/TopicsSection.tsx",
+  "src/portals/student/screens/subject/PapersList.tsx",
+  "src/portals/student/screens/subject/SubjectHeader.tsx",
+  "src/portals/student/screens/subject/SubjectBody.tsx",
+  "src/portals/student/screens/subject/SubjectFirstRun.tsx",
+  "src/portals/student/screens/subject/SubjectLoading.tsx",
+  "src/portals/student/screens/subject/SubjectError.tsx",
+  "src/portals/student/screens/subject/SubjectRefreshNotice.tsx",
   "src/portals/student/screens/Parents.tsx",
   "src/portals/student/screens/Notifications.tsx",
   "src/portals/student/screens/Announcements.tsx",
