@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { createElement, isValidElement, type ComponentProps, type ComponentType, type ReactNode } from "react"
+import { createElement, isValidElement, useState, type ComponentProps, type ComponentType, type ElementType, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { MemoryRouter } from "react-router-dom"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { TopicChips } from "@/components/redesign"
 import type { PaperBreakdown, Subject } from "@/lib/studentTypes"
 import { GhostSteps, SubjectSteps } from "@/portals/student/screens/subject/SubjectSteps"
@@ -17,11 +17,46 @@ import { SubjectBody } from "@/portals/student/screens/subject/SubjectBody"
 import { SubjectFirstRun } from "@/portals/student/screens/subject/SubjectFirstRun"
 import { SubjectLoading } from "@/portals/student/screens/subject/SubjectLoading"
 import { SubjectError } from "@/portals/student/screens/subject/SubjectError"
-import { buildSubjectView, firstRunTip, winRows, type SubjectView, type TopicChipView } from "@/portals/student/screens/subject/subjectModel"
+import { SubjectRefreshNotice } from "@/portals/student/screens/subject/SubjectRefreshNotice"
+import { GHOST_CHIPS, buildSubjectView, firstRunTip, winRows, type SubjectView, type TopicChipView } from "@/portals/student/screens/subject/subjectModel"
 import { MATHS, MATHS_ONE, MATHS_TOPICS, NOW } from "@/portals/student/screens/subject/fixtures"
+
+/*
+ * SubjectBody holds two hooks, so its element tree can only be read by calling it. `useNavigate` needs
+ * a router context, so it is replaced by one spy. `useState` keeps the real hook everywhere except the
+ * single call a test queues with `mockImplementationOnce`.
+ */
+const navigate = vi.hoisted(() => vi.fn())
+vi.mock("react-router-dom", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("react-router-dom")>()),
+  useNavigate: () => navigate,
+}))
+vi.mock("react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react")>()
+  return { ...actual, useState: vi.fn(actual.useState) }
+})
 
 const html = <P extends object>(node: ComponentType<P>, props: P) =>
   renderToStaticMarkup(createElement(MemoryRouter, null, createElement(node, props)))
+
+/** Every element of `type` in a tree a hookless component returned (or SubjectBody, called by hand), as its props. */
+function propsOf<T extends ElementType>(root: ReactNode, type: T): ComponentProps<T>[] {
+  const found: ComponentProps<T>[] = []
+  const walk = (node: ReactNode): void => {
+    if (Array.isArray(node)) return node.forEach(walk)
+    if (!isValidElement<{ children?: ReactNode }>(node)) return
+    if (node.type === type) found.push(node.props as unknown as ComponentProps<T>)
+    walk(node.props.children)
+  }
+  walk(root)
+  return found
+}
+
+function only<T extends ElementType>(root: ReactNode, type: T): ComponentProps<T> {
+  const found = propsOf(root, type)
+  if (found.length !== 1) throw new Error(`expected one ${String(typeof type === "string" ? type : (type as { name?: string }).name)}, found ${found.length}`)
+  return found[0]
+}
 
 /**
  * What TopicsSection hands the kit's chips. The section holds no hooks, so calling it returns its
@@ -501,20 +536,130 @@ describe("SubjectBody", () => {
   })
 })
 
+describe("SubjectBody wiring", () => {
+  type BodyProps = ComponentProps<typeof SubjectBody>
+  const baseProps = (over: Partial<BodyProps> = {}): BodyProps => ({ view: full, code: "0580", wide: false, twoCol: false, onSelectPaper: () => {}, ...over })
+  /** One call of the component with the papers list collapsed (`expanded` false) unless told otherwise. */
+  const draw = (over: Partial<BodyProps> = {}, expanded = false) => {
+    const setExpanded = vi.fn()
+    vi.mocked(useState).mockImplementationOnce((() => [expanded, setExpanded]) as unknown as typeof useState)
+    return { tree: SubjectBody(baseProps(over)), setExpanded }
+  }
+  const sections = (tree: ReactNode) => ({
+    path: only(tree, PathSection),
+    tip: only(tree, TipSection),
+    topics: only(tree, TopicsSection),
+    papers: only(tree, PapersList),
+  })
+
+  it("hands each section its own slice of the view", () => {
+    const { tree } = draw()
+    const { path, tip, topics, papers } = sections(tree)
+    expect(path.path).toBe(full.path)
+    expect(tip.tip).toBe(full.tip)
+    expect(topics.chips).toBe(full.chips)
+    expect(topics.hint).toBe(full.topicsHint)
+    expect(papers.rows).toBe(full.papers)
+    expect(only(tree, WinList).win).toBe(full.win)
+  })
+  it("hands the topics section the sparse hint, which the full view leaves null", () => {
+    expect(sparse.topicsHint).not.toBeNull()
+    expect(sections(draw({ view: sparse }).tree).topics.hint).toBe(sparse.topicsHint)
+  })
+  it("puts path, tip and win on the left and topics and papers on the right", () => {
+    const { tree } = draw()
+    const root = tree as { props: { children: ReactNode } }
+    const columns = (root.props.children as ReactNode[]).filter(isValidElement)
+    expect(columns).toHaveLength(2)
+    const typesIn = (col: ReactNode) =>
+      ((col as { props: { children: ReactNode } }).props.children as ReactNode[]).filter(isValidElement).map((e) => e.type)
+    expect(typesIn(columns[0])).toEqual([PathSection, TipSection, WinList])
+    expect(typesIn(columns[1])).toEqual([TopicsSection, PapersList])
+  })
+  it("sends a tab press on the path to onSelectPaper", () => {
+    const onSelectPaper = vi.fn()
+    const { path } = sections(draw({ onSelectPaper }).tree)
+    path.onSelect(2)
+    expect(onSelectPaper).toHaveBeenCalledTimes(1)
+    expect(onSelectPaper).toHaveBeenCalledWith(2)
+  })
+  it("sends a topic chip press to that topic's practice page for this subject", () => {
+    navigate.mockClear()
+    const { topics } = sections(draw({ code: "0625" }).tree)
+    topics.onSelect("C7 Vectors")
+    expect(navigate).toHaveBeenCalledTimes(1)
+    expect(navigate).toHaveBeenCalledWith("/student/practice/0625?topic=C7%20Vectors")
+  })
+  it("links the win heading to this subject's practice page", () => {
+    expect(only(draw({ code: "0625" }).tree, WinList).allTo).toBe("/student/practice/0625")
+  })
+  it("draws no win list when no topic has marks left to win", () => {
+    const view = { ...full, win: { heading: "More marks to win", rows: [] } }
+    expect(propsOf(draw({ view }).tree, WinList)).toHaveLength(0)
+  })
+  it("sizes Binny 60 on a phone, 64 in two columns and 72 when wide", () => {
+    const size = (wide: boolean, twoCol: boolean) => sections(draw({ wide, twoCol }).tree).tip.size
+    expect(size(false, false)).toBe(60)
+    expect(size(false, true)).toBe(64)
+    expect(size(true, false)).toBe(72)
+    expect(size(true, true)).toBe(72)
+  })
+  it("shows four papers on a phone and five when wide", () => {
+    expect(sections(draw({ wide: false }).tree).papers.visible).toBe(4)
+    expect(sections(draw({ wide: true }).tree).papers.visible).toBe(5)
+  })
+  it("shows every paper once All N papers has been pressed, and presses it through state", () => {
+    const first = draw()
+    expect(sections(first.tree).papers.visible).toBe(4)
+    sections(first.tree).papers.onShowAll()
+    expect(first.setExpanded).toHaveBeenCalledTimes(1)
+    expect(first.setExpanded).toHaveBeenCalledWith(true)
+    expect(sections(draw({}, true).tree).papers.visible).toBe(full.papers.length)
+    expect(sections(draw({ wide: true }, true).tree).papers.visible).toBe(full.papers.length)
+  })
+  it("folds the secure chips only on the full screen and only on a phone", () => {
+    const fold = (view: SubjectView, wide: boolean) => sections(draw({ view, wide }).tree).topics.foldSecure
+    expect(fold(full, false)).toBe(true)
+    expect(fold(full, true)).toBe(false)
+    expect(fold(sparse, false)).toBe(false)
+    expect(fold(sparse, true)).toBe(false)
+  })
+})
+
 describe("first run, loading and error", () => {
+  const firstRun = () => html(SubjectFirstRun, { code: "0580", name: "Mathematics", wide: false, twoCol: false })
   it("walks a new student through the first scan (K2)", () => {
-    const out = html(SubjectFirstRun, { code: "0580", name: "Mathematics", wide: false, twoCol: false })
+    const out = firstRun()
     expect(out).toContain("Your path to A*")
-    expect(out).toContain("Let’s find your first step")
+    expect(out).toContain("Find your first step")
     expect(out).toContain("Scan a Mathematics paper")
     expect(out).toContain("Upload a PDF instead")
     expect(out).toContain("Lemely marks it")
     expect(out).toContain("Every Mathematics paper you mark lands here, newest first.")
   })
-  it("marks the loading state busy and names it (K4)", () => {
+  it("draws the ghost path with the A* goal labelled, hidden from screen readers", () => {
+    const out = firstRun()
+    expect(out).toContain('<div class="sj-steps sj-steps--ghost" aria-hidden="true">')
+    expect(out).toContain("<b>A*</b>")
+    expect(out).toContain("A* line")
+    expect(only(SubjectFirstRun({ code: "0580", name: "Mathematics", wide: false, twoCol: false }), GhostSteps).goalGrade).toBe("A*")
+  })
+  it("hides the ghost topic chips from screen readers and draws all of them", () => {
+    const out = firstRun()
+    expect(out).toContain('<div class="sj-ghostchips" aria-hidden="true">')
+    expect(out.match(/class="sj-ghostchip"/g)).toHaveLength(GHOST_CHIPS.length)
+  })
+  it("marks the right column as the first-run aside", () => {
+    const out = firstRun()
+    expect(out).toContain('<div class="sj-col sj-col--aside-first-run">')
+    expect(out.match(/class="sj-col"/g)).toHaveLength(1)
+  })
+  it("announces the load as one named status region, left live (K4)", () => {
     const out = html(SubjectLoading, { name: "Mathematics" })
-    expect(out).toContain('aria-busy="true"')
+    expect(out).toContain('role="status"')
     expect(out).toContain('aria-label="Loading Mathematics"')
+    // aria-busy="true" would mute the live region the status role exists to announce through.
+    expect(out).not.toContain("aria-busy")
   })
   it("offers a retry and a way home on error (K5)", () => {
     const out = html(SubjectError, { name: "Mathematics", onRetry: () => {} })
@@ -523,5 +668,39 @@ describe("first run, loading and error", () => {
     expect(out).toContain("Try again")
     expect(out).toContain('href="/student"')
     expect(out).toContain('role="alert"')
+  })
+  it("calls onRetry once when Try again is pressed", () => {
+    const onRetry = vi.fn()
+    const buttons = propsOf(SubjectError({ name: "Mathematics", onRetry }), "button")
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0].children).toBe("Try again")
+    expect(buttons[0].type).toBe("button")
+    buttons[0].onClick?.({} as never)
+    expect(onRetry).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("SubjectRefreshNotice", () => {
+  it("says the refresh failed and that the last loaded view is still showing, in a quiet status region", () => {
+    const out = html(SubjectRefreshNotice, { name: "Mathematics", onRetry: () => {}, pending: false })
+    expect(out).toContain('role="status"')
+    expect(out).not.toContain('role="alert"')
+    expect(out).toContain("Couldn’t refresh Mathematics.")
+    expect(out).toContain("Showing what loaded before.")
+    expect(out).toContain("Try again")
+    expect(out).not.toContain("!")
+  })
+  it("calls onRetry once when Try again is pressed", () => {
+    const onRetry = vi.fn()
+    const buttons = propsOf(SubjectRefreshNotice({ name: "Mathematics", onRetry, pending: false }), "button")
+    expect(buttons).toHaveLength(1)
+    buttons[0].onClick?.({} as never)
+    expect(onRetry).toHaveBeenCalledTimes(1)
+  })
+  it("disables the button while the retry is running", () => {
+    const [button] = propsOf(SubjectRefreshNotice({ name: "Mathematics", onRetry: () => {}, pending: true }), "button")
+    expect(button.disabled).toBe(true)
+    const [idle] = propsOf(SubjectRefreshNotice({ name: "Mathematics", onRetry: () => {}, pending: false }), "button")
+    expect(idle.disabled).toBe(false)
   })
 })

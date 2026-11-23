@@ -128,6 +128,13 @@
 .sj-skelbars { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; align-items: end; height: 108px; }
 .sj-skelbars > * { border-radius: 14px 14px 4px 4px; }
 
+/* ---- Refresh failed over cached data ------------------------------------ */
+.sj-notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; padding: 4px 4px 4px 14px; border-radius: 14px; background: var(--md-surface-container-low); }
+.sj-notice p { margin: 0; font: 500 14px/1.4 var(--font-sans); color: var(--md-on-surface); text-wrap: pretty; }
+.sj-notice-go { min-height: 44px; padding: 0 10px; border: 0; background: none; cursor: pointer; font: 700 14px var(--font-sans); color: var(--md-primary); }
+.sj-notice-go:disabled { cursor: default; opacity: 0.6; }
+.sj-notice-go:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; border-radius: 10px; }
+
 /* ---- Error -------------------------------------------------------------- */
 .sj-err { display: grid; justify-items: center; align-content: center; text-align: center; gap: 12px; padding: 24px 8px; min-height: 60dvh; }
 .sj-err h2 { margin: 6px 0 0; font: 800 28px/1.15 var(--font-display); letter-spacing: -0.02em; color: var(--md-primary); text-wrap: balance; }

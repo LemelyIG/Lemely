@@ -18,7 +18,7 @@ export function SubjectFirstRun({ code, name, wide, twoCol }: { code: string; na
           <h2 id="sj-path-h" className="sj-h2">
             Your path to A*
           </h2>
-          <GhostSteps />
+          <GhostSteps goalGrade="A*" />
         </section>
         <TipSection tip={firstRunTip(code, name)} size={wide ? 72 : twoCol ? 64 : 60} />
         <Walkthrough steps={steps} />

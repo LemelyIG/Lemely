@@ -12,12 +12,17 @@ export interface QueryFacts {
   status: "pending" | "error" | "success"
   errorStatus: number | null
   paperCount: number
+  /** `data !== undefined`. react-query v5 reports status "error" for a failed refetch yet keeps the last good data. */
+  hasData: boolean
 }
+/** A failed first load is an error screen. A failed refetch over data already loaded keeps that screen. */
 export function selectScreenState(q: QueryFacts): SubjectScreenState {
   if (q.status === "pending") return "loading"
-  if (q.status === "error") return q.errorStatus === 404 ? "first-run" : "error"
+  if (q.status === "error" && !q.hasData) return q.errorStatus === 404 ? "first-run" : "error"
   return q.paperCount === 0 ? "first-run" : q.paperCount === 1 ? "sparse" : "full"
 }
+/** The body is still showing but its refresh failed: the screen adds a quiet notice. */
+export function refreshFailed(q: QueryFacts): boolean { return q.status === "error" && q.hasData }
 const enc = encodeURIComponent
 export const links = {
   scan: (code: string) => `/student/correct?subject=${enc(code)}`,
@@ -151,7 +156,7 @@ export function sparseTip(code: string): TipView {
   return { mood: "happy", line: "Great start. Next paper?", action: scanAction(code), secondary: null }
 }
 export function firstRunTip(code: string, subjectName: string): TipView {
-  return { mood: "open", line: "Let’s find your first step",
+  return { mood: "open", line: "Find your first step",
     action: { label: `Scan a ${subjectName} paper`, detail: null, to: links.scan(code) },
     secondary: { label: "Upload a PDF instead", detail: null, to: links.upload(code) } }
 }

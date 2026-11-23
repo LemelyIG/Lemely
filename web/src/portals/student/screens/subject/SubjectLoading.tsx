@@ -6,11 +6,11 @@ const BARS = [38, 50, 56, 84, 100]
 
 /**
  * Mock L_P: title bar, five bars, the tip block, three rows. Right column rows from 768px.
- * One labelled status region announces the load once; the blocks inside stay silent.
+ * One labelled status region announces the load once; the blocks inside stay silent. No aria-busy: it would mute that region.
  */
 export function SubjectLoading({ name }: { name: string }) {
   return (
-    <div className="sj-layout" role="status" aria-busy="true" aria-label={`Loading ${name}`}>
+    <div className="sj-layout" role="status" aria-label={`Loading ${name}`}>
       <div className="sj-col sj-skel">
         <SkeletonBlock announce={false} style={{ width: 150, height: 22 }} />
         <div className="sj-skelbars">

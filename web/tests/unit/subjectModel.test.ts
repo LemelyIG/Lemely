@@ -19,6 +19,7 @@ import {
   plural,
   rankedWins,
   resolvePaper,
+  refreshFailed,
   selectScreenState,
   sparseTip,
   stepsFor,
@@ -31,8 +32,11 @@ import {
   trendFor,
   visiblePapers,
   winRows,
+  type QueryFacts,
   type SubjectView,
 } from "@/portals/student/screens/subject/subjectModel"
+import { QueryClient, QueryObserver } from "@tanstack/react-query"
+import { ApiError } from "@/lib/api"
 import { MATHS, MATHS_ONE, MATHS_TOPICS, NOW } from "@/portals/student/screens/subject/fixtures"
 import type { StudentExamCalendar } from "@/lib/announcementTypes"
 import type { DeckSummaryDTO } from "@/lib/flashcardTypes"
@@ -42,20 +46,67 @@ const p4 = MATHS.papersBreakdown.find((p) => p.paperNumber === 4)!
 const p2 = MATHS.papersBreakdown.find((p) => p.paperNumber === 2)!
 
 describe("selectScreenState", () => {
+  const facts = (over: Partial<QueryFacts>): QueryFacts => ({ status: "success", errorStatus: null, paperCount: 0, hasData: true, ...over })
   it("is loading while pending", () => {
-    expect(selectScreenState({ status: "pending", errorStatus: null, paperCount: 0 })).toBe("loading")
+    expect(selectScreenState(facts({ status: "pending", hasData: false }))).toBe("loading")
   })
   it("treats a 404 as first run, not an error (K2)", () => {
-    expect(selectScreenState({ status: "error", errorStatus: 404, paperCount: 0 })).toBe("first-run")
+    expect(selectScreenState(facts({ status: "error", errorStatus: 404, hasData: false }))).toBe("first-run")
   })
-  it("treats any other failure as an error", () => {
-    expect(selectScreenState({ status: "error", errorStatus: 500, paperCount: 0 })).toBe("error")
-    expect(selectScreenState({ status: "error", errorStatus: null, paperCount: 0 })).toBe("error")
+  it("treats any other failure with nothing cached as an error", () => {
+    expect(selectScreenState(facts({ status: "error", errorStatus: 500, hasData: false }))).toBe("error")
+    expect(selectScreenState(facts({ status: "error", errorStatus: null, hasData: false }))).toBe("error")
   })
   it("is first run on a 200 with no papers, sparse with one, full with two or more", () => {
-    expect(selectScreenState({ status: "success", errorStatus: null, paperCount: 0 })).toBe("first-run")
-    expect(selectScreenState({ status: "success", errorStatus: null, paperCount: 1 })).toBe("sparse")
-    expect(selectScreenState({ status: "success", errorStatus: null, paperCount: 7 })).toBe("full")
+    expect(selectScreenState(facts({ paperCount: 0 }))).toBe("first-run")
+    expect(selectScreenState(facts({ paperCount: 1 }))).toBe("sparse")
+    expect(selectScreenState(facts({ paperCount: 7 }))).toBe("full")
+  })
+  it("keeps the cached screen when a refetch fails over data already loaded", () => {
+    expect(selectScreenState(facts({ status: "error", errorStatus: 500, paperCount: 7 }))).toBe("full")
+    expect(selectScreenState(facts({ status: "error", errorStatus: null, paperCount: 1 }))).toBe("sparse")
+    expect(selectScreenState(facts({ status: "error", errorStatus: 500, paperCount: 0 }))).toBe("first-run")
+    expect(selectScreenState(facts({ status: "error", errorStatus: 404, paperCount: 7 }))).toBe("full")
+  })
+  it("flags a failed refresh only when there is cached data to keep showing", () => {
+    expect(refreshFailed(facts({ status: "error", errorStatus: 500, paperCount: 7 }))).toBe(true)
+    expect(refreshFailed(facts({ status: "error", errorStatus: 500, hasData: false }))).toBe(false)
+    expect(refreshFailed(facts({ status: "success", paperCount: 7 }))).toBe(false)
+    expect(refreshFailed(facts({ status: "pending", hasData: false }))).toBe(false)
+  })
+  it("holds against a real react-query v5 observer whose refetch failed over cached data", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const queryKey = ["subject", "0580"]
+    await client.fetchQuery({ queryKey, queryFn: async () => MATHS })
+    const observer = new QueryObserver(client, {
+      queryKey,
+      queryFn: async (): Promise<typeof MATHS> => {
+        throw new ApiError(500, "down")
+      },
+    })
+    await observer.refetch()
+    const result = observer.getCurrentResult()
+    // The premise: v5 reports "error" and still holds the last good payload.
+    expect(result.status).toBe("error")
+    expect(result.data).toBe(MATHS)
+    const real: QueryFacts = {
+      status: result.status,
+      errorStatus: result.error instanceof ApiError ? result.error.status : null,
+      paperCount: MATHS.paperHistory.length,
+      hasData: result.data !== undefined,
+    }
+    expect(selectScreenState(real)).toBe("full")
+    expect(refreshFailed(real)).toBe(true)
+    // And a query that never loaded is the error screen.
+    const cold = new QueryObserver(new QueryClient({ defaultOptions: { queries: { retry: false } } }), {
+      queryKey,
+      queryFn: async (): Promise<typeof MATHS> => {
+        throw new ApiError(500, "down")
+      },
+    })
+    await cold.refetch()
+    const coldResult = cold.getCurrentResult()
+    expect(selectScreenState({ status: coldResult.status, errorStatus: 500, paperCount: 0, hasData: coldResult.data !== undefined })).toBe("error")
   })
 })
 
@@ -375,7 +426,7 @@ describe("Binny's tip", () => {
   })
   it("offers scanning for sparse and first-run states with short lines", () => {
     expect(sparseTip("0580")).toEqual({ mood: "happy", line: "Great start. Next paper?", action: { label: "Scan your next paper", detail: null, to: "/student/correct?subject=0580" }, secondary: null })
-    expect(firstRunTip("0580", "Mathematics")).toEqual({ mood: "open", line: "Let’s find your first step", action: { label: "Scan a Mathematics paper", detail: null, to: "/student/correct?subject=0580" }, secondary: { label: "Upload a PDF instead", detail: null, to: "/student/correct?subject=0580&source=file" } })
+    expect(firstRunTip("0580", "Mathematics")).toEqual({ mood: "open", line: "Find your first step", action: { label: "Scan a Mathematics paper", detail: null, to: "/student/correct?subject=0580" }, secondary: { label: "Upload a PDF instead", detail: null, to: "/student/correct?subject=0580&source=file" } })
     expect(FIRST_RUN_STEPS("Mathematics").map(s => s.title)).toEqual(["Scan a Mathematics paper", "Lemely marks it", "Your path appears"])
   })
   it("names no goal grade in the first-run walkthrough, since none is known yet", () => {
