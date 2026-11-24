@@ -315,6 +315,11 @@ def test_sp5_slots_window_duration_and_bounds(
 
     # A request holds its slot (and the half hours either side, for a one-hour session).
     held = slot(timedelta(days=2))
+    # A one-hour slot never crosses the tutor zone's midnight, so a hold in the first hour of a
+    # day has no free start an hour before it: run between 00:00 and 00:30 Cairo time, the check
+    # below failed every day. Move such a hold one hour on, still inside the same day's rules.
+    if held.astimezone(ZoneInfo(ZONE)).hour == 0:
+        held += HOUR
     assert client.post(BOOKINGS, json=booking_body(w, starts_at=held)).status_code == 201
     again = client.get(path, params={"from": today.isoformat(), "durationMinutes": 60}).json()
     starts = {datetime.fromisoformat(item["startsAt"]) for item in again["slots"]}
