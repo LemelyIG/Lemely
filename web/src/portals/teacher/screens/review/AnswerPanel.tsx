@@ -189,7 +189,7 @@ export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts 
           {view.integrity ? (
             <p className="flex items-start gap-2 text-dense text-on-surface-variant"><Flag weight="fill" className="mt-0.5 size-4 flex-none text-on-tertiary-container" aria-hidden />A signal to look at, not a verdict. Dismissing never changes the student's mark.</p>
           ) : null}
-          <Textarea rows={2} value={view.integrity ? dismissNote : marking.note} onChange={(e) => (view.integrity ? setDismissNote(e.target.value) : marking.onNote(e.target.value))} placeholder={view.integrity ? "Note for your records (optional)" : notePlaceholder(changed)} label={view.integrity ? "Note for your records" : notePlaceholder(changed)} labelClassName="sr-only" className="resize-none py-2.5 caret-primary !font-normal !leading-[1.45]" />
+          <Textarea rows={2} value={view.integrity ? dismissNote : marking.note} onChange={(e) => (view.integrity ? setDismissNote(e.target.value) : marking.onNote(e.target.value))} placeholder={view.integrity ? "Note for your records (optional)" : notePlaceholder(changed)} label={view.integrity ? "Note for your records" : notePlaceholder(changed)} labelClassName="sr-only" className="rq-note resize-none py-2.5 caret-primary" />
         </>
       ) : null}
       </div>

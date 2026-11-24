@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { MemoryRouter } from "react-router-dom"
@@ -12,9 +14,11 @@ import { FilterBar } from "@/portals/teacher/screens/review/FilterBar"
  * The review queue's two kit fields (the search pill and the answer note box) sit on `Input` and
  * `Textarea`. The kit's `.text-field` rule is unlayered, so it beats every layered Tailwind utility
  * that sets the same property: the note box silently rendered 600 weight instead of the approved
- * mock's `400 / 1.45`. These tests pin the important-modified overrides and the field names. The
- * computed-style proof (that the override really wins in a browser) is a browser check, recorded in
- * the lane report; a node-environment runner cannot cascade.
+ * mock's `400 / 1.45`. A `!` utility would fix it but puts a `!` in the rendered class list, which
+ * the copy gate (reviewQueueSample) reads as an exclamation mark, so review.css carries a plain
+ * `textarea.rq-note` rule instead. These tests pin that rule, the class that hooks it, and the field
+ * names. The computed-style proof (that the rule really wins in a browser) is a browser check,
+ * recorded in the lane report; a node-environment runner cannot cascade.
  */
 
 const point = (id: string, code: string) => ({
@@ -53,8 +57,14 @@ const labelFor = (html: string, id: string) =>
 describe("answer note box type", () => {
   it("restores the mock's weight 400 and 1.45 line height over the unlayered kit rule", () => {
     const cls = attr(tag(panel(view()), "textarea"), "class")
-    expect(cls).toContain("!font-normal")
-    expect(cls).toContain("!leading-[1.45]")
+    expect(cls).toContain("rq-note")
+    const css = readFileSync(join(import.meta.dirname, "../../src/portals/teacher/screens/review/review.css"), "utf8")
+    const body = css.match(/(?:^|\n)textarea\.rq-note\s*\{([^}]*)\}/)?.[1] ?? ""
+    expect(body).toMatch(/font-weight:\s*400\b/)
+    expect(body).toMatch(/line-height:\s*1\.45\b/)
+  })
+  it("keeps a `!` out of the rendered panel: the copy gate reads one in a class list as punctuation", () => {
+    expect(panel(view())).not.toContain("!")
   })
   it("keeps the 16px field floor: no size override on the note box", () => {
     const cls = attr(tag(panel(view()), "textarea"), "class")
