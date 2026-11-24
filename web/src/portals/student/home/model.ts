@@ -8,9 +8,11 @@
  * Copy rules (web/scripts/check_copy.mjs): no "!" ending a sentence, no em
  * dash as punctuation. Binny's line is the stage headline from the approved
  * mock (see plan "Needs user decision" item 2). Owner rule, 2026-11-24: the
- * line is 2 to 4 words. Whatever a line leaves out is already on the screen
- * (score and paper in the last-paper row, topic and marks in the win-back
- * list, the countdown in the top row), so nothing is added to carry it.
+ * line is 2 to 4 words. Most of what a line leaves out is on the screen
+ * already (score and paper in the last-paper row, topic and marks in the
+ * win-back list, the countdown in the top row), so nothing is added to carry
+ * it. Not all of it: days away and a session's minutes are on no Home surface,
+ * and a topic name too long for four words is not guaranteed to be on one.
  */
 import type { BinnyMood, BinnyMotion } from "@/components/redesign"
 import type {
