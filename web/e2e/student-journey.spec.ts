@@ -37,48 +37,15 @@ test("the corrected-paper student sees their real dashboard data and the parents
   await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0, {
     timeout: 15_000,
   })
-  // Non-empty: the first-run view must NOT render — this student has one
-  // seeded, persisted attempt (88%, subject 0625). P3.2 replaced the single
-  // centred EmptyState ("Correct your first paper to see it here") with the
-  // composed `GettingStarted` panel, so the string this asserted against no
-  // longer exists anywhere. Anchored on the new panel's heading instead.
-  await expect(page.getByText("Let's get your first paper marked")).toHaveCount(0)
-  await expect(page.getByText("Subjects this session")).toBeVisible()
-  // The subject row itself, not a bare `getByText("0625")` — the sidebar's
-  // static "Physics" nav item is also tagged "0625" (student/data.ts), and
-  // `SubjectRowDTO.name` echoes `code` (no human subject name source), so
-  // "0625" appears twice more inside the row's own button — all three would
-  // make an untargeted text lookup ambiguous.
-  /*
-   * P4.10 · updated for the redesign, and the change is the point (§9.7).
-   *
-   * This was `getByRole("button")`. Surface 1 replaced the
-   * `<button onClick={navigate(...)}>` with a real `<Link>` — the audit's M8
-   * finding, raised against the teacher portal and sitting unremarked on the
-   * student side: a button that navigates cannot be opened in a new tab,
-   * middle-clicked or copied as a link, and it tells assistive technology that
-   * something will happen rather than that somewhere will be reached. So the
-   * role is `link` now, deliberately, and this asserts the better markup.
-   *
-   * The row's own text changed with it: "1 papers corrected" (which was also
-   * ungrammatical at one) is now "88% · 1 paper", pluralised.
-   *
-   * And it is scoped to the ledger panel. The comment above warned that a bare
-   * "0625" lookup is ambiguous; as a `link` it is ambiguous four more ways,
-   * because P3.1's sidebar gives Physics, Practice, Flashcards and Study plan
-   * their own `0625`-tagged links. Scoping to the panel is what makes the
-   * assertion about the ledger row rather than about whatever matched first.
-   */
-  const ledger = page.locator("section, div").filter({
-    has: page.getByRole("heading", { name: "Subjects this session" }),
-  }).last()
-  const subjectRow = ledger.getByRole("link", { name: /0625/ })
-  await expect(subjectRow).toBeVisible()
-  await expect(subjectRow).toContainText("1 paper")
-  await expect(page.getByRole("progressbar", { name: "0625 mastery: 88%" })).toBeVisible()
-  await expect(
-    page.getByRole("img", { name: /^Predicted grade [A-Z*]+$/ }).first(),
-  ).toBeVisible()
+  // Lane L1: Home replaced the Overview. The first-run view must NOT render
+  // for this student (one seeded paper in 0625), and the grade floor links
+  // the subject.
+  await expect(page.getByText("Mark your first paper")).toHaveCount(0)
+  const floor = page.getByRole("main").getByRole("navigation", { name: "Your grades" })
+  await expect(floor).toBeVisible()
+  const subjectDoor = floor.getByRole("link").first()
+  await expect(subjectDoor).toHaveAttribute("href", "/student/subject/0625")
+  await expect(subjectDoor).toContainText(/marks? to |On the way to |Top grade/)
 
   await page.goto("/student/parents")
   await expect(page.getByRole("heading", { name: "Your parents" })).toBeVisible({

@@ -6,10 +6,18 @@ import "./redesign.css"
  * Ghost skeleton rows in the hairline-row geometry. One status region announces "Loading" once; the rows are
  * silent. The pulse is the kit's opacity-only animate-lm-pulse (DESIGN.md §9.2), which the global
  * reduced-motion rule in index.css ends.
+ *
+ * `announce={false}` makes the rows pure decoration: no status region and hidden from assistive tech. Use it
+ * inside a parent that already announces (a skeleton's own status) or beside real empty copy.
  */
-export function GhostRows({ rows = 3, withLeading = false }: { rows?: number; withLeading?: boolean }) {
+export function GhostRows({ rows = 3, withLeading = false, announce = true }: { rows?: number; withLeading?: boolean; announce?: boolean }) {
   return (
-    <div role="status" aria-label="Loading" className="rd-ghostrows">
+    <div
+      role={announce ? "status" : undefined}
+      aria-label={announce ? "Loading" : undefined}
+      aria-hidden={announce ? undefined : true}
+      className="rd-ghostrows"
+    >
       {Array.from({ length: rows }, (_, i) => (
         <div key={i} className="rd-ghostrow">
           {withLeading ? <SkeletonBlock announce={false} className="h-9 w-9 flex-none rounded-row bg-surface-container-high" /> : null}
