@@ -4,7 +4,7 @@ import {
   fillCalendar,
   levelProgress,
   sourceLabel,
-} from "@/portals/student/screens/Profile"
+} from "@/portals/student/home/me/meModel"
 import type { XpProfile } from "@/lib/xpTypes"
 
 /*

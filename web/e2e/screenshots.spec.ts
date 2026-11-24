@@ -195,13 +195,13 @@ for (const bp of BREAKPOINTS) {
       // P3.2: the greeting follows the reader's real local time now, so a
       // fixed "afternoon" would fail this capture for most of the day.
       await expect(
-        page.getByRole("heading", { name: /good (morning|afternoon|evening)/i }),
+        page.getByRole("heading", { name: /(morning|afternoon|evening), /i }),
       ).toBeVisible()
-      await expect(page.getByText("Subjects this session")).toBeVisible()
+      await expect(page.getByRole("navigation", { name: "Your grades" })).toBeVisible()
       await shoot(page, "S-06", "default", bp.width)
 
       // ── S-06 · loading (delay the overview fetch to catch the pending state) ─
-      await page.route("**/api/student/overview", async (route) => {
+      await page.route("**/api/student/home", async (route) => {
         await new Promise((resolve) => setTimeout(resolve, 1_500))
         try {
           await route.continue()
@@ -223,10 +223,10 @@ for (const bp of BREAKPOINTS) {
       })
       await shoot(page, "S-06", "loading", bp.width)
       await reloadPromise
-      await page.unroute("**/api/student/overview")
+      await page.unroute("**/api/student/home")
 
       // ── S-06 · error (force the overview fetch to fail) ─────────────────
-      await page.route("**/api/student/overview", (route) =>
+      await page.route("**/api/student/home", (route) =>
         route.fulfill({
           status: 500,
           contentType: "application/json",
@@ -234,9 +234,9 @@ for (const bp of BREAKPOINTS) {
         }),
       )
       await page.reload()
-      await expect(page.getByText("Couldn't load your overview")).toBeVisible({ timeout: 5_000 })
+      await expect(page.getByText("Couldn't load your home")).toBeVisible({ timeout: 5_000 })
       await shoot(page, "S-06", "error", bp.width)
-      await page.unroute("**/api/student/overview")
+      await page.unroute("**/api/student/home")
 
       // ── S-14 · error (real 413 upload-cap failure — see file header note) ─
       await page.goto("/student/correct")
