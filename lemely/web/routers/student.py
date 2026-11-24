@@ -54,6 +54,7 @@ from lemely.core.object_keys import sibling_scheme_key
 from lemely.core.schemas import ExamMetadata, WeaknessReport
 from lemely.db.attempt_repo import AttemptRepository, UploadDeletedError
 from lemely.db.class_repo import ClassService, JoinCodeError
+from lemely.db.history_repo import DbHistoryStore
 from lemely.db.invite_repo import (
     MAX_LIVE_PARENT_LINKS,
     InviteError,
@@ -117,6 +118,7 @@ from lemely.web.schemas_parent import (
     ParentLinkListDTO,
 )
 from lemely.web.schemas_student import (
+    ConfidenceSummaryDTO,
     CorrectRequest,
     IntegrityRowDTO,
     MomentumDTO,
@@ -144,7 +146,13 @@ from lemely.web.services.grading import (
     extract_answers,
     grade_paper,
 )
-from lemely.web.subject_paths import attempt_dto, goal_line, marks_to_win, paper_code_label
+from lemely.web.subject_paths import (
+    attempt_dto,
+    goal_line,
+    marks_to_win,
+    paper_code_label,
+    session_label,
+)
 from lemely.web.tutoring_http import NO_STORE
 from lemely.web.tutoring_notify import send_after_commit
 from lemely.web.upload_utils import check_scan_geometry, check_upload_cap, safe_upload_name
@@ -465,6 +473,22 @@ def student_subject(
         for area in sorted(weaknesses.weak_areas, key=lambda a: a.accuracy)
     ]
 
+    # Per-question evidence exists only in the relational store, and the store
+    # scopes the read to this student, so an id that is not theirs is never read.
+    evidence = (
+        history_store.review_summaries(
+            auth.user_id, [r.attempt_id for _, r in indexed_records if r.attempt_id]
+        )
+        if isinstance(history_store, DbHistoryStore)
+        else {}
+    )
+
+    def _evidence(record: PaperRecord) -> tuple[ConfidenceSummaryDTO | None, int]:
+        found = evidence.get(record.attempt_id or "")
+        if found is None:
+            return None, 0
+        return ConfidenceSummaryDTO(scored=found.scored, uncertain=found.uncertain), found.corrected
+
     paper_history = [
         PaperHistoryRowDTO(
             id=str(index),
@@ -480,6 +504,10 @@ def student_subject(
             recordedAt=record.recorded_at,
             paperNumber=record.metadata.paper_number,
             label=paper_code_label(record.metadata),
+            variant=record.metadata.paper_variant,
+            session=session_label(record.metadata),
+            confidence=_evidence(record)[0],
+            teacherCorrected=_evidence(record)[1],
         )
         for index, record in reversed(indexed_records)
     ]

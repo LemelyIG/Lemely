@@ -175,6 +175,17 @@ class PaperBreakdownDTO(ApiModel):
     attempts: list[PaperAttemptDTO]
 
 
+class ConfidenceSummaryDTO(ApiModel):
+    """How sure the marker was across one attempt's questions (S-09).
+
+    ``scored`` questions had a marker form an opinion; ``uncertain`` of those
+    were under the review threshold and not re-marked by a teacher.
+    """
+
+    scored: int
+    uncertain: int
+
+
 class PaperHistoryRowDTO(ApiModel):
     """A row in the subject's paper history table (mirrors ``PaperHistoryRow``).
 
@@ -186,6 +197,11 @@ class PaperHistoryRowDTO(ApiModel):
     ``awarded``/``maximum``/``recordedAt``/``paperNumber``/``label`` (L2) are
     the structured form of ``marks``/``paper``, so the client never parses a
     display string.
+
+    ``variant``/``session`` (S-09) are the filter keys the All papers screen
+    needs. ``confidence`` is ``None`` when the store keeps no per-question
+    evidence for the attempt; ``teacherCorrected`` counts questions a teacher
+    re-marked (0 means none, or no evidence).
     """
 
     id: str
@@ -201,6 +217,10 @@ class PaperHistoryRowDTO(ApiModel):
     recordedAt: str
     paperNumber: int
     label: str
+    variant: int
+    session: str
+    confidence: ConfidenceSummaryDTO | None = None
+    teacherCorrected: int = 0
 
 
 class TopicTileDTO(ApiModel):

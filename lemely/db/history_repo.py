@@ -18,6 +18,7 @@ str → ``user_id`` UUID FK, month label ↔ enum, ISO string ↔ tz-aware datet
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -25,11 +26,18 @@ import structlog
 from sqlalchemy import select
 
 from lemely.core.history import PaperRecord, StudentHistory
-from lemely.core.schemas import ExamMetadata, WeakArea
-from lemely.db.models.attempts import Attempt, WeaknessRecord
+from lemely.core.schemas import (
+    REVIEW_CONFIDENCE_THRESHOLD,
+    ExamMetadata,
+    WeakArea,
+    marker_scored,
+)
+from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
 from lemely.db.models.enums import SESSION_MONTH_LABELS, AttemptOrigin, SessionMonth
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from sqlalchemy.orm import Session, sessionmaker
 
 log = structlog.get_logger(__name__)
@@ -39,6 +47,20 @@ log = structlog.get_logger(__name__)
 _MONTH_TO_ENUM: dict[str, SessionMonth] = {
     label: member for member, label in SESSION_MONTH_LABELS.items()
 }
+
+
+@dataclass(frozen=True)
+class AttemptReviewSummary:
+    """Per-attempt marking evidence for the paper-history list (S-09).
+
+    ``scored`` questions had a marker form an opinion; ``uncertain`` of those
+    came in under the review threshold and no teacher has re-marked them;
+    ``corrected`` questions carry a teacher's mark.
+    """
+
+    scored: int
+    uncertain: int
+    corrected: int
 
 
 class DbHistoryStore:
@@ -84,6 +106,60 @@ class DbHistoryStore:
             attempts = session.scalars(stmt).all()
             records = [attempt_to_record(student_id, a) for a in attempts]
         return StudentHistory(student_id=student_id, records=records)
+
+    def review_summaries(
+        self, student_id: str, attempt_ids: Sequence[str]
+    ) -> dict[str, AttemptReviewSummary]:
+        """How sure the marker was, and what a teacher re-marked, per attempt.
+
+        Reads ``question_results`` for the given attempts, but only those that
+        belong to ``student_id``: an id of someone else's attempt is simply
+        absent from the answer, so a caller can pass ids it did not verify
+        without ever reading another student's marking. An attempt with no
+        question rows (a quiz-shaped or imported record) is also absent: "no
+        evidence" is a different claim from "every question was confident".
+
+        A question counts as *scored* when a marker formed an opinion about it
+        (:func:`lemely.core.schemas.marker_scored`), *corrected* when a teacher
+        re-marked it, and *uncertain* when it was scored, not corrected, and
+        came in under :data:`~lemely.core.schemas.REVIEW_CONFIDENCE_THRESHOLD`.
+        A teacher's mark replaces the marker's doubt, so a corrected question is
+        never also uncertain.
+        """
+        user_id = parse_user_id(student_id)
+        wanted: list[uuid.UUID] = []
+        for raw in attempt_ids:
+            try:
+                wanted.append(uuid.UUID(raw))
+            except ValueError:
+                continue
+        if not wanted:
+            return {}
+        stmt = (
+            select(
+                QuestionResult.attempt_id,
+                QuestionResult.marker_source,
+                QuestionResult.confidence_score,
+                QuestionResult.teacher_awarded_marks,
+            )
+            .join(Attempt, Attempt.id == QuestionResult.attempt_id)
+            .where(Attempt.user_id == user_id, QuestionResult.attempt_id.in_(wanted))
+        )
+        counts: dict[str, list[int]] = {}
+        with self._sm() as session:
+            for attempt_id, source, score, teacher_marks in session.execute(stmt):
+                scored, uncertain, corrected = counts.setdefault(str(attempt_id), [0, 0, 0])
+                if teacher_marks is not None:
+                    counts[str(attempt_id)][2] = corrected + 1
+                if not marker_scored(source.value):
+                    continue
+                counts[str(attempt_id)][0] = scored + 1
+                if teacher_marks is None and score < REVIEW_CONFIDENCE_THRESHOLD:
+                    counts[str(attempt_id)][1] = uncertain + 1
+        return {
+            attempt_id: AttemptReviewSummary(scored=s, uncertain=u, corrected=c)
+            for attempt_id, (s, u, c) in counts.items()
+        }
 
     def list_students(self) -> list[str]:
         """Return the distinct ids of all users that have any attempt on record."""
@@ -244,6 +320,7 @@ def migrate_json_history(
 
 
 __all__ = [
+    "AttemptReviewSummary",
     "DbHistoryStore",
     "migrate_json_history",
     "month_to_enum",
