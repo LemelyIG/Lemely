@@ -8,7 +8,9 @@ import { useToast } from "@/components/ui/toast"
 import { usePracticeTopics } from "@/lib/hooks/usePracticeApi"
 import { useOverview } from "@/lib/hooks/useStudentApi"
 import { useCreateDeck, useDeleteDeck, useGenerateDeck, useRetryGeneration, useRetryingDeckIds, useWeakTopics } from "@/lib/hooks/useFlashcardApi"
+import { Input } from "@/components/ui/input"
 import { CountStepper } from "./parts/CountStepper"
+import { FIELD_CONTROL, FIELD_LABEL, FIELD_WRAPPER } from "./parts/fieldStyles"
 import { FcSheet } from "./parts/FcSheet"
 import {
   COUNT_DEFAULT, COUNT_MAX, COUNT_MIN, GENERATION_FAILED_TEXT, buildNewDeckRequest, clampCount, failedDeckToDiscard, finishGeneration,
@@ -164,11 +166,8 @@ function NewDeckForm({ seed, onClose, onStarted, onDiscarded }: {
           })}
         </div>
         {mode === "manual" ? (
-          <label className="grid gap-1.5 text-[13px] font-semibold leading-tight text-on-surface-variant">
-            <span>Title</span>
-            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={`${subjectName} deck`}
-              className={`rounded-2xl bg-surface-container-lowest px-3.5 py-3 text-[16px] text-on-surface shadow-[inset_0_0_0_1.5px_var(--color-outline)] ${FOCUS}`} />
-          </label>
+          <Input label="Title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={`${subjectName} deck`}
+            wrapperClassName={FIELD_WRAPPER} labelClassName={FIELD_LABEL} className={FIELD_CONTROL} />
         ) : <>
           {mode === "topic" ? (
             <QueryState

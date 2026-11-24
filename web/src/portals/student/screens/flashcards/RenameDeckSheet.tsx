@@ -5,6 +5,8 @@ import { useRenameDeck } from "@/lib/hooks/useFlashcardApi"
 import { DECK_TITLE_MAX, RENAME_ERROR, renameControls, renameTitle, submitRename } from "./deckActions"
 import { FcSheet } from "./parts/FcSheet"
 import { FOCUS, PRIMARY_BTN } from "./parts/buttonStyles"
+import { FIELD_CONTROL, FIELD_LABEL, FIELD_WRAPPER } from "./parts/fieldStyles"
+import { Input } from "@/components/ui/input"
 
 
 /** One step, no confirm: a rename is undone by renaming again. Save stays off until the name differs. */
@@ -29,12 +31,9 @@ export function RenameDeckSheet({
   const submit = () => { if (!rename.isPending) submitRename(deckId, title, value, rename.mutate, onClose) }
   return (
     <FcSheet open={open} onOpenChange={(o) => { if (!o && !rename.isPending) onClose() }} title="Rename deck" restoreFocusTo={restoreFocusTo}>
-      <label className="grid gap-1.5 text-[13px] font-semibold leading-tight text-on-surface-variant">
-        <span>Name</span>
-        <input autoFocus maxLength={DECK_TITLE_MAX} value={value} onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && valid) { e.preventDefault(); submit() } }}
-          className="rounded-2xl bg-surface-container-lowest px-3.5 py-3 text-[16px] font-medium text-on-surface shadow-[inset_0_0_0_1.5px_var(--color-outline)] outline-none focus:shadow-[inset_0_0_0_2px_var(--color-primary)]" />
-      </label>
+      <Input label="Name" autoFocus maxLength={DECK_TITLE_MAX} value={value} onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter" && valid) { e.preventDefault(); submit() } }}
+        wrapperClassName={FIELD_WRAPPER} labelClassName={FIELD_LABEL} className={FIELD_CONTROL} />
       {rename.isError ? <div role="alert" className={ERROR_ALERT}>{RENAME_ERROR}</div> : null}
       <button type="button" disabled={controls.saveDisabled} onClick={submit}
         className={PRIMARY_BTN}>

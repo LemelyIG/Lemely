@@ -10,9 +10,8 @@ import type { CardRowView } from "./deckView"
 import { CardDeleteStep } from "./parts/CardDeleteStep"
 import { FcSheet } from "./parts/FcSheet"
 import { FOCUS, PRIMARY_BTN } from "./parts/buttonStyles"
-
-/** pr.css `.fld textarea`: Mono 16/1.5, r16, 1.5px outline, primary 2px on focus. The border is the focus ring. */
-const FIELD = "rounded-2xl bg-surface-container-lowest px-3.5 py-3 font-mono text-[16px] font-medium leading-[1.5] text-on-surface shadow-[inset_0_0_0_1.5px_var(--color-outline)] outline-none resize-none focus:shadow-[inset_0_0_0_2px_var(--color-primary)]"
+import { FIELD_LABEL, FIELD_MONO, FIELD_WRAPPER } from "./parts/fieldStyles"
+import { Textarea } from "@/components/ui/textarea"
 
 /**
  * FC (edit), add, and the second step of Delete card, in one sheet so the move between them keeps
@@ -73,14 +72,10 @@ export function CardSheet({
   const failed = add.isError || edit.isError
   return (
     <FcSheet {...sheetProps} title={cardSheetTitle(shownMode)}>
-      <label className="grid gap-1.5 text-[13px] font-semibold leading-tight text-on-surface-variant">
-        <span>Front</span>
-        <textarea rows={2} required value={draft.front} onChange={(e) => setDraft((d) => ({ ...d, front: e.target.value }))} className={FIELD} />
-      </label>
-      <label className="grid gap-1.5 text-[13px] font-semibold leading-tight text-on-surface-variant">
-        <span>Back</span>
-        <textarea rows={2} required value={draft.back} onChange={(e) => setDraft((d) => ({ ...d, back: e.target.value }))} className={FIELD} />
-      </label>
+      <Textarea label="Front" rows={2} required value={draft.front} onChange={(e) => setDraft((d) => ({ ...d, front: e.target.value }))}
+        wrapperClassName={FIELD_WRAPPER} labelClassName={FIELD_LABEL} className={FIELD_MONO} />
+      <Textarea label="Back" rows={2} required value={draft.back} onChange={(e) => setDraft((d) => ({ ...d, back: e.target.value }))}
+        wrapperClassName={FIELD_WRAPPER} labelClassName={FIELD_LABEL} className={FIELD_MONO} />
       {failed ? <div role="alert" className={ERROR_ALERT}>{cardSaveError(shownMode)}</div> : null}
       <button type="button" disabled={!canSave || saving}
         onClick={() => submitCard(shownMode, shownCard, draft, mutators, finish("saved"))} className={PRIMARY_BTN}>
