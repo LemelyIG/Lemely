@@ -127,16 +127,44 @@ export function ordinal(n: number): string {
   return `${n}${({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[n % 10] ?? "th"}`
 }
 
+/**
+ * The Standings door's line. A student who turned rankings off sees "Rankings off" (the door opens the board,
+ * where the switch to turn them back on lives), whatever their class or rank. With rankings on, no rank means
+ * no class to be ranked in. `undefined` means still loading: say nothing rather than a wrong thing, because
+ * an opted-out student's rank is `null` and would otherwise read "Join a class" until the setting arrived.
+ */
+export function standingsSub(rank: number | null | undefined, rankingsOff: boolean | undefined): string | null {
+  if (rankingsOff === true) return "Rankings off"
+  if (rank === undefined) return null
+  if (rank === null) return rankingsOff === undefined ? null : "Join a class"
+  return ordinal(rank)
+}
+
+/**
+ * Whether the student has turned rankings off. Their own setting (`leaderboardOptOut` on the student profile)
+ * is the source of truth; the board's `viewerOptedOut` covers a slow or failed profile read for a student who
+ * has a class. If both are silent and the profile read failed, assume rankings are on: the only student that
+ * can wrongly read "Join a class" then is one whose setting we could not read at all.
+ */
+export function resolveRankingsOff(input: {
+  profileOptOut: boolean | undefined
+  boardOptedOut: boolean | undefined
+  profileFailed: boolean
+}): boolean | undefined {
+  return input.profileOptOut ?? input.boardOptedOut ?? (input.profileFailed ? false : undefined)
+}
+
 export function peopleVm(input: {
   classes: number | undefined
   rank: number | null | undefined
+  rankingsOff: boolean | undefined
   friends: number | undefined
   parents: number | undefined
 }) {
   const sub = <T,>(v: T | undefined, f: (v: T) => string) => (v === undefined ? null : f(v))
   return [
     { id: "classes", label: "Classes", sub: sub(input.classes, (n) => `${n} ${n === 1 ? "class" : "classes"}`), to: homeRoutes.classes },
-    { id: "standings", label: "Standings", sub: input.rank === undefined ? null : input.rank === null ? "Join a class" : ordinal(input.rank), to: homeRoutes.standings },
+    { id: "standings", label: "Standings", sub: standingsSub(input.rank, input.rankingsOff), to: homeRoutes.standings },
     { id: "friends", label: "Friends", sub: sub(input.friends, (n) => (n === 0 ? "Add a friend" : plural(n, "friend"))), to: homeRoutes.friends },
     { id: "parents", label: "Parents", sub: sub(input.parents, (n) => (n === 0 ? "Invite a parent" : `${n} linked`)), to: homeRoutes.parents },
   ] as const

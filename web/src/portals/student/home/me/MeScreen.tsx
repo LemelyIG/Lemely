@@ -5,7 +5,7 @@ import { PageHeading } from "@/components/ui/page-heading"
 import { QueryState } from "@/components/ui/query-state"
 import { useFriends } from "@/lib/hooks/useFriendApi"
 import { useLeaderboard, useMyClasses } from "@/lib/hooks/useLeaderboardApi"
-import { useProfile } from "@/lib/hooks/useMeApi"
+import { useProfile, useStudentProfile } from "@/lib/hooks/useMeApi"
 import { useDeletedPapers } from "@/lib/hooks/usePaperDeletionApi"
 import { useParentLinks } from "@/lib/hooks/useStudentApi"
 import { useStudentHome } from "@/lib/hooks/useStudentHomeApi"
@@ -15,7 +15,7 @@ import { AccountRows } from "./AccountRows"
 import { BadgeRow } from "./BadgeRow"
 import { BadgesSheet } from "./BadgesSheet"
 import { MeHero } from "./MeHero"
-import { accountRows, activityVm, deriveBadges, heroName, peopleVm, statsVm, subjectsVm } from "./meModel"
+import { accountRows, activityVm, deriveBadges, heroName, peopleVm, resolveRankingsOff, statsVm, subjectsVm } from "./meModel"
 import { MeSkeleton } from "./MeSkeleton"
 import { PeopleDoors } from "./PeopleDoors"
 import { ProgressSheet } from "./ProgressSheet"
@@ -33,6 +33,12 @@ export function MeScreen() {
   const classes = useMyClasses()
   const firstClass = classes.data?.classes[0]?.classId
   const board = useLeaderboard({ scope: "class", basis: "total", classId: firstClass })
+  const studentProfile = useStudentProfile()
+  const rankingsOff = resolveRankingsOff({
+    profileOptOut: studentProfile.data?.profile.leaderboardOptOut,
+    boardOptedOut: board.data?.viewerOptedOut,
+    profileFailed: studentProfile.isError,
+  })
   const friends = useFriends()
   const parents = useParentLinks()
   const deleted = useDeletedPapers()
@@ -86,6 +92,7 @@ export function MeScreen() {
                 doors={peopleVm({
                   classes: classes.data?.classes.length,
                   rank: firstClass ? (board.data ? (board.data.viewer?.rank ?? null) : undefined) : null,
+                  rankingsOff,
                   friends: friends.data?.friends.length,
                   parents: parents.data?.parents.length,
                 })}

@@ -57,3 +57,24 @@ test("Not now moves Binny on to the next suggestion", async ({ page }) => {
   // Falls to the next fallback stage: the win-back line if the seed has one, else the default scan line.
   await expect(line).toHaveText(/(Win marks back|Scan your next paper)$/)
 })
+
+test("Me's Standings door reads Rankings off for a student who turned rankings off, and opens the board", async ({ page }) => {
+  const seed = readSeed()
+  const student = seed.students.correctedPaper
+  await injectSession(page, { accessToken: student.accessToken, userId: student.userId, role: "student" })
+  await page.route("**/api/me/student-profile", async (route) => {
+    if (route.request().method() !== "GET") return route.continue()
+    const response = await route.fetch()
+    const body = await response.json()
+    body.profile.leaderboardOptOut = true
+    await route.fulfill({ response, json: body })
+  })
+  await page.goto("/student/profile")
+  const standings = page.getByRole("main").getByRole("navigation", { name: "Your people" }).getByRole("link", { name: /Standings/ })
+  await expect(standings).toContainText("Rankings off", { timeout: 15_000 })
+  await expect(standings).not.toContainText("Join a class")
+  await expect(standings).toHaveAttribute("href", "/student/board")
+  await standings.click()
+  await expect(page).toHaveURL(/\/student\/board$/)
+  await expect(page.getByRole("button", { name: "Show me again" })).toBeVisible()
+})

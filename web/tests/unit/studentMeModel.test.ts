@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import {
   accountRows,
@@ -8,6 +10,8 @@ import {
   levelLine,
   ordinal,
   peopleVm,
+  resolveRankingsOff,
+  standingsSub,
   statsVm,
   streakLine,
   streakStrip,
@@ -95,19 +99,58 @@ describe("Me view model", () => {
     expect(ordinal(3)).toBe("3rd")
     expect(ordinal(11)).toBe("11th")
     expect(ordinal(22)).toBe("22nd")
-    const doors = peopleVm({ classes: 2, rank: 3, friends: 4, parents: 1 })
+    const doors = peopleVm({ classes: 2, rank: 3, rankingsOff: false, friends: 4, parents: 1 })
     expect(doors.map((d) => [d.label, d.sub, d.to])).toEqual([
       ["Classes", "2 classes", "/student/classes"],
       ["Standings", "3rd", "/student/board"],
       ["Friends", "4 friends", "/student/friends"],
       ["Parents", "1 linked", "/student/parents"],
     ])
-    expect(peopleVm({ classes: undefined, rank: null, friends: 0, parents: 0 }).map((d) => d.sub)).toEqual([
+    expect(peopleVm({ classes: undefined, rank: null, rankingsOff: false, friends: 0, parents: 0 }).map((d) => d.sub)).toEqual([
       null,
       "Join a class",
       "Add a friend",
       "Invite a parent",
     ])
+  })
+
+  it("standings door: a student who turned rankings off sees Rankings off and the door opens the board that holds the switch", () => {
+    const off = peopleVm({ classes: 2, rank: null, rankingsOff: true, friends: 4, parents: 1 })
+    expect(off[1]).toMatchObject({ id: "standings", label: "Standings", sub: "Rankings off", to: "/student/board" })
+  })
+
+  it("standings door: a student with no class and rankings on still sees Join a class", () => {
+    const noClass = peopleVm({ classes: 0, rank: null, rankingsOff: false, friends: 0, parents: 0 })
+    expect(noClass[1]).toMatchObject({ id: "standings", sub: "Join a class", to: "/student/board" })
+  })
+
+  it("standings door: opting out wins over having no class, and over a stale rank", () => {
+    expect(standingsSub(null, true)).toBe("Rankings off")
+    expect(standingsSub(3, true)).toBe("Rankings off")
+    expect(standingsSub(undefined, true)).toBe("Rankings off")
+  })
+
+  it("standings door: says nothing while an answer is still loading, never a wrong claim", () => {
+    expect(standingsSub(undefined, false)).toBeNull()
+    expect(standingsSub(undefined, undefined)).toBeNull()
+    expect(standingsSub(null, undefined)).toBeNull()
+    expect(standingsSub(3, undefined)).toBe("3rd")
+    expect(standingsSub(1, false)).toBe("1st")
+  })
+
+  it("rankings-off state reads the student's own setting first, then the board, then assumes on only after a failed read", () => {
+    expect(resolveRankingsOff({ profileOptOut: true, boardOptedOut: false, profileFailed: false })).toBe(true)
+    expect(resolveRankingsOff({ profileOptOut: false, boardOptedOut: true, profileFailed: false })).toBe(false)
+    expect(resolveRankingsOff({ profileOptOut: undefined, boardOptedOut: true, profileFailed: false })).toBe(true)
+    expect(resolveRankingsOff({ profileOptOut: undefined, boardOptedOut: undefined, profileFailed: false })).toBeUndefined()
+    expect(resolveRankingsOff({ profileOptOut: undefined, boardOptedOut: undefined, profileFailed: true })).toBe(false)
+  })
+
+  it("MeScreen feeds the door from the student profile's leaderboardOptOut", () => {
+    const screen = readFileSync(join(process.cwd(), "src/portals/student/home/me/MeScreen.tsx"), "utf8")
+    expect(screen).toContain("useStudentProfile()")
+    expect(screen).toContain("profileOptOut: studentProfile.data?.profile.leaderboardOptOut")
+    expect(screen).toMatch(/rankingsOff,\s+friends:/)
   })
 
   it("subjects and activity", () => {
