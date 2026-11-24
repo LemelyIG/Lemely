@@ -339,7 +339,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # bearer credential than the link's opaque token, so it is scoped to the
     # caller's own session rather than redeemable by anyone who has it.
     ("POST", "/api/auth/verify-email/code"): AUTH_ANY,
-    # ── STAFF (44) ────────────────────
+    # ── STAFF (45) ────────────────────
     ("GET", "/api/classes/{class_id}"): STAFF,
     ("GET", "/api/classes/{class_id}/analytics"): STAFF,
     # Console paper deletion (Task 17, R2). Row-level: only the uploader may
@@ -401,6 +401,14 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # which this table's role sweep cannot reach (it never gets past
     # `require_role`).
     ("GET", "/api/teacher/review/{item_id}/crop"): STAFF,
+    # L5 "Whole page": the same image-of-a-script surface as `/crop`, behind the
+    # same router-level staff triple. The row-level guard is shared too: both
+    # routes go through `_render_item_scan` and
+    # `ReviewService.get_item_crop_source`, so a caller who cannot see the
+    # student gets no page either. Proven in
+    # `tests/test_web_review.py` (the `/page` ownership cases), which this
+    # table's role sweep cannot reach.
+    ("GET", "/api/teacher/review/{item_id}/page"): STAFF,
     ("POST", "/api/teacher/review/{item_id}/dismiss"): STAFF,
     ("POST", "/api/teacher/review/{item_id}/resolve"): STAFF,
     ("GET", "/api/teacher/students/{student_id}"): STAFF,
