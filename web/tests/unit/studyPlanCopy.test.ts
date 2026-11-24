@@ -159,10 +159,14 @@ describe("plan lines", () => {
     expect(whyTopicsHint("Mathematics", 4)).toBe("Your weakest Mathematics topics from 4 papers.")
     expect(whyTopicsHint("Mathematics", 0)).toBe("Your weakest Mathematics topics so far.")
   })
-  it("words each refusal, naming the unknown one rather than hiding it", () => {
+  it("words no_signal specifically, and gives any unknown reason the general message with no raw code", () => {
     expect(refusalCopy("no_signal").heading).toBe("I need a paper first")
-    expect(refusalCopy("quota").heading).toBe("I couldn’t plan this week")
-    expect(refusalCopy(null).heading).toBe("I couldn’t plan this week")
+    for (const reason of ["quota", "model_unavailable", null]) {
+      const copy = refusalCopy(reason)
+      expect(copy.heading, String(reason)).toBe("I couldn’t plan this week")
+      // Owner decision 2026-11-24: a student never sees a reason code.
+      if (reason) expect(`${copy.heading} ${copy.body}`).not.toContain(reason)
+    }
   })
 })
 

@@ -85,7 +85,7 @@ describe("state selection", () => {
       expect(s.copy.heading).toBe("I need a paper first")
     }
   })
-  it("an unknown refusal reason keeps its own copy", () => {
+  it("an unknown refusal reason gets the general message", () => {
     const s = planScreen(input(O([SUB("0625", P("0625", [], { available: false, reason: "quota" }))])))
     expect(s.kind === "needPaper" && s.copy.heading).toBe("I couldn’t plan this week")
   })

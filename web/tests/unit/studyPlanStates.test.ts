@@ -152,9 +152,16 @@ describe("study plan states", () => {
     })
   })
 
+  it("drops the rebuilt sentence from the not-in-week note when no plan was rebuilt (K24)", () => {
+    const plain = render(createElement(NotInWeekNote, { rebuilt: false }))
+    expect(plain).toContain(COPY.notInWeek)
+    expect(plain).not.toContain("rebuilt")
+    expect(render(createElement(NotInWeekNote, { rebuilt: true }))).toContain("Your plan was rebuilt.")
+  })
+
   it("announces the rebuild, the missing session and an action failure", () => {
     expect(render(createElement(RebuildingBanner))).toContain('role="status"')
-    expect(render(createElement(NotInWeekNote))).toContain(COPY.notInWeek)
+    expect(render(createElement(NotInWeekNote, { rebuilt: true }))).toContain(COPY.notInWeekRebuilt)
     const err = render(createElement(ActionError, { message: COPY.moveError }))
     expect(err).toContain('role="alert"')
     expect(err).toContain(COPY.moveError)

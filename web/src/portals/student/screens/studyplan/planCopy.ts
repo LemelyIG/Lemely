@@ -203,8 +203,8 @@ export interface RefusalCopy {
   body: string
 }
 
-/** One message per refusal reason. An unknown reason still gets its own
- * heading, never the no-signal one (K4). */
+/** `no_signal` is worded specifically. Any other reason gets the general
+ * message, and no raw reason code reaches a student (K4, owner decision 2026-11-24). */
 export function refusalCopy(reason: string | null): RefusalCopy {
   if (reason === "no_signal") {
     return {
@@ -240,7 +240,9 @@ export const COPY = {
   movedToday: "Moved to today",
   moveSuperseded: "Your plan was rebuilt. Here’s the new one.",
   moveCompleted: "That one’s already done.",
-  notInWeek: "That session isn’t in this week’s plan. Your plan was rebuilt.",
+  notInWeek: "That session isn’t in this week’s plan.",
+  /** Over a plan that exists: the plan is the one that replaced the session's. */
+  notInWeekRebuilt: "That session isn’t in this week’s plan. Your plan was rebuilt.",
   firstRunTitle: "Let’s plan your week",
   firstRunBody: "Lemely builds it from your papers and weak topics. Takes a second.",
   firstRunCta: "Build my week",

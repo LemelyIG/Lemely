@@ -97,7 +97,7 @@ export function FirstRun({ building, error, onBuild }: { building: boolean; erro
   )
 }
 
-/** Z1 · not enough to plan from (or an unknown refusal, with its own copy). */
+/** Z1 · not enough to plan from (or an unknown refusal, with the general message). */
 export function NeedPaper({ copy, placementCode }: { copy: RefusalCopy; placementCode: string }) {
   return (
     <StateStack mood="thinking" title={copy.heading} body={copy.body} className="pt-5">
@@ -176,11 +176,11 @@ export function RebuildingBanner() {
   )
 }
 
-/** K25: a deep link to a session this week's plan no longer has. Not a 404. */
-export function NotInWeekNote() {
+/** K25: a deep link to a session this week's plan no longer has. Not a 404. `rebuilt` is false where there is no plan yet (K24). */
+export function NotInWeekNote({ rebuilt }: { rebuilt: boolean }) {
   return (
     <p role="status" className="m-0 rounded-xl bg-surface-container-high px-3 py-2.5 font-sans text-[13.5px] leading-[1.35] font-semibold text-on-surface">
-      {COPY.notInWeek}
+      {rebuilt ? COPY.notInWeekRebuilt : COPY.notInWeek}
     </p>
   )
 }

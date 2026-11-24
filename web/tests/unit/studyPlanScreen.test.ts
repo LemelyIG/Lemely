@@ -399,10 +399,18 @@ describe("the next week and rebuild flows", () => {
 describe("which notices the screen shows", () => {
   const base = { kind: "plan", missingNote: false, rebuilding: false, rebuildError: null }
   it("shows nothing on a quiet plan", () => {
-    expect(screenNotices(base)).toEqual({ missing: false, rebuilding: false, actionError: null })
+    expect(screenNotices(base)).toEqual({ missing: false, missingRebuilt: false, rebuilding: false, actionError: null })
   })
-  it("shows the not-in-week note", () => {
+  it("shows the not-in-week note, and says the plan was rebuilt over a plan", () => {
     expect(screenNotices({ ...base, missingNote: true }).missing).toBe(true)
+    expect(screenNotices({ ...base, missingNote: true }).missingRebuilt).toBe(true)
+  })
+  it("keeps the note but drops the rebuilt sentence where no plan exists to have been rebuilt (K24)", () => {
+    for (const kind of ["firstRun", "needPaper"]) {
+      const n = screenNotices({ ...base, kind, missingNote: true })
+      expect(n.missing, kind).toBe(true)
+      expect(n.missingRebuilt, kind).toBe(false)
+    }
   })
   it("shows the rebuilding banner only over a plan", () => {
     expect(screenNotices({ ...base, rebuilding: true }).rebuilding).toBe(true)
@@ -462,6 +470,7 @@ describe("the orchestrator's source", () => {
     expect(SCREEN).toMatch(/onConfirm=\{[^}]*confirmRebuild\(/)
     expect(SCREEN).toMatch(/rebuildFailure\(rebuild\)/)
     expect(SCREEN).toMatch(/screenNotices\(/)
+    expect(SCREEN).toMatch(/<NotInWeekNote rebuilt=\{notices\.missingRebuilt\}/)
     expect(SCREEN).toMatch(/planRoute\(/)
     expect(SCREEN).toMatch(/openSessionNav\(/)
     expect(SCREEN).toMatch(/moveBusy\(/)

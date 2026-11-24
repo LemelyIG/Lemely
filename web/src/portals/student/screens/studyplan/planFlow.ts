@@ -184,14 +184,20 @@ export function rebuildFailure(rebuild: {
 export const shouldResetRebuild = (p: { previous: string | null; current: string | null; failed: boolean }): boolean =>
   p.previous !== p.current && p.failed
 
-/** The notices above the plan. First run draws its own failure inside its card. */
+/**
+ * The notices above the plan. First run draws its own failure inside its card. The not-in-week
+ * note adds "Your plan was rebuilt." only over a plan: with first run or need-a-paper there is
+ * none, so the sentence would be false (K24).
+ */
 export function screenNotices(p: { kind: string; missingNote: boolean; rebuilding: boolean; rebuildError: string | null }): {
   missing: boolean
+  missingRebuilt: boolean
   rebuilding: boolean
   actionError: string | null
 } {
   return {
     missing: p.missingNote,
+    missingRebuilt: p.missingNote && p.kind !== "firstRun" && p.kind !== "needPaper",
     rebuilding: p.rebuilding && p.kind === "plan",
     actionError: p.kind === "firstRun" ? null : p.rebuildError,
   }

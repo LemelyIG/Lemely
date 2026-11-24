@@ -231,7 +231,7 @@ function PlanContent({ overview }: { overview: StudyPlanOverviewDTO }) {
   return (
     <>
       <PlanHeader header={screen.header} wide={wide} now={now} onFilter={onFilter} />
-      {notices.missing ? <NotInWeekNote /> : null}
+      {notices.missing ? <NotInWeekNote rebuilt={notices.missingRebuilt} /> : null}
       {notices.rebuilding ? <RebuildingBanner /> : null}
       {notices.actionError ? <ActionError message={notices.actionError} /> : null}
 
