@@ -25,7 +25,8 @@ describe("practiceHubPaths", () => {
     expect(practiceHubPaths.createFromPaper("a b")).toBe("/student/practice/papers/a%20b")
   })
 
-  it("points homework at the existing student quiz list", () => {
-    expect(practiceHubPaths.homework).toBe("/student/quizzes")
+  it("has no homework entry: a teacher quiz has no take or result screen under Practice yet", () => {
+    expect(practiceHubPaths).not.toHaveProperty("homework")
+    expect(practiceHubKeys).not.toHaveProperty("homework")
   })
 })

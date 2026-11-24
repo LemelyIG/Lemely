@@ -1,15 +1,14 @@
 import { readFileSync } from "node:fs"
 import { QueryClient, QueryObserver } from "@tanstack/react-query"
 import { describe, expect, it } from "vitest"
-import type { PracticeRun, StudentQuizListItem } from "@/lib/practiceHubTypes"
+import type { PracticeRun } from "@/lib/practiceHubTypes"
 import type { PracticeTopics } from "@/lib/practiceTypes"
 import {
   dayLabel,
-  dueLabel,
+  BINNY_MAX_WORDS,
   hubState,
   hubTiles,
   wordCount,
-  pickHomework,
   practiceHubView,
   profileQueryState,
   recentRows,
@@ -52,25 +51,6 @@ function run(over: Partial<PracticeRun>): PracticeRun {
   }
 }
 
-function homework(over: Partial<StudentQuizListItem>): StudentQuizListItem {
-  return {
-    assignmentId: "h1",
-    quizTitle: "Vectors set",
-    subjectCode: "0580",
-    className: "10B",
-    teacherName: "Ms Adel",
-    assignedAt: iso(2026, 10, 12),
-    dueAt: iso(2026, 10, 20),
-    closesAt: null,
-    questionCount: 8,
-    timeLimitMinutes: null,
-    submissionStatus: "not_started",
-    isOpen: true,
-    isOverdue: false,
-    ...over,
-  }
-}
-
 function input(over: Partial<HubInput> = {}): HubInput {
   return {
     overviewStatus: "success",
@@ -82,7 +62,6 @@ function input(over: Partial<HubInput> = {}): HubInput {
     ],
     runsStatus: "success",
     runs: [run({})],
-    homework: [],
     dueTotal: 26,
     deckCount: 4,
     placement: [
@@ -94,21 +73,12 @@ function input(over: Partial<HubInput> = {}): HubInput {
   }
 }
 
-describe("dayLabel / dueLabel", () => {
+describe("dayLabel", () => {
   it("names today, yesterday, this week by weekday, and older by date", () => {
     expect(dayLabel(iso(2026, 10, 15), NOW)).toBe("Today")
     expect(dayLabel(iso(2026, 10, 14), NOW)).toBe("Yesterday")
     expect(dayLabel(iso(2026, 10, 10), NOW)).toBe("Tue")
     expect(dayLabel(iso(2026, 10, 2), NOW)).toBe("2 Nov")
-  })
-
-  it("says overdue first, then today, tomorrow, weekday, date", () => {
-    expect(dueLabel({ dueAt: iso(2026, 10, 10), isOverdue: true }, NOW)).toBe("overdue")
-    expect(dueLabel({ dueAt: null, isOverdue: false }, NOW)).toBeNull()
-    expect(dueLabel({ dueAt: iso(2026, 10, 15, 18), isOverdue: false }, NOW)).toBe("due today")
-    expect(dueLabel({ dueAt: iso(2026, 10, 16), isOverdue: false }, NOW)).toBe("due tomorrow")
-    expect(dueLabel({ dueAt: iso(2026, 10, 20), isOverdue: false }, NOW)).toBe("due Friday")
-    expect(dueLabel({ dueAt: iso(2026, 11, 1), isOverdue: false }, NOW)).toBe("due 1 Dec")
   })
 })
 
@@ -297,6 +267,13 @@ describe("recentRows", () => {
     expect(row).toMatchObject({ kind: "resume", title: "Trigonometry", sub: "Question 4 of 8 · saved", to: "/student/practice/set/a1" })
   })
 
+  it("a set with nothing answered yet (a printed or just-made one) does not claim to be saved", () => {
+    const [row] = recentRows([run({ status: "not_started", answeredCount: 0, questionCount: 8, awardedMarks: null, maximumMarks: null })], SUBJECTS, NOW)
+    expect(row).toMatchObject({ kind: "resume", sub: "Question 1 of 8" })
+    const [started] = recentRows([run({ status: "in_progress", answeredCount: 1, questionCount: 8, awardedMarks: null, maximumMarks: null })], SUBJECTS, NOW)
+    expect(started.sub).toBe("Question 2 of 8 · saved")
+  })
+
   it("never points past the last question", () => {
     const [row] = recentRows([run({ status: "in_progress", answeredCount: 8, questionCount: 8, awardedMarks: null, maximumMarks: null })], SUBJECTS, NOW)
     expect(row.sub).toBe("Question 8 of 8 · saved")
@@ -317,37 +294,6 @@ describe("recentRows", () => {
   it("falls back to the set title when no question has a topic", () => {
     const [row] = recentRows([run({ topics: [] })], SUBJECTS, NOW)
     expect(row.title).toBe("Mathematics Practice Set")
-  })
-})
-
-describe("pickHomework", () => {
-  it("is null with no open teacher homework", () => {
-    expect(pickHomework([], NOW)).toBeNull()
-    expect(pickHomework([homework({ teacherName: null })], NOW)).toBeNull()
-    expect(pickHomework([homework({ submissionStatus: "submitted" })], NOW)).toBeNull()
-    expect(pickHomework([homework({ isOpen: false })], NOW)).toBeNull()
-  })
-
-  it("shows the most urgent: overdue, then soonest due", () => {
-    const hw = pickHomework(
-      [
-        homework({ assignmentId: "later", dueAt: iso(2026, 10, 25) }),
-        homework({ assignmentId: "late", isOverdue: true, dueAt: iso(2026, 10, 12) }),
-        homework({ assignmentId: "soon", dueAt: iso(2026, 10, 16) }),
-      ],
-      NOW,
-    )
-    expect(hw?.assignmentId).toBe("late")
-    expect(hw?.sub).toBe("Ms Adel · 8 questions · overdue · +2 more")
-  })
-
-  it("matches the mock line for a single homework", () => {
-    expect(pickHomework([homework({})], NOW)).toEqual({
-      assignmentId: "h1",
-      title: "Homework · Vectors set",
-      sub: "Ms Adel · 8 questions · due Friday",
-      to: "/student/practice/set/h1",
-    })
   })
 })
 
@@ -467,6 +413,14 @@ describe("practiceHubView", () => {
     expect(view.tiles[3]).toMatchObject({ status: "Needs a subject", disabled: true })
   })
 
+  it("past first run, a student left with no subject is still sent to add one", () => {
+    // Runs exist, so this is not a first run; the subject list loaded empty, so the set tile must still say why.
+    const view = practiceHubView(input({ subjects: [], topics: [], runs: [run({})], placement: [] }))
+    expect(view.state).toBe("normal")
+    expect(view.tiles[0]).toMatchObject({ status: "Add a subject first", to: "/student/onboard", disabled: false, opensSheet: false })
+    expect(view.tiles[3]).toMatchObject({ status: "Needs a subject", disabled: true })
+  })
+
   it("a failed load with no subject keeps the set tile paused: the failure, not a missing subject, is the reason", () => {
     const view = practiceHubView(input({ subjects: [], topics: [], runs: [], placement: [], overviewStatus: "error", profileStatus: "error" }))
     expect(view.state).toBe("error")
@@ -489,7 +443,7 @@ describe("practiceHubView", () => {
     for (const line of lines) {
       expect(line).toBeTruthy()
       expect(wordCount(line as string), line).toBeGreaterThanOrEqual(2)
-      expect(wordCount(line as string), line).toBeLessThanOrEqual(4)
+      expect(wordCount(line as string), line).toBeLessThanOrEqual(BINNY_MAX_WORDS)
     }
   })
 
@@ -534,11 +488,5 @@ describe("practiceHubView", () => {
     const view = practiceHubView(input({ runs }))
     expect(view.recent).toHaveLength(4)
     expect(view.recentMore).toHaveLength(2)
-  })
-
-  it("shows homework only when set, and never while loading", () => {
-    expect(practiceHubView(input()).homework).toBeNull()
-    expect(practiceHubView(input({ homework: [homework({})] })).homework?.title).toBe("Homework · Vectors set")
-    expect(practiceHubView(input({ homework: [homework({})], runsStatus: "pending" })).homework).toBeNull()
   })
 })

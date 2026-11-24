@@ -17,7 +17,7 @@ export function HubSkeleton() {
     <div aria-busy="true" aria-label="Loading practice" className="grid gap-3.5">
       <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4 md:gap-3">
         {[0, 1, 2, 3].map((i) => (
-          <SkeletonBlock key={i} className="h-[124px] rounded-[20px] lg:h-[140px]" />
+          <SkeletonBlock key={i} className="h-[124px] rounded-[20px] md:h-[140px]" />
         ))}
       </div>
       <SkeletonBlock className="mt-2 h-[22px] w-40" />
@@ -101,7 +101,7 @@ export function FirstRun({ line }: { line: string }) {
       <BinnyLine mood="open" line={line} size={64} motion="pop" />
       <Walkthrough
         steps={[
-          { icon: PaperIcon, title: "Scan a marked paper", body: "Or take the 10-minute placement test." },
+          { icon: PaperIcon, title: "Scan a marked paper", body: "Or take the placement test." },
           { icon: TestIcon, title: "See where marks went", body: "Your weakest topics show up here." },
           { icon: SetIcon, title: "Win them back", body: "Short sets, checked as you go." },
         ]}

@@ -8,7 +8,6 @@ export const practiceHubKeys = {
   papers: (subjectCode: string) => ["practice", "papers", subjectCode] as const,
   /** Identical to `usePracticeTopics`'s key (usePracticeApi.ts). */
   topics: (subjectCode: string) => ["practice", "topics", subjectCode] as const,
-  homework: ["student", "quizzes"] as const,
 }
 
 export const practiceHubPaths = {
@@ -16,5 +15,4 @@ export const practiceHubPaths = {
   papers: (subjectCode: string) => `/student/practice/papers/${encodeURIComponent(subjectCode)}`,
   createFromPaper: (paperId: string) => `/student/practice/papers/${encodeURIComponent(paperId)}`,
   topics: (subjectCode: string) => `/student/practice/${encodeURIComponent(subjectCode)}/topics`,
-  homework: "/student/quizzes",
 }

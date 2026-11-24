@@ -1,10 +1,10 @@
 /*
  * Practice tab (L4) view model. Pure: no React, no DOM, no `.tsx` imports.
  * Every decision the hub screen makes lives here: the state, the subtitle,
- * Binny's mood and line, the tile statuses, the homework row, win marks back
+ * Binny's mood and line, the tile statuses, win marks back
  * and Recent. The screen only renders `HubView`.
  */
-import type { PracticeRun, StudentQuizListItem } from "@/lib/practiceHubTypes"
+import type { PracticeRun } from "@/lib/practiceHubTypes"
 import type { PracticeTopics } from "@/lib/practiceTypes"
 import { plural, topicLabel } from "../practiceCopy"
 
@@ -38,8 +38,6 @@ export interface HubInput {
   topics: readonly { code: string; status: HubQueryStatus; data?: PracticeTopics }[]
   runsStatus: HubQueryStatus
   runs: readonly PracticeRun[]
-  /** Empty when the list failed: the row simply hides. */
-  homework: readonly StudentQuizListItem[]
   /** null when unknown (loading or failed). */
   dueTotal: number | null
   deckCount: number | null
@@ -73,13 +71,6 @@ export interface WinBackRow {
   to: string
 }
 
-export interface HomeworkView {
-  assignmentId: string
-  title: string
-  sub: string
-  to: string
-}
-
 export type RecentKind = "resume" | "marking" | "done"
 
 export interface RecentRow {
@@ -100,7 +91,6 @@ export interface HubView {
   notice: "subjects" | null
   subtitle: string | null
   binny: { mood: "happy" | "open"; line: string } | null
-  homework: HomeworkView | null
   tiles: TileView[]
   winBack: WinBackRow[]
   winBackMore: WinBackRow[]
@@ -135,16 +125,6 @@ export function dayLabel(isoString: string, now: Date): string {
   if (diff === -1) return "Yesterday"
   if (diff < -1 && diff > -7) return new Date(isoString).toLocaleDateString("en-GB", { weekday: "short" })
   return shortDate(isoString)
-}
-
-export function dueLabel(item: Pick<StudentQuizListItem, "dueAt" | "isOverdue">, now: Date): string | null {
-  if (item.isOverdue) return "overdue"
-  if (!item.dueAt) return null
-  const diff = dayDiff(item.dueAt, now)
-  if (diff <= 0) return "due today"
-  if (diff === 1) return "due tomorrow"
-  if (diff < 7) return `due ${new Date(item.dueAt).toLocaleDateString("en-GB", { weekday: "long" })}`
-  return `due ${shortDate(item.dueAt)}`
 }
 
 function isPending(input: HubInput): boolean {
@@ -219,7 +199,9 @@ export function recentRows(runs: readonly PracticeRun[], subjects: readonly HubS
     }
     if (UNFINISHED.has(r.status)) {
       const next = Math.min(r.answeredCount + 1, Math.max(r.questionCount, 1))
-      return { ...base, kind: "resume", sub: `Question ${next} of ${r.questionCount} · saved`, to: `/student/practice/set/${r.assignmentId}` }
+      // "saved" is only true once an answer is: a printed or just-made set has nothing saved yet.
+      const saved = r.answeredCount > 0 ? " · saved" : ""
+      return { ...base, kind: "resume", sub: `Question ${next} of ${r.questionCount}${saved}`, to: `/student/practice/set/${r.assignmentId}` }
     }
     const day = dayLabel(r.lastActivityAt, now)
     if (r.status === "marked" && r.awardedMarks !== null && r.maximumMarks !== null) {
@@ -227,29 +209,6 @@ export function recentRows(runs: readonly PracticeRun[], subjects: readonly HubS
     }
     return { ...base, kind: "marking", sub: `Marking · ${day}`, to: `/student/practice/result/${r.assignmentId}` }
   })
-}
-
-export function pickHomework(list: readonly StudentQuizListItem[], now: Date): HomeworkView | null {
-  const open = list.filter((q) => q.teacherName !== null && q.isOpen && UNFINISHED.has(q.submissionStatus))
-  if (open.length === 0) return null
-  const sorted = [...open].sort((a, b) => {
-    if (a.isOverdue !== b.isOverdue) return a.isOverdue ? -1 : 1
-    const ad = a.dueAt ? Date.parse(a.dueAt) : Number.POSITIVE_INFINITY
-    const bd = b.dueAt ? Date.parse(b.dueAt) : Number.POSITIVE_INFINITY
-    if (ad !== bd) return ad - bd
-    return Date.parse(b.assignedAt) - Date.parse(a.assignedAt)
-  })
-  const first = sorted[0]
-  const parts = [first.teacherName as string, plural(first.questionCount, "question")]
-  const due = dueLabel(first, now)
-  if (due) parts.push(due)
-  if (sorted.length > 1) parts.push(`+${sorted.length - 1} more`)
-  return {
-    assignmentId: first.assignmentId,
-    title: `Homework · ${first.quizTitle}`,
-    sub: parts.join(" · "),
-    to: `/student/practice/set/${first.assignmentId}`,
-  }
 }
 
 function cardsStatus(due: number | null, decks: number | null): string {
@@ -372,11 +331,10 @@ export function practiceHubView(input: HubInput): HubView {
     notice: input.profileStatus === "error" && state !== "error" && state !== "loading" ? "subjects" : null,
     subtitle: showsContent && allWinBack.length > 0 ? `${plural(allWinBack.length, "topic")} to win back` : null,
     binny: binnyFor(state, allWinBack[0], papers),
-    homework: state === "loading" ? null : pickHomework(input.homework, input.now),
     tiles: hubTiles({
       firstTime: state === "firstTime",
       primarySubject,
-      noSubjects: state === "firstTime" && input.subjects.length === 0,
+      noSubjects: state !== "error" && state !== "loading" && input.subjects.length === 0,
       dueTotal: input.dueTotal,
       deckCount: input.deckCount,
       placement: input.placement,

@@ -2,7 +2,7 @@ import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { MemoryRouter } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import type { PracticeRun, StudentQuizListItem } from "@/lib/practiceHubTypes"
+import type { PracticeRun } from "@/lib/practiceHubTypes"
 import type { PracticeTopics } from "@/lib/practiceTypes"
 import type { HubInput } from "@/portals/student/screens/practice/hub/hubModel"
 
@@ -57,22 +57,6 @@ function run(over: Partial<PracticeRun>): PracticeRun {
   }
 }
 
-const HOMEWORK: StudentQuizListItem = {
-  assignmentId: "h1",
-  quizTitle: "Vectors set",
-  subjectCode: "0580",
-  className: "10B",
-  teacherName: "Ms Adel",
-  assignedAt: iso(2026, 10, 12),
-  dueAt: iso(2026, 10, 20),
-  closesAt: null,
-  questionCount: 8,
-  timeLimitMinutes: null,
-  submissionStatus: "not_started",
-  isOpen: true,
-  isOverdue: false,
-}
-
 function input(over: Partial<HubInput> = {}): HubInput {
   return {
     overviewStatus: "success",
@@ -87,7 +71,6 @@ function input(over: Partial<HubInput> = {}): HubInput {
     ],
     runsStatus: "success",
     runs: [run({}), run({ assignmentId: "a2", status: "in_progress", answeredCount: 3, lastActivityAt: iso(2026, 10, 14) })],
-    homework: [],
     dueTotal: 26,
     deckCount: 4,
     placement: [
@@ -125,12 +108,16 @@ describe("PracticeHub", () => {
     const out = render()
     expect(out).toContain('aria-busy="true"')
     expect(out).not.toContain("Ways to practise")
+    // The skeleton tile grows where the real tiles do (md, four across), not a breakpoint later.
+    expect(out).toContain("md:h-[140px]")
+    expect(out).not.toContain("lg:h-[140px]")
     expect(out).not.toContain("rd-say")
   })
 
   it("normal (CN): subtitle, four tiles, Binny once after the tiles on a phone, both lists", () => {
     const out = render()
-    expect(out).toContain("3 topics to win back")
+    expect(out).toMatch(/<span class="font-mono">3<\/span> topics to win back/)
+    expect(out.replace(/<[^>]+>/g, "")).toContain("3 topics to win back")
     expect(count(out, 'class="rd-tile"')).toBe(4)
     expect(count(out, "rd-say")).toBe(1)
     expect(out.indexOf("rd-say")).toBeGreaterThan(out.indexOf("Ways to practise"))
@@ -164,27 +151,12 @@ describe("PracticeHub", () => {
     expect(out).toMatch(/\+9<small[^>]*>marks<\/small>/)
   })
 
-  it("homework sits on top as the one tinted row, when set", () => {
-    hub.input = input({ homework: [HOMEWORK] })
-    const out = render()
-    expect(out).toContain("Homework · Vectors set")
-    expect(out.indexOf("Homework · Vectors set")).toBeLessThan(out.indexOf("Ways to practise"))
-  })
-
   it("offers a keyboard-accessible disclosure for overflow topics", () => {
     hub.input = input({ topics: [
       { code: "0580", status: "success", data: topics("0580", [["A", 4], ["B", 3], ["C", 2]]) },
       { code: "0625", status: "success", data: topics("0625", [["D", 1]]) },
     ] })
     expect(render()).toMatch(/<button type="button" class="rd-lnk" aria-expanded="false"[^>]*>All topics<\/button>/)
-  })
-
-  it("homework counts are set in Mono and the line still reads whole", () => {
-    hub.input = input({ homework: [HOMEWORK] })
-    const out = render()
-    expect(out).toMatch(/<span class="font-mono">8<\/span> questions/)
-    const text = out.replace(/<[^>]+>/g, "")
-    expect(text).toContain("Ms Adel · 8 questions · due Friday")
   })
 
   it("recent run counts are set in Mono and the line still reads whole", () => {
@@ -322,7 +294,9 @@ describe("PracticeHub", () => {
     const out = render()
     expect(out).toMatch(/<a class="rd-tile" data-tone="tide"[^>]*href="\/student\/onboard"[^>]*>[\s\S]*Add a subject first/)
     expect(out).not.toMatch(/<button type="button" class="rd-tile"/)
-    expect(out).toMatch(/aria-disabled="true"[^>]*>[\s\S]*Needs a subject/)
+    // It is the placement tile (sea) that is paused, not merely some tile followed by the words.
+    expect(out).toMatch(/<[a-z]+ (?=[^>]*data-tone="sea")(?=[^>]*aria-disabled="true")[^>]*>(?:(?!<\/li>)[\s\S])*Needs a subject/)
+    expect(count(out, 'aria-disabled="true"')).toBe(1)
   })
 
   it("sparse (CS): one paper, no All topics link, the scan tip", () => {

@@ -4,11 +4,11 @@ import { useLocation, useNavigate, useParams, useSearchParams } from "react-rout
 import { BinnyLine } from "@/components/redesign"
 import { PageHeading } from "@/components/ui/page-heading"
 import { SetBuilderSheet } from "./builder/SetBuilderSheet"
-import { HomeworkRow } from "./hub/HomeworkRow"
 import { practiceHubView } from "./hub/hubModel"
 import { HubLayout } from "./hub/HubLayout"
 import { FirstRun, HubError, HubNotice, HubSkeleton } from "./hub/HubStates"
 import { HubTiles } from "./hub/HubTiles"
+import { MonoNumbers } from "./hub/MonoNumbers"
 import { RecentRuns } from "./hub/RecentRuns"
 import { usePracticeHubData } from "./hub/usePracticeHubData"
 import { useWide } from "./hub/useWide"
@@ -47,14 +47,17 @@ export function PracticeHub() {
         >
           Practice
         </PageHeading>
-        {view.subtitle ? <p className="text-[13px] font-medium text-on-surface-variant">{view.subtitle}</p> : null}
+        {view.subtitle ? (
+            <p className="text-[13px] font-medium text-on-surface-variant">
+              <MonoNumbers text={view.subtitle} />
+            </p>
+          ) : null}
       </header>
 
       {view.state === "loading" ? (
         <HubSkeleton />
       ) : (
         <HubLayout
-          homework={view.homework ? <HomeworkRow homework={view.homework} /> : null}
           binnyTop={wide ? binny : null}
           binnyAfterTiles={wide ? null : binny}
           tiles={<HubTiles tiles={view.tiles} />}

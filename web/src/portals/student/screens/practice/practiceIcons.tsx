@@ -72,15 +72,6 @@ export function ResumeIcon(p: PracticeIconProps) {
   )
 }
 
-export function HomeworkIcon(p: PracticeIconProps) {
-  return (
-    <Svg viewBox="0 0 20 20" size={20} strokeWidth={1.7} {...p}>
-      <path d="M3 7.5 10 4l7 3.5-7 3.5z" />
-      <path d="M6 9.2V13c0 1 1.8 2.2 4 2.2s4-1.2 4-2.2V9.2" />
-    </Svg>
-  )
-}
-
 export function PrintIcon(p: PracticeIconProps) {
   return (
     <Svg viewBox="0 0 18 18" size={18} strokeWidth={1.7} {...p}>

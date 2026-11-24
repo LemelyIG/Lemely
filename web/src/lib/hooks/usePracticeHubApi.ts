@@ -8,7 +8,7 @@ import {
 } from "@tanstack/react-query"
 import { request } from "@/lib/api"
 import { RUNS_LIMIT, practiceHubKeys, practiceHubPaths } from "@/lib/practiceHubKeys"
-import type { PastPapers, PracticeRuns, StudentQuizList } from "@/lib/practiceHubTypes"
+import type { PastPapers, PracticeRuns } from "@/lib/practiceHubTypes"
 import type { CreatePracticeResponse, PracticeTopics } from "@/lib/practiceTypes"
 
 /*
@@ -33,14 +33,6 @@ export function usePracticeTopicsMany(subjectCodes: readonly string[]): UseQuery
       queryFn: () => request<PracticeTopics>(practiceHubPaths.topics(code)),
       enabled: !!code,
     })),
-  })
-}
-
-/** `GET /api/student/quizzes`: the homework row reads the teacher-set entries. */
-export function useStudentQuizzes(): UseQueryResult<StudentQuizList, Error> {
-  return useQuery({
-    queryKey: practiceHubKeys.homework,
-    queryFn: () => request<StudentQuizList>(practiceHubPaths.homework),
   })
 }
 

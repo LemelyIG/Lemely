@@ -2,7 +2,7 @@ import { useMemo } from "react"
 import { usePlacementAvailabilities } from "@/lib/hooks/usePlacementApi"
 import { useDueSession, useFlashcardDecks } from "@/lib/hooks/useFlashcardApi"
 import { useStudentProfile } from "@/lib/hooks/useMeApi"
-import { usePracticeRuns, usePracticeTopicsMany, useStudentQuizzes } from "@/lib/hooks/usePracticeHubApi"
+import { usePracticeRuns, usePracticeTopicsMany } from "@/lib/hooks/usePracticeHubApi"
 import { useReference } from "@/lib/hooks/useReferenceApi"
 import { useOverview } from "@/lib/hooks/useStudentApi"
 import { subjectNameFor } from "@/lib/reference"
@@ -40,7 +40,6 @@ export function usePracticeHubData(): {
   const codes = subjects.map((s) => s.code)
   const topicQueries = usePracticeTopicsMany(codes)
   const runs = usePracticeRuns()
-  const quizzes = useStudentQuizzes()
   const due = useDueSession()
   const decks = useFlashcardDecks()
   const placement = usePlacementAvailabilities(codes)
@@ -54,7 +53,6 @@ export function usePracticeHubData(): {
     topics: codes.map((code, i) => ({ code, status: topicQueries[i].status, data: topicQueries[i].data })),
     runsStatus: runs.data === undefined ? runs.status : "success",
     runs: runs.data?.runs ?? [],
-    homework: quizzes.data?.quizzes ?? [],
     dueTotal: due.data?.totalDue ?? null,
     deckCount: decks.data ? decks.data.length : null,
     placement: codes.map((code, i) => ({
