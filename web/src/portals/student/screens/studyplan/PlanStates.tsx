@@ -8,8 +8,9 @@ import { SkeletonBlock } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { COPY, type RefusalCopy } from "./planCopy"
 import type { WeekDoneStat } from "./planModel"
+import { CTA } from "./planStyles"
 
-const go = "min-h-[50px] w-full max-w-[360px] rounded-[18px] text-[15.5px] font-bold shadow-[0_14px_24px_-16px_oklch(0.3_0.07_242/0.7)]"
+const go = cn(CTA, "max-w-[360px]")
 /** Once next week is built the button is an answer, not an action: keep it legible, not greyed. */
 const settled = "disabled:bg-surface-container-high disabled:text-on-surface-variant disabled:opacity-100 disabled:shadow-none"
 const quiet = "inline-flex min-h-11 items-center px-3.5 font-sans text-sm font-semibold text-on-surface-variant"
@@ -36,7 +37,7 @@ function StateStack({
   role?: "alert"
 }) {
   return (
-    // `min-h` stands in for the mock's `flex: 1`: the shell's page has no fixed height, so the stack is centred in a viewport-sized band instead of hugging the top.
+    // `min-h` stands in for the mock's `flex: 1`: the shell's page has no fixed height, so the stack is centred in a viewport-sized band instead of hugging the top. Measured at 568, 667, 740 and 844px tall: below about 720px the content is taller than the band, so it never adds scroll of its own.
     <section role={role} className={cn("grid min-h-[56dvh] flex-1 content-center justify-items-center gap-3 px-2 py-6 text-center", className)}>
       <Binny mood={mood} size={size} motion={motion} aria-hidden />
       <h2 className="mt-1.5 mb-0 font-display text-[28px] leading-[1.15] font-extrabold tracking-[-0.02em] text-balance text-primary">{title}</h2>
@@ -52,7 +53,7 @@ export function PlanLoading() {
   const block = "bg-surface-container-high"
   return (
     <div role="status" aria-busy="true" aria-label="Loading your week" className="grid gap-3.5">
-      <SkeletonBlock announce={false} className={cn(block, "h-10 rounded-xl")} />
+      <SkeletonBlock announce={false} className={cn(block, "h-10 rounded-md")} />
       <SkeletonBlock announce={false} className={cn(block, "h-6 w-[180px]")} />
       <SkeletonBlock announce={false} className={cn(block, "h-16 rounded-[14px]")} />
       <SkeletonBlock announce={false} className={cn(block, "h-16 rounded-[14px]")} />
@@ -147,8 +148,8 @@ export function WeekDone({
         <div className="grid w-full max-w-[360px] text-center" style={{ gridTemplateColumns: `repeat(${stats.length}, minmax(0, 1fr))` }}>
           {stats.map((s) => (
             <span key={s.label} className="grid justify-items-center gap-0.5">
-              <b className={cn("font-mono text-2xl font-extrabold", s.tone === "ok" ? "text-success-text" : "text-primary")}>{s.value}</b>
-              <small className="font-sans text-[12.5px] font-medium text-on-surface-variant">{s.label}</small>
+              <b className={cn("font-mono text-2xl leading-[1.3] font-extrabold", s.tone === "ok" ? "text-success-text" : "text-primary")}>{s.value}</b>
+              <small className="font-sans text-[12.5px] leading-[1.2] font-medium text-on-surface-variant">{s.label}</small>
             </span>
           ))}
         </div>
@@ -165,7 +166,7 @@ export function WeekDone({
 /** PR · `.rebuild`. Carries the screen's one Binny while it shows. */
 export function RebuildingBanner() {
   return (
-    <div role="status" className="flex items-center gap-3 rounded-2xl bg-surface-container-lowest px-3.5 py-3 shadow-[inset_0_0_0_1.5px_var(--color-outline-variant)]">
+    <div role="status" className="flex items-center gap-3 rounded-[16px] bg-surface-container-lowest px-3.5 py-3 shadow-[inset_0_0_0_1.5px_var(--color-outline-variant)]">
       <Binny mood="thinking" size={52} motion="idle" aria-hidden />
       <p className="m-0 font-sans text-[14.5px] leading-[1.4] font-medium text-on-surface">
         <b>{COPY.rebuildingTitle}</b>
@@ -179,7 +180,7 @@ export function RebuildingBanner() {
 /** K25: a deep link to a session this week's plan no longer has. Not a 404. `rebuilt` is false where there is no plan yet (K24). */
 export function NotInWeekNote({ rebuilt }: { rebuilt: boolean }) {
   return (
-    <p role="status" className="m-0 rounded-xl bg-surface-container-high px-3 py-2.5 font-sans text-[13.5px] leading-[1.35] font-semibold text-on-surface">
+    <p role="status" className="m-0 rounded-md bg-surface-container-high px-3 py-2.5 font-sans text-[13.5px] leading-[1.35] font-semibold text-on-surface">
       {rebuilt ? COPY.notInWeekRebuilt : COPY.notInWeek}
     </p>
   )
@@ -188,7 +189,7 @@ export function NotInWeekNote({ rebuilt }: { rebuilt: boolean }) {
 /** `.errl`: an action failure under the header (K7). */
 export function ActionError({ message }: { message: string }) {
   return (
-    <div role="alert" className="w-full rounded-xl bg-error-container px-3 py-2.5 text-start font-sans text-[13.5px] leading-[1.35] font-semibold text-on-error-container">
+    <div role="alert" className="w-full rounded-md bg-error-container px-3 py-2.5 text-start font-sans text-[13.5px] leading-[1.35] font-semibold text-on-error-container">
       {message}
     </div>
   )

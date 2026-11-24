@@ -52,13 +52,17 @@ export function PlanList(p: PlanListProps) {
   const { body } = p
   const navigate = useNavigate()
   const subjectCode = focusSubjectCode(body)
-  const rows = (list: SessionVM[], big: boolean, label: string) => (
-    <HairRows aria-label={label}>
-      {list.map((s) => (
-        <SessionRow key={s.id} session={s} big={big} selected={p.wide && p.selectedId === s.id} onOpen={p.onOpen} />
-      ))}
-    </HairRows>
-  )
+  // `rule`: the mock draws a hairline above the first row of the any-day and done lists (`.srow2`'s top rule), where the kit only rules between rows.
+  const rows = (list: SessionVM[], big: boolean, label: string, rule = false) => {
+    const items = (
+      <HairRows aria-label={label}>
+        {list.map((s) => (
+          <SessionRow key={s.id} session={s} big={big} selected={p.wide && p.selectedId === s.id} onOpen={p.onOpen} />
+        ))}
+      </HairRows>
+    )
+    return rule ? <div className="border-t border-outline-variant">{items}</div> : items
+  }
 
   return (
     <div id="plan-list" aria-busy={p.rebuilding || undefined} className={cn("flex flex-col gap-6 xl:gap-[22px]", p.rebuilding && "opacity-50")}>
@@ -77,10 +81,10 @@ export function PlanList(p: PlanListProps) {
         <div className="flex items-center gap-3">
           <GoldRing parts={body.ring} size={32} label={body.ringLabel} />
           <div>
-            <h2 id={TODAY_HEADING_ID} className="m-0 font-sans text-lg font-extrabold tracking-[-0.01em] text-on-surface">
+            <h2 id={TODAY_HEADING_ID} className="m-0 font-sans text-lg leading-tight font-extrabold tracking-[-0.01em] text-on-surface">
               {body.today.heading}
             </h2>
-            <span className="font-sans text-[13px] font-medium text-on-surface-variant">{body.today.sub}</span>
+            <span className="font-sans text-[13px] leading-tight font-medium text-on-surface-variant">{body.today.sub}</span>
           </div>
         </div>
         {body.today.sessions.length > 0 ? rows(body.today.sessions, true, "Today's sessions") : null}
@@ -98,7 +102,7 @@ export function PlanList(p: PlanListProps) {
         <section aria-label={COPY.anyDay} className="grid gap-2.5">
           <H2Row title={COPY.anyDay} />
           <WeekStrip days={body.week.days} onDay={p.onDay} />
-          {body.week.anyDay.length > 0 ? rows(body.week.anyDay, true, COPY.anyDay) : null}
+          {body.week.anyDay.length > 0 ? rows(body.week.anyDay, true, COPY.anyDay, true) : null}
         </section>
       ) : null}
 
@@ -107,7 +111,7 @@ export function PlanList(p: PlanListProps) {
           <H2Row title={COPY.later} />
           {body.later.map((g) => (
             <div key={g.date} id={`plan-day-${g.date}`} className="grid">
-              <span className="pt-2.5 pb-0.5 font-sans text-[12.5px] font-bold text-on-surface-variant">{g.label}</span>
+              <span className="pt-2.5 pb-0.5 font-sans text-[12.5px] leading-tight font-bold text-on-surface-variant">{g.label}</span>
               {rows(g.sessions, false, g.label)}
             </div>
           ))}
@@ -119,7 +123,7 @@ export function PlanList(p: PlanListProps) {
           <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-[10px] font-sans text-sm font-bold text-success-text focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary [&::-webkit-details-marker]:hidden">
             <TickGlyph /> {body.done.title} <span className="font-medium text-on-surface-variant">{body.done.daysLabel}</span>
           </summary>
-          {rows(body.done.sessions, false, body.done.title)}
+          {rows(body.done.sessions, false, body.done.title, true)}
         </details>
       ) : null}
 

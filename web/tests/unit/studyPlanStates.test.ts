@@ -16,6 +16,7 @@ import {
   WeekDone,
 } from "@/portals/student/screens/studyplan/PlanStates"
 import { COPY } from "@/portals/student/screens/studyplan/planCopy"
+import { CTA } from "@/portals/student/screens/studyplan/planStyles"
 
 const render = (child: ReturnType<typeof createElement>) =>
   renderToStaticMarkup(createElement(MemoryRouter, null, child))
@@ -70,6 +71,15 @@ describe("study plan states", () => {
     // Nothing is in flight and nothing failed, so nothing is announced.
     expect(html).not.toContain(COPY.buildingAnnounce)
     expect(html).not.toContain('role="alert"')
+  })
+
+  it("sets the primary action's height, so a phone's 44px touch floor cannot shrink it", () => {
+    // The global `(pointer: coarse)` rule is unlayered and floors `min-height` at 44px, beating any `min-h-*` utility.
+    expect(CTA).toMatch(/(^| )h-\[54px\]( |$)/)
+    expect(CTA).not.toMatch(/min-h/)
+    const html = render(createElement(FirstRun, { building: false, error: null, onBuild: () => {} }))
+    expect(html).toMatch(/<button[^>]*class="[^"]*\bh-\[54px\]/)
+    expect(html).not.toMatch(/<button[^>]*class="[^"]*min-h-\[5/)
   })
 
   it("announces the first run build once while it is in flight", () => {

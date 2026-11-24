@@ -59,7 +59,7 @@ export function SubjectFilter({
           tabIndex={f.selected ? 0 : -1}
           onClick={() => onFilter(f.code)}
           className={cn(
-            "relative inline-flex min-h-10 flex-none items-center rounded-xl px-3.5 font-sans text-[13.5px] font-semibold whitespace-nowrap",
+            "relative inline-flex min-h-10 flex-none items-center rounded-md px-3.5 font-sans text-[13.5px] font-semibold whitespace-nowrap",
             "before:absolute before:inset-x-0 before:-inset-y-0.5 before:content-['']",
             "transition-[background-color,box-shadow] duration-150 ease-out motion-reduce:transition-none",
             "focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary",
@@ -92,11 +92,12 @@ export function PlanHeader({
   onFilter: (code: string | null) => void
 }) {
   const title = (size: string) => (
-    <PageHeading repeatsTitle className={cn("font-display leading-[1.1] font-extrabold tracking-[-0.03em] text-balance text-primary", size)}>
+    // `size` goes first: tailwind-merge drops an earlier `leading-*` once a later `text-[..px]` sets the size, which left the heading on the body's 1.5.
+    <PageHeading repeatsTitle className={cn(size, "font-display leading-[1.1] font-extrabold tracking-[-0.03em] text-balance text-primary")}>
       {header.title}
     </PageHeading>
   )
-  const sub = <span className="font-sans text-[13px] font-medium text-on-surface-variant">{header.sub}</span>
+  const sub = <span className="font-sans text-[13px] leading-tight font-medium text-on-surface-variant">{header.sub}</span>
   const pill = header.examDate ? (
     <span className="shrink-0">
       <CountdownPill examDate={header.examDate} now={now} to={EXAM_DATES} />

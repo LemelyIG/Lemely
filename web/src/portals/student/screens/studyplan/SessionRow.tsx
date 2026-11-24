@@ -46,7 +46,7 @@ export function SessionRow({
         )
       }
       sub={
-        <span className={cn("flex flex-col", big && "py-0.5")}>
+        <span className={cn("flex flex-col", big && "py-1")}>
           <span>
             <SubjectDot subject={session.subjectCode} />
             {session.subjectName} · {session.activityLabel} · {session.minutesLabel}

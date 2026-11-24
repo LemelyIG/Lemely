@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils"
 import { CalendarGlyph, TickGlyph } from "./icons"
 import { COPY } from "./planCopy"
 import type { SessionVM } from "./planModel"
+import { CTA } from "./planStyles"
 import { ActivityTile } from "./SessionRow"
 
 export interface SessionActions {
@@ -24,7 +25,7 @@ export interface SessionActions {
 
 /** `.sa`: the two secondary actions. */
 const actionClass =
-  "inline-flex min-h-12 items-center justify-center gap-2 rounded-[14px] bg-surface-container-high font-sans text-sm font-bold text-primary disabled:opacity-60 focus-visible:outline-[2.5px] focus-visible:outline-primary focus-visible:outline-offset-2"
+  "inline-flex h-12 items-center justify-center gap-2 rounded-[14px] bg-surface-container-high font-sans text-sm font-bold text-primary disabled:opacity-60 focus-visible:outline-[2.5px] focus-visible:outline-primary focus-visible:outline-offset-2"
 
 /** The body shared by the sheet (SS, PX) and the desktop panel (SD). */
 export function SessionDetail({
@@ -43,15 +44,16 @@ export function SessionDetail({
   // A new session starts with the move choice closed.
   useEffect(() => setMoveOpen(false), [session.id])
   const done = session.status === "done"
-  const heading = <h2 className="m-0 font-sans text-[22px] font-extrabold text-on-surface">{session.title}</h2>
+  const heading = <h2 className="m-0 font-sans text-[22px] leading-tight font-extrabold text-on-surface">{session.title}</h2>
 
   return (
-    <div className="flex flex-1 flex-col gap-3.5">
+    <div className="flex flex-1 flex-col gap-3">
       <div className="flex items-center gap-3">
         <ActivityTile session={session} />
         <div className="min-w-0">
           {titleWrap ? titleWrap(heading) : heading}
-          <span className="inline-flex items-center gap-1.5 font-sans text-[13px] font-medium text-on-surface-variant">
+          {/* No `gap`: the kit's dot carries its own 6px, and a gap on top made it 12. */}
+          <span className="flex items-center font-sans text-[13px] leading-tight font-medium text-on-surface-variant">
             <SubjectDot subject={session.subjectCode} />
             {session.subjectName} · {session.activityLabel} · {session.minutesLabel}
           </span>
@@ -59,7 +61,7 @@ export function SessionDetail({
       </div>
 
       {completeError ? (
-        <div role="alert" className="rounded-xl bg-error-container px-3 py-2.5 font-sans text-[13.5px] leading-[1.35] font-semibold text-on-error-container">
+        <div role="alert" className="rounded-md bg-error-container px-3 py-2.5 font-sans text-[13.5px] leading-[1.35] font-semibold text-on-error-container">
           {completeError}
         </div>
       ) : (
@@ -72,7 +74,7 @@ export function SessionDetail({
         <Button
           variant="primary"
           onClick={() => session.start && onStart(session.start.path)}
-          className="min-h-[50px] w-full rounded-[18px] text-[15.5px] font-bold shadow-[0_14px_24px_-16px_oklch(0.3_0.07_242/0.7)]"
+          className={CTA}
         >
           {session.start.label}
         </Button>
@@ -130,7 +132,7 @@ export function MoveChoices({
           disabled={busy}
           aria-pressed={movingTo === day.date}
           className={cn(
-            "min-h-11 flex-1 rounded-xl font-sans text-sm font-semibold focus-visible:outline-[2.5px] focus-visible:outline-primary focus-visible:outline-offset-2",
+            "min-h-11 flex-1 rounded-md font-sans text-sm font-semibold focus-visible:outline-[2.5px] focus-visible:outline-primary focus-visible:outline-offset-2",
             movingTo === day.date
               ? "bg-primary-container text-primary shadow-[inset_0_0_0_2px_var(--color-primary)]"
               : "bg-surface-container-lowest text-on-surface shadow-[inset_0_0_0_1.5px_var(--color-outline)]",

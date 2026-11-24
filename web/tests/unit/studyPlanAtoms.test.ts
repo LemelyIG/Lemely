@@ -164,6 +164,12 @@ describe("PlanHeader", () => {
     expect(out).toContain("14 days to exams")
     expect(out.indexOf("14 days to exams")).toBeLessThan(out.indexOf('role="tablist"'))
   })
+  it("keeps the heading's line-height, which tailwind-merge drops when the size class comes after it", () => {
+    for (const wide of [false, true]) {
+      const out = html(createElement(PlanHeader, { header: header(), wide, now, onFilter: noop }))
+      expect(out, String(wide)).toMatch(/<h1[^>]*class="[^"]*\bleading-\[1\.1\]/)
+    }
+  })
   it("wide: the filter sits inline in the header row", () => {
     const wide = html(createElement(PlanHeader, { header: header(), wide: true, now, onFilter: noop }))
     const narrow = html(createElement(PlanHeader, { header: header(), wide: false, now, onFilter: noop }))
