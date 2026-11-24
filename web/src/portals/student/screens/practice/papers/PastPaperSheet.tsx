@@ -70,7 +70,7 @@ export function PastPaperSheet({
       >
         <div className="grid gap-3">
           {failure ? (
-            <div role="alert" className="rounded-[12px] bg-error-container px-3 py-2.5 text-[13.5px] font-semibold leading-[1.35] text-on-error-container">
+            <div role="alert" className="rounded-chip bg-error-container px-3 py-2.5 text-[13.5px] font-semibold leading-[1.35] text-on-error-container">
               {failure.message}
             </div>
           ) : null}

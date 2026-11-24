@@ -3,7 +3,6 @@ import type { PastPaper } from "@/lib/practiceHubTypes"
 import { plural, tryOthers } from "../practiceCopy"
 
 export type PaperOption = "timed" | "print"
-export type PapersState = "loading" | "error" | "empty" | "ready"
 
 export interface PaperRowView {
   paperId: string
@@ -57,15 +56,6 @@ export function paperGroups(papers: readonly PastPaper[]): PaperGroupView[] {
   return [...byNumber.entries()]
     .sort(([a], [b]) => b - a)
     .map(([paperNumber, rows]) => ({ paperNumber, heading: `Paper ${paperNumber}`, rows }))
-}
-
-export function papersState(
-  status: "pending" | "error" | "success",
-  papers: readonly PastPaper[] | undefined,
-): PapersState {
-  if (status === "pending") return "loading"
-  if (status === "error" || !papers) return "error"
-  return papers.length === 0 ? "empty" : "ready"
 }
 
 export function paperSheetView(p: PastPaper, subjectName: string): PaperSheetView {

@@ -6,7 +6,6 @@ import {
   paperGroups,
   paperRow,
   paperSheetView,
-  papersState,
 } from "@/portals/student/screens/practice/papers/papersModel"
 
 const paper = (over: Partial<PastPaper>): PastPaper => ({
@@ -62,15 +61,6 @@ describe("paperGroups", () => {
       ["Paper 4", ["b", "c"]],
       ["Paper 2", ["a"]],
     ])
-  })
-})
-
-describe("papersState", () => {
-  it("covers loading, error, empty and ready", () => {
-    expect(papersState("pending", undefined)).toBe("loading")
-    expect(papersState("error", undefined)).toBe("error")
-    expect(papersState("success", [])).toBe("empty")
-    expect(papersState("success", [paper({})])).toBe("ready")
   })
 })
 
