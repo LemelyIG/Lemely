@@ -47,7 +47,7 @@ function Mouth({ mood }: { mood: BinnyMood }) {
 
 /**
  * The official Binny (portals/marketing/Binny.tsx geometry) with the clipped
- * paper sheet and the mock's added sad mood (student-r2/h.js BIN). Student
+ * paper sheet and the sad mood (student-r2/h.js BIN), confirmed official Binny by the owner 2026-11-24. Student
  * screens only, once per screen. Under prefers-reduced-motion every motion is 'none'.
  */
 export function Binny({ mood, size = 96, motion = "idle", className, "aria-hidden": ariaHidden = true, roamDistance = 48, headCrop = false }: BinnyProps) {

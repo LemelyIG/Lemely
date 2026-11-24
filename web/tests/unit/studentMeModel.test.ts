@@ -151,13 +151,64 @@ describe("Me view model", () => {
   it("standingsRank: a student who has a class never reads Join a class, whatever is still loading or unranked", () => {
     const door = (input: Parameters<typeof standingsRank>[0]) =>
       peopleVm({ classes: input.classes, rank: standingsRank(input), rankingsOff: false, friends: 0, parents: 0 })[1]!.sub
-    // classes still loading (the first transient wrong case), board not yet fetched, no XP this week (viewer rank null)
+    // classes still loading (the first transient wrong case), board not yet fetched: nothing is said
     expect(door({ classes: undefined, board: undefined })).toBeNull()
     expect(door({ classes: 2, board: undefined })).toBeNull()
-    expect(door({ classes: 2, board: { viewer: { rank: null } } })).toBeNull()
-    expect(door({ classes: 2, board: { viewer: null } })).toBeNull()
+    // the board is in and holds no rank for them (no XP this week): never Join a class
+    expect(door({ classes: 2, board: { viewer: { rank: null } } })).not.toBe("Join a class")
+    expect(door({ classes: 2, board: { viewer: null } })).not.toBe("Join a class")
     expect(door({ classes: 2, board: { viewer: { rank: 1 } } })).toBe("1st")
     expect(door({ classes: 0, board: undefined })).toBe("Join a class")
+  })
+
+  it("standingsRank: a classed student the loaded board has no rank for is unranked, a board still loading is unknown", () => {
+    expect(standingsRank({ classes: 2, board: { viewer: { rank: null } } })).toBe("unranked")
+    expect(standingsRank({ classes: 2, board: { viewer: null } })).toBe("unranked")
+    expect(standingsRank({ classes: 2, board: undefined })).toBeUndefined()
+    expect(standingsRank({ classes: undefined, board: { viewer: { rank: null } } })).toBeUndefined()
+    expect(standingsRank({ classes: 0, board: { viewer: { rank: null } } })).toBeNull()
+  })
+
+  it("standingsSub: unranked reads Not ranked yet unless rankings are off or the setting is unread", () => {
+    expect(standingsSub("unranked", false)).toBe("Not ranked yet")
+    expect(standingsSub("unranked", true)).toBe("Rankings off")
+    expect(standingsSub("unranked", undefined)).toBeNull()
+  })
+
+  it("standings door: all four states, from the inputs MeScreen has", () => {
+    // Mirrors MeScreen: classes, board and the student's own opt-out go in; the Standings sub comes out.
+    const standings = (input: {
+      classes: number | undefined
+      board: { viewer: { rank: number | null } | null; viewerOptedOut: boolean } | undefined
+      optOut: boolean | undefined
+    }) =>
+      peopleVm({
+        classes: input.classes,
+        rank: standingsRank({ classes: input.classes, board: input.board }),
+        rankingsOff: resolveRankingsOff({
+          profileOptOut: input.optOut,
+          boardOptedOut: input.board?.viewerOptedOut,
+          profileFailed: false,
+        }),
+        friends: 0,
+        parents: 0,
+      })[1]!
+    // a class, rankings on, no XP this week: Not ranked yet
+    expect(standings({ classes: 2, board: { viewer: { rank: null }, viewerOptedOut: false }, optOut: false })).toMatchObject({
+      label: "Standings",
+      sub: "Not ranked yet",
+      to: "/student/board",
+    })
+    // opted out wins, with a class and no rank, and with no class at all
+    expect(standings({ classes: 2, board: { viewer: { rank: null }, viewerOptedOut: true }, optOut: true }).sub).toBe("Rankings off")
+    expect(standings({ classes: 0, board: undefined, optOut: true }).sub).toBe("Rankings off")
+    // no class, rankings on: Join a class
+    expect(standings({ classes: 0, board: undefined, optOut: false }).sub).toBe("Join a class")
+    // loading: nothing
+    expect(standings({ classes: undefined, board: undefined, optOut: undefined }).sub).toBeNull()
+    expect(standings({ classes: 2, board: undefined, optOut: false }).sub).toBeNull()
+    // ranked: the ordinal
+    expect(standings({ classes: 2, board: { viewer: { rank: 4 }, viewerOptedOut: false }, optOut: false }).sub).toBe("4th")
   })
 
   it("rankings-off state reads the student's own setting first, then the board, then assumes on only after a failed read", () => {

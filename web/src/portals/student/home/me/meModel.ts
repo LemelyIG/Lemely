@@ -128,32 +128,45 @@ export function ordinal(n: number): string {
 }
 
 /**
+ * What the Standings door knows about the student's rank:
+ *   a number      ranked on the class board
+ *   `"unranked"`  has a class, the board is in, and it holds no rank for them (no XP this week)
+ *   `null`        no class to be ranked in
+ *   `undefined`   not known yet (classes or board still loading)
+ */
+export type StandingsRank = number | "unranked" | null | undefined
+
+/**
  * The Standings door's line. A student who turned rankings off sees "Rankings off" (the door opens the board,
  * where the switch to turn them back on lives), whatever their class or rank. With rankings on, `null` reads
- * "Join a class", so a caller may pass `null` only for a student it knows has no class (`standingsRank` does).
- * A missing rank alone proves nothing: it is also what a student with a class has while the board loads, or
- * with no XP this week. `undefined` means not known: say nothing rather than a wrong thing. That also covers
- * an opted-out student, whose rank is `null` and would otherwise read "Join a class" until the setting arrived.
+ * "Join a class", so a caller may pass `null` only for a student it knows has no class (`standingsRank` does),
+ * and `"unranked"` reads "Not ranked yet". A missing rank alone proves nothing: it is also what a student with a
+ * class has while the board loads. `undefined` means not known: say nothing rather than a wrong thing. An unread
+ * setting says nothing for `null` and `"unranked"` too: an opted-out student's rank is `null` and would
+ * otherwise read "Join a class" or "Not ranked yet" until the setting arrived.
  */
-export function standingsSub(rank: number | null | undefined, rankingsOff: boolean | undefined): string | null {
+export function standingsSub(rank: StandingsRank, rankingsOff: boolean | undefined): string | null {
   if (rankingsOff === true) return "Rankings off"
   if (rank === undefined) return null
   if (rank === null) return rankingsOff === undefined ? null : "Join a class"
+  if (rank === "unranked") return rankingsOff === undefined ? null : "Not ranked yet"
   return ordinal(rank)
 }
 
 /**
  * The rank `standingsSub` is given. `null` (no class to be ranked in) only once the student's classes have loaded
- * and there are none. While the classes or the board are still loading, or the board has no rank for the student
- * (no XP this week), it is `undefined`: unknown, so the door says nothing rather than "Join a class".
+ * and there are none. While the classes or the board are still loading it is `undefined`: unknown, so the door
+ * says nothing rather than "Join a class". Once the board is in, a student with a class whom it holds no rank for
+ * (no XP this week) is `"unranked"`: they have a class, so never "Join a class".
  */
 export function standingsRank(input: {
   classes: number | undefined
   board: { viewer: { rank: number | null } | null } | undefined
-}): number | null | undefined {
+}): StandingsRank {
   if (input.classes === undefined) return undefined
   if (input.classes === 0) return null
-  return input.board?.viewer?.rank ?? undefined
+  if (input.board === undefined) return undefined
+  return input.board.viewer?.rank ?? "unranked"
 }
 
 /**
@@ -172,7 +185,7 @@ export function resolveRankingsOff(input: {
 
 export function peopleVm(input: {
   classes: number | undefined
-  rank: number | null | undefined
+  rank: StandingsRank
   rankingsOff: boolean | undefined
   friends: number | undefined
   parents: number | undefined
