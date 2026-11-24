@@ -11,6 +11,7 @@ import {
   ordinal,
   peopleVm,
   resolveRankingsOff,
+  standingsRank,
   standingsSub,
   statsVm,
   streakLine,
@@ -130,12 +131,33 @@ describe("Me view model", () => {
     expect(standingsSub(undefined, true)).toBe("Rankings off")
   })
 
-  it("standings door: says nothing while an answer is still loading, never a wrong claim", () => {
+  it("standingsSub: an unknown rank or an unread setting says nothing, a known rank reads as an ordinal", () => {
     expect(standingsSub(undefined, false)).toBeNull()
     expect(standingsSub(undefined, undefined)).toBeNull()
     expect(standingsSub(null, undefined)).toBeNull()
     expect(standingsSub(3, undefined)).toBe("3rd")
     expect(standingsSub(1, false)).toBe("1st")
+  })
+
+  it("standingsRank: null (Join a class) only once the classes have loaded and there are none", () => {
+    const board = { viewer: { rank: 3 } }
+    expect(standingsRank({ classes: undefined, board: undefined })).toBeUndefined()
+    expect(standingsRank({ classes: undefined, board })).toBeUndefined()
+    expect(standingsRank({ classes: 0, board: undefined })).toBeNull()
+    expect(standingsRank({ classes: 2, board: undefined })).toBeUndefined()
+    expect(standingsRank({ classes: 2, board })).toBe(3)
+  })
+
+  it("standingsRank: a student who has a class never reads Join a class, whatever is still loading or unranked", () => {
+    const door = (input: Parameters<typeof standingsRank>[0]) =>
+      peopleVm({ classes: input.classes, rank: standingsRank(input), rankingsOff: false, friends: 0, parents: 0 })[1]!.sub
+    // classes still loading (the first transient wrong case), board not yet fetched, no XP this week (viewer rank null)
+    expect(door({ classes: undefined, board: undefined })).toBeNull()
+    expect(door({ classes: 2, board: undefined })).toBeNull()
+    expect(door({ classes: 2, board: { viewer: { rank: null } } })).toBeNull()
+    expect(door({ classes: 2, board: { viewer: null } })).toBeNull()
+    expect(door({ classes: 2, board: { viewer: { rank: 1 } } })).toBe("1st")
+    expect(door({ classes: 0, board: undefined })).toBe("Join a class")
   })
 
   it("rankings-off state reads the student's own setting first, then the board, then assumes on only after a failed read", () => {
@@ -151,6 +173,12 @@ describe("Me view model", () => {
     expect(screen).toContain("useStudentProfile()")
     expect(screen).toContain("profileOptOut: studentProfile.data?.profile.leaderboardOptOut")
     expect(screen).toMatch(/rankingsOff,\s+friends:/)
+  })
+
+  it("MeScreen derives the rank from the loaded classes, never from firstClass alone", () => {
+    const screen = readFileSync(join(process.cwd(), "src/portals/student/home/me/MeScreen.tsx"), "utf8")
+    expect(screen).toContain("standingsRank({ classes: classes.data?.classes.length, board: board.data })")
+    expect(screen).not.toMatch(/rank:\s*firstClass/)
   })
 
   it("subjects and activity", () => {

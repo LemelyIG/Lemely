@@ -129,15 +129,31 @@ export function ordinal(n: number): string {
 
 /**
  * The Standings door's line. A student who turned rankings off sees "Rankings off" (the door opens the board,
- * where the switch to turn them back on lives), whatever their class or rank. With rankings on, no rank means
- * no class to be ranked in. `undefined` means still loading: say nothing rather than a wrong thing, because
- * an opted-out student's rank is `null` and would otherwise read "Join a class" until the setting arrived.
+ * where the switch to turn them back on lives), whatever their class or rank. With rankings on, `null` reads
+ * "Join a class", so a caller may pass `null` only for a student it knows has no class (`standingsRank` does).
+ * A missing rank alone proves nothing: it is also what a student with a class has while the board loads, or
+ * with no XP this week. `undefined` means not known: say nothing rather than a wrong thing. That also covers
+ * an opted-out student, whose rank is `null` and would otherwise read "Join a class" until the setting arrived.
  */
 export function standingsSub(rank: number | null | undefined, rankingsOff: boolean | undefined): string | null {
   if (rankingsOff === true) return "Rankings off"
   if (rank === undefined) return null
   if (rank === null) return rankingsOff === undefined ? null : "Join a class"
   return ordinal(rank)
+}
+
+/**
+ * The rank `standingsSub` is given. `null` (no class to be ranked in) only once the student's classes have loaded
+ * and there are none. While the classes or the board are still loading, or the board has no rank for the student
+ * (no XP this week), it is `undefined`: unknown, so the door says nothing rather than "Join a class".
+ */
+export function standingsRank(input: {
+  classes: number | undefined
+  board: { viewer: { rank: number | null } | null } | undefined
+}): number | null | undefined {
+  if (input.classes === undefined) return undefined
+  if (input.classes === 0) return null
+  return input.board?.viewer?.rank ?? undefined
 }
 
 /**
