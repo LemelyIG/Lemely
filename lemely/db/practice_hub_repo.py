@@ -293,6 +293,11 @@ class PracticeHubService:
             paper = session.get(Paper, paper_uuid)
             if paper is None:
                 raise PracticeNotFoundError(f"Unknown paper: {paper_uuid}")
+            # The list narrows to the papers the student sits; a made-up id must not get past it.
+            # An empty enrolment means "not narrowed" (D4.9), never "sits nothing".
+            enrolled = enrolled_paper_numbers(session, student_uuid, paper.subject_code)
+            if enrolled and paper.paper_number not in enrolled:
+                raise PracticeNotFoundError(f"Unknown paper: {paper_uuid}")
             rows = list(
                 session.scalars(
                     select(QuestionBank).where(
@@ -357,7 +362,7 @@ def _run_status(status: QuizSubmissionStatus | None, awarded: int | None) -> str
         return QuizSubmissionStatus.not_started.value
     if status == QuizSubmissionStatus.marked:
         return "marked" if awarded is not None else QuizSubmissionStatus.submitted.value
-    return status.name
+    return str(status.value)
 
 
 def _topics_by_quiz(session: Session, quiz_ids: list[uuid.UUID]) -> dict[uuid.UUID, list[str]]:

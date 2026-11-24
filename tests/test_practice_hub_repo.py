@@ -35,6 +35,7 @@ from lemely.db.models.enums import (
     Role,
     SessionMonth,
 )
+from lemely.db.models.profiles import StudentEnrolmentPaper, StudentSubjectEnrolment
 from lemely.db.models.quizzes import Quiz, QuizAnswer, QuizAssignment, QuizQuestion, QuizSubmission
 from lemely.db.practice_hub_repo import (
     RUNS_LIMIT_MAX,
@@ -509,3 +510,58 @@ def test_create_from_paper_with_nothing_servable_is_refused(
     p21 = _paper(sm, number=2, variant=1, month=SessionMonth.may_june, year=2023)
     with pytest.raises(PastPaperUnavailableError):
         service.create_from_paper(_user(sm), p21, timed=False)
+
+
+def _enrol(sm: sessionmaker[Session], student: uuid.UUID, paper_numbers: list[int]) -> None:
+    """An onboarding enrolment in Physics naming the papers the student will sit."""
+    with sm.begin() as session:
+        if session.scalars(sa.select(Subject).where(Subject.code == "0625")).first() is None:
+            session.add(Subject(code="0625", name="Physics", board=ExamBoard.caie))
+            session.flush()
+        enrolment = StudentSubjectEnrolment(user_id=student, subject_code="0625")
+        session.add(enrolment)
+        session.flush()
+        for number in paper_numbers:
+            session.add(StudentEnrolmentPaper(enrolment_id=enrolment.id, paper_number=number))
+
+
+def test_past_papers_narrow_to_the_enrolled_paper_numbers(
+    service: PracticeHubService, sm: sessionmaker[Session]
+) -> None:
+    student = _user(sm)
+    p41 = _paper(sm, number=4, variant=1, month=SessionMonth.may_june, year=2023)
+    p21 = _paper(sm, number=2, variant=1, month=SessionMonth.may_june, year=2023)
+    _bank(sm, p41, [1])
+    _bank(sm, p21, [1], prefix="0625_s23_qp_21")
+    _enrol(sm, student, [4])
+
+    assert [r.paper_id for r in service.past_papers(student, "0625")] == [p41]
+
+
+def test_create_from_paper_outside_the_enrolled_papers_is_not_found(
+    service: PracticeHubService, sm: sessionmaker[Session]
+) -> None:
+    student = _user(sm)
+    p41 = _paper(sm, number=4, variant=1, month=SessionMonth.may_june, year=2023)
+    p21 = _paper(sm, number=2, variant=1, month=SessionMonth.may_june, year=2023)
+    _bank(sm, p41, [1])
+    _bank(sm, p21, [1], prefix="0625_s23_qp_21")
+    _enrol(sm, student, [4])
+
+    with pytest.raises(PracticeNotFoundError):
+        service.create_from_paper(student, p21, timed=False)
+    # Nothing was written for the refused paper, and the enrolled one still works.
+    assert service.runs(student) == []
+    assert service.create_from_paper(student, p41, timed=False).question_count == 1
+
+
+def test_create_from_paper_is_not_narrowed_when_no_papers_are_enrolled(
+    service: PracticeHubService, sm: sessionmaker[Session]
+) -> None:
+    """An unanswered paper question means "not narrowed", never "sits nothing"."""
+    student = _user(sm)
+    p21 = _paper(sm, number=2, variant=1, month=SessionMonth.may_june, year=2023)
+    _bank(sm, p21, [1], prefix="0625_s23_qp_21")
+    _enrol(sm, student, [])
+
+    assert service.create_from_paper(student, p21, timed=False).question_count == 1
