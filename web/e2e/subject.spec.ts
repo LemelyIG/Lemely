@@ -8,7 +8,6 @@ test("a student with one paper sees the sparse path and opens the paper", async 
   const seed = readSeed()
   const errors = watchConsole(page)
   const student = seed.students.correctedPaper
-  expect(student.correctedPaperId).toBeTruthy()
 
   await page.goto("/login")
   await page.getByLabel("Email").fill(student.email)
@@ -27,10 +26,12 @@ test("a student with one paper sees the sparse path and opens the paper", async 
   const papers = page.getByRole("list", { name: "Papers, newest first" })
   await expect(papers.getByRole("link")).toHaveCount(1)
   await papers.getByRole("link").click()
-  await expect(page).toHaveURL(`/student/result/${student.correctedPaperId}`)
+  // The result route is addressed by history index, not by attempt id.
+  await expect(page).toHaveURL(/\/student\/result\/\d+$/)
+  await expect(page.getByRole("heading", { level: 2, name: "Integrity and provenance" })).toBeVisible({ timeout: 15_000 })
 
   await page.goto("/student/subject/0580")
-  await expect(page.getByText("Let’s find your first step")).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByText("Find your first step", { exact: true })).toBeVisible({ timeout: 15_000 })
   await expect(page.getByRole("link", { name: /^Scan a .+ paper$/ })).toHaveAttribute("href", "/student/correct?subject=0580")
 
   expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
