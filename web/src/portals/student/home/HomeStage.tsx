@@ -8,10 +8,15 @@ import type { StageVm } from "./model"
 
 const STAGE_IN = "@keyframes home-stage-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}"
 
-/** Numbers are Mono wherever they render, the bubble line included ("8 of 14 marked"). */
+/**
+ * Numbers are Mono wherever they render, the bubble line included ("8 of 14 marked"). A question label such as
+ * "Q7" or "Q4b" is one token: split on the digits alone it would be a sans Q beside a mono 7.
+ */
+const MONO_TOKEN = /(\bQ\d+[a-z]*|\d+)/
+
 function MonoNumbers({ text }: { text: string }) {
   return text
-    .split(/(\d+)/)
+    .split(MONO_TOKEN)
     .map((part, i) => (i % 2 === 1 ? <span key={i} className="font-mono">{part}</span> : part))
 }
 
