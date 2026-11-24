@@ -54,6 +54,7 @@ const vin = (over: Partial<BuilderViewInput> = {}): BuilderViewInput => ({
   topicsStatus: "success",
   topics: TOPICS,
   previewStatus: "success",
+  previewFetching: false,
   preview: preview({}),
   race: null,
   creating: false,
@@ -236,6 +237,30 @@ describe("builderView", () => {
     expect(v.line).toEqual({ tone: "error", text: "Couldn't check what matches.", retry: true })
     expect(builderView(vin()).line?.retry).toBeUndefined()
     expect(v.body).toBe("ready")
+  })
+
+  it("a failed background refetch keeps the count the student already has", () => {
+    const v = builderView(vin({ previewStatus: "error" }))
+    expect(v.line).toEqual({ tone: "ok", text: "32 questions match" })
+    expect(v.cta).toEqual({ label: "Start now", disabled: false })
+    expect(v.showPrint).toBe(true)
+  })
+
+  it("while that refetch retries the line reads Checking, from the fetch status", () => {
+    const v = builderView(vin({ previewStatus: "error", previewFetching: true }))
+    expect(v.line).toEqual({ tone: "wait", text: "Checking what matches…" })
+    expect(v.cta.disabled).toBe(true)
+    expect(v.showPrint).toBe(false)
+    // A refetch that has not failed is silent: the count stays put, no flicker.
+    expect(builderView(vin({ previewFetching: true })).line).toEqual({ tone: "ok", text: "32 questions match" })
+  })
+
+  it("a failed check with no count still offers its retry, and Checking while it runs", () => {
+    expect(builderView(vin({ previewStatus: "error", preview: undefined })).line?.retry).toBe(true)
+    expect(builderView(vin({ previewStatus: "error", preview: undefined, previewFetching: true })).line).toEqual({
+      tone: "wait",
+      text: "Checking what matches…",
+    })
   })
 
   it("creating: disabled CTA with progress copy", () => {

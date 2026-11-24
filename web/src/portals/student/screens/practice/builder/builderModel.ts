@@ -106,6 +106,8 @@ export interface BuilderViewInput {
   topicsStatus: "pending" | "error" | "success"
   topics: PracticeTopics | undefined
   previewStatus: "pending" | "error" | "success"
+  /** The query's `fetchStatus === "fetching"`: tells a retry in flight from a settled failure. */
+  previewFetching: boolean
   preview: PracticePreview | undefined
   /** The 409 payload from create, which overrides the preview until a filter changes. */
   race: PracticePreview | null
@@ -179,7 +181,9 @@ export function builderView(i: BuilderViewInput): BuilderView {
     }
   }
 
-  const effective = i.race ?? (i.previewStatus === "success" ? (i.preview ?? null) : null)
+  // A failed background refetch keeps the data it had, so the count stays; only a retry in flight reads "Checking".
+  const retrying = !i.race && i.previewStatus === "error" && i.previewFetching
+  const effective = i.race ?? (retrying ? null : (i.preview ?? null))
   let line: AvailabilityLine
   let label = START
   let enabled = false
@@ -198,7 +202,7 @@ export function builderView(i: BuilderViewInput): BuilderView {
       enabled = true
       startCount = view.requestedCount
     }
-  } else if (i.previewStatus === "error") {
+  } else if (i.previewStatus === "error" && !i.previewFetching) {
     line = { tone: "error", text: "Couldn't check what matches.", retry: true }
   } else {
     line = { tone: "wait", text: "Checking what matches…" }

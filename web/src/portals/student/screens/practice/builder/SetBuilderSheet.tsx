@@ -91,6 +91,7 @@ export function SetBuilderSheet({
     topicsStatus: topicsQuery.status,
     topics: topicsQuery.data,
     previewStatus: previewQuery.status,
+    previewFetching: previewQuery.fetchStatus === "fetching",
     preview: previewQuery.data,
     race: session.race,
     creating: create.isPending,
