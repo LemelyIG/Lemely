@@ -70,7 +70,7 @@ export function PlanList(p: PlanListProps) {
         <p className="m-0 flex flex-wrap gap-x-3.5 font-sans text-[13.5px] font-medium text-on-surface-variant [&>span+span]:before:me-3.5 [&>span+span]:before:text-outline [&>span+span]:before:content-['·']">
           {body.subjectTop.targetGrade ? (
             <span>
-              <b className="font-sans text-[15px] font-extrabold text-on-surface">{body.subjectTop.targetGrade}</b> target
+              <b className="font-sans text-[15px] font-extrabold text-success-text">{body.subjectTop.targetGrade}</b> target
             </span>
           ) : null}
           {body.subjectTop.exam ? <span>{body.subjectTop.exam}</span> : null}
