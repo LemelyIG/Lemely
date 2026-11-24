@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
+/* Hallmark · pre-emit critique: P4 H4 E3 S4 R4 V3 */
 import { useEffect, useRef, useState } from "react"
 import { Input } from "@/components/ui/input"
 import type { ReviewQueueFilters } from "@/lib/reviewQueueQuery"
@@ -59,7 +59,7 @@ export function FilterBar(p: FilterBarProps) {
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && p.onSearch(q)}
           placeholder="Search"
-          className="min-w-0 py-2.5 font-semibold caret-primary"
+          className="min-w-0 py-2.5 caret-primary pointer-coarse:pe-3"
         />
         <SortMenu value={p.filters.sort} onChange={p.onSort} />
       </div>
