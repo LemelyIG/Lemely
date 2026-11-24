@@ -13,7 +13,7 @@ import { paperSheetView, type PaperOption } from "./papersModel"
 import { usePrintPaper } from "./usePrintPaper"
 
 const OPTION =
-  "grid min-h-[60px] grid-cols-[40px_minmax(0,1fr)] items-center gap-3 rounded-2xl px-3 py-2.5 text-start text-on-surface bg-surface-container-lowest shadow-[inset_0_0_0_1.5px_var(--color-outline-variant)] aria-checked:bg-primary-container aria-checked:shadow-[inset_0_0_0_2px_var(--color-primary)] focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
+  "grid min-h-[60px] grid-cols-[40px_minmax(0,1fr)] items-center gap-3 rounded-[16px] px-3 py-2.5 text-start text-on-surface bg-surface-container-lowest shadow-[inset_0_0_0_1.5px_var(--color-outline-variant)] aria-checked:bg-primary-container aria-checked:shadow-[inset_0_0_0_2px_var(--color-primary)] focus-visible:!rounded-[16px] focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
 
 export function PastPaperSheet({
   paper,
@@ -58,7 +58,10 @@ export function PastPaperSheet({
               <SheetTitle className="text-[22px] font-extrabold text-on-surface">{view.title}</SheetTitle>
               <span className="inline-flex items-center text-[13px] font-medium text-on-surface-variant">
                 <SubjectDot color={subjectDotColor(paper.subjectCode, subjectOrder)} />
-                <MonoNumbers text={view.sub} />
+                {/* One flex item: bare text runs beside the Mono digits would each lose their edge spaces. */}
+                <span>
+                  <MonoNumbers text={view.sub} />
+                </span>
               </span>
             </div>
           </div>
@@ -67,7 +70,7 @@ export function PastPaperSheet({
       >
         <div className="grid gap-3">
           {failure ? (
-            <div role="alert" className="rounded-xl bg-error-container px-3 py-2.5 text-[13.5px] font-semibold leading-[1.35] text-on-error-container">
+            <div role="alert" className="rounded-[12px] bg-error-container px-3 py-2.5 text-[13.5px] font-semibold leading-[1.35] text-on-error-container">
               {failure.message}
             </div>
           ) : null}
@@ -106,7 +109,7 @@ export function PastPaperSheet({
             variant="primary"
             size="lg"
             ref={ctaRef}
-            className="min-h-[50px] w-full rounded-[18px] text-[15.5px] shadow-hover disabled:shadow-none"
+            className="min-h-[54px] w-full rounded-[18px] text-[16px] font-bold shadow-hover disabled:shadow-none"
             disabled={blocked}
             loading={pending}
             onClick={() => void print(choice)}

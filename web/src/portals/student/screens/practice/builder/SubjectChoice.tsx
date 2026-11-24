@@ -5,7 +5,7 @@ import { SubjectDot } from "../practiceIcons"
 import { radioKeyDown } from "./radioKeys"
 
 const CHIP =
-  "relative inline-flex min-h-11 flex-none cursor-pointer items-center gap-1.5 rounded-xl px-3.5 text-[13.5px] font-semibold text-on-surface bg-surface-container-lowest shadow-[inset_0_0_0_1.5px_var(--color-outline-variant)] aria-checked:bg-primary aria-checked:text-on-primary aria-checked:shadow-none focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
+  "relative inline-flex min-h-11 flex-none cursor-pointer items-center gap-1.5 rounded-[12px] px-3.5 text-[13.5px] font-semibold text-on-surface bg-surface-container-lowest shadow-[inset_0_0_0_1.5px_var(--color-outline-variant)] aria-checked:bg-primary aria-checked:text-on-primary aria-checked:shadow-none focus-visible:!rounded-[12px] focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
 
 export function SubjectChoice({
   subjects,

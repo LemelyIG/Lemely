@@ -38,15 +38,17 @@ import { TopicChips } from "./TopicChips"
 
 /** `subjectCode: ""` disables `usePracticePreview` until a draft exists. */
 const NO_FILTERS: PracticeFilterSet = { subjectCode: "", count: 0, topics: [], weakTopicsOnly: false, difficultyBands: [], source: null }
-const GO = "min-h-[50px] w-full rounded-[18px] text-[15.5px] shadow-hover disabled:shadow-none"
+const GO = "min-h-[54px] w-full rounded-[18px] text-[16px] font-bold shadow-hover disabled:shadow-none"
 /** The switch's label is a kit-owned span; this reaches it to match the mock's 14px semibold row. */
-const WEAK_ROW = "min-h-11 justify-center [&_label_span]:text-[14px] [&_label_span]:font-semibold"
+const WEAK_ROW = "min-h-11 justify-center [&_label_span]:!text-[14px] [&_label_span]:!font-[600] [&_label]:min-h-11 [&_label]:justify-center"
+/** The kit's switch is 48x28; this grows its tap area to 44px high without moving it (9px past the padding box, since the 1px border sits outside it). */
+const WEAK_SWITCH = "after:absolute after:inset-x-0 after:-inset-y-[9px] after:content-['']"
 
 function TopicsSkeleton() {
   return (
     <div aria-busy="true" aria-label="Loading topics" className="flex flex-wrap gap-1.5">
       {[96, 120, 84, 132, 104].map((w) => (
-        <SkeletonBlock key={w} className="h-11 rounded-xl" style={{ width: w }} />
+        <SkeletonBlock key={w} className="h-11 rounded-[12px]" style={{ width: w }} />
       ))}
     </div>
   )
@@ -133,13 +135,13 @@ export function SetBuilderSheet({
         nativeBodyClassName="grid gap-3 px-5 pt-1 pb-6"
       >
         <div className="grid gap-3">
+          <SubjectChoice subjects={allSubjects} value={subjectCode} onChange={chooseSubject} />
+
           {view.errorBanner ? (
-            <div role="alert" className="rounded-xl bg-error-container px-3 py-2.5 text-[13.5px] font-semibold leading-[1.35] text-on-error-container">
+            <div role="alert" className="rounded-[12px] bg-error-container px-3 py-2.5 text-[13.5px] font-semibold leading-[1.35] text-on-error-container">
               {view.errorBanner}
             </div>
           ) : null}
-
-          <SubjectChoice subjects={allSubjects} value={subjectCode} onChange={chooseSubject} />
 
           <QueryState
             query={topicsQuery}
@@ -162,6 +164,7 @@ export function SetBuilderSheet({
                     checked={draft.weakOnly}
                     onCheckedChange={(on) => edit(setWeakOnly(draft, on, weakServableTopics(topics)))}
                     wrapperClassName={WEAK_ROW}
+                    className={WEAK_SWITCH}
                   />
                   <TopicChips
                     groups={visibleTopicGroups(topics, draft.weakOnly)}

@@ -309,12 +309,20 @@ describe("PracticeHub", () => {
     hub.input = input({ subjects: [{ code: "0580", name: "Maths", papers: 0 }], topics: [], runs: [] })
     const out = render()
     expect(count(out, "rd-say")).toBe(1)
-    expect(out).toContain("Scan a paper and I&#x27;ll find your marks to win back.")
+    expect(out).toContain("Start with a scan.")
     expect(out).toContain('class="rd-walk"')
     expect(out).toContain("Scan a marked paper")
     expect(out).toMatch(/<a [^>]*href="\/student\/correct"[^>]*>Scan a paper<\/a>/)
     expect(out).not.toContain("Win marks back")
     expect(out).not.toContain('aria-label="Recent"')
+  })
+
+  it("first run with no subject: the set tile is a link that says why and leads to adding one", () => {
+    hub.input = input({ subjects: [], topics: [], runs: [], placement: [] })
+    const out = render()
+    expect(out).toMatch(/<a class="rd-tile" data-tone="tide"[^>]*href="\/student\/onboard"[^>]*>[\s\S]*Add a subject first/)
+    expect(out).not.toMatch(/<button type="button" class="rd-tile"/)
+    expect(out).toMatch(/aria-disabled="true"[^>]*>[\s\S]*Needs a subject/)
   })
 
   it("sparse (CS): one paper, no All topics link, the scan tip", () => {
@@ -324,7 +332,7 @@ describe("PracticeHub", () => {
       runs: [],
     })
     const out = render()
-    expect(out).toContain("Good start. Try one set.")
+    expect(out).toContain("Good start. Keep going.")
     expect(out).toContain("More papers, sharper picks")
     expect(out).toMatch(/<a [^>]*href="\/student\/correct"[^>]*>Scan<\/a>/)
     expect(out).not.toContain("All topics")

@@ -15,10 +15,11 @@ const ICONS = { set: SetIcon, cards: CardsIcon, paper: PaperIcon, test: TestIcon
 export function HubTiles({ tiles }: { tiles: readonly TileView[] }) {
   const navigate = useNavigate()
   return (
-    <ul aria-label="Ways to practise" className="grid grid-cols-2 gap-2.5 md:grid-cols-4 md:gap-3">
+    // The kit's tile is 124px tall; four across (`.pgrid.tint.four`) the mock makes it 140. The kit's rule is unlayered, so only `!` outranks it.
+    <ul aria-label="Ways to practise" className="grid grid-cols-2 gap-2.5 md:grid-cols-4 md:gap-3 md:[&_.rd-tile]:!min-h-[140px]">
       {tiles.map((t) => {
         const to = t.to
-        const opensSheet = t.key === "set"
+        const opensSheet = t.opensSheet
         return (
           <li key={t.key} className="contents">
             <Tile

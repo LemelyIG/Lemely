@@ -3,7 +3,7 @@
 import { COUNT_MAX, COUNT_MIN, stepCount } from "./builderModel"
 
 const BTN =
-  "grid size-11 place-items-center rounded-[14px] bg-primary-container text-xl font-bold text-primary disabled:opacity-45 disabled:cursor-not-allowed focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
+  "grid size-11 place-items-center rounded-[14px] bg-primary-container text-xl font-bold text-primary disabled:opacity-45 disabled:cursor-not-allowed focus-visible:!rounded-[14px] focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
 
 export function CountStepper({ value, onChange }: { value: number; onChange: (n: number) => void }) {
   return (

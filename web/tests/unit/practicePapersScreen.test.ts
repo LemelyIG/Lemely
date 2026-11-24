@@ -338,6 +338,12 @@ describe("PastPaperSheet (PQ)", () => {
     expect(out).toMatch(/<i aria-hidden="true"[^>]*style="background:/)
   })
 
+  it("keeps the spaces around the Mono digits in the sub line", () => {
+    // The sub line is an inline-flex row, where each bare text run is its own item and loses its edge spaces.
+    // So the whole line must be one child beside the dot, or it reads "Paper4·80marks".
+    expect(sheet()).toMatch(/<\/i><span>Maths · Paper <span class="font-mono">4<\/span> · <span class="font-mono">80<\/span> marks<\/span>/)
+  })
+
   it("offers timed first, pressed, and print second", () => {
     const out = sheet()
     expect(count(out, 'role="radio"')).toBe(2)

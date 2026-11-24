@@ -58,6 +58,8 @@ export interface TileView {
   tone: HubTileTone
   to: string | null
   disabled: boolean
+  /** The tile opens the builder sheet over the hub (a button that pushes the route), not a page (a link). */
+  opensSheet: boolean
   /** The flashcards due count, rendered in Mono inside the ReactNode status; null otherwise. */
   count: number | null
 }
@@ -258,9 +260,14 @@ function cardsStatus(due: number | null, decks: number | null): string {
   return "Review your cards"
 }
 
+/** Where a student with no subject goes to add one: the onboarding wizard is the only subject editor. */
+export const ADD_SUBJECT_PATH = "/student/onboard"
+
 export function hubTiles(input: {
   firstTime: boolean
   primarySubject: string | null
+  /** The subject list loaded and is empty. A failed load is not this: the error state explains that one. */
+  noSubjects: boolean
   dueTotal: number | null
   deckCount: number | null
   placement: HubInput["placement"]
@@ -274,15 +281,19 @@ export function hubTiles(input: {
       ? null
       : `/student/placement/${primary}`
   return [
-    {
-      key: "set",
-      title: "Practice set",
-      status: input.firstTime ? "Pick any topic" : "Build your own",
-      tone: "tide",
-      to: primary ? `/student/practice/${primary}` : null,
-      disabled: primary === null,
-      count: null,
-    },
+    // With no subject the tile says why and leads to the one place that fixes it; a silent dead tile does neither.
+    input.noSubjects
+      ? { key: "set", title: "Practice set", status: "Add a subject first", tone: "tide", to: ADD_SUBJECT_PATH, disabled: false, opensSheet: false, count: null }
+      : {
+          key: "set",
+          title: "Practice set",
+          status: input.firstTime ? "Pick any topic" : "Build your own",
+          tone: "tide",
+          to: primary ? `/student/practice/${primary}` : null,
+          disabled: primary === null,
+          opensSheet: true,
+          count: null,
+        },
     {
       key: "cards",
       title: "Flashcards",
@@ -290,36 +301,53 @@ export function hubTiles(input: {
       tone: "violet",
       to: "/student/flashcards",
       disabled: false,
+      opensSheet: false,
       count: input.dueTotal !== null && input.dueTotal > 0 ? input.dueTotal : null,
     },
-    { key: "paper", title: "Past papers", status: "Print or do timed", tone: "mint", to: "/student/practice/papers", disabled: false, count: null },
+    { key: "paper", title: "Past papers", status: "Print or do timed", tone: "mint", to: "/student/practice/papers", disabled: false, opensSheet: false, count: null },
     {
       key: "test",
       title: "Placement test",
-      status: available
-        ? available.minutes
-          ? // No-break spaces keep "10 min" whole and the dot off the start of a wrapped line.
-            `Find your level\u00a0· ${available.minutes}\u00a0min`
-          : "Find your level"
-        : noneAvailable
-          ? "Not ready yet"
-          : "Find your level",
+      status: input.noSubjects
+        ? "Needs a subject"
+        : available
+          ? available.minutes
+            ? // No-break spaces keep "10 min" whole and the dot off the start of a wrapped line.
+              `Find your level\u00a0· ${available.minutes}\u00a0min`
+            : "Find your level"
+          : noneAvailable
+            ? "Not ready yet"
+            : "Find your level",
       tone: "sea",
       to: testTo,
       disabled: testTo === null,
+      opensSheet: false,
       count: null,
     },
   ]
 }
 
+/** Binny speaks in two to four words (master rule), so the line is counted, not hoped for. */
+export const BINNY_MAX_WORDS = 4
+
+export function wordCount(text: string): number {
+  return text.trim().split(/\s+/).length
+}
+
+/** The fullest line that fits: topic and marks, then the topic alone, then a line any topic fits. */
+function winLine(top: WinBackRow): string {
+  const candidates = [`${top.label} first. +${plural(top.marks, "mark")}.`, `${top.label} first.`]
+  return candidates.find((c) => wordCount(c) <= BINNY_MAX_WORDS) ?? "Win marks back."
+}
+
 function binnyFor(state: HubState, top: WinBackRow | undefined, papers: number): HubView["binny"] {
-  if (state === "firstTime") return { mood: "open", line: "Scan a paper and I'll find your marks to win back." }
-  if (state === "sparse") return { mood: "happy", line: "Good start. Try one set." }
+  if (state === "firstTime") return { mood: "open", line: "Start with a scan." }
+  if (state === "sparse") return { mood: "happy", line: "Good start. Keep going." }
   if (state === "normal") {
-    if (top) return { mood: "happy", line: `${top.label} first. +${plural(top.marks, "mark")}.` }
+    if (top) return { mood: "happy", line: winLine(top) }
     // Sets done but nothing scanned: there was nothing to catch up on, so ask for a paper.
     if (papers === 0) return { mood: "happy", line: "Scan a paper next." }
-    return { mood: "happy", line: "All caught up. Try a set." }
+    return { mood: "happy", line: "All caught up." }
   }
   return null
 }
@@ -348,6 +376,7 @@ export function practiceHubView(input: HubInput): HubView {
     tiles: hubTiles({
       firstTime: state === "firstTime",
       primarySubject,
+      noSubjects: state === "firstTime" && input.subjects.length === 0,
       dueTotal: input.dueTotal,
       deckCount: input.deckCount,
       placement: input.placement,

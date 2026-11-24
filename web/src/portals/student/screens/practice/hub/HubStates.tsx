@@ -9,7 +9,7 @@ import { PaperIcon, SetIcon, TestIcon } from "../practiceIcons"
 import type { HubErrorKind } from "./hubModel"
 
 /** The mock's big call to action. Its lift is the `shadow-hover` token, the nearest to the mock's off-token shadow. */
-const BIG_CTA = "min-h-[54px] w-full max-w-[300px] rounded-[18px] text-[16px] shadow-hover"
+const BIG_CTA = "min-h-[54px] w-full max-w-[300px] rounded-[18px] text-[16px] font-bold shadow-hover"
 
 /** CL: the tile grid, a heading bar and three ghost rows, in the real layout's shape. */
 export function HubSkeleton() {
@@ -106,7 +106,8 @@ export function FirstRun({ line }: { line: string }) {
           { icon: SetIcon, title: "Win them back", body: "Short sets, checked as you go." },
         ]}
       />
-      <Link to="/student/correct" className={buttonVariants({ variant: "primary", size: "lg", className: cn(BIG_CTA, "max-w-none") })}>
+      {/* `cn` merges after the variant recipe: `buttonVariants`' own `className` only appends, so `rounded-md` and `font-medium` would sit beside the mock's 18px and 700 and win the tie. */}
+      <Link to="/student/correct" className={cn(buttonVariants({ variant: "primary", size: "lg" }), BIG_CTA, "max-w-none lg:max-w-[360px]")}>
         Scan a paper
       </Link>
     </div>

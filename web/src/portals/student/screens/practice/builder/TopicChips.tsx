@@ -29,8 +29,8 @@ export function TopicChips({
                   aria-pressed={on}
                   onClick={() => onToggle(t.topic)}
                   className={cn(
-                    "relative inline-flex min-h-11 items-center gap-2 rounded-xl px-3 text-[13.5px] font-semibold transition-[translate] duration-200 ease-out hover:-translate-y-0.5 motion-reduce:transition-none motion-reduce:hover:translate-y-0",
-                    "focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary",
+                    "relative inline-flex min-h-11 items-center gap-2 rounded-[12px] px-3 text-[13.5px] font-semibold transition-[translate] duration-200 ease-out hover:-translate-y-0.5 motion-reduce:transition-none motion-reduce:hover:translate-y-0",
+                    "focus-visible:!rounded-[12px] focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary",
                     t.marksLost > 0
                       ? "bg-error-container text-on-error-container"
                       : "bg-surface-container-low text-on-surface shadow-[inset_0_0_0_1px_var(--color-outline-variant)]",

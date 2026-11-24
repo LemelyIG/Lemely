@@ -8,6 +8,7 @@ import {
   dueLabel,
   hubState,
   hubTiles,
+  wordCount,
   pickHomework,
   practiceHubView,
   profileQueryState,
@@ -351,7 +352,7 @@ describe("pickHomework", () => {
 })
 
 describe("hubTiles", () => {
-  const base = { firstTime: false, primarySubject: "0580", dueTotal: 26, deckCount: 4, placement: input().placement }
+  const base = { firstTime: false, primarySubject: "0580", noSubjects: false, dueTotal: 26, deckCount: 4, placement: input().placement }
 
   it("matches the mock statuses", () => {
     expect(hubTiles(base).map((t) => [t.key, t.title, t.status, t.tone])).toEqual([
@@ -386,11 +387,23 @@ describe("hubTiles", () => {
     expect(test).toMatchObject({ status: "Not ready yet", disabled: true, to: null })
   })
 
-  it("no subject at all disables only the subject-bound tiles", () => {
+  it("a failed load with no subject still pauses the subject-bound tiles; the error state explains why", () => {
     const tiles = hubTiles({ ...base, primarySubject: null, placement: [] })
     expect(tiles[0].disabled).toBe(true)
     expect(tiles[1].disabled).toBe(false)
     expect(tiles[2].disabled).toBe(false)
+  })
+
+  it("an empty subject list says so and leads to the page that adds one", () => {
+    const tiles = hubTiles({ ...base, firstTime: true, primarySubject: null, noSubjects: true, placement: [] })
+    expect(tiles[0]).toMatchObject({ status: "Add a subject first", to: "/student/onboard", disabled: false, opensSheet: false })
+    expect(tiles[3]).toMatchObject({ status: "Needs a subject", to: null, disabled: true })
+    expect(tiles[1].disabled).toBe(false)
+    expect(tiles[2].disabled).toBe(false)
+  })
+
+  it("only the practice set tile opens a sheet", () => {
+    expect(hubTiles(base).map((t) => [t.key, t.opensSheet])).toEqual([["set", true], ["cards", false], ["paper", false], ["test", false]])
   })
 
   it("flashcards always opens the flashcards root (L10 makes it a route)", () => {
@@ -436,7 +449,7 @@ describe("practiceHubView", () => {
     )
     expect(view.state).toBe("sparse")
     expect(view.subtitle).toBe("1 topic to win back")
-    expect(view.binny?.line).toBe("Good start. Try one set.")
+    expect(view.binny?.line).toBe("Good start. Keep going.")
     expect(view.showScanTip).toBe(true)
   })
 
@@ -444,13 +457,53 @@ describe("practiceHubView", () => {
     const view = practiceHubView(input({ subjects: [{ code: "0580", name: "Maths", papers: 0 }], topics: [], runs: [] }))
     expect(view.state).toBe("firstTime")
     expect(view.subtitle).toBeNull()
-    expect(view.binny).toEqual({ mood: "open", line: "Scan a paper and I'll find your marks to win back." })
+    expect(view.binny).toEqual({ mood: "open", line: "Start with a scan." })
+  })
+
+  it("first time with no subject at all: the set tile leads to adding one, not a silent dead tile", () => {
+    const view = practiceHubView(input({ subjects: [], topics: [], runs: [], placement: [] }))
+    expect(view.state).toBe("firstTime")
+    expect(view.tiles[0]).toMatchObject({ status: "Add a subject first", to: "/student/onboard", disabled: false, opensSheet: false })
+    expect(view.tiles[3]).toMatchObject({ status: "Needs a subject", disabled: true })
+  })
+
+  it("a failed load with no subject keeps the set tile paused: the failure, not a missing subject, is the reason", () => {
+    const view = practiceHubView(input({ subjects: [], topics: [], runs: [], placement: [], overviewStatus: "error", profileStatus: "error" }))
+    expect(view.state).toBe("error")
+    expect(view.tiles[0]).toMatchObject({ status: "Build your own", to: null, disabled: true })
+  })
+
+  it("every Binny line is two to four words, whatever the topic is called", () => {
+    const named = (topic: string) =>
+      practiceHubView(input({ topics: [{ code: "0580", status: "success", data: topics("0580", [[topic, 6]]) }] })).binny?.line ?? ""
+    const lines = [
+      practiceHubView(input()).binny?.line,
+      practiceHubView(input({ subjects: [{ code: "0580", name: "Maths", papers: 1 }], runs: [] })).binny?.line,
+      practiceHubView(input({ subjects: [{ code: "0580", name: "Maths", papers: 0 }], topics: [], runs: [] })).binny?.line,
+      practiceHubView(input({ topics: [{ code: "0580", status: "success", data: topics("0580", [["Vectors", 0]]) }] })).binny?.line,
+      practiceHubView(input({ subjects: [{ code: "0580", name: "Maths", papers: 0 }], topics: [{ code: "0580", status: "success", data: topics("0580", []) }] })).binny?.line,
+      named("Vectors"),
+      named("Newton's laws"),
+      named("Quadratic inequalities and graphs"),
+    ]
+    for (const line of lines) {
+      expect(line).toBeTruthy()
+      expect(wordCount(line as string), line).toBeGreaterThanOrEqual(2)
+      expect(wordCount(line as string), line).toBeLessThanOrEqual(4)
+    }
+  })
+
+  it("a longer topic name drops the marks, then the name, before it breaks the word limit", () => {
+    const line = (topic: string) =>
+      practiceHubView(input({ topics: [{ code: "0580", status: "success", data: topics("0580", [[topic, 6]]) }] })).binny?.line
+    expect(line("Newton's laws")).toBe("Newton's laws first.")
+    expect(line("Quadratic inequalities and graphs")).toBe("Win marks back.")
   })
 
   it("normal with nothing to win back: no subtitle, a calm line", () => {
     const view = practiceHubView(input({ topics: [{ code: "0580", status: "success", data: topics("0580", [["Vectors", 0]]) }] }))
     expect(view.subtitle).toBeNull()
-    expect(view.binny?.line).toBe("All caught up. Try a set.")
+    expect(view.binny?.line).toBe("All caught up.")
     expect(view.showScanTip).toBe(false)
   })
 
