@@ -284,7 +284,8 @@ class PracticeHubService:
         """Self-assign a practice set made of one past paper's servable questions.
 
         Raises:
-            PracticeNotFoundError: No paper with ``paper_id`` (→ 404).
+            PracticeNotFoundError: No paper with ``paper_id``, or the paper is outside the
+                student's non-empty paper enrolment for its subject (→ 404).
             PastPaperUnavailableError: The paper has no servable question (→ 409).
         """
         student_uuid = _as_uuid(student_id)
