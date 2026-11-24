@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { SubjectDot, subjectDotColor } from "@/components/redesign"
 import { QueryState } from "@/components/ui/query-state"
+import { PageHeading } from "@/components/ui/page-heading"
 import { SkeletonBlock } from "@/components/ui/skeleton"
 import { useToast } from "@/components/ui/toast"
 import { useFlashcardDeck, useGenerationStatus, useRetryingDeckIds } from "@/lib/hooks/useFlashcardApi"
@@ -103,7 +104,7 @@ export function DeckBody({
               {variant === "page" ? (
                 <header className="flex items-center gap-2.5">
                   <div className="min-w-0 flex-1 leading-tight">
-                    <h1 className="font-display text-[28px] font-extrabold leading-[1.1] tracking-[-0.03em] text-primary [overflow-wrap:anywhere]">{v.title}</h1>
+                    <PageHeading repeatsTitle={false} className="font-display text-[28px] font-extrabold leading-[1.1] tracking-[-0.03em] text-primary [overflow-wrap:anywhere]">{v.title}</PageHeading>
                     <span className="text-[13px] font-medium text-on-surface-variant">{sub}</span>
                   </div>
                   {options}

@@ -3,6 +3,7 @@ import { X } from "@phosphor-icons/react"
 import { Link } from "react-router-dom"
 import { useEffect, useRef } from "react"
 import { Binny, GoldRing } from "@/components/redesign"
+import { PageHeading } from "@/components/ui/page-heading"
 import type { DoneView } from "./reviewView"
 import { PRIMARY_BTN } from "./parts/buttonStyles"
 import "./flashcards.css"
@@ -15,11 +16,11 @@ export function ReviewDone({
   useEffect(() => { heading.current?.focus() }, [])
   const done = today ? today.filter((p) => p >= 1).length : 0
   return (
-    <div className="fc-review-done flex min-h-[calc(100dvh-var(--native-bar-h,56px)-env(safe-area-inset-top)-0.25rem)] flex-1 flex-col gap-[18px] overflow-auto lg:min-h-0 bg-[linear-gradient(180deg,var(--color-success-container),var(--color-surface)_45%)] -ml-[var(--fc-bleed-l)] -mr-[var(--fc-bleed-r)] pl-[calc(var(--fc-bleed-l)+6px)] pr-[calc(var(--fc-bleed-r)+6px)] pb-[26px] pt-4 [scrollbar-width:none] lg:mx-auto lg:w-full lg:max-w-[640px] lg:bg-none lg:px-5">
+    <div className="fc-review-done flex min-h-[calc(100dvh-var(--native-bar-h,56px)-env(safe-area-inset-top)-0.25rem-var(--native-tabbar-h,0px)-env(safe-area-inset-bottom))] flex-1 flex-col gap-[18px] overflow-auto lg:min-h-0 bg-[linear-gradient(180deg,var(--color-success-container),var(--color-surface)_45%)] -ml-[var(--fc-bleed-l)] -mr-[var(--fc-bleed-r)] pl-[calc(var(--fc-bleed-l)+6px)] pr-[calc(var(--fc-bleed-r)+6px)] pb-[26px] pt-4 [scrollbar-width:none] lg:mx-auto lg:w-full lg:max-w-[640px] lg:bg-none lg:px-5">
       <button type="button" aria-label="Close" onClick={onBack} className="grid size-11 place-items-center rounded-[14px] bg-primary-container text-primary"><X size={20} aria-hidden /></button>
       <div className="grid justify-items-center gap-1.5 leading-tight">
         <Binny mood={view.mood} size={110} motion="hop" />
-        <h1 ref={heading} tabIndex={-1} className="text-center font-display text-[34px] font-extrabold leading-[1.05] tracking-[-0.03em] text-primary">{view.title}</h1>
+        <PageHeading repeatsTitle={false} ref={heading} tabIndex={-1} className="text-center font-display text-[34px] font-extrabold leading-[1.05] tracking-[-0.03em] text-primary">{view.title}</PageHeading>
         <p className="text-center text-[14px] font-medium text-on-surface-variant">{view.sub}</p>
       </div>
       {banner}

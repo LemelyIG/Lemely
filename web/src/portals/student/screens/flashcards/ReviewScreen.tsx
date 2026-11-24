@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowRight, X } from "@phosphor-icons/react"
 import { useEffect, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { ComboChip, SubjectDot } from "@/components/redesign"
+import { PageHeading } from "@/components/ui/page-heading"
 import { ConfirmModal } from "@/components/ui/confirm-modal"
 import { Kbd } from "@/components/ui/kbd"
 import { SkeletonBlock } from "@/components/ui/skeleton"
@@ -167,7 +168,7 @@ export function ReviewScreen() {
   if (cards.length === 0) {
     return withStatus(
       <div className="grid flex-1 content-center justify-items-center gap-3 px-6 text-center">
-        <h1 className="font-display text-[28px] font-extrabold text-primary">Nothing due</h1>
+        <PageHeading repeatsTitle={false} className="font-display text-[28px] font-extrabold text-primary">Nothing due</PageHeading>
         <p className="text-[15px] text-on-surface-variant">{comingBackLine(due.data?.upcoming ?? [], meta.nextDueAt, new Date())}</p>
         <button type="button" onClick={() => navigate(backTo)} className={`${PRIMARY_BTN} max-w-[300px]`}>Back to decks</button>
       </div>
@@ -192,7 +193,7 @@ export function ReviewScreen() {
   const labelSubject = deckId ? deck.data?.subjectCode : subjectCode
 
   return withStatus(
-    <div className="flex min-h-[calc(100dvh-var(--native-bar-h,56px)-env(safe-area-inset-top)-0.25rem)] flex-col lg:mx-auto lg:min-h-[calc(100dvh-9.75rem)] lg:w-full lg:max-w-[640px] lg:pt-3">
+    <div className="flex min-h-[calc(100dvh-var(--native-bar-h,56px)-env(safe-area-inset-top)-0.25rem-var(--native-tabbar-h,0px)-env(safe-area-inset-bottom))] flex-col lg:mx-auto lg:min-h-[calc(100dvh-9.75rem)] lg:w-full lg:max-w-[640px] lg:pt-3">
       <h1 className="sr-only">Review flashcards</h1>
       {/* `.prtop`: end, progress bar, count */}
       <div className="flex items-center gap-3 px-0.5 pb-1.5 pt-4 lg:px-4">

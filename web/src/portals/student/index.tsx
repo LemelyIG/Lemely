@@ -438,9 +438,9 @@ export const studentRoute: RouteObject = {
     {
       path: "flashcards/review",
       element: <ReviewScreen />,
-      handle: { title: "Flashcard review", skeleton: "page-header", immersive: true },
+      handle: { title: "Flashcard review", skeleton: "page-header" },
     },
-    { path: "flashcards/review/:subjectCode", element: <LegacyReviewRedirect /> },
+    { path: "flashcards/review/:subjectCode", element: <LegacyReviewRedirect />, handle: { title: "Flashcard review", skeleton: "page-header" } },
     { path: "flashcards/:subjectCode", element: <FlashcardsScreen />, handle: { title: "Flashcards", skeleton: "list" } },
     /*
      * P4.9 moved the marketing page out of this portal and onto a public
