@@ -20,7 +20,7 @@ export function ReviewCard({
   const reduced = reducedMotion()
   const visual = swipeVisual(dx, revealed, reduced)
 
-  // Once flipped, focus rests on the card: its label now reads the answer, and Space or Enter does nothing here.
+  // Once flipped, focus rests on the card: its name now reads the question then the answer, and Space or Enter does nothing here.
   useEffect(() => { if (revealed) surface.current?.focus() }, [revealed])
 
   useDragGesture(surface, {
@@ -47,6 +47,7 @@ export function ReviewCard({
   })
 
   const stampGood = visual.stamp === "good"
+  const answerHintId = `fc-answer-hint-${card.id}`
   return (
     <div className="relative mx-[22px] mb-2.5 mt-3.5 min-h-[320px] flex-1 [perspective:1200px]">
       <span aria-hidden className="absolute inset-0 translate-y-3 scale-[0.94] rounded-[28px] bg-surface-container-lowest opacity-60 shadow-[inset_0_0_0_1px_var(--color-outline-variant)]" />
@@ -56,7 +57,10 @@ export function ReviewCard({
         role="button"
         data-review-primary=""
         tabIndex={0}
-        aria-label={revealed ? `${card.front}. Answer: ${card.back}` : `${card.front}. Tap to flip`}
+        // No aria-label: the name comes from the visible text (WCAG 2.5.3 label in name), so what a screen reader
+        // announces and what a voice-control user reads on the card are the same words in the same order.
+        // The flipped state adds its cue as a description, which sits after the name instead of inside it.
+        aria-describedby={revealed ? answerHintId : undefined}
         onClick={() => { if (!revealed) onReveal() }}
         style={{ transform: leaving ? undefined : `translateX(${dx}px) rotate(${visual.rotateDeg}deg)` }}
         className={[
@@ -80,15 +84,18 @@ export function ReviewCard({
         {revealed ? (
           <>
             <span className="text-balance text-[20px] font-bold leading-[1.35] text-on-surface-variant">{card.front}</span>
+            {" "}
             <span className="max-w-full break-words font-mono text-[clamp(18px,6vw,34px)] font-bold leading-[1.2] text-on-surface">{card.back}</span>
           </>
         ) : (
           <>
             <span className="text-balance font-display text-[28px] font-extrabold leading-[1.2] tracking-[-0.02em] text-primary">{card.front}</span>
+            {" "}
             <span className="text-[13px] font-semibold text-on-surface-variant">Tap to flip</span>
           </>
         )}
       </div>
+      {revealed ? <span id={answerHintId} className="sr-only">Answer shown. Rate how well you knew it.</span> : null}
     </div>
   )
 }
