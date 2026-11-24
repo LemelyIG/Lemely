@@ -136,6 +136,8 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
       : shellItem
   })
   const trail = studentShellTrail(pagePath)
+  // The phone breadcrumb already links back to Practice on this page.
+  const isPastPapers = pagePath.replace(/\/+$/, "") === "/student/practice/papers"
   const titleLevel = titleLevelFor(trail, isTabRoot(pagePath, STUDENT_BOTTOM_TABS.map((tab) => tab.to), isStudentSubjectRoot))
   // Practice also owns flashcards, and Plan its subject weeks: sections the tab's own URL match would miss.
   const practiceActive = isPracticeSection(pagePath)
@@ -199,14 +201,12 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
         title: studentPageTitle(pagePath, subjects),
         trail,
         titleLevel,
-        backFallback: "/student",
+        backFallback: isPastPapers ? "/student/practice" : "/student",
         navLabel: "Open student navigation",
         actions: (
           <>
-            {/* Packet B2a: a drilled-in page's trail has no linked crumb
-                ("Practice / 0580"), so below the sidebar column this is the
-                way back. Never on a section page, which design A shows bare. */}
-            {titleLevel === "detail" ? <BackControl fallback="/student" className="shell-lg:hidden native:hidden" /> : null}
+            {/* Past papers already has a linked Practice breadcrumb on phones. */}
+            {titleLevel === "detail" && !isPastPapers ? <BackControl fallback="/student" className="shell-lg:hidden native:hidden" /> : null}
             {/* Not on the scan screen itself, where it would do nothing; the rail (from shell-lg) carries it there. */}
             {location.pathname === "/student/correct" ? null : scan("me-2.5 max-shell-sm:hidden shell-lg:hidden")}
           </>
