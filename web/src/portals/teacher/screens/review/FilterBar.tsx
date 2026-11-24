@@ -1,5 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
 import { useEffect, useRef, useState } from "react"
+import { Input } from "@/components/ui/input"
 import type { ReviewQueueFilters } from "@/lib/reviewQueueQuery"
 import type { ReviewSort } from "@/lib/teacherTypes"
 import { FilterMenu } from "./FilterMenu"
@@ -45,11 +46,21 @@ export function FilterBar(p: FilterBarProps) {
   return (
     <div className="grid min-w-0 gap-2">
       <div className="flex min-w-0 gap-2">
-        <label className="flex min-w-0 flex-1 items-center gap-2 rounded-button bg-surface-container-lowest px-3 text-on-surface-variant shadow-[inset_0_0_0_1px_var(--color-outline)] focus-within:shadow-[inset_0_0_0_1.5px_var(--color-primary),0_0_0_3px_var(--color-primary-container)]">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5" /><path d="m10.5 10.5 3 3" /></svg>
-          <input ref={p.searchRef} type="search" maxLength={100} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && p.onSearch(q)} placeholder="Search" aria-label="Search students, papers or questions" className="w-full min-w-0 flex-1 border-0 bg-transparent py-2.5 text-sm font-semibold text-on-surface caret-primary outline-transparent" />
-          <span className="rounded-bar bg-surface-container-high pointer-coarse:hidden px-1.5 py-px font-mono text-xs" aria-hidden="true">/</span>
-        </label>
+        <Input
+          ref={p.searchRef}
+          type="search"
+          label="Search students, papers or questions"
+          labelClassName="sr-only"
+          wrapperClassName="min-w-0 flex-1"
+          leadingIcon={<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><circle cx="7" cy="7" r="4.5" /><path d="m10.5 10.5 3 3" /></svg>}
+          trailingIcon={<span className="rounded-bar bg-surface-container-high pointer-coarse:hidden px-1.5 py-px font-mono text-xs">/</span>}
+          maxLength={100}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && p.onSearch(q)}
+          placeholder="Search"
+          className="min-w-0 py-2.5 font-semibold caret-primary"
+        />
         <SortMenu value={p.filters.sort} onChange={p.onSort} />
       </div>
       <div ref={wrap} className="relative min-w-0">
