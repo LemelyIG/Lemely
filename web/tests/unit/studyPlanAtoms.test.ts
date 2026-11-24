@@ -249,6 +249,22 @@ describe("MissedGroup", () => {
     expect(out).toContain("Moving…")
     expect(out.match(/Move to today/g)).toHaveLength(1)
   })
+  it("never wears the gold family: gold is for earned things, a missed session is a soft error", () => {
+    for (const n of [2, 3]) {
+      const out = renderToStaticMarkup(createElement(MissedGroup, { ...props, missed: missed(n) }))
+      expect(out).not.toMatch(/tertiary|gold/)
+      expect(out).toContain("bg-error-container")
+      expect(out).toContain("text-on-error-container")
+    }
+  })
+})
+
+describe("WeekStrip missed day", () => {
+  it("shares the soft-error tone, never the gold family", () => {
+    const out = renderToStaticMarkup(createElement(WeekStrip, { days: [day({ count: 1, hasMissed: true })], onDay: noop }))
+    expect(out).not.toMatch(/tertiary|gold/)
+    expect(out).toContain("bg-error-container text-on-error-container")
+  })
 })
 
 describe("BasedOn", () => {

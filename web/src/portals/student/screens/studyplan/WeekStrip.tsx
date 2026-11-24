@@ -11,7 +11,7 @@ function dayLabel(d: DayCell): string {
 function circleTone(d: DayCell): string {
   if (d.isToday) return "bg-surface-container-lowest text-primary"
   if (d.allDone) return "bg-success-container text-success-text"
-  if (d.hasMissed) return "bg-tertiary-container text-on-tertiary-container"
+  if (d.hasMissed) return "bg-error-container text-on-error-container"
   if (d.count === 0) return "text-on-surface-variant shadow-[inset_0_0_0_1.5px_var(--color-outline-variant)]"
   return "bg-surface-container-high text-on-surface"
 }

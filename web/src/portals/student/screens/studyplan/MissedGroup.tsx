@@ -4,11 +4,12 @@ import type { SessionVM } from "./planModel"
 
 const focus = "focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
 const bar =
-  "flex min-h-12 items-center justify-between gap-2.5 rounded-[14px] bg-tertiary-container ps-3 pe-1 font-sans text-[13.5px] font-medium text-on-tertiary-container"
+  "flex min-h-12 items-center justify-between gap-2.5 rounded-[14px] bg-error-container ps-3 pe-1 font-sans text-[13.5px] font-medium text-on-error-container"
 const action = `inline-flex min-h-11 flex-none items-center whitespace-nowrap rounded-[14px] px-2 font-bold text-primary disabled:opacity-60 ${focus}`
 
 /*
- * Missed sessions (`.missr`): one warm bar per session, the text opens it, the
+ * Missed sessions (`.missr`): one soft-error bar per session (never gold, which
+ * is for earned things), the text opens it, the
  * action moves it to today. More than two collapse into one bar with a single
  * move-all, so a bad week never stacks a wall of warnings above today.
  * While any move is in flight every action waits, and the moving one says so.
