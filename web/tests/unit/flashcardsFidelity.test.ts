@@ -70,13 +70,30 @@ describe("flashcards fidelity guards", () => {
     expect(stray).toEqual([])
   })
 
-  it("the done-screen wash bleeds past the shell gutter on both sides, using the shell's own bleed vars", () => {
+  it("the done-screen wash uses shell gutters on web, iOS and Android", () => {
     const done = files.find((f) => f.name.endsWith("flashcards/ReviewDone.tsx"))
-    expect(done).toBeDefined()
-    expect(done!.source).toContain("-ml-[var(--native-bleed-l,0px)]")
-    expect(done!.source).toContain("-mr-[var(--native-bleed-r,0px)]")
-    expect(done!.source).toContain("pl-[calc(var(--native-bleed-l,0px)+6px)]")
-    expect(done!.source).toContain("pr-[calc(var(--native-bleed-r,0px)+6px)]")
+    expect(done?.source).toContain("fc-review-done")
+    expect(done?.source).toContain("-ml-[var(--fc-bleed-l)]")
+    expect(done?.source).toContain("-mr-[var(--fc-bleed-r)]")
+    const css = readFileSync(join(SCREENS, "flashcards.css"), "utf8")
+    expect(css).toContain("--fc-bleed-l: var(--native-bleed-l, 14px)")
+    expect(css).toContain("--fc-bleed-r: var(--native-bleed-r, 14px)")
+    expect(css).toContain(':root[data-platform="ios"] .fc-review-done')
+    expect(css).toContain("max(var(--native-group-inset-ios), env(safe-area-inset-left))")
+    expect(css).toContain("max(var(--native-group-inset-ios), env(safe-area-inset-right))")
+  })
+
+  it("every error alert box takes its look from parts/errorAlert.ts, never a copy of the classes", () => {
+    const copies: string[] = []
+    for (const { name, source } of files) {
+      if (name.endsWith("parts/errorAlert.ts")) continue
+      if (/bg-error-container[^"`']*px-3 py-2\.5|px-3 py-2\.5[^"`']*bg-error-container/.test(source)) copies.push(name)
+      for (const m of source.matchAll(/role="alert"[^>]*className=("[^"]*"|\{[^}]*\})/g)) {
+        if (!m[1].includes("ERROR_ALERT") && m[1].includes("error-container")) copies.push(`${name}: ${m[1].slice(0, 50)}`)
+      }
+    }
+    expect(copies).toEqual([])
+    expect(readFileSync(join(SCREENS, "parts/errorAlert.ts"), "utf8")).toContain("leading-tight")
   })
 
   it("the shelf heading is a PageHeading that repeats the shell title, not a bare h1", () => {

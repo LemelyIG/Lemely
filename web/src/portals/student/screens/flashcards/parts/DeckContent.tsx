@@ -1,4 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
+import { ERROR_ALERT } from "./errorAlert"
 import { PencilSimple, Plus } from "@phosphor-icons/react"
 import type { Ref } from "react"
 import type { DeckDetailDTO } from "@/lib/flashcardTypes"
@@ -56,7 +57,7 @@ export function DeckContent({
     const failed = failedDeckView(retrying)
     return (
       <div className="grid gap-3">
-        <div role="alert" className="rounded-xl bg-error-container px-3 py-2.5 text-[13.5px] font-semibold leading-tight text-on-error-container">{GENERATION_FAILED_TEXT}</div>
+        <div role="alert" className={ERROR_ALERT}>{GENERATION_FAILED_TEXT}</div>
         <button type="button" disabled={failed.retryDisabled} onClick={onRetry} className={PRIMARY_BTN}>{failed.retryLabel}</button>
         <button type="button" onClick={onDeleteFailed}
           className={`min-h-11 justify-self-center px-3.5 text-[15px] font-bold text-on-error-container ${FOCUS}`}>Delete deck</button>

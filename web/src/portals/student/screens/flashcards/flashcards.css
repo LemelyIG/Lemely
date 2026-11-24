@@ -1,4 +1,17 @@
-/* L10 · keyframes only. Values from .impeccable/mocks/student-r2/fc.css (flip) and the motion
+/* The wash follows the shell's horizontal padding, including native safe areas. */
+.fc-review-done {
+  --fc-bleed-l: var(--native-bleed-l, 14px);
+  --fc-bleed-r: var(--native-bleed-r, 14px);
+}
+
+@media (max-width: 720px) {
+  :root[data-platform="ios"] .fc-review-done {
+    --fc-bleed-l: max(var(--native-group-inset-ios), env(safe-area-inset-left));
+    --fc-bleed-r: max(var(--native-group-inset-ios), env(safe-area-inset-right));
+  }
+}
+
+/* L10 · keyframes. Values from .impeccable/mocks/student-r2/fc.css (flip) and the motion
  * table in the L10 plan. Each keyframe has a utility class below; under reduced motion all of them
  * resolve to no animation, so a call site never has to remember the guard. */
 @keyframes fc-flip {

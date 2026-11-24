@@ -1,4 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H3 E4 S3 R5 V3 */
+import { ERROR_ALERT } from "./errorAlert"
 import { CARD_DELETE_ERROR, cardDeleteConfirm, deleteControls, type CardSource } from "../deckActions"
 import { ALERT_BODY_ID } from "./FcSheet"
 import { DANGER_BTN, FOCUS } from "./buttonStyles"
@@ -23,7 +24,7 @@ export function CardDeleteStep({
   return (
     <>
       <p id={ALERT_BODY_ID} className="text-[14px] leading-[1.4] text-on-surface-variant">{copy.body}</p>
-      {state.isError ? <div role="alert" className="rounded-xl bg-error-container px-3 py-2.5 text-[13.5px] font-semibold text-on-error-container">{CARD_DELETE_ERROR}</div> : null}
+      {state.isError ? <div role="alert" className={ERROR_ALERT}>{CARD_DELETE_ERROR}</div> : null}
       <button type="button" disabled={controls.confirmDisabled} onClick={onConfirm}
         className={DANGER_BTN}>
         {controls.confirmLabel}

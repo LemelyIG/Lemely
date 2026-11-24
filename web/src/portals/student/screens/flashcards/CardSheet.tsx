@@ -1,4 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
+import { ERROR_ALERT } from "./parts/errorAlert"
 import { useEffect, useRef, useState } from "react"
 import { useAddCard, useDeleteCard, useEditCard } from "@/lib/hooks/useFlashcardApi"
 import {
@@ -12,7 +13,6 @@ import { FOCUS, PRIMARY_BTN } from "./parts/buttonStyles"
 
 /** pr.css `.fld textarea`: Mono 16/1.5, r16, 1.5px outline, primary 2px on focus. The border is the focus ring. */
 const FIELD = "rounded-2xl bg-surface-container-lowest px-3.5 py-3 font-mono text-[16px] font-medium leading-[1.5] text-on-surface shadow-[inset_0_0_0_1.5px_var(--color-outline)] outline-none resize-none focus:shadow-[inset_0_0_0_2px_var(--color-primary)]"
-const ERROR = "rounded-xl bg-error-container px-3 py-2.5 text-[13.5px] font-semibold text-on-error-container"
 
 /**
  * FC (edit), add, and the second step of Delete card, in one sheet so the move between them keeps
@@ -81,7 +81,7 @@ export function CardSheet({
         <span>Back</span>
         <textarea rows={2} required value={draft.back} onChange={(e) => setDraft((d) => ({ ...d, back: e.target.value }))} className={FIELD} />
       </label>
-      {failed ? <div role="alert" className={ERROR}>{cardSaveError(shownMode)}</div> : null}
+      {failed ? <div role="alert" className={ERROR_ALERT}>{cardSaveError(shownMode)}</div> : null}
       <button type="button" disabled={!canSave || saving}
         onClick={() => submitCard(shownMode, shownCard, draft, mutators, finish("saved"))} className={PRIMARY_BTN}>
         {cardSaveLabel(shownMode, saving)}

@@ -1,4 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E3 S4 R4 V3 */
+import { ERROR_ALERT } from "./parts/errorAlert"
 import { PencilSimple, Sparkle, Target } from "@phosphor-icons/react"
 import { useRef, useState } from "react"
 import { QueryState } from "@/components/ui/query-state"
@@ -138,7 +139,7 @@ function NewDeckForm({ seed, onClose, onStarted, onDiscarded }: {
 
   return (
     <FcSheet open onOpenChange={(open) => { if (!open) close() }} title="New deck">
-      {failedDeckId ? <div role="alert" className="rounded-xl bg-error-container px-3 py-2.5 text-[13.5px] font-semibold leading-tight text-on-error-container">{GENERATION_FAILED_TEXT}</div> : null}
+      {failedDeckId ? <div role="alert" className={ERROR_ALERT}>{GENERATION_FAILED_TEXT}</div> : null}
       {!failedDeckId && subjects.length > 1 ? (
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Subject">
           {subjects.map((s) => <button key={s.code} type="button" aria-pressed={s.code === subjectCode}
@@ -183,7 +184,7 @@ function NewDeckForm({ seed, onClose, onStarted, onDiscarded }: {
           <CountStepper label="Cards" value={count} min={COUNT_MIN} max={COUNT_MAX} onChange={(n) => setCount(clampCount(n))} />
         </>}
       </> : null}
-      {requestError ? <div role="alert" className="rounded-xl bg-error-container px-3 py-2.5 text-[13.5px] font-semibold leading-tight text-on-error-container">{newDeckErrorMessage(requestError)}</div> : null}
+      {requestError ? <div role="alert" className={ERROR_ALERT}>{newDeckErrorMessage(requestError)}</div> : null}
       <button type="button" onClick={() => void submit()} disabled={pending || (!failedDeckId && (!subjectCode || req.kind === "invalid")) || (!!failedDeckId && retrying.has(failedDeckId))}
         className={PRIMARY_BTN}>
         {failedDeckId ? "Try again" : submitLabel(mode, count, pending)}

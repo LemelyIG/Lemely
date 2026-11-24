@@ -1,4 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 */
+import { ERROR_ALERT } from "./parts/errorAlert"
 import { useEffect } from "react"
 import { useToast } from "@/components/ui/toast"
 import { useDeleteDeck } from "@/lib/hooks/useFlashcardApi"
@@ -34,7 +35,7 @@ export function DeleteDeckSheet({
   return (
     <FcSheet open={open} onOpenChange={(o) => { if (!o && !del.isPending) onClose() }} title={view.title} alert restoreFocusTo={restoreFocusTo}>
       <p id={ALERT_BODY_ID} className="text-[14px] leading-[1.4] text-on-surface-variant">{view.body}</p>
-      {del.isError ? <div role="alert" className="rounded-xl bg-error-container px-3 py-2.5 text-[13.5px] font-semibold text-on-error-container">{DELETE_DECK_ERROR}</div> : null}
+      {del.isError ? <div role="alert" className={ERROR_ALERT}>{DELETE_DECK_ERROR}</div> : null}
       <button type="button" disabled={controls.confirmDisabled}
         onClick={() => submitDeleteDeck(deckId, del.mutate, {
           onClose,

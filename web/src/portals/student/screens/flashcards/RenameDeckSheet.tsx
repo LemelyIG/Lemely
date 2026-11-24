@@ -1,4 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H3 E4 S3 R5 V3 */
+import { ERROR_ALERT } from "./parts/errorAlert"
 import { useEffect, useState } from "react"
 import { useRenameDeck } from "@/lib/hooks/useFlashcardApi"
 import { DECK_TITLE_MAX, RENAME_ERROR, renameControls, renameTitle, submitRename } from "./deckActions"
@@ -34,7 +35,7 @@ export function RenameDeckSheet({
           onKeyDown={(e) => { if (e.key === "Enter" && valid) { e.preventDefault(); submit() } }}
           className="rounded-2xl bg-surface-container-lowest px-3.5 py-3 text-[16px] font-medium text-on-surface shadow-[inset_0_0_0_1.5px_var(--color-outline)] outline-none focus:shadow-[inset_0_0_0_2px_var(--color-primary)]" />
       </label>
-      {rename.isError ? <div role="alert" className="rounded-xl bg-error-container px-3 py-2.5 text-[13.5px] font-semibold text-on-error-container">{RENAME_ERROR}</div> : null}
+      {rename.isError ? <div role="alert" className={ERROR_ALERT}>{RENAME_ERROR}</div> : null}
       <button type="button" disabled={controls.saveDisabled} onClick={submit}
         className={PRIMARY_BTN}>
         {controls.saveLabel}
