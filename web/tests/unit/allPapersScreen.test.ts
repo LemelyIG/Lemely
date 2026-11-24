@@ -6,7 +6,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ApiError } from "@/lib/api"
 import type { PaperHistoryRow, Subject } from "@/lib/studentTypes"
-import { currentSubjectCode, resolveCrumb, resolveCrumbTrail, studentShellTrail } from "@/portals/student/data"
+import { currentSubjectCode, resolveCrumb, resolveCrumbTrail, shellParentTo, studentShellTrail } from "@/portals/student/data"
 import { AllPapers } from "@/portals/student/screens/AllPapers"
 import { AllPapersList } from "@/portals/student/screens/papers/AllPapersList"
 import { ComparePanel } from "@/portals/student/screens/papers/ComparePanel"
@@ -83,6 +83,23 @@ describe("the trail and the way back", () => {
   })
   it("keeps the subject open in the sidebar", () => {
     expect(currentSubjectCode("/student/subject/0580/papers")).toBe("0580")
+  })
+})
+
+describe("one back control on the phone header", () => {
+  const shell = read("src/portals/student/shell.tsx")
+  it("the parent is the nearest linked ancestor in the shell trail, and null when none is linked", () => {
+    expect(shellParentTo(studentShellTrail("/student/subject/0580/papers"))).toBe("/student/subject/0580")
+    expect(shellParentTo(studentShellTrail("/student/subject/0580"))).toBeNull()
+    expect(shellParentTo(studentShellTrail("/student/result/3"))).toBeNull()
+    expect(shellParentTo([])).toBeNull()
+  })
+  it("the bar's own Back button is skipped when the trail already carries a back link, so the title keeps its room", () => {
+    expect(shell).toMatch(/titleLevel === "detail" && parentTo === null \? <BackControl/)
+  })
+  it("the native back and the fallback follow the same parent", () => {
+    expect(shell).toContain("const parentTo = shellParentTo(trail)")
+    expect(shell).toContain('backFallback: parentTo ?? "/student"')
   })
 })
 
