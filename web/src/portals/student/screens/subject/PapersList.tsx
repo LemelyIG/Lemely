@@ -32,7 +32,7 @@ export function PapersList({ rows, visible, onShowAll }: { rows: PaperRowView[];
 
   if (rows.length === 0) return null
   return (
-    <section className="sj-sec" aria-labelledby="sj-papers-h" ref={sectionRef}>
+    <section className="sj-sec sj-sec--papers" aria-labelledby="sj-papers-h" ref={sectionRef}>
       <SectionHeading id="sj-papers-h" title="Papers" />
       <HairRows aria-label="Papers, newest first">
         {rows.slice(0, visible).map((row) => (

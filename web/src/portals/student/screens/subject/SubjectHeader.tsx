@@ -30,7 +30,7 @@ export function SubjectHeader({
         </PageHeading>
         {subtitle ? <span className="sj-sub">{subtitle}</span> : null}
       </div>
-      {examDate ? <CountdownPill examDate={examDate} now={now} to={planTo} /> : null}
+      {examDate ? <CountdownPill examDate={examDate} now={now} subject={null} to={planTo} /> : null}
     </div>
   )
 }
