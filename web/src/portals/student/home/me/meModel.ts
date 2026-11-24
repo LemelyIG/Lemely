@@ -157,16 +157,21 @@ export function standingsSub(rank: StandingsRank, rankingsOff: boolean | undefin
  * The rank `standingsSub` is given. `null` (no class to be ranked in) only once the student's classes have loaded
  * and there are none. While the classes or the board are still loading it is `undefined`: unknown, so the door
  * says nothing rather than "Join a class". Once the board is in, a student with a class whom it holds no rank for
- * (no XP this week) is `"unranked"`: they have a class, so never "Join a class".
+ * (no XP this week) is `"unranked"`: they have a class, so never "Join a class". Only a settled board says so: a
+ * cached board that is being fetched again may be left over from before a setting changed (an opted-out period
+ * holds no rank), so while it is fetching a missing rank stays unknown. A cached number is still a number.
  */
 export function standingsRank(input: {
   classes: number | undefined
   board: { viewer: { rank: number | null } | null } | undefined
+  boardFetching: boolean
 }): StandingsRank {
   if (input.classes === undefined) return undefined
   if (input.classes === 0) return null
   if (input.board === undefined) return undefined
-  return input.board.viewer?.rank ?? "unranked"
+  const rank = input.board.viewer?.rank
+  if (typeof rank === "number") return rank
+  return input.boardFetching ? undefined : "unranked"
 }
 
 /**

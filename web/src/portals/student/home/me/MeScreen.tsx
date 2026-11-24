@@ -91,7 +91,7 @@ export function MeScreen() {
                 className="order-4 md:order-none"
                 doors={peopleVm({
                   classes: classes.data?.classes.length,
-                  rank: standingsRank({ classes: classes.data?.classes.length, board: board.data }),
+                  rank: standingsRank({ classes: classes.data?.classes.length, board: board.data, boardFetching: board.isFetching }),
                   rankingsOff,
                   friends: friends.data?.friends.length,
                   parents: parents.data?.parents.length,

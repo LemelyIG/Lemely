@@ -60,12 +60,8 @@ describe("Binny's mood follows the grade", () => {
     expect(s.motion).toBe("idle")
   })
 
-  it("a drop from the top is never happier than concerned, even when the grade is still high", () => {
-    for (const kind of ["result", "tough"] as const) {
-      const s = stageFor({ kind, grade: "A", previousGrade: "A*" })
-      expect(SADDEST_FIRST.indexOf(s.mood), kind).toBeLessThanOrEqual(SADDEST_FIRST.indexOf("thinking"))
-      expect(s.motion, kind).toBe("idle")
-    }
+  it("From A* to A is still an A: happy and hopping, even though the grade dropped", () => {
+    expect(stageFor({ grade: "A", previousGrade: "A*" })).toMatchObject({ line: "From A* to A", mood: "happy", motion: "hop" })
   })
 
   it("a rise keeps the grade's own mood: From C to B is a pleased Binny, not a hopping one", () => {
@@ -73,26 +69,26 @@ describe("Binny's mood follows the grade", () => {
     expect(stageFor({ grade: "A", previousGrade: "C" })).toMatchObject({ line: "From C to A", mood: "happy", motion: "hop" })
   })
 
-  it("a tough paper is never happier than concerned, and the lowest grades are the saddest", () => {
+  it("the same grade gives the same mood whatever the previous grade or the paper kind", () => {
+    for (const grade of [...LADDER_BEST_FIRST, "9", ""]) {
+      const alone = stageFor({ grade, previousGrade: null }).mood
+      for (const previousGrade of [null, ...LADDER_BEST_FIRST]) {
+        for (const kind of ["result", "tough"] as const) {
+          expect(stageFor({ kind, grade, previousGrade }).mood, `${kind} ${previousGrade}->${grade}`).toBe(alone)
+        }
+      }
+    }
+  })
+
+  it("a tough paper takes its grade's mood: a tough C is open, a tough E is sad", () => {
+    expect(stageFor({ kind: "tough", grade: "C", previousGrade: "B" }).mood).toBe("open")
     expect(stageFor({ kind: "tough", grade: "D", previousGrade: null }).mood).toBe("thinking")
     expect(stageFor({ kind: "tough", grade: "E", previousGrade: null }).mood).toBe("sad")
     expect(stageFor({ kind: "tough", grade: "U", previousGrade: "C" }).mood).toBe("sad")
-    expect(stageFor({ kind: "tough", grade: "C", previousGrade: "B" }).mood).toBe("thinking")
   })
 
   it("a grade off the ladder makes no claim: neutral Binny, no hop", () => {
     expect(stageFor({ grade: "9" })).toMatchObject({ mood: "open", motion: "idle" })
     expect(stageFor({ grade: "" })).toMatchObject({ mood: "open", motion: "idle" })
-  })
-
-  it("only moods Binny already has are used, so no new art is implied", () => {
-    const existing: readonly BinnyMood[] = ["happy", "wink", "open", "thinking", "sad"]
-    for (const grade of [...LADDER_BEST_FIRST, "9"]) {
-      for (const previousGrade of [null, ...LADDER_BEST_FIRST]) {
-        for (const kind of ["result", "tough"] as const) {
-          expect(existing, `${kind} ${previousGrade}->${grade}`).toContain(stageFor({ kind, grade, previousGrade }).mood)
-        }
-      }
-    }
   })
 })

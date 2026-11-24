@@ -6,8 +6,8 @@ import { invalidateAfterStudentProfileChange } from "@/lib/hooks/useMeApi"
 import { stripComments } from "./support/jsxSource"
 
 /*
- * Me's Standings door reads the viewer's class rank. A class board leaves an opted-out student out
- * (`viewer: null`), so after "Show me again" a cached board still says "no rank" until it is fetched again.
+ * Me's Standings door reads the viewer's class rank. A class board holds no rank for an opted-out student
+ * (`viewer.rank: null`), so after "Show me again" a cached board still says "no rank" until it is fetched again.
  * Changing the student profile therefore has to invalidate every cached leaderboard, not only the profile.
  */
 

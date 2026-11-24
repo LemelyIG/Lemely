@@ -115,8 +115,8 @@ export function useStudentProfile(): UseQueryResult<StudentProfileWithEnrolments
 
 /**
  * After a student-profile change: refetch the profile, and every cached board. The ranking opt-out is part of
- * this profile, and a board leaves an opted-out student out (`viewer: null`), so a cached board is stale the
- * moment the setting flips. Without this, Me's Standings door reads a wrong line until the board refetches.
+ * this profile, and a class board holds no rank for an opted-out student (`viewer.rank: null`), so a cached board
+ * is stale the moment the setting flips. Without this, Me's Standings door reads a wrong line until the board refetches.
  */
 export function invalidateAfterStudentProfileChange(queryClient: QueryClient): void {
   queryClient.invalidateQueries({ queryKey: STUDENT_PROFILE_KEY })

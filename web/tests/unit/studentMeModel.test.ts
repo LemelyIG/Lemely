@@ -141,16 +141,22 @@ describe("Me view model", () => {
 
   it("standingsRank: null (Join a class) only once the classes have loaded and there are none", () => {
     const board = { viewer: { rank: 3 } }
-    expect(standingsRank({ classes: undefined, board: undefined })).toBeUndefined()
-    expect(standingsRank({ classes: undefined, board })).toBeUndefined()
-    expect(standingsRank({ classes: 0, board: undefined })).toBeNull()
-    expect(standingsRank({ classes: 2, board: undefined })).toBeUndefined()
-    expect(standingsRank({ classes: 2, board })).toBe(3)
+    expect(standingsRank({ classes: undefined, board: undefined, boardFetching: false })).toBeUndefined()
+    expect(standingsRank({ classes: undefined, board, boardFetching: false })).toBeUndefined()
+    expect(standingsRank({ classes: 0, board: undefined, boardFetching: false })).toBeNull()
+    expect(standingsRank({ classes: 2, board: undefined, boardFetching: false })).toBeUndefined()
+    expect(standingsRank({ classes: 2, board, boardFetching: false })).toBe(3)
   })
 
   it("standingsRank: a student who has a class never reads Join a class, whatever is still loading or unranked", () => {
-    const door = (input: Parameters<typeof standingsRank>[0]) =>
-      peopleVm({ classes: input.classes, rank: standingsRank(input), rankingsOff: false, friends: 0, parents: 0 })[1]!.sub
+    const door = (input: Omit<Parameters<typeof standingsRank>[0], "boardFetching">) =>
+      peopleVm({
+        classes: input.classes,
+        rank: standingsRank({ ...input, boardFetching: false }),
+        rankingsOff: false,
+        friends: 0,
+        parents: 0,
+      })[1]!.sub
     // classes still loading (the first transient wrong case), board not yet fetched: nothing is said
     expect(door({ classes: undefined, board: undefined })).toBeNull()
     expect(door({ classes: 2, board: undefined })).toBeNull()
@@ -162,11 +168,11 @@ describe("Me view model", () => {
   })
 
   it("standingsRank: a classed student the loaded board has no rank for is unranked, a board still loading is unknown", () => {
-    expect(standingsRank({ classes: 2, board: { viewer: { rank: null } } })).toBe("unranked")
-    expect(standingsRank({ classes: 2, board: { viewer: null } })).toBe("unranked")
-    expect(standingsRank({ classes: 2, board: undefined })).toBeUndefined()
-    expect(standingsRank({ classes: undefined, board: { viewer: { rank: null } } })).toBeUndefined()
-    expect(standingsRank({ classes: 0, board: { viewer: { rank: null } } })).toBeNull()
+    expect(standingsRank({ classes: 2, board: { viewer: { rank: null } }, boardFetching: false })).toBe("unranked")
+    expect(standingsRank({ classes: 2, board: { viewer: null }, boardFetching: false })).toBe("unranked")
+    expect(standingsRank({ classes: 2, board: undefined, boardFetching: false })).toBeUndefined()
+    expect(standingsRank({ classes: undefined, board: { viewer: { rank: null } }, boardFetching: false })).toBeUndefined()
+    expect(standingsRank({ classes: 0, board: { viewer: { rank: null } }, boardFetching: false })).toBeNull()
   })
 
   it("standingsSub: unranked reads Not ranked yet unless rankings are off or the setting is unread", () => {
@@ -181,10 +187,11 @@ describe("Me view model", () => {
       classes: number | undefined
       board: { viewer: { rank: number | null } | null; viewerOptedOut: boolean } | undefined
       optOut: boolean | undefined
+      fetching?: boolean
     }) =>
       peopleVm({
         classes: input.classes,
-        rank: standingsRank({ classes: input.classes, board: input.board }),
+        rank: standingsRank({ classes: input.classes, board: input.board, boardFetching: input.fetching ?? false }),
         rankingsOff: resolveRankingsOff({
           profileOptOut: input.optOut,
           boardOptedOut: input.board?.viewerOptedOut,
@@ -211,6 +218,27 @@ describe("Me view model", () => {
     expect(standings({ classes: 2, board: { viewer: { rank: 4 }, viewerOptedOut: false }, optOut: false }).sub).toBe("4th")
   })
 
+  it("standings door: a cached board with no rank, being fetched again, says nothing instead of Not ranked yet", () => {
+    // After "Show me again" the cached class board is still the opted-out period's (viewer.rank null) while the profile
+    // already says rankings are on. Until the refetch lands the door must not claim "Not ranked yet".
+    const stale = { viewer: { rank: null }, viewerOptedOut: false }
+    const standings = (fetching: boolean, board: { viewer: { rank: number | null } | null; viewerOptedOut: boolean }) =>
+      peopleVm({
+        classes: 2,
+        rank: standingsRank({ classes: 2, board, boardFetching: fetching }),
+        rankingsOff: resolveRankingsOff({ profileOptOut: false, boardOptedOut: board.viewerOptedOut, profileFailed: false }),
+        friends: 0,
+        parents: 0,
+      })[1]!.sub
+    expect(standings(true, stale)).toBeNull()
+    expect(standings(true, { viewer: null, viewerOptedOut: false })).toBeNull()
+    // settled: the same board is a claim again
+    expect(standings(false, stale)).toBe("Not ranked yet")
+    expect(standings(false, { viewer: null, viewerOptedOut: false })).toBe("Not ranked yet")
+    // a cached number is still a number while it refreshes
+    expect(standings(true, { viewer: { rank: 4 }, viewerOptedOut: false })).toBe("4th")
+  })
+
   it("rankings-off state reads the student's own setting first, then the board, then assumes on only after a failed read", () => {
     expect(resolveRankingsOff({ profileOptOut: true, boardOptedOut: false, profileFailed: false })).toBe(true)
     expect(resolveRankingsOff({ profileOptOut: false, boardOptedOut: true, profileFailed: false })).toBe(false)
@@ -228,8 +256,14 @@ describe("Me view model", () => {
 
   it("MeScreen derives the rank from the loaded classes, never from firstClass alone", () => {
     const screen = readFileSync(join(process.cwd(), "src/portals/student/home/me/MeScreen.tsx"), "utf8")
-    expect(screen).toContain("standingsRank({ classes: classes.data?.classes.length, board: board.data })")
+    expect(screen).toContain("classes: classes.data?.classes.length")
+    expect(screen).toContain("board: board.data")
     expect(screen).not.toMatch(/rank:\s*firstClass/)
+  })
+
+  it("MeScreen tells standingsRank when the class board is being fetched", () => {
+    const screen = readFileSync(join(process.cwd(), "src/portals/student/home/me/MeScreen.tsx"), "utf8")
+    expect(screen).toContain("boardFetching: board.isFetching")
   })
 
   it("subjects and activity", () => {
