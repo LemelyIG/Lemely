@@ -37,7 +37,7 @@ export function DeckRow({
           selected ? "lg:rounded-[14px] lg:bg-primary-container lg:px-3" : "",
         ].join(" ")}
       >
-        <span className="grid gap-1">
+        <span className="grid gap-1 leading-tight">
           <b className="text-[15px] font-bold transition-colors group-hover:text-primary">{row.title}</b>
           {row.statusLine ? (
             <span className={row.status === "failed" ? "text-[13px] font-semibold text-on-error-container" : "text-[13px] text-on-surface-variant"}>

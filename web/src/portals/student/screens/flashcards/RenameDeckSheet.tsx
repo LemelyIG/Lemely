@@ -3,8 +3,8 @@ import { useEffect, useState } from "react"
 import { useRenameDeck } from "@/lib/hooks/useFlashcardApi"
 import { DECK_TITLE_MAX, RENAME_ERROR, renameControls, renameTitle, submitRename } from "./deckActions"
 import { FcSheet } from "./parts/FcSheet"
+import { FOCUS, PRIMARY_BTN } from "./parts/buttonStyles"
 
-const FOCUS = "focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
 
 /** One step, no confirm: a rename is undone by renaming again. Save stays off until the name differs. */
 export function RenameDeckSheet({
@@ -28,7 +28,7 @@ export function RenameDeckSheet({
   const submit = () => { if (!rename.isPending) submitRename(deckId, title, value, rename.mutate, onClose) }
   return (
     <FcSheet open={open} onOpenChange={(o) => { if (!o && !rename.isPending) onClose() }} title="Rename deck" restoreFocusTo={restoreFocusTo}>
-      <label className="grid gap-1.5 text-[13px] font-semibold text-on-surface-variant">
+      <label className="grid gap-1.5 text-[13px] font-semibold leading-tight text-on-surface-variant">
         <span>Name</span>
         <input autoFocus maxLength={DECK_TITLE_MAX} value={value} onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && valid) { e.preventDefault(); submit() } }}
@@ -36,7 +36,7 @@ export function RenameDeckSheet({
       </label>
       {rename.isError ? <div role="alert" className="rounded-xl bg-error-container px-3 py-2.5 text-[13.5px] font-semibold text-on-error-container">{RENAME_ERROR}</div> : null}
       <button type="button" disabled={controls.saveDisabled} onClick={submit}
-        className={`!min-h-[54px] w-full rounded-[18px] bg-primary px-7 text-[16px] font-bold text-on-primary shadow-[0_14px_24px_-16px_oklch(0.3_0.07_242/0.7)] disabled:shadow-none disabled:bg-surface-container-high disabled:text-on-surface-variant ${FOCUS}`}>
+        className={PRIMARY_BTN}>
         {controls.saveLabel}
       </button>
       <button type="button" disabled={controls.cancelDisabled} onClick={onClose}

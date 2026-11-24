@@ -188,7 +188,8 @@ test.describe("flashcards on a phone", () => {
     await expect(kinds.getByRole("radio")).toHaveCount(3)
     await expect(kinds.getByRole("radio", { checked: true })).toHaveCount(1)
     const chip = sheet.getByRole("group", { name: "Topic", exact: true }).getByRole("button").first()
-    await expect(chip).toHaveAttribute("aria-pressed", "false", { timeout: 15_000 })
+    // The sheet opens with the weakest weak topic already pressed (so "Make cards" works in one tap), so the first chip may start either way; it must report one or the other.
+    await expect(chip).toHaveAttribute("aria-pressed", /^(true|false)$/, { timeout: 15_000 })
     await chip.click()
     await expect(chip).toHaveAttribute("aria-pressed", "true")
     await expectAccessible(page, DIALOG)

@@ -4,6 +4,7 @@ import { Link } from "react-router-dom"
 import { Binny, Walkthrough } from "@/components/redesign"
 import { SkeletonBlock } from "@/components/ui/skeleton"
 import type { NewDeckMode } from "./newDeckView"
+import { FOCUS, PRIMARY_BTN } from "./parts/buttonStyles"
 
 /**
  * FL: 64 r16, 56 r16, 120×20, 4 × 60 r14 (fc.js `put('FL',…)`). One status region for the
@@ -20,7 +21,6 @@ export function DecksLoading() {
   )
 }
 
-const FOCUS = "focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
 
 /**
  * FE (fc.js `put('FE',…)`): the first load failed, so there is no shelf to keep. Sad Binny 96, the
@@ -32,10 +32,10 @@ export function DecksError({ onRetry }: { onRetry: () => void }) {
     <div className="grid flex-1 content-center justify-items-center gap-3 px-2 py-6 text-center" role="alert">
       <Binny mood="sad" size={96} />
       <h2 className="mt-1.5 font-display text-[28px] font-extrabold leading-[1.15] tracking-[-0.02em] text-balance text-primary">
-        Couldn’t load your decks
+        We couldn’t load your decks
       </h2>
       <p className="mb-1.5 max-w-[30ch] text-[15px] font-medium leading-[1.4] text-on-surface-variant">Check your connection, then try again.</p>
-      <button type="button" onClick={onRetry} className={`!min-h-[54px] w-full rounded-[18px] bg-primary px-7 text-[16px] font-bold text-on-primary shadow-[0_14px_24px_-16px_oklch(0.3_0.07_242/0.7)] ${FOCUS}`}>
+      <button type="button" onClick={onRetry} className={PRIMARY_BTN}>
         Try again
       </button>
       <Link to="/student" className={`inline-flex min-h-11 items-center px-3.5 text-[14px] font-semibold text-primary ${FOCUS}`}>Back to Home</Link>
@@ -89,7 +89,7 @@ export function EmptyShelf({ weakHint, onPick }: { weakHint: string | null; onPi
               i === 0 ? "bg-primary-container shadow-[inset_0_0_0_2px_var(--color-primary)]" : "bg-surface-container-lowest shadow-[inset_0_0_0_1.5px_var(--color-outline-variant)]",
             ].join(" ")}>
             <span className={`grid size-10 place-items-center rounded-xl ${o.tone}`}><o.icon size={16} weight="bold" aria-hidden /></span>
-            <span className="grid"><b className="text-[15px] font-bold">{o.title}</b><span className="text-[13px] text-on-surface-variant">{subs[o.mode]}</span></span>
+            <span className="grid leading-tight"><b className="text-[15px] font-bold">{o.title}</b><span className="text-[13px] text-on-surface-variant">{subs[o.mode]}</span></span>
             <CaretRight size={18} aria-hidden className="text-on-surface-variant" />
           </button>
         ))}
@@ -106,7 +106,7 @@ export function SparseExtras({
     <>
       {tip ? (
         <div className="flex items-center justify-between gap-3 py-3 shadow-[0_-1px_0_var(--color-outline-variant)]">
-          <span className="grid"><b className="text-[15px] font-bold">{tip.title}</b><span className="text-[13px] text-on-surface-variant">{tip.body}</span></span>
+          <span className="grid leading-tight"><b className="text-[15px] font-bold">{tip.title}</b><span className="text-[13px] text-on-surface-variant">{tip.body}</span></span>
           <button type="button" onClick={onMakeTip} className={`min-h-11 flex-none rounded-[14px] bg-primary px-4 text-[14px] font-bold text-on-primary ${FOCUS}`}>Make it</button>
         </div>
       ) : null}

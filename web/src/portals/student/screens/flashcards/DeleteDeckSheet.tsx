@@ -4,8 +4,8 @@ import { useToast } from "@/components/ui/toast"
 import { useDeleteDeck } from "@/lib/hooks/useFlashcardApi"
 import { DELETE_DECK_ERROR, deleteControls, deleteDeckConfirm, submitDeleteDeck } from "./deckActions"
 import { ALERT_BODY_ID, FcSheet } from "./parts/FcSheet"
+import { DANGER_BTN, FOCUS } from "./parts/buttonStyles"
 
-const FOCUS = "focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
 
 /**
  * FX. The consequence is on the sheet (what goes, that it can't come back) and Keep it is the way
@@ -40,7 +40,7 @@ export function DeleteDeckSheet({
           onClose,
           onDeleted: () => { toast({ title: `${title} deleted`, variant: "success" }); onDeleted() },
         })}
-        className={`!min-h-[54px] w-full rounded-[18px] bg-on-error-container px-7 text-[16px] font-bold text-on-primary disabled:opacity-60 ${FOCUS}`}>
+        className={DANGER_BTN}>
         {controls.confirmLabel}
       </button>
       <button type="button" autoFocus disabled={controls.keepDisabled} onClick={onClose}

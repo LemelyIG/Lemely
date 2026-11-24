@@ -182,6 +182,43 @@ describe("new deck sheet", () => {
   })
 })
 
+describe("opening on the weakest topic", () => {
+  const twoWeak = [
+    { subjectCode: "0580", topic: "algebra", marksLost: 5, accuracyPct: 58 },
+    { subjectCode: "0580", topic: "vectors", marksLost: 9, accuracyPct: 41 },
+  ]
+  const pressed = () => findAll(state.sheet, (el) => el.type === "button" && el.props["aria-pressed"] === true)
+    .map((el) => (el.props.children as { props: { children: string } }[])[0].props.children)
+  const make = () => button("Make 12 cards")
+
+  it("presses the weakest topic and lets Make cards work in one tap", () => {
+    state.weak = twoWeak
+    render(seed)
+    expect(pressed()).toEqual(["vectors"])
+    expect(make().props.disabled).toBe(false)
+  })
+
+  it("keeps the student's own topic instead of the weakest", () => {
+    state.weak = twoWeak
+    render({ mode: "weakness", subjectCode: "0580", topic: "algebra" })
+    expect(pressed()).toEqual(["algebra"])
+  })
+
+  it("preselects nothing when this subject has no weak topic, so Make cards waits for a pick", () => {
+    state.weak = [{ subjectCode: "0625", topic: "waves", marksLost: 6, accuracyPct: 50 }]
+    render(seed)
+    expect(pressed()).toEqual([])
+    expect(make().props.disabled).toBe(true)
+  })
+
+  it("preselects nothing in topic mode", () => {
+    state.weak = twoWeak
+    render({ mode: "topic", subjectCode: "0580", topic: null })
+    expect(pressed()).toEqual([])
+    expect(make().props.disabled).toBe(true)
+  })
+})
+
 describe("subject chips", () => {
   const two = [{ code: "0580", name: "Mathematics" }, { code: "0625", name: "Physics" }]
   const picked: NewDeckSeed = { mode: "manual", subjectCode: "0580", topic: "algebra" }

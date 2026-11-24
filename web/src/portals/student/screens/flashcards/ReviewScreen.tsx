@@ -17,6 +17,7 @@ import { ReviewCard } from "./ReviewCard"
 import { ReviewDone } from "./ReviewDone"
 import { comingBackLine, topicName } from "./flashcardsView"
 import { doneView, gradeButtons, progressView, reviewKeyAction, syncBannerText } from "./reviewView"
+import { PRIMARY_BTN } from "./parts/buttonStyles"
 
 const GRADE_TONE: Record<ReviewGrade, string> = {
   again: "bg-error-container text-on-error-container",
@@ -168,7 +169,7 @@ export function ReviewScreen() {
       <div className="grid flex-1 content-center justify-items-center gap-3 px-6 text-center">
         <h1 className="font-display text-[28px] font-extrabold text-primary">Nothing due</h1>
         <p className="text-[15px] text-on-surface-variant">{comingBackLine(due.data?.upcoming ?? [], meta.nextDueAt, new Date())}</p>
-        <button type="button" onClick={() => navigate(backTo)} className="!min-h-[54px] w-full max-w-[300px] rounded-[18px] bg-primary px-7 font-bold text-on-primary">Back to decks</button>
+        <button type="button" onClick={() => navigate(backTo)} className={`${PRIMARY_BTN} max-w-[300px]`}>Back to decks</button>
       </div>
     )
   }
@@ -191,7 +192,7 @@ export function ReviewScreen() {
   const labelSubject = deckId ? deck.data?.subjectCode : subjectCode
 
   return withStatus(
-    <div className="flex min-h-[calc(100dvh-var(--native-bar-h,56px)-env(safe-area-inset-top)-0.25rem)] flex-col leading-tight lg:mx-auto lg:min-h-[calc(100dvh-9.75rem)] lg:w-full lg:max-w-[640px] lg:pt-3">
+    <div className="flex min-h-[calc(100dvh-var(--native-bar-h,56px)-env(safe-area-inset-top)-0.25rem)] flex-col lg:mx-auto lg:min-h-[calc(100dvh-9.75rem)] lg:w-full lg:max-w-[640px] lg:pt-3">
       <h1 className="sr-only">Review flashcards</h1>
       {/* `.prtop`: end, progress bar, count */}
       <div className="flex items-center gap-3 px-0.5 pb-1.5 pt-4 lg:px-4">
@@ -199,10 +200,10 @@ export function ReviewScreen() {
         <div className="h-2 flex-1 overflow-hidden rounded bg-surface-container-high" role="progressbar" aria-valuemin={0} aria-valuemax={cards.length} aria-valuenow={index} aria-label="Cards reviewed">
           <i className="block h-full origin-left rounded bg-primary transition-transform duration-300 ease-out motion-reduce:transition-none" style={{ transform: `scaleX(${progress.fraction})` }} />
         </div>
-        <span className="font-mono text-[13px] font-bold text-on-surface-variant">{progress.label}</span>
+        <span className="font-mono text-[13px] font-bold leading-tight text-on-surface-variant">{progress.label}</span>
       </div>
       {/* `.prmeta`: combo + deck */}
-      <div className="flex items-center gap-2.5 px-1 pb-1 pt-1.5 lg:px-[18px] text-[13px] font-medium text-on-surface-variant">
+      <div className="flex items-center gap-2.5 px-1 pb-1 pt-1.5 lg:px-[18px] text-[13px] font-medium leading-tight text-on-surface-variant">
         <ComboChip count={session.combo} />
         {deckLabel ? (
           <span className="ml-auto inline-flex items-center gap-1.5 text-[13px] font-semibold">
@@ -217,7 +218,7 @@ export function ReviewScreen() {
         <div className="grid grid-cols-4 gap-2 px-1 pb-[26px] pt-2 lg:px-[18px]" role="group" aria-label="How well did you know it?">
           {buttons.map((b) => (
             <button key={b.grade} type="button" aria-keyshortcuts={b.key} onClick={() => grade(b.grade)}
-              className={`grid !min-h-[62px] content-center justify-items-center gap-0.5 rounded-2xl transition-transform duration-150 ease-out active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100 focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary ${GRADE_TONE[b.tone]}`}>
+              className={`grid !min-h-[62px] content-center justify-items-center gap-0.5 rounded-2xl leading-tight transition-transform duration-150 ease-out active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100 focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary ${GRADE_TONE[b.tone]}`}>
               <b className="text-[15px] font-bold">{b.label} <Kbd size="md" aria-hidden className="ml-1 hidden bg-black/10 text-current lg:inline">{b.key}</Kbd></b>
               <span className="text-[12px] font-medium">{b.interval}</span>
             </button>
@@ -225,9 +226,9 @@ export function ReviewScreen() {
         </div>
       ) : (
         <>
-          <div aria-hidden className="flex justify-between px-4 text-[13px] lg:px-[30px] font-semibold text-on-surface-variant"><span className="flex items-center gap-1"><ArrowLeft /> Again</span><span className="flex items-center gap-1">Good <ArrowRight /></span></div>
+          <div aria-hidden className="flex justify-between px-4 text-[13px] leading-tight lg:px-[30px] font-semibold text-on-surface-variant"><span className="flex items-center gap-1"><ArrowLeft /> Again</span><span className="flex items-center gap-1">Good <ArrowRight /></span></div>
           <div className="px-1 pb-[26px] pt-2.5 lg:px-[18px]">
-            <button ref={actionRef} data-review-primary="" type="button" aria-label={`Show answer: ${current?.front ?? ""}`} onClick={() => setRevealed(true)} className="!min-h-[54px] w-full rounded-[18px] bg-primary px-7 text-[16px] font-bold text-on-primary shadow-[0_14px_24px_-16px_oklch(0.3_0.07_242/0.7)]">Show answer</button>
+            <button ref={actionRef} data-review-primary="" type="button" aria-label={`Show answer: ${current?.front ?? ""}`} onClick={() => setRevealed(true)} className={PRIMARY_BTN}>Show answer</button>
           </div>
         </>
       )}

@@ -36,6 +36,12 @@ export function gradeButtons(card: CardDTO, againDelayMinutes: number): GradeBut
   }))
 }
 
+/** fc.css `.fa`: the answer is 34px mono. A short one keeps that on a phone; a longer one steps down
+ * with the viewport so it wraps to a few lines instead of overflowing (the long-answer clamp). */
+export const SHORT_ANSWER_CHARS = 14
+export const answerSize = (back: string) =>
+  back.trim().length <= SHORT_ANSWER_CHARS ? "text-[34px]" : "text-[clamp(18px,6vw,34px)]"
+
 export type ReviewKeyAction = { kind: "reveal" } | { kind: "grade"; grade: ReviewGrade }
 
 /** Space/Enter flip before the reveal; 1-4 rate after it. Anything else is ignored. */

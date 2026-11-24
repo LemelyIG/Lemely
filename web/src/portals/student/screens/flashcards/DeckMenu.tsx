@@ -8,9 +8,9 @@ import { useFlashcardDeck } from "@/lib/hooks/useFlashcardApi"
 import { DECK_MENU_ITEMS, firstConnected, keepCachedOnError } from "./deckActions"
 import { DeleteDeckSheet } from "./DeleteDeckSheet"
 import { RenameDeckSheet } from "./RenameDeckSheet"
+import { FOCUS } from "./parts/buttonStyles"
 import { FcSheet } from "./parts/FcSheet"
 
-const FOCUS = "focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
 const ITEM = `block min-h-11 w-full rounded-md px-3 py-2 text-start text-[15px] font-semibold hover:bg-surface-container-low ${FOCUS}`
 const itemTone = (destructive: boolean) => (destructive ? "text-on-error-container" : "text-on-surface")
 

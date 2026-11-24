@@ -9,7 +9,7 @@ const ICON = { target: Target, sparkle: Sparkle, pen: PencilSimple } as const
 export function OriginTag({ icon, children }: { icon: OriginIcon; children: ReactNode }) {
   const Glyph = ICON[icon]
   return (
-    <span className="inline-flex items-center gap-[5px] text-[13px] font-medium text-on-surface-variant">
+    <span className="inline-flex items-center gap-[5px] text-[13px] font-medium leading-tight text-on-surface-variant">
       <Glyph size={14} weight="bold" aria-hidden />
       {children}
     </span>

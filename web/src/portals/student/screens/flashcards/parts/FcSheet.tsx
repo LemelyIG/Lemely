@@ -21,7 +21,7 @@ export function FcSheet({
   restoreFocusTo?: () => HTMLElement | null
   children: ReactNode
 }) {
-  const heading = <SheetTitle className="block w-full text-start native:px-5 font-sans text-[22px] font-extrabold text-on-surface">{title}</SheetTitle>
+  const heading = <SheetTitle className="block w-full text-start native:px-5 font-sans text-[22px] font-extrabold leading-tight text-on-surface">{title}</SheetTitle>
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -39,7 +39,7 @@ export function FcSheet({
           target.focus()
         }}
       >
-        <div className="grid gap-3 leading-tight">{children}</div>
+        <div className="grid gap-3">{children}</div>
       </SheetContent>
     </Sheet>
   )

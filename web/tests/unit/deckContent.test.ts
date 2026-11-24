@@ -82,8 +82,10 @@ describe("DeckContent states", () => {
   })
 
   it("never uses an exclamation mark", () => {
+    // Copy rule: the words a student reads, not the markup. A Tailwind important prefix (`!min-h-[54px]`) is class syntax, so tags are stripped and only visible text plus aria-labels are checked.
+    const words = (html: string) => [html.replace(/<[^>]*>/g, " "), ...[...html.matchAll(/aria-label="([^"]*)"/g)].map((m) => m[1])].join(" ")
     for (const d of [deck(), deck({ generationStatus: "failed" }), deck({ generationStatus: "writing" })]) {
-      expect(render(d)).not.toContain("!")
+      expect(words(render(d))).not.toContain("!")
     }
   })
 })

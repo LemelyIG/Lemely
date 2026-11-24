@@ -8,7 +8,7 @@ export function CountStepper({
 }: { value: number; onChange: (n: number) => void; min: number; max: number; label: string }) {
   const labelId = useId()
   return (
-    <div className="flex items-center justify-between text-[14px] font-semibold text-on-surface">
+    <div className="flex items-center justify-between text-[14px] font-semibold leading-tight text-on-surface">
       <span id={labelId}>{label}</span>
       <div className="flex items-center gap-3" role="group" aria-labelledby={labelId}>
         <button type="button" aria-label="Fewer" aria-disabled={value <= min || undefined} onClick={() => value > min && onChange(value - 1)}

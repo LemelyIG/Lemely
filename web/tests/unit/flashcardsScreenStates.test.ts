@@ -121,7 +121,7 @@ describe("a failed refetch with decks already loaded", () => {
     const html = render()
     expect(html).toContain('data-row="a"')
     expect(html).toContain('data-row="b"')
-    expect(html).not.toContain("Couldn’t load your decks")
+    expect(html).not.toContain("We couldn’t load your decks")
     expect(html).toContain("Couldn’t refresh your decks")
   })
 
@@ -138,7 +138,7 @@ describe("the first load failing", () => {
     const html = render()
     expect(html).toContain('data-mood="sad"')
     expect(html).toContain("<h2")
-    expect(html).toContain("Couldn’t load your decks")
+    expect(html).toContain("We couldn’t load your decks")
     expect(html).toContain("Check your connection, then try again.")
     expect(html).toContain("Try again")
     expect(html).toContain('href="/student"')

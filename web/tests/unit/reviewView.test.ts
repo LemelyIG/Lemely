@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
+  SHORT_ANSWER_CHARS,
+  answerSize,
   comingBackRows,
   doneView,
   generationOutcome,
@@ -151,5 +153,21 @@ describe("generationOutcome", () => {
     expect(generationOutcome({ ...base, requestedCount: 12, generatedCount: 9 })).toEqual({
       text: "9 of 12 cards written", shortfall: true,
     })
+  })
+})
+
+describe("answerSize", () => {
+  it("keeps the mock's 34px for an answer that fits a phone line", () => {
+    expect(answerSize("½(a + b)")).toBe("text-[34px]")
+    expect(answerSize("x".repeat(SHORT_ANSWER_CHARS))).toBe("text-[34px]")
+  })
+
+  it("steps a longer answer down with the viewport so it wraps instead of overflowing", () => {
+    expect(answerSize("x".repeat(SHORT_ANSWER_CHARS + 1))).toBe("text-[clamp(18px,6vw,34px)]")
+    expect(answerSize("The midpoint of AB is half of a plus b")).toBe("text-[clamp(18px,6vw,34px)]")
+  })
+
+  it("measures the trimmed answer, so padding spaces never tip a short answer into the clamp", () => {
+    expect(answerSize(`  ${"x".repeat(SHORT_ANSWER_CHARS)}  `)).toBe("text-[34px]")
   })
 })

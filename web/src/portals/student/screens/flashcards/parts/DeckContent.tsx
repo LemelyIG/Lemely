@@ -9,15 +9,14 @@ import { WritingState } from "../WritingState"
 import { AiMark } from "./AiMark"
 import { MasteryBar, MasteryLegend } from "./MasteryBar"
 import { OriginTag } from "./OriginTag"
+import { FOCUS, PRIMARY_BTN } from "./buttonStyles"
 
-const FOCUS = "focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
-const PRIMARY_BTN = `!min-h-[54px] w-full rounded-[18px] bg-primary px-7 text-[16px] font-bold text-on-primary shadow-[0_14px_24px_-16px_oklch(0.3_0.07_242/0.7)] disabled:cursor-not-allowed disabled:bg-surface-container-high disabled:text-on-surface-variant disabled:shadow-none ${FOCUS}`
 
 /** fc.css `.cdr`: [1fr auto], gap 12, padding 10 0, hairline above (not on the first row). */
 function CardRow({ card, onEdit }: { card: CardRowView; onEdit: (card: CardRowView, opener: HTMLElement) => void }) {
   return (
     <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 py-2.5 [&+li]:shadow-[0_-1px_0_var(--color-outline-variant)]">
-      <span className="grid min-w-0 gap-0.5">
+      <span className="grid min-w-0 gap-0.5 leading-tight">
         <b className="text-[15px] font-bold text-on-surface [overflow-wrap:anywhere]">{card.front}</b>
         <span className="text-[13px] text-on-surface-variant [overflow-wrap:anywhere]">{card.back}</span>
         {card.ai ? <AiMark label={card.sourceLabel} /> : null}
@@ -57,7 +56,7 @@ export function DeckContent({
     const failed = failedDeckView(retrying)
     return (
       <div className="grid gap-3">
-        <div role="alert" className="rounded-xl bg-error-container px-3 py-2.5 text-[13.5px] font-semibold text-on-error-container">{GENERATION_FAILED_TEXT}</div>
+        <div role="alert" className="rounded-xl bg-error-container px-3 py-2.5 text-[13.5px] font-semibold leading-tight text-on-error-container">{GENERATION_FAILED_TEXT}</div>
         <button type="button" disabled={failed.retryDisabled} onClick={onRetry} className={PRIMARY_BTN}>{failed.retryLabel}</button>
         <button type="button" onClick={onDeleteFailed}
           className={`min-h-11 justify-self-center px-3.5 text-[15px] font-bold text-on-error-container ${FOCUS}`}>Delete deck</button>
@@ -71,12 +70,12 @@ export function DeckContent({
         <OriginTag icon={view.originIcon}>{view.originLine}</OriginTag>
         <MasteryBar mastery={view.mastery} size="detail" />
         <MasteryLegend legend={view.legend} />
-        {shortfall ? <span className="text-[13px] font-medium text-on-surface-variant">{shortfall}</span> : null}
+        {shortfall ? <span className="text-[13px] font-medium leading-tight text-on-surface-variant">{shortfall}</span> : null}
       </div>
       <button type="button" disabled={!view.review.enabled} onClick={onReview} className={PRIMARY_BTN}>{view.review.label}</button>
       <section className={variant === "panel" ? "grid min-h-0 grid-rows-[auto_minmax(0,1fr)]" : "grid"}>
         <div className="flex items-center justify-between gap-2.5">
-          <h2 className="font-sans text-[18px] font-extrabold tracking-[-0.01em] text-on-surface">Cards</h2>
+          <h2 className="font-sans text-[18px] font-extrabold leading-tight tracking-[-0.01em] text-on-surface">Cards</h2>
           <button type="button" ref={addRef} onClick={(e) => onAdd(e.currentTarget)}
             className={`inline-flex min-h-11 items-center gap-1.5 rounded-[14px] px-1 text-[14px] font-bold text-primary ${FOCUS}`}>
             <Plus size={18} weight="bold" aria-hidden /> Add card

@@ -45,7 +45,7 @@ export function MasteryBar({ mastery, size = "row" }: { mastery: MasteryView; si
 
 export function MasteryLegend({ legend }: { legend: readonly MasteryLegendItem[] }) {
   return (
-    <div className="flex gap-3.5 text-[13px] font-medium text-on-surface-variant">
+    <div className="flex gap-3.5 text-[13px] font-medium leading-tight text-on-surface-variant">
       {legend.map((item) => (
         <span key={item.key} className="inline-flex items-center gap-1.5">
           <i aria-hidden className={`size-2.5 rounded-[3px] ${FILL[item.key]}`} />

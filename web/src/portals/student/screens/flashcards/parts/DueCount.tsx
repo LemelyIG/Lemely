@@ -13,7 +13,7 @@ export function DueCount({ due }: { due: number }) {
   return (
     <span className="grid min-w-11 justify-items-center font-mono text-[18px] font-extrabold leading-none text-primary">
       {due}
-      <small className="mt-0.5 font-sans text-[12px] font-semibold text-on-surface-variant">due</small>
+      <small className="mt-0.5 font-sans text-[12px] font-semibold leading-tight text-on-surface-variant">due</small>
     </span>
   )
 }

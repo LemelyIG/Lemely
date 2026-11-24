@@ -15,6 +15,8 @@ import {
   selectSubject,
   showSubjectChips,
   submitLabel,
+  topicInForce,
+  weakestTopic,
   topicChips,
   weaknessChips,
 } from "@/portals/student/screens/flashcards/newDeckView"
@@ -238,5 +240,54 @@ describe("failedDeckToDiscard", () => {
 
   it("discards nothing when the sheet was not opened for a failed deck", () => {
     expect(failedDeckToDiscard({ failedDeckId: undefined, retryStarted: false, retrying: false })).toBeNull()
+  })
+})
+
+describe("weakestTopic", () => {
+  it("is the lowest accuracy among the subject's weak topics", () => {
+    expect(weakestTopic(weak, "0580")).toBe("E7 Vectors")
+    expect(weakestTopic([...weak].reverse(), "0580")).toBe("E7 Vectors")
+  })
+
+  it("breaks an accuracy tie toward the topic that lost more marks, then the first listed", () => {
+    const tie: WeakTopicDTO[] = [
+      { subjectCode: "0580", topic: "A", marksLost: 3, accuracyPct: 50 },
+      { subjectCode: "0580", topic: "B", marksLost: 8, accuracyPct: 50 },
+      { subjectCode: "0580", topic: "C", marksLost: 8, accuracyPct: 50 },
+    ]
+    expect(weakestTopic(tie, "0580")).toBe("B")
+  })
+
+  it("ignores other subjects, and is null when the subject has no weak topic", () => {
+    expect(weakestTopic(weak, "0625")).toBe("3 Waves")
+    expect(weakestTopic(weak, "0606")).toBeNull()
+    expect(weakestTopic([], "0580")).toBeNull()
+  })
+})
+
+describe("topicInForce", () => {
+  it("opens a weakness deck on the weakest topic so one tap can make it", () => {
+    expect(topicInForce(null, "weakness", weak, "0580")).toBe("E7 Vectors")
+  })
+
+  it("always lets the student's own pick win over the weakest", () => {
+    expect(topicInForce("E2 Algebra", "weakness", weak, "0580")).toBe("E2 Algebra")
+  })
+
+  it("preselects nothing when the subject has no weak topic", () => {
+    expect(topicInForce(null, "weakness", weak, "0606")).toBeNull()
+  })
+
+  it("never preselects for a topic or manual deck", () => {
+    expect(topicInForce(null, "topic", weak, "0580")).toBeNull()
+    expect(topicInForce(null, "manual", weak, "0580")).toBeNull()
+  })
+
+  it("re-derives after a kind or subject change, since both clear the pick", () => {
+    const picked = { subject: "0580", chosenMode: "weakness" as const, topic: "E2 Algebra" }
+    const backToWeakness = selectKind(selectKind(picked, "topic"), "weakness")
+    expect(topicInForce(backToWeakness.topic, "weakness", weak, "0580")).toBe("E7 Vectors")
+    const otherSubject = selectSubject(picked, "0625", "0580")
+    expect(topicInForce(otherSubject.topic, "weakness", weak, "0625")).toBe("3 Waves")
   })
 })

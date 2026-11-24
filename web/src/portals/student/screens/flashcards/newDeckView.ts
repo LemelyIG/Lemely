@@ -107,6 +107,34 @@ export function weaknessChips(weak: readonly WeakTopicDTO[], subjectCode: string
     .map((t) => ({ topic: t.topic, label: topicName(t.topic), badge: `${t.accuracyPct}%` }))
 }
 
+/**
+ * The topic that cost the most marks' worth of accuracy: the lowest accuracy among this subject's weak
+ * topics, ties going to the one that lost more marks, then to the first listed. `null` when the subject
+ * has no weak topic, so nothing is ever preselected on a guess.
+ */
+export function weakestTopic(weak: readonly WeakTopicDTO[], subjectCode: string): string | null {
+  let best: WeakTopicDTO | null = null
+  for (const t of weak) {
+    if (t.subjectCode !== subjectCode) continue
+    if (!best || t.accuracyPct < best.accuracyPct || (t.accuracyPct === best.accuracyPct && t.marksLost > best.marksLost)) best = t
+  }
+  return best ? best.topic : null
+}
+
+/**
+ * The topic the sheet acts on. The student's own pick always wins; with none, a weakness deck opens
+ * on the weakest topic so "Make cards" works in one tap. A topic or manual deck never preselects.
+ */
+export function topicInForce(
+  picked: string | null,
+  mode: NewDeckMode,
+  weak: readonly WeakTopicDTO[],
+  subjectCode: string,
+): string | null {
+  if (picked !== null) return picked
+  return mode === "weakness" ? weakestTopic(weak, subjectCode) : null
+}
+
 export function topicChips(topics: readonly string[]): ChipView[] {
   return topics.map((t) => ({ topic: t, label: topicName(t), badge: null }))
 }

@@ -38,7 +38,11 @@ describe("flashcards fidelity guards", () => {
     expect(capped).toEqual([])
   })
 
-  it("a focus radius is important, or the global :focus-visible 2px radius wins", () => {
+  // Per-component only. index.css has an unlayered `:focus-visible { border-radius: 2px }` that squares any
+  // rounded control's ring, and this lane patches just the two places it set a radius itself (DeckRow, ReviewCard).
+  // A flashcards control with no radius utility is still squared by it; that is the shell's to fix once, not
+  // here. What this proves: where this lane DOES write `focus-visible:rounded-[Npx]`, it is `!`-important.
+  it("a focus radius this lane writes is important, or the global :focus-visible 2px radius wins", () => {
     const squared: string[] = []
     for (const { name, source } of files) {
       for (const m of source.matchAll(/focus-visible:(!?)rounded-\[\d+px\]/g)) {
@@ -46,6 +50,33 @@ describe("flashcards fidelity guards", () => {
       }
     }
     expect(squared).toEqual([])
+  })
+
+  it("the solid 54px action button is defined once, in parts/buttonStyles.ts, and every screen uses it", () => {
+    const copies = files.filter((f) => /rounded-\[18px\][^"`']*\bbg-(primary|on-error-container)\b/.test(f.source)).map((f) => f.name)
+    expect(copies).toEqual([])
+    const styles = readFileSync(join(SCREENS, "parts/buttonStyles.ts"), "utf8")
+    expect(styles).toContain("!min-h-[54px]")
+    expect(styles).toContain("shadow-[0_14px_24px_-16px_oklch(0.3_0.07_242/0.7)]")
+    expect(styles).toContain("disabled:shadow-none")
+  })
+
+  it("leading-tight sits on text stacks, never on a screen root or a paragraph", () => {
+    const stray: string[] = []
+    for (const { name, source } of files) {
+      for (const m of source.matchAll(/<p\b[^>]*leading-tight/g)) stray.push(`${name}: ${m[0].slice(0, 60)}`)
+      for (const m of source.matchAll(/max-w-\[640px\][^"`]*leading-tight|pb-24 pt-3\.5 leading-tight|grid gap-3 leading-tight/g)) stray.push(`${name}: ${m[0]}`)
+    }
+    expect(stray).toEqual([])
+  })
+
+  it("the done-screen wash bleeds past the shell gutter on both sides, using the shell's own bleed vars", () => {
+    const done = files.find((f) => f.name.endsWith("flashcards/ReviewDone.tsx"))
+    expect(done).toBeDefined()
+    expect(done!.source).toContain("-ml-[var(--native-bleed-l,0px)]")
+    expect(done!.source).toContain("-mr-[var(--native-bleed-r,0px)]")
+    expect(done!.source).toContain("pl-[calc(var(--native-bleed-l,0px)+6px)]")
+    expect(done!.source).toContain("pr-[calc(var(--native-bleed-r,0px)+6px)]")
   })
 
   it("the shelf heading is a PageHeading that repeats the shell title, not a bare h1", () => {

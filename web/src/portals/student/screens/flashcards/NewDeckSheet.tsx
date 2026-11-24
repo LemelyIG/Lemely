@@ -12,8 +12,9 @@ import { FcSheet } from "./parts/FcSheet"
 import {
   COUNT_DEFAULT, COUNT_MAX, COUNT_MIN, GENERATION_FAILED_TEXT, buildNewDeckRequest, clampCount, failedDeckToDiscard, finishGeneration,
   newDeckErrorMessage, newDeckOptions, resolveMode, selectChip, selectKind, selectSubject,
-  submitLabel, topicChips, weaknessChips, type DeckSelection, type NewDeckMode,
+  submitLabel, topicChips, topicInForce, weaknessChips, type DeckSelection, type NewDeckMode,
 } from "./newDeckView"
+import { FOCUS, PRIMARY_BTN } from "./parts/buttonStyles"
 
 export interface NewDeckSeed {
   mode: NewDeckMode | null
@@ -28,7 +29,6 @@ const TONES = {
   topic: "bg-secondary-container text-on-secondary-container",
   manual: "bg-primary-container text-primary",
 } as const
-const FOCUS = "focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
 
 /** Three chip-shaped blocks, so the topics keep their place while they load. */
 function TopicsSkeleton() {
@@ -75,7 +75,6 @@ function NewDeckForm({ seed, onClose, onStarted, onDiscarded }: {
   const overview = useOverview()
   const subjects = overview.data?.subjects ?? []
   const [sel, setSel] = useState<DeckSelection>({ subject: seed.subjectCode, chosenMode: seed.mode, topic: seed.topic })
-  const { topic } = sel
   const subjectCode = sel.subject || subjects[0]?.code || ""
   const [count, setCount] = useState(COUNT_DEFAULT)
   const [title, setTitle] = useState("")
@@ -91,6 +90,7 @@ function NewDeckForm({ seed, onClose, onStarted, onDiscarded }: {
   const options = newDeckOptions(weak.data ?? [], subjectCode)
   const mode = resolveMode(sel.chosenMode, options)
   const subjectName = subjects.find((s) => s.code === subjectCode)?.name ?? subjectCode
+  const topic = topicInForce(sel.topic, mode, weak.data ?? [], subjectCode)
   const chips = mode === "weakness" ? weaknessChips(weak.data ?? [], subjectCode)
     : mode === "topic" ? topicChips((topics.data?.topics ?? []).map((t) => t.topic)) : []
   const req = buildNewDeckRequest({ mode, subjectCode, subjectName, topic, count, title,
@@ -138,7 +138,7 @@ function NewDeckForm({ seed, onClose, onStarted, onDiscarded }: {
 
   return (
     <FcSheet open onOpenChange={(open) => { if (!open) close() }} title="New deck">
-      {failedDeckId ? <div role="alert" className="rounded-xl bg-error-container px-3 py-2.5 text-[13.5px] font-semibold text-on-error-container">{GENERATION_FAILED_TEXT}</div> : null}
+      {failedDeckId ? <div role="alert" className="rounded-xl bg-error-container px-3 py-2.5 text-[13.5px] font-semibold leading-tight text-on-error-container">{GENERATION_FAILED_TEXT}</div> : null}
       {!failedDeckId && subjects.length > 1 ? (
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Subject">
           {subjects.map((s) => <button key={s.code} type="button" aria-pressed={s.code === subjectCode}
@@ -158,12 +158,12 @@ function NewDeckForm({ seed, onClose, onStarted, onDiscarded }: {
               onClick={() => setSel((s) => selectKind(s, o.mode))}
               className={`grid !min-h-[60px] grid-cols-[40px_minmax(0,1fr)] items-center gap-3 rounded-2xl px-3 py-2.5 text-start text-on-surface disabled:opacity-60 ${FOCUS} ${selected ? "bg-primary-container shadow-[inset_0_0_0_2px_var(--color-primary)]" : "bg-surface-container-lowest shadow-[inset_0_0_0_1.5px_var(--color-outline-variant)]"}`}>
               <span className={`grid size-10 place-items-center rounded-xl ${TONES[o.mode]}`}><Icon size={14} weight="bold" aria-hidden /></span>
-              <span className="grid"><b className="text-[15px] font-bold">{o.title}</b><span className="text-[13px] text-on-surface-variant">{o.sub}</span></span>
+              <span className="grid leading-tight"><b className="text-[15px] font-bold">{o.title}</b><span className="text-[13px] text-on-surface-variant">{o.sub}</span></span>
             </button>
           })}
         </div>
         {mode === "manual" ? (
-          <label className="grid gap-1.5 text-[13px] font-semibold text-on-surface-variant">
+          <label className="grid gap-1.5 text-[13px] font-semibold leading-tight text-on-surface-variant">
             <span>Title</span>
             <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={`${subjectName} deck`}
               className={`rounded-2xl bg-surface-container-lowest px-3.5 py-3 text-[16px] text-on-surface shadow-[inset_0_0_0_1.5px_var(--color-outline)] ${FOCUS}`} />
@@ -183,9 +183,9 @@ function NewDeckForm({ seed, onClose, onStarted, onDiscarded }: {
           <CountStepper label="Cards" value={count} min={COUNT_MIN} max={COUNT_MAX} onChange={(n) => setCount(clampCount(n))} />
         </>}
       </> : null}
-      {requestError ? <div role="alert" className="rounded-xl bg-error-container px-3 py-2.5 text-[13.5px] font-semibold text-on-error-container">{newDeckErrorMessage(requestError)}</div> : null}
+      {requestError ? <div role="alert" className="rounded-xl bg-error-container px-3 py-2.5 text-[13.5px] font-semibold leading-tight text-on-error-container">{newDeckErrorMessage(requestError)}</div> : null}
       <button type="button" onClick={() => void submit()} disabled={pending || (!failedDeckId && (!subjectCode || req.kind === "invalid")) || (!!failedDeckId && retrying.has(failedDeckId))}
-        className={`!min-h-[54px] w-full rounded-[18px] bg-primary px-7 text-[16px] font-bold text-on-primary shadow-[0_14px_24px_-16px_oklch(0.3_0.07_242/0.7)] disabled:shadow-none disabled:bg-surface-container-high disabled:text-on-surface-variant ${FOCUS}`}>
+        className={PRIMARY_BTN}>
         {failedDeckId ? "Try again" : submitLabel(mode, count, pending)}
       </button>
     </FcSheet>

@@ -17,13 +17,10 @@ import { DeckMenu } from "./DeckMenu"
 import { DeckPanel } from "./DeckBody"
 import { NewDeckSheet, type NewDeckSeed } from "./NewDeckSheet"
 import { decksScreenView, resolveSelectedDeck, searchWithoutDeck } from "./flashcardsView"
+import { FOCUS, PRIMARY_BTN } from "./parts/buttonStyles"
 import { DeckRow } from "./parts/DeckRow"
 import { isWide, useIsWide } from "./isWide"
 import "./flashcards.css"
-
-const FOCUS = "focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
-// !min-h-[54px] : the coarse-pointer floor in index.css is unlayered and would otherwise cap a phone button at 44px.
-const PRIMARY_BTN = `!min-h-[54px] rounded-[18px] bg-primary px-7 text-[16px] font-bold text-on-primary shadow-[0_14px_24px_-16px_oklch(0.3_0.07_242/0.7)] ${FOCUS}`
 
 export function FlashcardsScreen() {
   const navigate = useNavigate()
@@ -101,14 +98,14 @@ export function FlashcardsScreen() {
   const header = view.kind === "ready" ? view.header : { title: "Flashcards", sub: view.kind === "empty" ? "No decks yet" : "" }
 
   return (
-    <div className="mx-auto flex w-full max-w-[640px] flex-col leading-tight lg:max-w-none">
+    <div className="mx-auto flex w-full max-w-[640px] flex-col lg:max-w-none">
       <header className="flex items-center gap-2.5 px-1 pb-1.5 pt-3.5 lg:gap-5 lg:px-10 lg:pb-2 lg:pt-6">
-        <div className="grid min-w-0 flex-1">
+        <div className="grid min-w-0 flex-1 leading-tight">
           <PageHeading repeatsTitle tabIndex={-1} data-fc-heading className="font-display text-[28px] font-extrabold leading-[1.1] tracking-[-0.03em] text-primary outline-none lg:text-[32px]">{header.title}</PageHeading>
           {header.sub ? <span className="text-[13px] font-medium text-on-surface-variant">{header.sub}</span> : null}
         </div>
         {view.kind === "ready" && view.hero.reviewLabel ? (
-          <button type="button" onClick={() => navigate(reviewTo)} className={`hidden lg:inline-block ${PRIMARY_BTN}`}>
+          <button type="button" onClick={() => navigate(reviewTo)} className={`hidden lg:inline-block lg:w-auto ${PRIMARY_BTN}`}>
             {view.hero.reviewLabel}
           </button>
         ) : null}
@@ -141,7 +138,7 @@ export function FlashcardsScreen() {
                   <div className="flex flex-col gap-6">
                     <section className="flex items-center gap-3">
                       <Binny mood={view.hero.mood} size={64} motion="idle" />
-                      <div className="grid gap-0.5">
+                      <div className="grid gap-0.5 leading-tight">
                         <b className="font-display text-[28px] font-extrabold leading-[1.1] tracking-[-0.02em] text-primary">{view.hero.headline}</b>
                         <span className="text-[14px] font-medium text-on-surface-variant">{view.hero.sub}</span>
                       </div>
@@ -153,7 +150,7 @@ export function FlashcardsScreen() {
                     ) : null}
                     {view.groups.map((g) => (
                       <section key={g.subjectCode} className="grid">
-                        <h2 className="flex items-center font-sans text-[18px] font-extrabold tracking-[-0.01em] text-on-surface">
+                        <h2 className="flex items-center font-sans text-[18px] leading-tight font-extrabold tracking-[-0.01em] text-on-surface">
                           <SubjectDot subject={g.subjectCode} />
                           {g.subjectName}
                         </h2>

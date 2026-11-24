@@ -8,12 +8,11 @@ import {
 import type { CardRowView } from "./deckView"
 import { CardDeleteStep } from "./parts/CardDeleteStep"
 import { FcSheet } from "./parts/FcSheet"
+import { FOCUS, PRIMARY_BTN } from "./parts/buttonStyles"
 
-const FOCUS = "focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
 /** pr.css `.fld textarea`: Mono 16/1.5, r16, 1.5px outline, primary 2px on focus. The border is the focus ring. */
 const FIELD = "rounded-2xl bg-surface-container-lowest px-3.5 py-3 font-mono text-[16px] font-medium leading-[1.5] text-on-surface shadow-[inset_0_0_0_1.5px_var(--color-outline)] outline-none resize-none focus:shadow-[inset_0_0_0_2px_var(--color-primary)]"
 const ERROR = "rounded-xl bg-error-container px-3 py-2.5 text-[13.5px] font-semibold text-on-error-container"
-const PRIMARY = `!min-h-[54px] w-full rounded-[18px] bg-primary px-7 text-[16px] font-bold text-on-primary shadow-[0_14px_24px_-16px_oklch(0.3_0.07_242/0.7)] disabled:shadow-none disabled:bg-surface-container-high disabled:text-on-surface-variant ${FOCUS}`
 
 /**
  * FC (edit), add, and the second step of Delete card, in one sheet so the move between them keeps
@@ -74,17 +73,17 @@ export function CardSheet({
   const failed = add.isError || edit.isError
   return (
     <FcSheet {...sheetProps} title={cardSheetTitle(shownMode)}>
-      <label className="grid gap-1.5 text-[13px] font-semibold text-on-surface-variant">
+      <label className="grid gap-1.5 text-[13px] font-semibold leading-tight text-on-surface-variant">
         <span>Front</span>
         <textarea rows={2} required value={draft.front} onChange={(e) => setDraft((d) => ({ ...d, front: e.target.value }))} className={FIELD} />
       </label>
-      <label className="grid gap-1.5 text-[13px] font-semibold text-on-surface-variant">
+      <label className="grid gap-1.5 text-[13px] font-semibold leading-tight text-on-surface-variant">
         <span>Back</span>
         <textarea rows={2} required value={draft.back} onChange={(e) => setDraft((d) => ({ ...d, back: e.target.value }))} className={FIELD} />
       </label>
       {failed ? <div role="alert" className={ERROR}>{cardSaveError(shownMode)}</div> : null}
       <button type="button" disabled={!canSave || saving}
-        onClick={() => submitCard(shownMode, shownCard, draft, mutators, finish("saved"))} className={PRIMARY}>
+        onClick={() => submitCard(shownMode, shownCard, draft, mutators, finish("saved"))} className={PRIMARY_BTN}>
         {cardSaveLabel(shownMode, saving)}
       </button>
       {shownMode === "edit" ? (

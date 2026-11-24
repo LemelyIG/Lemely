@@ -5,18 +5,13 @@ import { GESTURE_INTERACTIVE_SELECTOR } from "@/lib/gestures/interactiveSelector
 import { GRADE_SWIPE_THRESHOLD, REVEAL_SWIPE_THRESHOLD, flashcardSwipeAction, swipeVisual } from "@/lib/flashcardSwipe"
 import type { CardDTO, ReviewGrade } from "@/lib/flashcardTypes"
 import { cardSourceLabel } from "./deckView"
+import { answerSize } from "./reviewView"
 import { AiMark } from "./parts/AiMark"
 import "./flashcards.css"
 
 const reducedMotion = () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
 
 /** The stack: an under-card plus the live card (fc.css `.fstage`, `.fcard`, `.under`, `.stamp`). */
-/** fc.css `.fa`: the answer is 34px mono. A short one keeps that on a phone; a longer one steps down
- * with the viewport so it wraps to a few lines instead of overflowing (the long-answer clamp). */
-const SHORT_ANSWER_CHARS = 14
-const answerSize = (back: string) =>
-  back.trim().length <= SHORT_ANSWER_CHARS ? "text-[34px]" : "text-[clamp(18px,6vw,34px)]"
-
 export function ReviewCard({
   card, revealed, onReveal, onGrade,
 }: { card: CardDTO; revealed: boolean; onReveal: () => void; onGrade: (g: ReviewGrade) => void }) {

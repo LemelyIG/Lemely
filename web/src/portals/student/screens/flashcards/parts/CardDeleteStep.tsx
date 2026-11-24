@@ -1,8 +1,8 @@
 /* Hallmark · pre-emit critique: P4 H3 E4 S3 R5 V3 */
 import { CARD_DELETE_ERROR, cardDeleteConfirm, deleteControls, type CardSource } from "../deckActions"
 import { ALERT_BODY_ID } from "./FcSheet"
+import { DANGER_BTN, FOCUS } from "./buttonStyles"
 
-const FOCUS = "focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
 
 /**
  * The second step of Delete card, the body of the card sheet. The card's own front is the
@@ -25,7 +25,7 @@ export function CardDeleteStep({
       <p id={ALERT_BODY_ID} className="text-[14px] leading-[1.4] text-on-surface-variant">{copy.body}</p>
       {state.isError ? <div role="alert" className="rounded-xl bg-error-container px-3 py-2.5 text-[13.5px] font-semibold text-on-error-container">{CARD_DELETE_ERROR}</div> : null}
       <button type="button" disabled={controls.confirmDisabled} onClick={onConfirm}
-        className={`!min-h-[54px] w-full rounded-[18px] bg-on-error-container px-7 text-[16px] font-bold text-on-primary disabled:opacity-60 ${FOCUS}`}>
+        className={DANGER_BTN}>
         {controls.confirmLabel}
       </button>
       <button type="button" autoFocus disabled={controls.keepDisabled} onClick={onKeep}

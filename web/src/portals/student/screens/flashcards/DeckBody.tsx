@@ -102,7 +102,7 @@ export function DeckBody({
             <>
               {variant === "page" ? (
                 <header className="flex items-center gap-2.5">
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-1 leading-tight">
                     <h1 className="font-display text-[28px] font-extrabold leading-[1.1] tracking-[-0.03em] text-primary [overflow-wrap:anywhere]">{v.title}</h1>
                     <span className="text-[13px] font-medium text-on-surface-variant">{sub}</span>
                   </div>
@@ -110,7 +110,7 @@ export function DeckBody({
                 </header>
               ) : (
                 <header className="flex items-center justify-between gap-2.5">
-                  <div className="min-w-0">
+                  <div className="min-w-0 leading-tight">
                     <h2 className="font-sans text-[22px] font-extrabold text-on-surface [overflow-wrap:anywhere]">{v.title}</h2>
                     <span className="text-[13px] font-medium text-on-surface-variant">{sub}</span>
                   </div>
