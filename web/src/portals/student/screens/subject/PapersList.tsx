@@ -31,9 +31,15 @@ export function PapersList({ rows, visible, onShowAll }: { rows: PaperRowView[];
   }, [visible, rows.length])
 
   if (rows.length === 0) return null
+  const expand = () => {
+    expandedFrom.current = visible
+    onShowAll()
+  }
+  const hidden = visible < rows.length
   return (
     <section className="sj-sec sj-sec--papers" aria-labelledby="sj-papers-h" ref={sectionRef}>
-      <SectionHeading id="sj-papers-h" title="Papers" />
+      {/* No screen lists every paper, so the heading's chevron opens the rest of this list, as the button under it does. Nothing hidden: plain heading. */}
+      <SectionHeading id="sj-papers-h" title="Papers" onActivate={hidden ? expand : undefined} />
       <HairRows aria-label="Papers, newest first">
         {rows.slice(0, visible).map((row) => (
           <HairRow

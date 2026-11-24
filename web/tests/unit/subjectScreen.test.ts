@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest"
 import { TopicChips } from "@/components/redesign"
 import type { PaperBreakdown, Subject } from "@/lib/studentTypes"
 import { GhostSteps, SubjectSteps } from "@/portals/student/screens/subject/SubjectSteps"
-import { PathSection, nextPaperIndex } from "@/portals/student/screens/subject/PathSection"
+import { PathSection, SectionHeading, nextPaperIndex } from "@/portals/student/screens/subject/PathSection"
 import { TipSection } from "@/portals/student/screens/subject/TipSection"
 import { WinList } from "@/portals/student/screens/subject/WinList"
 import { TopicsSection } from "@/portals/student/screens/subject/TopicsSection"
@@ -18,7 +18,7 @@ import { SubjectFirstRun } from "@/portals/student/screens/subject/SubjectFirstR
 import { SubjectLoading } from "@/portals/student/screens/subject/SubjectLoading"
 import { SubjectError } from "@/portals/student/screens/subject/SubjectError"
 import { SubjectRefreshNotice } from "@/portals/student/screens/subject/SubjectRefreshNotice"
-import { GHOST_CHIPS, buildSubjectView, firstRunTip, winRows, type SubjectView, type TopicChipView } from "@/portals/student/screens/subject/subjectModel"
+import { GHOST_CHIPS, buildSubjectView, scrollDeltaToReveal, firstRunTip, winRows, type SubjectView, type TopicChipView } from "@/portals/student/screens/subject/subjectModel"
 import { MATHS, MATHS_ONE, MATHS_TOPICS, NOW } from "@/portals/student/screens/subject/fixtures"
 
 /*
@@ -316,8 +316,12 @@ function themeBlock(header: string): string {
 
 function hexToken(block: string, name: string): Rgb {
   const m = new RegExp(`${name}:\\s*#([0-9a-fA-F]{6})`).exec(block)
-  if (!m) throw new Error(`${name} is not a hex colour in this block`)
-  return [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16)) as Rgb
+  if (m) return [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16)) as Rgb
+  // The grade and success roles are oklch(L C h); convert through oklab like the browser does.
+  const o = new RegExp(`${name}:\\s*oklch\\(([\\d.]+)\\s+([\\d.]+)\\s+([\\d.]+)\\)\\s*;`).exec(block)
+  if (!o) throw new Error(`${name} is not a hex or oklch colour in this block`)
+  const [L, C, h] = o.slice(1).map(Number)
+  return fromOklab([L, C * Math.cos((h * Math.PI) / 180), C * Math.sin((h * Math.PI) / 180)])
 }
 
 const toLinear = (c: number) => ((c /= 255) <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
@@ -392,6 +396,94 @@ describe("TipSection detail text", () => {
   }
 })
 
+/* ── Pins for the defects the fidelity pass fixed, read from subject.css and the real tokens ───── */
+
+/** The body of the rule whose selector is exactly `selector`, or null. */
+function cssRule(selector: string): string | null {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  return new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]*)\\}`).exec(subjectCss)?.[1] ?? null
+}
+const declaration = (body: string | null, property: string): string | undefined =>
+  new RegExp(`(?:^|[;\\s])${property}:\\s*([^;]+)`).exec(body ?? "")?.[1].trim()
+
+/** A token read from a theme's block, else from the light block: the grade colours are the same in both themes. */
+function tokenRgb(block: string, name: string): Rgb {
+  try {
+    return hexToken(block, name)
+  } catch {
+    return hexToken(themeBlock(":root"), name)
+  }
+}
+const THEMES = [
+  ["light", ":root"],
+  ["dark", ':root[data-theme="dark"]'],
+] as const
+const NINE_GRADES = ["a-star", "a", "b", "c", "d", "e", "f", "g", "u"]
+
+describe("subject.css contrast pins", () => {
+  for (const [theme, header] of THEMES) {
+    it(`keeps the letter on the current bar at 3:1 on all nine grade colours in ${theme} mode`, () => {
+      const block = themeBlock(header)
+      const body = (theme === "dark" ? cssRule(':root[data-theme="dark"] .sj-stp[data-current="true"] b') : null) ?? cssRule('.sj-stp[data-current="true"] b')
+      const color = declaration(body, "color")
+      if (!color) throw new Error("the current-bar letter has no colour")
+      const letter = resolveColor(color, block)
+      for (const grade of NINE_GRADES) {
+        const fill = tokenRgb(block, `--grade-${grade}`)
+        expect(contrast(letter, fill), `${theme} letter on grade ${grade}`).toBeGreaterThanOrEqual(3)
+      }
+    })
+    it(`keeps the goal text on the goal fill at 4.5:1 in ${theme} mode`, () => {
+      const block = themeBlock(header)
+      const text = /--sj-goal:\s*([^;]+);/.exec(subjectCss)?.[1]
+      const fill = /--sj-goal-fill:\s*([^;]+);/.exec(subjectCss)?.[1]
+      if (!text || !fill) throw new Error("--sj-goal or --sj-goal-fill is not declared")
+      expect(contrast(resolveColor(text, block), resolveColor(fill, block))).toBeGreaterThanOrEqual(4.5)
+    })
+  }
+  it("marks the chosen paper in dark mode with a cue that holds 3:1 against the tray", () => {
+    const block = themeBlock(':root[data-theme="dark"]')
+    const shadow = declaration(cssRule(':root[data-theme="dark"] .sj-ptog button[aria-selected="true"]'), "box-shadow")
+    const tray = declaration(cssRule(".sj-ptog"), "background")
+    const ring = /var\((--[\w-]+)\)/.exec(shadow ?? "")?.[1]
+    if (!ring || !tray) throw new Error("the dark selected tab has no ring token, or the tray no background")
+    expect(contrast(hexToken(block, ring), resolveColor(tray, block))).toBeGreaterThanOrEqual(3)
+  })
+})
+
+describe("subject.css layout pins", () => {
+  it("hides the first-run aside with a two-class selector, which the skeleton's display: grid cannot outrank", () => {
+    const selector = /(\.sj-col[\w.-]*\.sj-col--aside-first-run)\s*\{\s*display:\s*none/.exec(subjectCss)?.[1]
+    expect(selector).toBeDefined()
+    expect(selector?.match(/\./g)).toHaveLength(2)
+  })
+  it("lets the heading row wrap, so a wide paper switch drops under the heading instead of squeezing it", () => {
+    expect(declaration(cssRule(".sj-h2row"), "flex-wrap")).toBe("wrap")
+  })
+  it("lets the paper switch scroll inside its own tray and never squash the tabs", () => {
+    const tray = cssRule(".sj-ptog")
+    expect(declaration(tray, "overflow-x")).toBe("auto")
+    expect(declaration(tray, "min-width")).toBe("0")
+    expect(declaration(tray, "max-width")).toBe("100%")
+    expect(declaration(tray, "flex")).not.toBe("none")
+    expect(declaration(cssRule(".sj-ptog button"), "flex")).toBe("none")
+  })
+  it("sizes the section columns with minmax(0, 1fr): an auto track is as wide as the switch and pushes it off screen", () => {
+    expect(declaration(cssRule(".sj-sec"), "grid-template-columns")).toBe("minmax(0, 1fr)")
+    expect(declaration(cssRule(".sj-col"), "grid-template-columns")).toBe("minmax(0, 1fr)")
+  })
+  it("wraps the countdown pill under the title when they do not fit one line, with a flexible but not zero basis", () => {
+    expect(declaration(cssRule(".sj-head"), "flex-wrap")).toBe("wrap")
+    expect(declaration(cssRule(".sj-head .sj-head-t"), "flex")).toBe("1 1 auto")
+  })
+  it("gives the section heading the kit's word spacing for heavy sans text", () => {
+    const kit = readFileSync(join(WEB_ROOT, "src/components/redesign/redesign.css"), "utf8")
+    const kitSpacing = /\.rd-h2,[^{]*\{\s*word-spacing:\s*([^;]+);/.exec(kit)?.[1].trim()
+    expect(kitSpacing).toBeDefined()
+    expect(declaration(cssRule(".sj-h2"), "word-spacing")).toBe(kitSpacing)
+  })
+})
+
 describe("WinList", () => {
   const win = winRows("0580", MATHS_TOPICS, [{ id: "alg", subjectCode: "0580", topic: "C2 Algebra", title: "", description: null, origin: "topic", cardCount: 1, dueCount: 0, createdAt: "" }], "full")
   it("lists each topic with its marks and a practice link, heading linked to practice", () => {
@@ -451,6 +543,12 @@ describe("TopicsSection", () => {
     expect(out).toContain("E1 Number")
     expect(out).not.toContain(">Number<")
   })
+  it("links the Topics heading to the practice screen when given a destination, and leaves it plain otherwise", () => {
+    const linked = html(TopicsSection, { chips: full.chips, foldSecure: false, hint: null, allTo: "/student/practice/0580", onSelect: () => {} })
+    expect(linked).toMatch(/<h2[^>]*><a [^>]*href="\/student\/practice\/0580"[^>]*>Topics<svg/)
+    const plain = html(TopicsSection, { chips: full.chips, foldSecure: false, hint: null, onSelect: () => {} })
+    expect(plain).toMatch(/<h2[^>]*>Topics<\/h2>/)
+  })
   it("prints the sparse hint", () => {
     const out = html(TopicsSection, { chips: sparse.chips, foldSecure: false, hint: "4 of 10 topics so far. Each paper fills in more.", onSelect: () => {} })
     expect(out).toContain("4 of 10 topics so far. Each paper fills in more.")
@@ -477,6 +575,41 @@ describe("PapersList", () => {
   it("drops the control once everything is visible", () => {
     const out = html(PapersList, { rows: full.papers, visible: 7, onShowAll: () => {} })
     expect(out).not.toContain("All 7 papers")
+  })
+  it("makes the Papers heading a chevron button while rows are hidden, and plain text once none are", () => {
+    const hidden = html(PapersList, { rows: full.papers, visible: 4, onShowAll: () => {} })
+    expect(hidden).toMatch(/<h2[^>]*><button type="button"[^>]*>Papers<svg/)
+    const all = html(PapersList, { rows: full.papers, visible: 7, onShowAll: () => {} })
+    expect(all).toMatch(/<h2[^>]*>Papers<\/h2>/)
+  })
+})
+
+describe("scrollDeltaToReveal", () => {
+  const tray = { left: 14, right: 306 }
+  it("does not move a tab that is already inside the tray", () => {
+    expect(scrollDeltaToReveal(tray, { left: 20, right: 120 })).toBe(0)
+  })
+  it("scrolls forward by the overhang of a tab cut off at the trailing edge", () => {
+    expect(scrollDeltaToReveal(tray, { left: 250, right: 340 })).toBe(34)
+  })
+  it("scrolls back by the overhang of a tab cut off at the leading edge", () => {
+    expect(scrollDeltaToReveal(tray, { left: -30, right: 60 })).toBe(-44)
+  })
+})
+
+describe("SectionHeading", () => {
+  it("runs onActivate from the chevron button", () => {
+    const onActivate = vi.fn()
+    const tree = SectionHeading({ title: "Papers", onActivate })
+    const button = only(tree, "button")
+    expect(button.type).toBe("button")
+    button.onClick?.({} as never)
+    expect(onActivate).toHaveBeenCalledTimes(1)
+  })
+  it("prefers a link when it has both a destination and an action", () => {
+    const out = html(SectionHeading, { title: "Topics", to: "/student/practice/0580", onActivate: () => {} })
+    expect(out).toContain('href="/student/practice/0580"')
+    expect(out).not.toContain("<button")
   })
 })
 
@@ -510,6 +643,11 @@ describe("SubjectHeader", () => {
     const out = html(SubjectHeader, { title: "Mathematics", subtitle: "", examDate: "2025-05-27", planTo: "/student/plan/0580", now: NOW })
     expect(out).toContain('href="/student/plan/0580"')
     expect(out).toContain("rd-pill")
+  })
+  it("keeps 'to exams' in the pill's accessible name while showing only the days", () => {
+    const out = html(SubjectHeader, { title: "Mathematics", subtitle: "", examDate: "2025-05-27", planTo: "/student/plan/0580", now: NOW })
+    expect(out).toContain("<span>188 days</span>")
+    expect(out).toContain('<span class="sr-only"> to exams</span>')
   })
   it("draws no pill once the exam has passed", () => {
     const out = html(SubjectHeader, { title: "Mathematics", subtitle: "", examDate: "2024-01-05", planTo: "/student/plan/0580", now: NOW })
@@ -561,6 +699,9 @@ describe("SubjectBody wiring", () => {
     expect(topics.hint).toBe(full.topicsHint)
     expect(papers.rows).toBe(full.papers)
     expect(only(tree, WinList).win).toBe(full.win)
+  })
+  it("points the Topics heading at the subject's practice screen", () => {
+    expect(sections(draw().tree).topics.allTo).toBe("/student/practice/0580")
   })
   it("hands the topics section the sparse hint, which the full view leaves null", () => {
     expect(sparse.topicsHint).not.toBeNull()

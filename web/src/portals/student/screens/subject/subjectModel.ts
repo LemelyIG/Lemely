@@ -228,3 +228,13 @@ export function buildSubjectView(input: SubjectViewInput): SubjectView | null {
   topicsHint: topicsHint(mode, chips.length, catalogue ? catalogue.topics.length : null), papers: paperRows(data.paperHistory, now) }
 }
 export type { BinnyMood, DeckSummaryDTO, Subject, TopicState, TopicTile }
+
+/**
+ * How far the tray has to scroll for the chosen tab to sit fully inside it: 0 when it already does, else the gap on
+ * the side it overhangs. Works from on-screen rectangles, so it is the same in left-to-right and right-to-left.
+ */
+export function scrollDeltaToReveal(tray: { left: number; right: number }, tab: { left: number; right: number }): number {
+  if (tab.right > tray.right) return tab.right - tray.right
+  if (tab.left < tray.left) return tab.left - tray.left
+  return 0
+}

@@ -23,18 +23,21 @@ export function TopicsSection({
   chips,
   foldSecure,
   hint,
+  allTo,
   onSelect,
 }: {
   chips: TopicChipView[]
   foldSecure: boolean
   hint: string | null
+  /** Where the heading's chevron goes: the practice screen, which lists every topic to choose from. */
+  allTo?: string
   onSelect: (topic: string) => void
 }) {
   const texts = chipTexts(chips)
   const topicByText = new Map(chips.map((c, i) => [texts[i], c.topic]))
   return (
     <section className="sj-sec" aria-labelledby="sj-topics-h">
-      <SectionHeading id="sj-topics-h" title="Topics" />
+      <SectionHeading id="sj-topics-h" title="Topics" to={allTo} />
       {chips.length > 0 ? (
         <TopicChips
           topics={chips.map((c, i) => ({ topic: texts[i], state: c.state, pct: c.pct }))}

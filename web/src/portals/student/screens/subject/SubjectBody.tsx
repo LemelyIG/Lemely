@@ -37,6 +37,7 @@ export function SubjectBody({
           chips={view.chips}
           foldSecure={view.mode === "full" && !wide}
           hint={view.topicsHint}
+          allTo={links.practice(code)}
           onSelect={(topic) => navigate(links.practice(code, topic))}
         />
         <PapersList rows={view.papers} visible={visiblePapers(view.papers.length, wide, expanded)} onShowAll={() => setExpanded(true)} />

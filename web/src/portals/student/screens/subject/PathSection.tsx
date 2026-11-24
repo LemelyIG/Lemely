@@ -1,22 +1,43 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
-import { useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react"
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { CaretRight } from "@phosphor-icons/react"
 import { SubjectSteps } from "./SubjectSteps"
-import type { GoalStep, PaperTab, PathView, TrendView } from "./subjectModel"
+import { scrollDeltaToReveal, type GoalStep, type PaperTab, type PathView, type TrendView } from "./subjectModel"
 import "./subject.css"
 
-/** An h2 that is a link (with the mock's chevron) only when it has somewhere to go. */
-export function SectionHeading({ id, title, to, children }: { id?: string; title: string; to?: string; children?: ReactNode }) {
+/**
+ * An h2 that is a link (with the mock's chevron) when it has somewhere to go, or a button with the same chevron when
+ * the "somewhere" is more of this same list (`onActivate`). With neither it is plain text.
+ */
+export function SectionHeading({
+  id,
+  title,
+  to,
+  onActivate,
+  children,
+}: {
+  id?: string
+  title: string
+  to?: string
+  onActivate?: () => void
+  children?: ReactNode
+}) {
+  // A forward chevron: it must flip under dir="rtl" when Arabic ships.
+  const chevron = <CaretRight size={14} weight="bold" aria-hidden="true" />
   return (
     <div className="sj-h2row">
       <h2 id={id} className="sj-h2">
         {to ? (
           <Link to={to} className="lm-press lm-press-scale">
             {title}
-            {/* A forward chevron: it must flip under dir="rtl" when Arabic ships. */}
-            <CaretRight size={14} weight="bold" aria-hidden="true" />
+            {chevron}
           </Link>
+        ) : onActivate ? (
+          <button type="button" className="lm-press lm-press-scale" onClick={onActivate}>
+            {title}
+            {chevron}
+          </button>
         ) : (
           title
         )}
@@ -39,6 +60,15 @@ export function nextPaperIndex(index: number, key: string, count: number, rtl: b
 
 function PaperSwitch({ tabs, selected, onSelect }: { tabs: PaperTab[]; selected: number; onSelect: (n: number) => void }) {
   const refs = useRef<(HTMLButtonElement | null)[]>([])
+  const tray = useRef<HTMLDivElement>(null)
+  // A tray that scrolls must not hide the chosen paper, on first paint or after a key press.
+  useEffect(() => {
+    const el = tray.current
+    const tab = refs.current[tabs.findIndex((t) => t.paperNumber === selected)]
+    if (!el || !tab) return
+    const delta = scrollDeltaToReveal(el.getBoundingClientRect(), tab.getBoundingClientRect())
+    if (delta !== 0) el.scrollLeft += delta
+  }, [tabs, selected])
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     const rtl = event.currentTarget.closest('[dir="rtl"]') !== null
     const next = nextPaperIndex(index, event.key, tabs.length, rtl)
@@ -48,7 +78,7 @@ function PaperSwitch({ tabs, selected, onSelect }: { tabs: PaperTab[]; selected:
     refs.current[next]?.focus()
   }
   return (
-    <div className="sj-ptog" role="tablist" aria-label="Choose a paper">
+    <div ref={tray} className="sj-ptog" role="tablist" aria-label="Choose a paper">
       {tabs.map((tab, i) => {
         const on = tab.paperNumber === selected
         return (
