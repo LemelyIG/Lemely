@@ -16,7 +16,7 @@ export function ReviewDone({
   useEffect(() => { heading.current?.focus() }, [])
   const done = today ? today.filter((p) => p >= 1).length : 0
   return (
-    <div className="fc-review-fill fc-review-done flex min-h-[var(--fc-review-min-h)] flex-1 flex-col gap-[18px] overflow-auto lg:min-h-0 bg-[linear-gradient(180deg,var(--color-success-container),var(--color-surface)_45%)] -ml-[var(--fc-bleed-l)] -mr-[var(--fc-bleed-r)] pl-[calc(var(--fc-bleed-l)+6px)] pr-[calc(var(--fc-bleed-r)+6px)] pb-[26px] pt-4 [scrollbar-width:none] lg:mx-auto lg:w-full lg:max-w-[640px] lg:bg-none lg:px-5">
+    <div className="fc-review-fill fc-review-done flex flex-1 flex-col gap-[18px] bg-[linear-gradient(180deg,var(--color-success-container),var(--color-surface)_45%)] -ml-[var(--fc-bleed-l)] -mr-[var(--fc-bleed-r)] pl-[calc(var(--fc-bleed-l)+6px)] pr-[calc(var(--fc-bleed-r)+6px)] pb-[26px] pt-4 [scrollbar-width:none] lg:mx-auto lg:w-full lg:max-w-[640px] lg:bg-none lg:px-5">
       <button type="button" aria-label="Close" onClick={onBack} className="grid size-11 place-items-center rounded-[14px] bg-primary-container text-primary"><X size={20} aria-hidden /></button>
       <div className="grid justify-items-center gap-1.5 leading-tight">
         <Binny mood={view.mood} size={110} motion="hop" />

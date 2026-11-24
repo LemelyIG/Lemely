@@ -83,20 +83,16 @@ describe("flashcards fidelity guards", () => {
     expect(css).toContain("max(var(--native-group-inset-ios), env(safe-area-inset-right))")
   })
 
-  it("both review screens fill the viewport above the bottom bar the platform shows, from one shared variable", () => {
+  it("review screens take their height from the shell's flex column, never a viewport calculation", () => {
+    // A 100dvh sum cannot know how tall the shell's banners are, so it pushed "Show answer" under the tabs (round 4).
+    // Rendered geometry lives in e2e/flashcards-geometry.spec.ts; this only keeps the retired calculation out.
     for (const name of ["ReviewScreen.tsx", "ReviewDone.tsx"]) {
       const file = files.find((f) => f.name.endsWith(`/${name}`))
       expect(file?.source, name).toContain("fc-review-fill")
-      expect(file?.source, name).toContain("min-h-[var(--fc-review-min-h)]")
-      // The old per-screen copies subtracted only the native tab bar, so plain web ran under the bottom nav.
-      expect(file?.source, name).not.toMatch(/(?<![:\w-])min-h-\[calc\(100dvh/)
+      expect(file?.source, name).not.toMatch(/min-h-\[(var\(--fc-review-min-h\)|calc\(100dvh)/)
     }
     const css = readFileSync(join(SCREENS, "flashcards.css"), "utf8")
-    const fill = css.match(/\.fc-review-fill \{[^}]*\}/)?.[0] ?? ""
-    expect(fill).toContain("--fc-nav-h: var(--native-tabbar-h, calc(var(--bottom-nav-height, 56px) + 7px))")
-    expect(fill).toContain("- var(--fc-nav-h)")
-    expect(fill).toContain("- var(--fc-top-extra)")
-    expect(css).toMatch(/@media \(min-width: 820px\) \{\s*\.fc-review-fill \{\s*--fc-nav-h: 0px/)
+    expect(css).not.toMatch(/--fc-review-min-h|100dvh/)
   })
 
   it("every error alert box takes its look from parts/errorAlert.ts, never a copy of the classes", () => {

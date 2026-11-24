@@ -193,7 +193,7 @@ export function ReviewScreen() {
   const labelSubject = deckId ? deck.data?.subjectCode : subjectCode
 
   return withStatus(
-    <div className="fc-review-fill flex min-h-[var(--fc-review-min-h)] flex-col lg:mx-auto lg:min-h-[calc(100dvh-9.75rem)] lg:w-full lg:max-w-[640px] lg:pt-3">
+    <div className="fc-review-fill flex flex-col lg:mx-auto lg:w-full lg:max-w-[640px] lg:pt-3">
       <h1 className="sr-only">Review flashcards</h1>
       {/* `.prtop`: end, progress bar, count */}
       <div className="flex items-center gap-3 px-0.5 pb-1.5 pt-4 lg:px-4">
