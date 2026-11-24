@@ -232,6 +232,9 @@ describe("builderView", () => {
   it("preview failure is an inline line, not a page error", () => {
     const v = builderView(vin({ previewStatus: "error", preview: undefined }))
     expect(v.line?.tone).toBe("error")
+    // A failed check offers its own retry rather than telling the student to fiddle with a filter.
+    expect(v.line).toEqual({ tone: "error", text: "Couldn't check what matches.", retry: true })
+    expect(builderView(vin()).line?.retry).toBeUndefined()
     expect(v.body).toBe("ready")
   })
 
@@ -245,11 +248,11 @@ describe("builderView", () => {
   })
 
   it("names dropped weak topics and the untopiced pool", () => {
-    expect(builderView(vin({ dropped: ["Electricity"] })).droppedNote).toBe("Electricity isn't in the question bank yet.")
+    expect(builderView(vin({ dropped: ["Electricity"] })).droppedNote).toBe("Electricity has no questions yet.")
     expect(builderView(vin({ dropped: ["4.1 Electricity", "unknown"] })).droppedNote).toBe(
-      "2 weak topics aren't in the question bank yet: Electricity, unknown.",
+      "2 weak topics have no questions yet: Electricity, unknown.",
     )
-    expect(builderView(vin()).untopicedNote).toBe("Plus 12 untagged questions, used when no topic is picked.")
+    expect(builderView(vin()).untopicedNote).toBe("Plus 12 general questions, used when no topic is picked.")
   })
 })
 

@@ -109,7 +109,7 @@ describe("SetBuilderSheet (PS): the default sheet", () => {
       'aria-label="Topics"',
       "Questions",
       "Difficulty and source",
-      "32 questions match",
+      " questions match",
       "Start now",
       "Print instead",
     ].map((needle) => out.indexOf(needle))
@@ -191,7 +191,10 @@ describe("SetBuilderSheet: the other states", () => {
     api.preview = preview({ requestedCount: 20, availableCount: 6, reason: "insufficient_pool" })
     const out = render()
     expect(text(out)).toContain("Only 6 questions match. Add a topic or ask for fewer.")
-    expect(isDisabled(button(out, "Start with 6"))).toBe(false)
+    expect(isDisabled(button(out, "Start with "))).toBe(false)
+    expect(text(out)).toContain("Start with 6")
+    // The number inside the button is Mono too.
+    expect(out).toMatch(/Start with <span class="font-mono">6<\/span>/)
     expect(out).toContain("Print instead")
   })
 
@@ -228,12 +231,20 @@ describe("SetBuilderSheet: the other states", () => {
     expect(isDisabled(button(out, "Start now"))).toBe(true)
   })
 
-  it("the check failed: the line says so and nothing can start", () => {
+  it("the check failed: the line says so, offers a retry beside it, and nothing can start", () => {
     api.previewStatus = "error"
     api.preview = undefined
     const out = render()
-    expect(text(out)).toContain("Couldn't check what matches. Change a filter to try again.")
+    expect(text(out)).toContain("Couldn't check what matches.")
+    expect(text(out)).not.toContain("Change a filter")
+    expect(out).toMatch(/<button[^>]*>Check again<\/button>/)
+    // The retry is not part of the status region, so it is not read out as the status.
+    expect(out).toMatch(/<p role="status"[^>]*>Couldn(?:'|&#x27;)t check what matches\.<\/p>/)
     expect(isDisabled(button(out, "Start now"))).toBe(true)
+  })
+
+  it("a healthy line has no retry", () => {
+    expect(render()).not.toContain("Check again")
   })
 
   it("making the set: the button says so and is off", () => {
@@ -262,6 +273,27 @@ describe("builder pieces", () => {
     expect(out).toContain('aria-label="Fewer"')
     expect(out).toContain('aria-label="More"')
     expect(out).toContain("size-11")
+  })
+
+  it("a weak chip is not colour alone: a diamond marker and spoken text carry it", () => {
+    const groups = [
+      {
+        syllabusGroup: "Motion",
+        topics: [
+          { topic: "Motion", availableCount: 6, syllabusGroup: "Motion", marksLost: 4 },
+          { topic: "Waves", availableCount: 1, syllabusGroup: "Waves", marksLost: 0 },
+        ],
+      },
+    ]
+    const out = html(createElement(TopicChips, { groups, selected: [], onToggle: () => {} }))
+    const [motion, waves] = out.split("</button>")
+    expect(motion).toContain("rotate-45")
+    expect(motion).toMatch(/class="sr-only">, weak topic,<\/span>/)
+    expect(motion).toMatch(/class="sr-only"> questions<\/span>/)
+    expect(waves).not.toContain("rotate-45")
+    expect(waves).not.toContain("weak topic")
+    expect(waves).toMatch(/class="sr-only"> question<\/span>/)
+    expect(text(out)).toContain("Motion, weak topic,6 questions")
   })
 
   it("topic chips: a non-weak topic is neutral, a pressed one is primary, headings only for several groups", () => {

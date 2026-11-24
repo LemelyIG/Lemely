@@ -1,6 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
 /* L4 · "Difficulty and source" fold (the mock's `details.more`). Native details: keyboard and reduced motion for free. */
 import { PRACTICE_SOURCES } from "@/lib/practiceSources"
+import { ChevronIcon } from "../practiceIcons"
 import { radioKeyDown } from "./radioKeys"
 import { SUBJECT_CHIP_CLASS } from "./SubjectChoice"
 
@@ -21,8 +22,10 @@ export function MoreFilters({
   const stop = PRACTICE_SOURCES.some((o) => o.value === source) ? source : PRACTICE_SOURCES[0]?.value
   return (
     <details className="group">
-      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-1.5 text-[14px] font-semibold text-primary focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary [&::-webkit-details-marker]:hidden after:ms-1 after:size-[7px] after:-translate-y-0.5 after:rotate-45 after:border-r-2 after:border-b-2 after:border-current group-open:after:translate-y-0.5 group-open:after:-rotate-135">
+      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-1.5 text-[14px] font-semibold text-primary focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary [&::-webkit-details-marker]:hidden">
         Difficulty and source
+        {/* A turned icon, not a physical border corner: it points down (up when open) in either reading direction. */}
+        <ChevronIcon size={16} className="rotate-90 transition-transform duration-150 motion-reduce:transition-none group-open:-rotate-90" />
       </summary>
       <div className="grid gap-3 pt-1">
         {availableBands.length > 0 ? (

@@ -98,6 +98,8 @@ export type LineTone = "wait" | "ok" | "short" | "none" | "error"
 export interface AvailabilityLine {
   tone: LineTone
   text: string
+  /** The check failed and re-running it is the way out; the sheet offers the button. */
+  retry?: boolean
 }
 
 export interface BuilderViewInput {
@@ -144,12 +146,12 @@ function matchText(n: number): string {
 
 function droppedNote(dropped: readonly string[]): string | null {
   if (dropped.length === 0) return null
-  if (dropped.length === 1) return `${topicLabel(dropped[0])} isn't in the question bank yet.`
-  return `${dropped.length} weak topics aren't in the question bank yet: ${dropped.map(topicLabel).join(", ")}.`
+  if (dropped.length === 1) return `${topicLabel(dropped[0])} has no questions yet.`
+  return `${dropped.length} weak topics have no questions yet: ${dropped.map(topicLabel).join(", ")}.`
 }
 
 function untopicedNote(n: number): string | null {
-  return n > 0 ? `Plus ${plural(n, "untagged question")}, used when no topic is picked.` : null
+  return n > 0 ? `Plus ${plural(n, "general question")}, used when no topic is picked.` : null
 }
 
 const START = "Start now"
@@ -197,7 +199,7 @@ export function builderView(i: BuilderViewInput): BuilderView {
       startCount = view.requestedCount
     }
   } else if (i.previewStatus === "error") {
-    line = { tone: "error", text: "Couldn't check what matches. Change a filter to try again." }
+    line = { tone: "error", text: "Couldn't check what matches.", retry: true }
   } else {
     line = { tone: "wait", text: "Checking what matches…" }
   }

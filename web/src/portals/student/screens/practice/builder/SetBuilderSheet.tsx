@@ -12,6 +12,7 @@ import { useToast } from "@/components/ui/toast"
 import { useCreatePractice, usePracticePreview, usePracticeTopics } from "@/lib/hooks/usePracticeApi"
 import { useReference } from "@/lib/hooks/useReferenceApi"
 import type { PracticeFilterSet } from "@/lib/practiceTypes"
+import { MonoNumbers } from "../hub/MonoNumbers"
 import { PrintIcon } from "../practiceIcons"
 import { AvailabilityLine } from "./AvailabilityLine"
 import {
@@ -40,7 +41,7 @@ import { TopicChips } from "./TopicChips"
 const NO_FILTERS: PracticeFilterSet = { subjectCode: "", count: 0, topics: [], weakTopicsOnly: false, difficultyBands: [], source: null }
 const GO = "min-h-[54px] w-full rounded-[18px] text-[16px] font-bold shadow-hover disabled:shadow-none"
 /** The switch's label is a kit-owned span; this reaches it to match the mock's 14px semibold row. */
-const WEAK_ROW = "min-h-11 justify-center [&_label_span]:!text-[14px] [&_label_span]:!font-[600] [&_label]:min-h-11 [&_label]:justify-center"
+const WEAK_ROW = "min-h-11 justify-center [&_label_span]:!text-[14px] [&_label_span]:!font-semibold [&_label]:min-h-11 [&_label]:justify-center"
 /** The kit's switch is 48x28; this grows its tap area to 44px high without moving it (9px past the padding box, since the 1px border sits outside it). */
 const WEAK_SWITCH = "after:absolute after:inset-x-0 after:-inset-y-[9px] after:content-['']"
 
@@ -48,7 +49,7 @@ function TopicsSkeleton() {
   return (
     <div aria-busy="true" aria-label="Loading topics" className="flex flex-wrap gap-1.5">
       {[96, 120, 84, 132, 104].map((w) => (
-        <SkeletonBlock key={w} className="h-11 rounded-[12px]" style={{ width: w }} />
+        <SkeletonBlock key={w} className="h-11 rounded-chip" style={{ width: w }} />
       ))}
     </div>
   )
@@ -101,6 +102,8 @@ export function SetBuilderSheet({
 
   // CB4: the banner appears after the busy button (and Print) unmounted, so keyboard focus would fall to the body.
   const ctaRef = useRef<HTMLButtonElement>(null)
+  // A retry unmounts its own button as the line flips to "checking", so focus moves to the line instead of the body.
+  const lineRef = useRef<HTMLDivElement>(null)
   const failed = view.errorBanner !== null
   useEffect(() => {
     if (failed) ctaRef.current?.focus()
@@ -138,7 +141,7 @@ export function SetBuilderSheet({
           <SubjectChoice subjects={allSubjects} value={subjectCode} onChange={chooseSubject} />
 
           {view.errorBanner ? (
-            <div role="alert" className="rounded-[12px] bg-error-container px-3 py-2.5 text-[13.5px] font-semibold leading-[1.35] text-on-error-container">
+            <div role="alert" className="rounded-chip bg-error-container px-3 py-2.5 text-[13.5px] font-semibold leading-[1.35] text-on-error-container">
               {view.errorBanner}
             </div>
           ) : null}
@@ -171,8 +174,16 @@ export function SetBuilderSheet({
                     selected={draft.selected}
                     onToggle={(topic) => edit(toggleTopic(draft, topic))}
                   />
-                  {view.droppedNote ? <p className="text-[12.5px] text-on-surface-variant">{view.droppedNote}</p> : null}
-                  {view.untopicedNote ? <p className="text-[12.5px] text-on-surface-variant">{view.untopicedNote}</p> : null}
+                  {view.droppedNote ? (
+                    <p className="text-[12.5px] text-on-surface-variant">
+                      <MonoNumbers text={view.droppedNote} />
+                    </p>
+                  ) : null}
+                  {view.untopicedNote ? (
+                    <p className="text-[12.5px] text-on-surface-variant">
+                      <MonoNumbers text={view.untopicedNote} />
+                    </p>
+                  ) : null}
                   <CountStepper value={draft.count} onChange={(count) => edit({ ...draft, count })} />
                   <MoreFilters
                     bands={draft.bands}
@@ -181,7 +192,17 @@ export function SetBuilderSheet({
                     onToggleBand={(band) => edit(toggleBand(draft, band))}
                     onSource={(source) => edit(setSource(draft, source))}
                   />
-                  {view.line ? <AvailabilityLine line={view.line} /> : null}
+                  {view.line ? (
+                    <div ref={lineRef} tabIndex={-1}>
+                      <AvailabilityLine
+                        line={view.line}
+                        onRetry={() => {
+                          void previewQuery.refetch()
+                          lineRef.current?.focus()
+                        }}
+                      />
+                    </div>
+                  ) : null}
                 </div>
               ) : null
             }
@@ -196,7 +217,7 @@ export function SetBuilderSheet({
             loading={create.isPending}
             onClick={() => void make("set")}
           >
-            {view.cta.label}
+            <MonoNumbers text={view.cta.label} />
           </Button>
           {view.showPrint ? (
             <button
