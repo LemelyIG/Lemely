@@ -15,13 +15,16 @@ export interface CountdownPillProps {
 
 /** Neutral pill; inside 30 days of the exam it turns Tide. Nothing after the exam or on an unreadable date. */
 export function CountdownPill({ examDate, now, subject = "exams", to }: CountdownPillProps) {
-  const text = countdownLabel(daysUntil(examDate, now), subject)
+  const days = daysUntil(examDate, now)
+  const text = countdownLabel(days, subject)
   if (text === null) return null
   const tone = countdownTone(examDate, now)
   const inner = (
     <>
       <CalendarGlyph />
       <span>{text}</span>
+      {/* The bare "188 days" is the visible label; a reader still needs to hear what the days count down to. */}
+      {subject === null && days > 0 ? <span className="sr-only"> to exams</span> : null}
       {to ? <SmallChevron /> : null}
     </>
   )
