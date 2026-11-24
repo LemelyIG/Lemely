@@ -33,19 +33,38 @@ const repoRoot = path.resolve(__dirname, "..", "..")
  * process inherits them for free; whether Playwright happens to run
  * `globalSetup` before or after booting `webServer` is irrelevant either way.
  *
- * Before seeding, this also runs `alembic upgrade head` against that same
- * stack. Migration 0024 inserts the subject/paper/topic catalogue as part of
- * the schema upgrade (Task 18) — without it `seed_e2e.py` would be seeding
- * demo accounts and attempts on top of a database with no subjects at all,
- * and S-01 would render an empty subject list, failing `phase4-journey` and
- * `signup` at their first step. `make db-up` already runs this migration for
- * local dev, but the E2E stack is not guaranteed to have gone through it
- * (e.g. a stack started directly via `supabase start` and never migrated),
- * so this can't assume it already happened.
+ * OWN DATABASE. The app's data does not go in the shared local `postgres`
+ * database. `playwright.config.ts` points `LEMELY_DATABASE__URL` at
+ * `lemely_e2e` on the same Supabase server, and every run starts here by
+ * dropping and recreating it (`scripts/reset_e2e_db.py`, which refuses any
+ * name not starting with `lemely_e2e`), so another branch's alembic stamp on
+ * `postgres` can never break a run and a run can never move that stamp. Auth
+ * is the one exception: GoTrue only reads its own `auth` schema in
+ * `postgres`, so `seed_e2e.py` still creates its users there over GoTrue's
+ * HTTP API. Those accounts carry a per-run tag and `public.users` is a
+ * mirror with no foreign key to them, so nothing else touches `postgres`.
+ *
+ * Then `alembic upgrade head` builds the schema from this checkout. Migration
+ * 0024 inserts the subject/paper/topic catalogue as part of that upgrade
+ * (Task 18) — without it `seed_e2e.py` would be seeding demo accounts and
+ * attempts on top of a database with no subjects at all, and S-01 would
+ * render an empty subject list, failing `phase4-journey` and `signup` at their
+ * first step. `scripts/seed_e2e_boundaries.py` adds synthetic grade
+ * boundaries (not exam board data), since grading refuses an empty table and
+ * the real ones come from a network scrape.
  */
 export default function globalSetup(): void {
   const outDir = reportDir()
   fs.mkdirSync(outDir, { recursive: true })
+
+  const reset = spawnSync(path.join(repoRoot, ".venv/bin/python"), ["scripts/reset_e2e_db.py"], {
+    cwd: repoRoot,
+    env: process.env,
+    encoding: "utf-8",
+  })
+  if (reset.status !== 0) {
+    throw new Error(`e2e database reset failed (exit ${reset.status}):\n${reset.stderr}`)
+  }
 
   const migrate = spawnSync(path.join(repoRoot, ".venv/bin/alembic"), ["upgrade", "head"], {
     cwd: repoRoot,
@@ -55,6 +74,15 @@ export default function globalSetup(): void {
   })
   if (migrate.status !== 0) {
     throw new Error(`alembic upgrade head failed (exit ${migrate.status}):\n${migrate.stderr}`)
+  }
+
+  const boundaries = spawnSync(path.join(repoRoot, ".venv/bin/python"), ["scripts/seed_e2e_boundaries.py"], {
+    cwd: repoRoot,
+    env: process.env,
+    encoding: "utf-8",
+  })
+  if (boundaries.status !== 0) {
+    throw new Error(`e2e boundary fixtures failed (exit ${boundaries.status}):\n${boundaries.stderr}`)
   }
 
   const result = spawnSync(

@@ -4,6 +4,27 @@ Project-scoped MCP servers, plugins, and skills for Claude Code. Everything here
 is committed, so a fresh clone picks it up — but the MCP servers need local
 credentials that are deliberately not in the repo (see Prerequisites).
 
+## Local Playwright database
+
+`cd web && npm run test:e2e` runs on its own database, not the shared local
+`postgres` one. Before each run, `web/e2e/global-setup.ts` drops and recreates
+`lemely_e2e` on the local Supabase server (`scripts/reset_e2e_db.py`, which
+refuses any name not starting with `lemely_e2e`), runs `alembic upgrade head`
+from the current checkout, adds synthetic grade boundaries
+(`scripts/seed_e2e_boundaries.py`; test fixtures, not exam board data), and
+runs `scripts/seed_e2e.py`. `web/playwright.config.ts` points the backend it
+starts at that database through `LEMELY_DATABASE__URL`, overriding any value
+exported in your shell.
+
+- The shared `postgres` database's app schema is never migrated, stamped, or
+  seeded, so another branch's alembic revision there cannot break a run.
+- Auth is the one contact with `postgres`: GoTrue only reads its own `auth`
+  schema there, so the seed creates its users through GoTrue's HTTP API. They
+  carry a per-run tag and are not cleaned up.
+- Port 8000 must be free. The backend is never reused, because an existing
+  server there would be using some other database.
+- One run at a time per local stack.
+
 ## MCP servers
 
 Declared in `.mcp.json`. Claude Code fetches them with `npx` on first use.

@@ -55,7 +55,19 @@ const supabaseEnv = resolveSupabaseEnv()
 // invokes directly, which cannot receive config-module-scoped values any
 // other way — inherits them without re-shelling out to `supabase status`
 // itself.
-Object.assign(process.env, supabaseEnv)
+//
+// The app's own data lives in a database of its own (`lemely_e2e`, recreated by
+// `./e2e/global-setup.ts` on every run), never in the shared `postgres`
+// database. The URL is the local Supabase server's documented default
+// credentials with only the database name changed, and it overrides any
+// `LEMELY_DATABASE__URL` already exported in the invoking shell. `PYTHONPATH`
+// pins the helper scripts to this checkout, because every worktree shares one
+// venv whose editable install may point at another one.
+const databaseUrl = "postgresql+psycopg://postgres:postgres@127.0.0.1:54322/lemely_e2e"
+Object.assign(process.env, supabaseEnv, {
+  LEMELY_DATABASE__URL: databaseUrl,
+  PYTHONPATH: repoRoot,
+})
 
 /**
  * `process.env` is typed `string | undefined` per key, but Playwright's
@@ -162,8 +174,10 @@ export default defineConfig({
       cwd: repoRoot,
       port: 8000,
       timeout: 60_000,
-      reuseExistingServer: !process.env.CI,
-      env: definedEnv({ ...process.env, ...supabaseEnv }),
+      // Never reuse: a server already on :8000 belongs to another session and
+      // points at whatever database it was started with, not `lemely_e2e`.
+      reuseExistingServer: false,
+      env: definedEnv({ ...process.env, ...supabaseEnv, LEMELY_DATABASE__URL: databaseUrl }),
     },
     {
       // vite (v8) binds "localhost" to [::1] only by default, which Playwright's
