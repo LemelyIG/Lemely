@@ -21,6 +21,7 @@ import type {
   PaperMoment,
   StudentHome,
 } from "@/lib/studentHomeTypes"
+import { paperMood } from "./gradeMood"
 import { flashcardsTarget, homeRoutes, planTarget, practiceTarget } from "./routes"
 
 export const EXAM_NEAR_DAYS = 30
@@ -183,7 +184,7 @@ function paperStage(m: PaperMoment): StageVm {
     return stage(
       `tough:${m.paperId}`,
       "tough",
-      "sad",
+      paperMood(m),
       "Win back easy marks",
       { label: focus ? `Start with ${focus}` : "See my result", to },
     )
@@ -193,7 +194,7 @@ function paperStage(m: PaperMoment): StageVm {
     m.previousGrade && m.previousGrade !== m.grade
       ? `From ${m.previousGrade} to ${m.grade}`
       : `That's ${withArticle(m.grade)}`
-  return stage(`result:${m.paperId}`, "result", "happy", line, {
+  return stage(`result:${m.paperId}`, "result", paperMood(m), line, {
     label: focus ? `Fix ${focus}` : "See my result",
     to,
   })

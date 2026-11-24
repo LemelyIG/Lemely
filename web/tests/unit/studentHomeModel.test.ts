@@ -81,18 +81,18 @@ describe("stage", () => {
     ])
   })
 
-  it("result: happy hop, names the question to fix", () => {
+  it("result: a B is a pleased Binny (mood follows the grade), names the question to fix", () => {
     const s = pickStage(makeHome({ moments: [result] }), NONE)
-    expect(s).toMatchObject({ kind: "result", mood: "happy", motion: "hop", dismissible: true })
+    expect(s).toMatchObject({ kind: "result", mood: "wink", motion: "idle", dismissible: true })
     expect(s.line).toBe("From C to B")
     expect(s.action).toEqual({ label: "Fix Q8", to: "/student/result/5?q=lost" })
     const anA = pickStage(makeHome({ moments: [{ ...result, grade: "A", previousGrade: "E" } as HomeMoment] }), NONE)
     expect(anA.line).toBe("From E to A")
   })
 
-  it("tough: sad, easiest question first", () => {
+  it("tough: a D is a concerned Binny, easiest question first", () => {
     const s = pickStage(makeHome({ moments: [tough] }), NONE)
-    expect(s.mood).toBe("sad")
+    expect(s.mood).toBe("thinking")
     expect(s.line).toBe("Win back easy marks")
     expect(s.action.label).toBe("Start with Q3")
   })
