@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import uvicorn
+from sqlalchemy.engine import make_url
 
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
@@ -37,6 +38,12 @@ from lemely.web.routers import student
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
+
+#: Opt-in database guard: when set, the server refuses to start unless the database it
+#: resolves from settings has exactly this name. ``web/playwright.config.ts`` sets it to
+#: ``lemely_e2e``, so a configuration regression fails loudly instead of landing test
+#: traffic in the shared development database. Unset (the default) for hand runs.
+EXPECT_DATABASE_ENV = "LEMELY_E2E_EXPECT_DATABASE"
 
 FIXTURE_DIR = Path(__file__).resolve().parent.parent / "tests" / "golden" / "0625_m20_qp_12_mcq"
 
@@ -78,7 +85,20 @@ def build_app() -> FastAPI:
     return app
 
 
+def require_expected_database(settings: Settings, expected: str | None) -> None:
+    """Exit unless ``settings`` resolves to the database named ``expected`` (no-op if unset)."""
+    if not expected:
+        return
+    actual = make_url(settings.database.url).database
+    if actual != expected:
+        raise SystemExit(
+            f"e2e_server: refusing to start: the database resolves to {actual!r}, "
+            f"but {EXPECT_DATABASE_ENV} requires {expected!r}."
+        )
+
+
 def main() -> None:
+    require_expected_database(load_settings(), os.environ.get(EXPECT_DATABASE_ENV))
     app = build_app()
     port = int(os.environ.get("PORT", "8000"))
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")

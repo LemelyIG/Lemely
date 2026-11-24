@@ -30,19 +30,31 @@ const repoRoot = path.resolve(__dirname, "..", "..")
  * never touches the app's own HTTP server, so it needs no `webServer` up.
  * `playwright.config.ts` exports the same resolved keys into `process.env`
  * right after computing them for the backend `webServer`'s env, so this
- * process inherits them for free; whether Playwright happens to run
- * `globalSetup` before or after booting `webServer` is irrelevant either way.
+ * process inherits them for free.
+ *
+ * ORDER. Playwright starts the `webServer` processes BEFORE it runs this
+ * function, so the backend is already up, pointed at `lemely_e2e`, while the
+ * reset below drops and recreates that database under it (the reset's
+ * `DROP ... WITH (FORCE)` closes its pooled connections; `pool_pre_ping`
+ * recovers them). That is harmless because no spec runs yet and nothing in the
+ * backend works on the database in the meantime; the notification sweeper
+ * would, so `playwright.config.ts` turns it off for this server. The same
+ * ordering is what makes a second concurrent run fail on the busy port 8000
+ * before it can reach its own reset.
  *
  * OWN DATABASE. The app's data does not go in the shared local `postgres`
  * database. `playwright.config.ts` points `LEMELY_DATABASE__URL` at
  * `lemely_e2e` on the same Supabase server, and every run starts here by
  * dropping and recreating it (`scripts/reset_e2e_db.py`, which refuses any
- * name not starting with `lemely_e2e`), so another branch's alembic stamp on
- * `postgres` can never break a run and a run can never move that stamp. Auth
- * is the one exception: GoTrue only reads its own `auth` schema in
- * `postgres`, so `seed_e2e.py` still creates its users there over GoTrue's
- * HTTP API. Those accounts carry a per-run tag and `public.users` is a
- * mirror with no foreign key to them, so nothing else touches `postgres`.
+ * name but exactly `lemely_e2e` on a loopback host), so another branch's
+ * alembic stamp on `postgres` can never break a run and a run can never move
+ * that stamp. Auth is the one exception: GoTrue only reads its own `auth`
+ * schema in `postgres`, so the specs and `seed_e2e.py` still create their users
+ * there over GoTrue's HTTP API. Every such account is on the
+ * `e2e.lemely.local` domain, and the same reset deletes the GoTrue users on
+ * that domain (admin API, loopback Supabase only, no other domain) because
+ * once the database is dropped they are orphans. `public.users` is a mirror
+ * with no foreign key to them, so nothing else touches `postgres`.
  *
  * Then `alembic upgrade head` builds the schema from this checkout. Migration
  * 0024 inserts the subject/paper/topic catalogue as part of that upgrade
@@ -65,6 +77,7 @@ export default function globalSetup(): void {
   if (reset.status !== 0) {
     throw new Error(`e2e database reset failed (exit ${reset.status}):\n${reset.stderr}`)
   }
+  process.stderr.write(reset.stderr)
 
   const migrate = spawnSync(path.join(repoRoot, ".venv/bin/alembic"), ["upgrade", "head"], {
     cwd: repoRoot,
