@@ -108,9 +108,8 @@ export function weaknessChips(weak: readonly WeakTopicDTO[], subjectCode: string
 }
 
 /**
- * The subject's weak topic with the lowest accuracy, breaking ties by more marks lost and then by
- * the first listed. `null` when the subject
- * has no weak topic, so nothing is ever preselected on a guess.
+ * The subject's weak topic with the lowest accuracy, breaking ties by more marks lost and then by the
+ * first listed. `null` when the subject has no weak topic, so nothing is ever preselected on a guess.
  */
 export function weakestTopic(weak: readonly WeakTopicDTO[], subjectCode: string): string | null {
   let best: WeakTopicDTO | null = null

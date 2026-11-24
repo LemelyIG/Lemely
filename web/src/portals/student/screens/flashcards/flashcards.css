@@ -35,3 +35,24 @@
 @media (prefers-reduced-motion: reduce) {
   .fc-flip, .fc-rise, .fc-out-right, .fc-out-left { animation: none; }
 }
+/* The review screens fill the viewport between the shell bar and whichever bottom bar the platform shows,
+ * so the primary button is never under it. Below the sidebar breakpoint the bar is the native tab bar when
+ * there is one, else the web bottom nav, which renders 7px taller than its --bottom-nav-height (a shell
+ * issue, measured at 63px). Between 721px and 819px the shell's top bar floats and main starts 52px
+ * lower than the 60px the calc assumes (measured: main top 112px). At the sidebar breakpoint and above
+ * there is no bottom bar. Only a variable is set here, so the lg overrides in the class lists still win. */
+.fc-review-fill {
+  --fc-nav-h: var(--native-tabbar-h, calc(var(--bottom-nav-height, 56px) + 7px));
+  --fc-top-extra: 0px;
+  --fc-review-min-h: calc(100dvh - var(--native-bar-h, 56px) - env(safe-area-inset-top) - 0.25rem - var(--fc-top-extra) - var(--fc-nav-h) - env(safe-area-inset-bottom));
+}
+@media (min-width: 721px) and (max-width: 819px) {
+  .fc-review-fill {
+    --fc-top-extra: 52px;
+  }
+}
+@media (min-width: 820px) {
+  .fc-review-fill {
+    --fc-nav-h: 0px;
+  }
+}
