@@ -11,7 +11,7 @@ import { MasteryBar, MasteryLegend } from "./MasteryBar"
 import { OriginTag } from "./OriginTag"
 
 const FOCUS = "focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
-const PRIMARY_BTN = `min-h-[50px] w-full rounded-[18px] bg-primary px-7 text-[15.5px] font-bold text-on-primary shadow-[0_14px_24px_-16px_oklch(0.3_0.07_242/0.7)] disabled:cursor-not-allowed disabled:bg-surface-container-high disabled:text-on-surface-variant disabled:shadow-none ${FOCUS}`
+const PRIMARY_BTN = `!min-h-[54px] w-full rounded-[18px] bg-primary px-7 text-[16px] font-bold text-on-primary shadow-[0_14px_24px_-16px_oklch(0.3_0.07_242/0.7)] disabled:cursor-not-allowed disabled:bg-surface-container-high disabled:text-on-surface-variant disabled:shadow-none ${FOCUS}`
 
 /** fc.css `.cdr`: [1fr auto], gap 12, padding 10 0, hairline above (not on the first row). */
 function CardRow({ card, onEdit }: { card: CardRowView; onEdit: (card: CardRowView, opener: HTMLElement) => void }) {

@@ -11,6 +11,12 @@ import "./flashcards.css"
 const reducedMotion = () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
 
 /** The stack: an under-card plus the live card (fc.css `.fstage`, `.fcard`, `.under`, `.stamp`). */
+/** fc.css `.fa`: the answer is 34px mono. A short one keeps that on a phone; a longer one steps down
+ * with the viewport so it wraps to a few lines instead of overflowing (the long-answer clamp). */
+const SHORT_ANSWER_CHARS = 14
+const answerSize = (back: string) =>
+  back.trim().length <= SHORT_ANSWER_CHARS ? "text-[34px]" : "text-[clamp(18px,6vw,34px)]"
+
 export function ReviewCard({
   card, revealed, onReveal, onGrade,
 }: { card: CardDTO; revealed: boolean; onReveal: () => void; onGrade: (g: ReviewGrade) => void }) {
@@ -49,7 +55,7 @@ export function ReviewCard({
   const stampGood = visual.stamp === "good"
   const answerHintId = `fc-answer-hint-${card.id}`
   return (
-    <div className="relative mx-[22px] mb-2.5 mt-3.5 min-h-[320px] flex-1 [perspective:1200px]">
+    <div className="relative mx-2 mb-2.5 mt-3.5 lg:mx-[22px] min-h-[320px] flex-1 [perspective:1200px]">
       <span aria-hidden className="absolute inset-0 translate-y-3 scale-[0.94] rounded-[28px] bg-surface-container-lowest opacity-60 shadow-[inset_0_0_0_1px_var(--color-outline-variant)]" />
       <div
         key={card.id}
@@ -64,7 +70,7 @@ export function ReviewCard({
         onClick={() => { if (!revealed) onReveal() }}
         style={{ transform: leaving ? undefined : `translateX(${dx}px) rotate(${visual.rotateDeg}deg)` }}
         className={[
-          "absolute inset-0 focus-visible:rounded-[28px] flex flex-col items-center justify-center gap-[22px] rounded-[28px] bg-surface-container-lowest p-7 text-center",
+          "absolute inset-0 focus-visible:!rounded-[28px] flex flex-col items-center justify-center gap-[22px] rounded-[28px] bg-surface-container-lowest p-7 text-center",
           "shadow-[0_18px_36px_-18px_oklch(0.3_0.06_242/0.4),inset_0_0_0_1px_var(--color-outline-variant)]",
           visual.armed ? (stampGood ? "!shadow-[0_18px_36px_-18px_oklch(0.3_0.06_242/0.4),inset_0_0_0_3px_var(--color-success-text)]" : "!shadow-[0_18px_36px_-18px_oklch(0.3_0.06_242/0.4),inset_0_0_0_3px_var(--color-on-error-container)]") : "",
           revealed ? "animate-[fc-flip_450ms_var(--ease-out)_both] motion-reduce:animate-none" : "animate-[fc-rise_280ms_var(--ease-out)] motion-reduce:animate-none",
@@ -85,7 +91,7 @@ export function ReviewCard({
           <>
             <span className="text-balance text-[20px] font-bold leading-[1.35] text-on-surface-variant">{card.front}</span>
             {" "}
-            <span className="max-w-full break-words font-mono text-[clamp(18px,6vw,34px)] font-bold leading-[1.2] text-on-surface">{card.back}</span>
+            <span className={`max-w-full break-words font-mono ${answerSize(card.back)} font-bold leading-[1.2] text-on-surface`}>{card.back}</span>
           </>
         ) : (
           <>

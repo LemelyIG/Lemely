@@ -13,8 +13,8 @@ export function ReviewDone({
   useEffect(() => { heading.current?.focus() }, [])
   const done = today ? today.filter((p) => p >= 1).length : 0
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-[18px] overflow-auto bg-[linear-gradient(180deg,var(--color-success-container),var(--color-surface)_45%)] px-5 pb-[26px] pt-4 [scrollbar-width:none] lg:mx-auto lg:w-full lg:max-w-[640px] lg:bg-none">
-      <button type="button" aria-label="Close" onClick={onBack} className="grid size-11 place-items-center rounded-[14px] bg-surface-container-high text-on-surface"><X size={20} aria-hidden /></button>
+    <div className="flex min-h-[calc(100dvh-var(--native-bar-h,56px)-env(safe-area-inset-top)-0.25rem)] flex-1 flex-col gap-[18px] overflow-auto lg:min-h-0 bg-[linear-gradient(180deg,var(--color-success-container),var(--color-surface)_45%)] px-1.5 pb-[26px] pt-4 leading-tight [scrollbar-width:none] lg:mx-auto lg:w-full lg:max-w-[640px] lg:bg-none lg:px-5">
+      <button type="button" aria-label="Close" onClick={onBack} className="grid size-11 place-items-center rounded-[14px] bg-primary-container text-primary"><X size={20} aria-hidden /></button>
       <div className="grid justify-items-center gap-1.5">
         <Binny mood={view.mood} size={110} motion="hop" />
         <h1 ref={heading} tabIndex={-1} className="text-center font-display text-[34px] font-extrabold leading-[1.05] tracking-[-0.03em] text-primary">{view.title}</h1>
@@ -40,8 +40,8 @@ export function ReviewDone({
           </div>
         ))}
       </div>
-      <button type="button" onClick={onBack} className="min-h-[50px] w-full rounded-[18px] bg-primary px-7 text-[15.5px] font-bold text-on-primary">Back to decks</button>
-      {view.practiceLink ? <Link to={view.practiceLink.to} className="inline-flex min-h-11 items-center justify-self-center px-3.5 text-[15px] font-bold text-primary">{view.practiceLink.label}</Link> : null}
+      <button type="button" onClick={onBack} className="!min-h-[54px] w-full rounded-[18px] bg-primary px-7 text-[16px] font-bold text-on-primary shadow-[0_14px_24px_-16px_oklch(0.3_0.07_242/0.7)]">Back to decks</button>
+      {view.practiceLink ? <Link to={view.practiceLink.to} className="inline-flex min-h-11 items-center self-center px-3.5 text-[15px] font-bold text-primary">{view.practiceLink.label}</Link> : null}
     </div>
   )
 }

@@ -156,7 +156,7 @@ function NewDeckForm({ seed, onClose, onStarted, onDiscarded }: {
             const selected = o.mode === mode
             return <button key={o.mode} type="button" role="radio" aria-checked={selected} disabled={o.disabled}
               onClick={() => setSel((s) => selectKind(s, o.mode))}
-              className={`grid min-h-[60px] grid-cols-[40px_minmax(0,1fr)] items-center gap-3 rounded-2xl px-3 py-2.5 text-start text-on-surface disabled:opacity-60 ${FOCUS} ${selected ? "bg-primary-container shadow-[inset_0_0_0_2px_var(--color-primary)]" : "bg-surface-container-lowest shadow-[inset_0_0_0_1.5px_var(--color-outline-variant)]"}`}>
+              className={`grid !min-h-[60px] grid-cols-[40px_minmax(0,1fr)] items-center gap-3 rounded-2xl px-3 py-2.5 text-start text-on-surface disabled:opacity-60 ${FOCUS} ${selected ? "bg-primary-container shadow-[inset_0_0_0_2px_var(--color-primary)]" : "bg-surface-container-lowest shadow-[inset_0_0_0_1.5px_var(--color-outline-variant)]"}`}>
               <span className={`grid size-10 place-items-center rounded-xl ${TONES[o.mode]}`}><Icon size={14} weight="bold" aria-hidden /></span>
               <span className="grid"><b className="text-[15px] font-bold">{o.title}</b><span className="text-[13px] text-on-surface-variant">{o.sub}</span></span>
             </button>
@@ -185,7 +185,7 @@ function NewDeckForm({ seed, onClose, onStarted, onDiscarded }: {
       </> : null}
       {requestError ? <div role="alert" className="rounded-xl bg-error-container px-3 py-2.5 text-[13.5px] font-semibold text-on-error-container">{newDeckErrorMessage(requestError)}</div> : null}
       <button type="button" onClick={() => void submit()} disabled={pending || (!failedDeckId && (!subjectCode || req.kind === "invalid")) || (!!failedDeckId && retrying.has(failedDeckId))}
-        className={`min-h-[50px] w-full rounded-[18px] bg-primary px-7 text-[15.5px] font-bold text-on-primary disabled:bg-surface-container-high disabled:text-on-surface-variant ${FOCUS}`}>
+        className={`!min-h-[54px] w-full rounded-[18px] bg-primary px-7 text-[16px] font-bold text-on-primary shadow-[0_14px_24px_-16px_oklch(0.3_0.07_242/0.7)] disabled:shadow-none disabled:bg-surface-container-high disabled:text-on-surface-variant ${FOCUS}`}>
         {failedDeckId ? "Try again" : submitLabel(mode, count, pending)}
       </button>
     </FcSheet>

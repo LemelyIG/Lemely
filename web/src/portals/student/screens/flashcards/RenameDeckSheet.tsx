@@ -36,7 +36,7 @@ export function RenameDeckSheet({
       </label>
       {rename.isError ? <div role="alert" className="rounded-xl bg-error-container px-3 py-2.5 text-[13.5px] font-semibold text-on-error-container">{RENAME_ERROR}</div> : null}
       <button type="button" disabled={controls.saveDisabled} onClick={submit}
-        className={`min-h-[50px] w-full rounded-[18px] bg-primary px-7 text-[15.5px] font-bold text-on-primary disabled:bg-surface-container-high disabled:text-on-surface-variant ${FOCUS}`}>
+        className={`!min-h-[54px] w-full rounded-[18px] bg-primary px-7 text-[16px] font-bold text-on-primary shadow-[0_14px_24px_-16px_oklch(0.3_0.07_242/0.7)] disabled:shadow-none disabled:bg-surface-container-high disabled:text-on-surface-variant ${FOCUS}`}>
         {controls.saveLabel}
       </button>
       <button type="button" disabled={controls.cancelDisabled} onClick={onClose}

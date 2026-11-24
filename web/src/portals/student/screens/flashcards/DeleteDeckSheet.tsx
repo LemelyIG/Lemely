@@ -40,7 +40,7 @@ export function DeleteDeckSheet({
           onClose,
           onDeleted: () => { toast({ title: `${title} deleted`, variant: "success" }); onDeleted() },
         })}
-        className={`min-h-[50px] w-full rounded-[18px] bg-on-error-container px-7 text-[15.5px] font-bold text-on-primary disabled:opacity-60 ${FOCUS}`}>
+        className={`!min-h-[54px] w-full rounded-[18px] bg-on-error-container px-7 text-[16px] font-bold text-on-primary disabled:opacity-60 ${FOCUS}`}>
         {controls.confirmLabel}
       </button>
       <button type="button" autoFocus disabled={controls.keepDisabled} onClick={onClose}

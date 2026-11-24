@@ -33,7 +33,7 @@ export function DeckRow({
         {...longPress}
         className={[
           "group grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_18px] items-center gap-3 py-3 text-start text-on-surface",
-          "focus-visible:rounded-[14px] focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary",
+          "focus-visible:!rounded-[14px] focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary",
           selected ? "lg:rounded-[14px] lg:bg-primary-container lg:px-3" : "",
         ].join(" ")}
       >
@@ -51,7 +51,7 @@ export function DeckRow({
           )}
         </span>
         {row.status === "ready" ? <DueCount due={row.due} /> : <span />}
-        <CaretRight size={18} aria-hidden className="text-on-surface-variant" />
+        <CaretRight size={18} weight="bold" aria-hidden className="text-on-surface" />
       </button>
       {row.canRetry && onRetry ? (
         <button

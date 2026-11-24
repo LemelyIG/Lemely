@@ -15,7 +15,7 @@ export function DeckScreen() {
     if (isWide()) navigate(`/student/flashcards?deck=${deckId}`, { replace: true })
   }, [deckId, navigate])
   return (
-    <div className="mx-auto flex w-full max-w-[640px] flex-col px-[18px] pb-24 pt-3.5">
+    <div className="mx-auto flex w-full max-w-[640px] flex-col px-1 pb-24 pt-3.5 leading-tight">
       <DeckBody key={deckId} deckId={deckId} variant="page" onDeleted={() => navigate("/student/flashcards", { replace: true })} />
     </div>
   )

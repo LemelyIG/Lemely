@@ -31,14 +31,14 @@ export function DecksError({ onRetry }: { onRetry: () => void }) {
   return (
     <div className="grid flex-1 content-center justify-items-center gap-3 px-2 py-6 text-center" role="alert">
       <Binny mood="sad" size={96} />
-      <h2 className="mt-1.5 font-display text-[26px] font-extrabold leading-[1.15] tracking-[-0.02em] text-balance text-primary">
+      <h2 className="mt-1.5 font-display text-[28px] font-extrabold leading-[1.15] tracking-[-0.02em] text-balance text-primary">
         Couldn’t load your decks
       </h2>
-      <p className="mb-1.5 max-w-[30ch] text-[15px] leading-[1.4] text-on-surface-variant">Check your connection, then try again.</p>
-      <button type="button" onClick={onRetry} className={`min-h-[50px] w-full max-w-[320px] rounded-[18px] bg-primary px-7 text-[15.5px] font-bold text-on-primary ${FOCUS}`}>
+      <p className="mb-1.5 max-w-[30ch] text-[15px] font-medium leading-[1.4] text-on-surface-variant">Check your connection, then try again.</p>
+      <button type="button" onClick={onRetry} className={`!min-h-[54px] w-full rounded-[18px] bg-primary px-7 text-[16px] font-bold text-on-primary shadow-[0_14px_24px_-16px_oklch(0.3_0.07_242/0.7)] ${FOCUS}`}>
         Try again
       </button>
-      <Link to="/student" className={`inline-flex min-h-11 items-center px-3.5 text-[15px] font-bold text-primary ${FOCUS}`}>Back to Home</Link>
+      <Link to="/student" className={`inline-flex min-h-11 items-center px-3.5 text-[14px] font-semibold text-primary ${FOCUS}`}>Back to Home</Link>
     </div>
   )
 }
@@ -77,14 +77,14 @@ export function EmptyShelf({ weakHint, onPick }: { weakHint: string | null; onPi
     <div className="mx-auto flex w-full max-w-[520px] flex-col gap-6">
       <div className="grid justify-items-center gap-3 pt-3 text-center">
         <Binny mood="open" size={96} />
-        <h2 className="mt-1.5 font-display text-[26px] font-extrabold leading-[1.15] tracking-[-0.02em] text-balance text-primary">Your shelf is empty</h2>
-        <p className="max-w-[30ch] text-[15px] leading-[1.4] text-on-surface-variant">Make a deck from what cost you marks. Lemely writes the cards.</p>
+        <h2 className="mt-1.5 font-display text-[28px] font-extrabold leading-[1.15] tracking-[-0.02em] text-balance text-primary">Your shelf is empty</h2>
+        <p className="max-w-[30ch] text-[15px] font-medium leading-[1.4] text-on-surface-variant">Make a deck from what cost you marks. Lemely writes the cards.</p>
       </div>
       <div className="grid gap-2">
         {OPTIONS.map((o, i) => (
           <button key={o.mode} type="button" onClick={() => onPick(o.mode)}
             className={[
-              "grid min-h-[60px] grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-3 rounded-2xl px-3 py-2.5 text-start text-on-surface",
+              "grid !min-h-[60px] grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-3 rounded-2xl px-3 py-2.5 text-start text-on-surface",
               FOCUS,
               i === 0 ? "bg-primary-container shadow-[inset_0_0_0_2px_var(--color-primary)]" : "bg-surface-container-lowest shadow-[inset_0_0_0_1.5px_var(--color-outline-variant)]",
             ].join(" ")}>
@@ -112,8 +112,8 @@ export function SparseExtras({
       ) : null}
       <Walkthrough
         steps={[
-          { icon: Sparkle, title: "A few minutes a day", body: "Cards show up here when they’re due." },
-          { icon: Target, title: "Be honest when you rate", body: "Again brings a card back soon. Easy sends it away for a week." },
+          { title: "A few minutes a day", body: "Cards show up here when they’re due." },
+          { title: "Be honest when you rate", body: "Again brings a card back soon. Easy sends it away for a week." },
         ]}
       />
     </>

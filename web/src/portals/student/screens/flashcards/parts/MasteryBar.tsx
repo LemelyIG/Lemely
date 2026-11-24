@@ -49,7 +49,7 @@ export function MasteryLegend({ legend }: { legend: readonly MasteryLegendItem[]
       {legend.map((item) => (
         <span key={item.key} className="inline-flex items-center gap-1.5">
           <i aria-hidden className={`size-2.5 rounded-[3px] ${FILL[item.key]}`} />
-          <span className="font-mono">{item.count}</span> {item.label}
+          <span><span className="font-mono">{item.count}</span> {item.label}</span>
         </span>
       ))}
     </div>

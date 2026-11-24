@@ -3,6 +3,7 @@ import { Plus } from "@phosphor-icons/react"
 import { useMemo, useState } from "react"
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Binny, HairRows, SubjectDot } from "@/components/redesign"
+import { PageHeading } from "@/components/ui/page-heading"
 import { QueryState } from "@/components/ui/query-state"
 import { useToast } from "@/components/ui/toast"
 import { useDueSession, useFlashcardDecks, useRetryGeneration, useRetryingDeckIds, useWeakTopics } from "@/lib/hooks/useFlashcardApi"
@@ -21,7 +22,8 @@ import { isWide, useIsWide } from "./isWide"
 import "./flashcards.css"
 
 const FOCUS = "focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
-const PRIMARY_BTN = `min-h-[50px] rounded-[18px] bg-primary px-7 text-[15.5px] font-bold text-on-primary shadow-[0_14px_24px_-16px_oklch(0.3_0.07_242/0.7)] ${FOCUS}`
+// !min-h-[54px] : the coarse-pointer floor in index.css is unlayered and would otherwise cap a phone button at 44px.
+const PRIMARY_BTN = `!min-h-[54px] rounded-[18px] bg-primary px-7 text-[16px] font-bold text-on-primary shadow-[0_14px_24px_-16px_oklch(0.3_0.07_242/0.7)] ${FOCUS}`
 
 export function FlashcardsScreen() {
   const navigate = useNavigate()
@@ -99,10 +101,10 @@ export function FlashcardsScreen() {
   const header = view.kind === "ready" ? view.header : { title: "Flashcards", sub: view.kind === "empty" ? "No decks yet" : "" }
 
   return (
-    <div className="mx-auto flex w-full max-w-[640px] flex-col lg:max-w-none">
-      <header className="flex items-center gap-2.5 px-4 pb-1.5 pt-3.5 lg:gap-5 lg:px-10 lg:pb-2 lg:pt-6">
+    <div className="mx-auto flex w-full max-w-[640px] flex-col leading-tight lg:max-w-none">
+      <header className="flex items-center gap-2.5 px-1 pb-1.5 pt-3.5 lg:gap-5 lg:px-10 lg:pb-2 lg:pt-6">
         <div className="grid min-w-0 flex-1">
-          <h1 tabIndex={-1} data-fc-heading className="font-display text-[28px] font-extrabold leading-[1.1] tracking-[-0.03em] text-primary outline-none lg:text-[32px]">{header.title}</h1>
+          <PageHeading repeatsTitle tabIndex={-1} data-fc-heading className="font-display text-[28px] font-extrabold leading-[1.1] tracking-[-0.03em] text-primary outline-none lg:text-[32px]">{header.title}</PageHeading>
           {header.sub ? <span className="text-[13px] font-medium text-on-surface-variant">{header.sub}</span> : null}
         </div>
         {view.kind === "ready" && view.hero.reviewLabel ? (
@@ -116,7 +118,7 @@ export function FlashcardsScreen() {
         </button>
       </header>
 
-      <div className="flex flex-col gap-6 px-[18px] pb-24 pt-2 lg:px-10">
+      <div className="flex flex-col gap-6 px-1 pb-24 pt-2 lg:px-10">
         {refetchFailed ? <DecksRefreshNotice onRetry={() => void decks.refetch()} /> : null}
         {firstLoadFailed && !isOfflineFailure(decks.error) ? (
           <DecksError onRetry={() => void decks.refetch()} />

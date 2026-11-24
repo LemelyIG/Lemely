@@ -25,7 +25,7 @@ export function CardDeleteStep({
       <p id={ALERT_BODY_ID} className="text-[14px] leading-[1.4] text-on-surface-variant">{copy.body}</p>
       {state.isError ? <div role="alert" className="rounded-xl bg-error-container px-3 py-2.5 text-[13.5px] font-semibold text-on-error-container">{CARD_DELETE_ERROR}</div> : null}
       <button type="button" disabled={controls.confirmDisabled} onClick={onConfirm}
-        className={`min-h-[50px] w-full rounded-[18px] bg-on-error-container px-7 text-[15.5px] font-bold text-on-primary disabled:opacity-60 ${FOCUS}`}>
+        className={`!min-h-[54px] w-full rounded-[18px] bg-on-error-container px-7 text-[16px] font-bold text-on-primary disabled:opacity-60 ${FOCUS}`}>
         {controls.confirmLabel}
       </button>
       <button type="button" autoFocus disabled={controls.keepDisabled} onClick={onKeep}
