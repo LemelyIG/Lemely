@@ -25,7 +25,14 @@ test("a student with one paper sees the sparse path and opens the paper", async 
 
   const papers = page.getByRole("list", { name: "Papers, newest first" })
   await expect(papers.getByRole("link")).toHaveCount(1)
-  await papers.getByRole("link").click()
+  // The Papers heading's chevron opens the All papers screen, which says a trend needs a second paper.
+  await page.getByRole("heading", { level: 2, name: "Papers" }).getByRole("link").click()
+  await expect(page).toHaveURL(/\/student\/subject\/0625\/papers$/)
+  await expect(page.getByRole("heading", { level: 1, name: "All papers" })).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByText("One paper so far. Your trend starts with the next one.")).toBeVisible()
+  const everyPaper = page.getByRole("list", { name: /^Papers/ })
+  await expect(everyPaper.getByRole("link")).toHaveCount(1)
+  await everyPaper.getByRole("link").click()
   // The result route is addressed by history index, not by attempt id.
   await expect(page).toHaveURL(/\/student\/result\/\d+$/)
   await expect(page.getByRole("heading", { level: 2, name: "Integrity and provenance" })).toBeVisible({ timeout: 15_000 })

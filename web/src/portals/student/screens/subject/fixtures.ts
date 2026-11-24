@@ -42,6 +42,10 @@ const row = (a: PaperAttempt, paperNumber: number): PaperHistoryRow => ({
   recordedAt: a.recordedAt,
   paperNumber,
   label: a.label,
+  variant: Number(a.label.split(" · ")[0].slice(-1)),
+  session: a.label.split(" · ")[1],
+  confidence: null,
+  teacherCorrected: 0,
 })
 
 const topic = (name: string, accuracy: number, marksToWin: number): TopicTile => ({

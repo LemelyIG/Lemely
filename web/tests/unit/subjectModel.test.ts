@@ -323,11 +323,10 @@ describe("papers", () => {
     const rows = paperRows([{ ...MATHS.paperHistory[0], recordedAt: "" }], NOW)
     expect(rows[0].sub).toBe("61/80")
   })
-  it("shows 4 rows below 1280px, 5 at desktop, all once expanded", () => {
-    expect(visiblePapers(7, false, false)).toBe(4)
-    expect(visiblePapers(7, true, false)).toBe(5)
-    expect(visiblePapers(7, false, true)).toBe(7)
-    expect(visiblePapers(2, true, false)).toBe(2)
+  it("shows 4 rows below 1280px and 5 at desktop; the rest are on the All papers screen", () => {
+    expect(visiblePapers(7, false)).toBe(4)
+    expect(visiblePapers(7, true)).toBe(5)
+    expect(visiblePapers(2, true)).toBe(2)
   })
 })
 

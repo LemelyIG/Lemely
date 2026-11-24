@@ -1,5 +1,4 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
-import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { PathSection } from "./PathSection"
 import { PapersList } from "./PapersList"
@@ -24,7 +23,6 @@ export function SubjectBody({
   onSelectPaper: (n: number) => void
 }) {
   const navigate = useNavigate()
-  const [expanded, setExpanded] = useState(false)
   return (
     <div className="sj-layout">
       <div className="sj-col">
@@ -40,7 +38,7 @@ export function SubjectBody({
           allTo={links.practice(code)}
           onSelect={(topic) => navigate(links.practice(code, topic))}
         />
-        <PapersList rows={view.papers} visible={visiblePapers(view.papers.length, wide, expanded)} onShowAll={() => setExpanded(true)} />
+        <PapersList rows={view.papers} visible={visiblePapers(view.papers.length, wide)} allTo={links.papers(code)} />
       </div>
     </div>
   )

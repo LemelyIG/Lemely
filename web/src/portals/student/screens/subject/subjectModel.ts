@@ -30,6 +30,7 @@ export const links = {
   practice: (code: string, topic?: string) => `/student/practice/${enc(code)}${topic ? `?topic=${enc(topic)}` : ""}`,
   flashcards: (code: string, deckId: string) => `/student/flashcards/${enc(code)}?deck=${enc(deckId)}`,
   plan: (code: string) => `/student/plan/${enc(code)}`,
+  papers: (code: string) => `/student/subject/${enc(code)}/papers`,
   result: (id: string) => `/student/result/${enc(id)}`,
   home: "/student",
 } as const
@@ -118,7 +119,7 @@ export function paperRows(history: PaperHistoryRow[], now: Date): PaperRowView[]
   return history.map(h => ({ id: h.id, grade: h.grade, colorVar: gradeColorVar(h.grade), title: h.label,
     sub: [`${h.awarded}/${h.maximum}`, monthYearLabel(h.recordedAt, now)].filter(Boolean).join(" · "), to: links.result(h.id) }))
 }
-export function visiblePapers(count: number, wide: boolean, expanded: boolean): number { return expanded ? count : Math.min(count, wide ? 5 : 4) }
+export function visiblePapers(count: number, wide: boolean): number { return Math.min(count, wide ? 5 : 4) }
 export function tierLabel(subject: CatalogueSubject | undefined, paperNumber: number | null): string | null {
   const tier = subject?.papers.find(p => p.number === paperNumber)?.tier
   return tier ? tier.charAt(0).toUpperCase() + tier.slice(1) : null

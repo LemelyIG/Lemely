@@ -1,0 +1,70 @@
+/* All papers (S-09). A sibling of the Subject screen: it reuses subject.css's heading, grade, hint, notice and button
+   classes, and adds only the controls and the compare panel. Colours are roles from index.css or mixes of two roles;
+   no raw values. Logical properties only (rtlSafety). */
+
+/* ---- Layout: one column, the controls first; two from 768px -------------- */
+.ap-page { display: grid; gap: 20px; }
+/* minmax(0, 1fr), not the implicit auto track, so a long session tray scrolls instead of pushing the page wide. */
+.ap-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
+.ap-aside, .ap-main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-content: start; min-width: 0; }
+@media (min-width: 768px) {
+  .ap-layout { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 32px; align-items: start; }
+  .ap-layout > .ap-main { grid-column: 1; grid-row: 1; }
+  .ap-aside { grid-column: 2; grid-row: 1; position: sticky; inset-block-start: 16px; }
+}
+@media (min-width: 1280px) { .ap-layout { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 48px; } }
+
+/* ---- Filter and sort ----------------------------------------------------- */
+/* On phone the controls fold behind one button; from 768px they are always open beside the list. */
+.ap-toggle { display: inline-flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 44px; padding-inline: 14px; border: 0; border-radius: 14px; background: var(--md-surface-container-low); font: 700 14px var(--font-sans); color: var(--md-on-surface); cursor: pointer; }
+.ap-toggle:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+.ap-toggle[aria-pressed="true"] { background: var(--md-primary-container); color: var(--md-on-primary-container); }
+.ap-toggle b { font: 700 13px var(--font-mono); font-variant-numeric: tabular-nums; color: var(--md-primary); }
+.ap-panel { display: grid; gap: 12px; }
+.ap-panel[data-open="false"] { display: none; }
+@media (min-width: 768px) {
+  .ap-toggle--filters { display: none; }
+  .ap-panel[data-open="false"] { display: grid; }
+}
+.ap-group { display: grid; gap: 4px; }
+.ap-label { font: 600 13px var(--font-sans); color: var(--md-on-surface-variant); }
+/* The paper switch's tray (.sj-ptog), keyed on aria-pressed because these are filters, not tabs. */
+.ap-seg { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; display: inline-flex; justify-self: start; padding: 4px 3px; border-radius: 12px; background: var(--md-surface-container-high); gap: 2px; }
+.ap-seg::-webkit-scrollbar { display: none; }
+.ap-seg button { flex: none; position: relative; white-space: nowrap; border: 0; background: none; min-height: 36px; padding-inline: 12px; border-radius: 9px; font: 600 13px var(--font-sans); color: var(--md-on-surface-variant); cursor: pointer; }
+.ap-seg button::before { content: ""; position: absolute; inset: -4px 0; }
+.ap-seg button[aria-pressed="true"] { background: var(--md-surface-container-lowest); color: var(--md-primary); box-shadow: 0 1px 3px color-mix(in oklch, var(--md-shadow) 18%, transparent); }
+:root[data-theme="dark"] .ap-seg button[aria-pressed="true"] { box-shadow: inset 0 0 0 1.5px var(--md-primary); }
+.ap-seg button:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 0; }
+.ap-num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.ap-clear { justify-self: start; min-height: 44px; border: 0; background: none; padding: 0; cursor: pointer; font: 700 14px var(--font-sans); color: var(--md-primary); }
+.ap-clear:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; border-radius: 8px; }
+
+/* ---- Rows ---------------------------------------------------------------- */
+.ap-line { display: block; }
+.ap-line .ap-num { font-weight: 600; color: var(--md-on-surface); }
+/* Marking evidence sits a step back from the mark; the teacher's mark is a quiet chip, not gold (gold is for earned things). */
+.ap-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; margin-block-start: 2px; }
+.ap-tag { display: inline-flex; align-items: center; min-height: 22px; padding-inline: 8px; border-radius: 8px; background: var(--md-primary-container); color: var(--md-on-primary-container); font: 600 12px var(--font-sans); }
+.ap-pick { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--md-primary); color: var(--md-on-primary); font: 700 13px var(--font-mono); }
+.ap-count { margin: 0; }
+
+/* ---- Compare ------------------------------------------------------------- */
+.ap-cmp { display: grid; gap: 12px; padding: 14px; border-radius: 18px; background: var(--md-surface-container-low); }
+.ap-cmp h2 { margin: 0; font: 800 18px/1.28 var(--font-sans); letter-spacing: -0.01em; word-spacing: 0.1em; color: var(--md-on-surface); }
+.ap-cmp-sides { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.ap-cmp-side { display: grid; gap: 2px; align-content: start; min-width: 0; }
+.ap-cmp-side .sj-grade { width: auto; text-align: start; font-size: 36px; }
+.ap-cmp-side b { font: 700 14px/1.3 var(--font-sans); color: var(--md-on-surface); overflow-wrap: anywhere; }
+.ap-cmp-side span { font: 400 13px/1.35 var(--font-sans); color: var(--md-on-surface-variant); }
+.ap-cmp-side .ap-num { font-weight: 600; color: var(--md-on-surface); }
+.ap-cmp-when { font: 600 12px var(--font-sans); color: var(--md-on-surface-variant); }
+/* Plain words: the change is never coloured by its sign. */
+.ap-cmp-change { margin: 0; font: 700 16px/1.3 var(--font-sans); color: var(--md-on-surface); }
+.ap-cmp-change small { font: 500 14px var(--font-sans); color: var(--md-on-surface-variant); }
+.ap-cmp-links { display: flex; flex-wrap: wrap; gap: 0 16px; }
+.ap-cmp-links a { display: inline-flex; align-items: center; min-height: 44px; font: 700 14px var(--font-sans); color: var(--md-primary); border-radius: 8px; }
+.ap-cmp-links a:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+
+/* ---- Loading ------------------------------------------------------------- */
+.ap-skel { display: grid; gap: 12px; }

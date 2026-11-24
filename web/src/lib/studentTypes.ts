@@ -138,6 +138,14 @@ export interface PaperHistoryRow {
   recordedAt: string
   paperNumber: number
   label: string
+  /** Paper variant digit (the 2 of paper 42). */
+  variant: number
+  /** Session label, e.g. "May/Jun 2024". */
+  session: string
+  /** How sure the marker was; `null` when no per-question evidence is stored. */
+  confidence: { scored: number; uncertain: number } | null
+  /** Questions a teacher re-marked (0 when none, or no evidence). */
+  teacherCorrected: number
 }
 
 /** A tile in the topic map (mirrors `TopicTileDTO`). */

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { createElement, isValidElement, useState, type ComponentProps, type ComponentType, type ElementType, type ReactNode } from "react"
+import { createElement, isValidElement, type ComponentProps, type ComponentType, type ElementType, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { MemoryRouter } from "react-router-dom"
 import { describe, expect, it, vi } from "vitest"
@@ -11,7 +11,7 @@ import { PathSection, SectionHeading, nextPaperIndex } from "@/portals/student/s
 import { TipSection } from "@/portals/student/screens/subject/TipSection"
 import { WinList } from "@/portals/student/screens/subject/WinList"
 import { TopicsSection } from "@/portals/student/screens/subject/TopicsSection"
-import { PapersList, focusRowAfterExpand } from "@/portals/student/screens/subject/PapersList"
+import { PapersList } from "@/portals/student/screens/subject/PapersList"
 import { SubjectHeader } from "@/portals/student/screens/subject/SubjectHeader"
 import { SubjectBody } from "@/portals/student/screens/subject/SubjectBody"
 import { SubjectFirstRun } from "@/portals/student/screens/subject/SubjectFirstRun"
@@ -22,19 +22,14 @@ import { GHOST_CHIPS, buildSubjectView, scrollDeltaToReveal, firstRunTip, winRow
 import { MATHS, MATHS_ONE, MATHS_TOPICS, NOW } from "@/portals/student/screens/subject/fixtures"
 
 /*
- * SubjectBody holds two hooks, so its element tree can only be read by calling it. `useNavigate` needs
- * a router context, so it is replaced by one spy. `useState` keeps the real hook everywhere except the
- * single call a test queues with `mockImplementationOnce`.
+ * SubjectBody holds a hook, so its element tree can only be read by calling it. `useNavigate` needs
+ * a router context, so it is replaced by one spy.
  */
 const navigate = vi.hoisted(() => vi.fn())
 vi.mock("react-router-dom", async (importOriginal) => ({
   ...(await importOriginal<typeof import("react-router-dom")>()),
   useNavigate: () => navigate,
 }))
-vi.mock("react", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react")>()
-  return { ...actual, useState: vi.fn(actual.useState) }
-})
 
 const html = <P extends object>(node: ComponentType<P>, props: P) =>
   renderToStaticMarkup(createElement(MemoryRouter, null, createElement(node, props)))
@@ -572,26 +567,28 @@ describe("TopicsSection", () => {
 })
 
 describe("PapersList", () => {
+  const allTo = "/student/subject/0580/papers"
   it("draws nothing, not an empty heading, when there are no papers", () => {
-    expect(html(PapersList, { rows: [], visible: 4, onShowAll: () => {} })).toBe("")
+    expect(html(PapersList, { rows: [], visible: 4, allTo })).toBe("")
   })
-  it("shows the visible rows and an All N papers control", () => {
-    const out = html(PapersList, { rows: full.papers, visible: 4, onShowAll: () => {} })
+  it("shows the visible rows and an All N papers link to the All papers screen", () => {
+    const out = html(PapersList, { rows: full.papers, visible: 4, allTo })
     expect(out).toContain("Papers")
     expect(out.match(/href="\/student\/result\//g)).toHaveLength(4)
-    expect(out).toContain("All 7 papers")
+    expect(out).toMatch(/<a [^>]*href="\/student\/subject\/0580\/papers"[^>]*>All 7 papers/)
+    expect(out).not.toContain("<button")
     expect(out).toContain("0580/42 · May/Jun 2024")
     expect(out).toContain("61/80 · Apr")
   })
-  it("drops the control once everything is visible", () => {
-    const out = html(PapersList, { rows: full.papers, visible: 7, onShowAll: () => {} })
+  it("drops the All N papers link once everything is visible", () => {
+    const out = html(PapersList, { rows: full.papers, visible: 7, allTo })
     expect(out).not.toContain("All 7 papers")
   })
-  it("makes the Papers heading a chevron button while rows are hidden, and plain text once none are", () => {
-    const hidden = html(PapersList, { rows: full.papers, visible: 4, onShowAll: () => {} })
-    expect(hidden).toMatch(/<h2[^>]*><button type="button"[^>]*>Papers<svg/)
-    const all = html(PapersList, { rows: full.papers, visible: 7, onShowAll: () => {} })
-    expect(all).toMatch(/<h2[^>]*>Papers<\/h2>/)
+  it("makes the Papers heading a chevron link to the All papers screen, hidden rows or not", () => {
+    for (const visible of [4, 7]) {
+      const out = html(PapersList, { rows: full.papers, visible, allTo })
+      expect(out).toMatch(/<h2[^>]*><a [^>]*href="\/student\/subject\/0580\/papers"[^>]*>Papers<svg/)
+    }
   })
 })
 
@@ -621,25 +618,6 @@ describe("SectionHeading", () => {
     const out = html(SectionHeading, { title: "Topics", to: "/student/practice/0580", onActivate: () => {} })
     expect(out).toContain('href="/student/practice/0580"')
     expect(out).not.toContain("<button")
-  })
-})
-
-describe("focusRowAfterExpand", () => {
-  // The All N papers button unmounts when pressed, so keyboard focus has to land somewhere real.
-  it("lands on the first row the press revealed", () => {
-    expect(focusRowAfterExpand(4, 7)).toBe(4)
-    expect(focusRowAfterExpand(1, 2)).toBe(1)
-  })
-  it("never points past the last row", () => {
-    expect(focusRowAfterExpand(9, 7)).toBe(6)
-  })
-  it("has no target when there are no rows", () => {
-    expect(focusRowAfterExpand(0, 0)).toBeNull()
-  })
-  it("is what PapersList calls once the button has gone", () => {
-    const source = readFileSync(join(WEB_ROOT, "src/portals/student/screens/subject/PapersList.tsx"), "utf8")
-    expect(source).toContain("focusRowAfterExpand(")
-    expect(source).toMatch(/\.focus\(\)/)
   })
 })
 
@@ -688,12 +666,7 @@ describe("SubjectBody", () => {
 describe("SubjectBody wiring", () => {
   type BodyProps = ComponentProps<typeof SubjectBody>
   const baseProps = (over: Partial<BodyProps> = {}): BodyProps => ({ view: full, code: "0580", wide: false, twoCol: false, onSelectPaper: () => {}, ...over })
-  /** One call of the component with the papers list collapsed (`expanded` false) unless told otherwise. */
-  const draw = (over: Partial<BodyProps> = {}, expanded = false) => {
-    const setExpanded = vi.fn()
-    vi.mocked(useState).mockImplementationOnce((() => [expanded, setExpanded]) as unknown as typeof useState)
-    return { tree: SubjectBody(baseProps(over)), setExpanded }
-  }
+  const draw = (over: Partial<BodyProps> = {}) => ({ tree: SubjectBody(baseProps(over)) })
   const sections = (tree: ReactNode) => ({
     path: only(tree, PathSection),
     tip: only(tree, TipSection),
@@ -760,14 +733,8 @@ describe("SubjectBody wiring", () => {
     expect(sections(draw({ wide: false }).tree).papers.visible).toBe(4)
     expect(sections(draw({ wide: true }).tree).papers.visible).toBe(5)
   })
-  it("shows every paper once All N papers has been pressed, and presses it through state", () => {
-    const first = draw()
-    expect(sections(first.tree).papers.visible).toBe(4)
-    sections(first.tree).papers.onShowAll()
-    expect(first.setExpanded).toHaveBeenCalledTimes(1)
-    expect(first.setExpanded).toHaveBeenCalledWith(true)
-    expect(sections(draw({}, true).tree).papers.visible).toBe(full.papers.length)
-    expect(sections(draw({ wide: true }, true).tree).papers.visible).toBe(full.papers.length)
+  it("sends the Papers heading and the All N papers link to this subject's All papers screen", () => {
+    expect(sections(draw({ code: "0625" }).tree).papers.allTo).toBe("/student/subject/0625/papers")
   })
   it("folds the secure chips only on the full screen and only on a phone", () => {
     const fold = (view: SubjectView, wide: boolean) => sections(draw({ view, wide }).tree).topics.foldSecure

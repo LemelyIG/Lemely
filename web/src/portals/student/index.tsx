@@ -29,6 +29,7 @@ export { STUDENT_BOTTOM_TABS } from "./shell"
  */
 const Overview = lazy(() => import("./screens/Overview").then((m) => ({ default: m.Overview })))
 const Subject = lazy(() => import("./screens/Subject").then((m) => ({ default: m.Subject })))
+const AllPapers = lazy(() => import("./screens/AllPapers").then((m) => ({ default: m.AllPapers })))
 const PaperResult = lazy(() => import("./screens/PaperResult").then((m) => ({ default: m.PaperResult })))
 // Task 11 (B6c): `loadCorrectPaper` is a named loader, not inlined into
 // `lazy(...)`, so `prefetchOnIntent` below can pass the exact same function
@@ -246,6 +247,11 @@ export const studentRoute: RouteObject = {
       path: "subject/:code",
       element: <Subject />,
       handle: { title: "Subject", skeleton: "page-header" },
+    },
+    {
+      path: "subject/:code/papers",
+      element: <AllPapers />,
+      handle: { title: "All papers", skeleton: "page-header" },
     },
     {
       path: "result/:paperId",

@@ -89,6 +89,7 @@ export const navGroups: NavGroup[] = [
 export function currentSubjectCode(pathname: string): string | null {
   const exactArms = [
     /^\/student\/subject\/([^/]+)$/,
+    /^\/student\/subject\/([^/]+)\/papers$/,
     /^\/student\/practice\/([^/]+)$/,
     /^\/student\/flashcards\/([^/]+)$/,
   ]
@@ -175,6 +176,10 @@ export function resolveCrumb(pathname: string): string {
   const subjectMatch = pathname.match(/^\/student\/subject\/([^/]+)$/)
   if (subjectMatch) return `Home / ${subjectMatch[1]}`
 
+  // S-09: every attempt in a subject. One level under the subject page, which is the crumb before it.
+  const subjectPapersMatch = pathname.match(/^\/student\/subject\/([^/]+)\/papers$/)
+  if (subjectPapersMatch) return `Home / ${subjectPapersMatch[1]} / All papers`
+
   // "This result", not `Result ${paperId}`. The teacher portal's `resolveTrail`
   // states the rule and a test enforces it there: no crumb interpolates an id,
   // because a UUID in a breadcrumb is noise and fetching a name to replace it
@@ -241,10 +246,14 @@ export function resolveCrumb(pathname: string): string {
  */
 export function resolveCrumbTrail(pathname: string): Crumb[] {
   const parts = resolveCrumb(pathname).split(" / ")
+  // The subject code in front of "All papers" is a real route (the Subject screen), unlike the grouping labels
+  // below, so it links: that is what the phone's back control falls back to.
+  const subjectPapers = pathname.match(/^\/student\/subject\/([^/]+)\/papers$/)
   return parts.map((label, i) => {
     // The page you are already on is never a link (`Breadcrumbs` renders the
     // final crumb as `aria-current`).
     if (i === parts.length - 1) return { label }
+    if (subjectPapers && i === 1) return { label, to: `/student/subject/${subjectPapers[1]}` }
     return label === "Home" ? { label, to: "/student" } : { label }
   })
 }
