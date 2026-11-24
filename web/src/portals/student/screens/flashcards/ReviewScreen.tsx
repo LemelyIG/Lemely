@@ -135,7 +135,7 @@ export function ReviewScreen() {
   const bannerText = syncBannerText(session.failed.length)
   const withStatus = (content: React.ReactNode) => (
     <>
-      <div role="status" className="sr-only">{bannerText}</div>
+      <div role="status" data-testid="review-sync-status" className="sr-only">{bannerText}</div>
       {content}
       <ConfirmModal
         open={exitModalOpen}

@@ -16,7 +16,7 @@ const BACKEND_URL = "http://127.0.0.1:8000"
  * the Card, Rename and Delete sheets), and the review (ReviewScreen, ReviewCard, ReviewDone).
  */
 
-/* a11y:begin
+/*
  * The accessibility step Task 14 deferred to this spec. Axe covers the WCAG rules; the two floors
  * axe does not enforce (44x44 targets, 12px text) are measured in the page. Both scan one scope and
  * skip `role="status"` regions, which on a seeded (unverified) student include the shell's email
@@ -108,7 +108,6 @@ async function expectAccessible(page: Page, scope: string): Promise<void> {
   await expectNoAxeViolations(page, scope)
   await expectFloors(page, scope)
 }
-/* a11y:end */
 
 const SCREEN = "main"
 const DIALOG = '[role="dialog"]'
@@ -140,11 +139,12 @@ async function makeDeck(request: APIRequestContext, account: SeedAccount, cards:
   return { id, title }
 }
 
-// Best effort: the delete test has already removed its deck, so a 404 here is expected and ignored.
+// The delete test has already removed its deck, so 404 is as good as 204 here. Anything else (a 401, a 500) means a deck was left behind.
 test.afterEach(async ({ request }) => {
   const account = readSeed().practice.students.active
   for (const id of createdDecks.splice(0)) {
-    await request.delete(`${BACKEND_URL}/api/student/flashcards/decks/${id}`, { headers: authHeaders(account) })
+    const res = await request.delete(`${BACKEND_URL}/api/student/flashcards/decks/${id}`, { headers: authHeaders(account) })
+    expect([204, 404], `cleanup DELETE of deck ${id}`).toContain(res.status())
   }
 })
 
@@ -261,16 +261,19 @@ test.describe("flashcards on a phone", () => {
     await expect(page.getByText("1/2", { exact: true })).toBeVisible({ timeout: 15_000 })
     await expect(page.getByRole("heading", { level: 1, name: "Review flashcards" })).toHaveCount(1)
 
-    // The progress bar and the sync live region are announced; the region exists before any failure, so a later banner is read out.
+    // The progress bar is announced. The review's own sync live region (not the shell's email banner or toast region) is
+    // mounted and empty before any failure, so a later "not saved yet" banner is read out when it appears.
     const progress = page.getByRole("progressbar", { name: "Cards reviewed" })
     await expect(progress).toHaveAttribute("aria-valuemax", "2")
     await expect(progress).toHaveAttribute("aria-valuenow", "0")
-    await expect(page.getByRole("status").first()).toBeAttached()
+    const sync = page.getByTestId("review-sync-status")
+    await expect(sync).toHaveAttribute("role", "status")
+    await expect(sync).toHaveText("")
     await expectAccessible(page, SCREEN)
 
     // Card one, with the mouse. The grade buttons name their key for assistive tech instead of reading the on-screen keycap.
     await page.getByRole("button", { name: "Show answer" }).click()
-    await expect(page.getByText(/^L10 back \d$/)).toBeVisible()
+    await expect(page.getByText("L10 back 1", { exact: true })).toBeVisible()
     const grades = page.getByRole("group", { name: "How well did you know it?" })
     await expect(grades.getByRole("button", { name: /Easy/ })).toHaveAttribute("aria-keyshortcuts", "4")
     await expectAccessible(page, SCREEN)

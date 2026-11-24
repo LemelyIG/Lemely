@@ -387,6 +387,12 @@ describe("review screen: accessibility", () => {
     expect(headings[0].props.children).toBe("Review flashcards")
   })
 
+  it("marks the screen's own sync live region so e2e can tell it from the shell's status regions", () => {
+    const [region] = findAll(start(), (e) => e.props.role === "status")
+    expect(region.props["data-testid"]).toBe("review-sync-status")
+    expect(region.props.children).toBeNull()
+  })
+
   it("the sync banner's Retry is at least 44px in both directions", async () => {
     h.mutateAsync.mockRejectedValueOnce(new Error("offline"))
     start()
