@@ -53,8 +53,9 @@ def reset_database(url: str) -> str:
     """Drop and recreate the database named by ``url``; return its name.
 
     Raises:
-        ValueError: the name is not exactly ``lemely_e2e``, or the host is not
-            loopback. Raised before any connection is opened.
+        ValueError: the name is not exactly ``lemely_e2e``, the host is not
+            loopback, or the URL carries a query string. Raised before any
+            connection is opened.
     """
     parsed = make_url(url)
     name = parsed.database
@@ -66,6 +67,14 @@ def reset_database(url: str) -> str:
         raise ValueError(
             f"Refusing to reset a database on host {parsed.host!r}: the host must be one of "
             f"{sorted(LOOPBACK_HOSTS)}."
+        )
+    if parsed.query:
+        # This script ignores the query, but alembic, the seeds and the backend apply it
+        # (SQLAlchemy hands every parameter to libpq), so a `?dbname=postgres` would send
+        # them elsewhere while every check here passed.
+        raise ValueError(
+            f"Refusing a database URL with a query string ({sorted(parsed.query)}): libpq "
+            "would apply it on top of the host and name checked here."
         )
     with psycopg.connect(
         host=parsed.host,

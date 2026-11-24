@@ -30,9 +30,17 @@ from scripts.e2e_fixtures import BOUNDARY_FIXTURE_ROWS, E2E_DATABASE_NAME
 def main() -> int:
     """Insert the fixture rows into the dedicated e2e database."""
     settings = load_settings()
-    name = make_url(settings.database.url).database
+    parsed = make_url(settings.database.url)
+    name = parsed.database
     if name != E2E_DATABASE_NAME:
         print(f"seed_e2e_boundaries: refusing database {name!r}", file=sys.stderr)
+        return 2
+    if parsed.query:
+        print(
+            "seed_e2e_boundaries: refusing a database URL with a query string "
+            f"({sorted(parsed.query)}): libpq would apply it on top of the name checked here",
+            file=sys.stderr,
+        )
         return 2
     with get_sessionmaker(settings)() as session:
         existing = session.scalar(

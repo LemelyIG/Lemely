@@ -2,6 +2,12 @@ import { execSync } from "node:child_process"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { defineConfig, devices } from "@playwright/test"
+import {
+  E2E_DATABASE_NAME,
+  bypassProxyForLoopback,
+  e2eDatabaseUrl,
+  scrubLibpqOverrides,
+} from "./e2e/e2e-env"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -23,22 +29,8 @@ interface SupabaseStatus {
   SERVICE_ROLE_KEY: string
   /** The local Postgres, e.g. `postgresql://postgres:postgres@127.0.0.1:54322/postgres`. */
   DB_URL?: string
-}
-
-/** The one database a run may reset; `scripts/e2e_fixtures.py` holds the same name. */
-const E2E_DATABASE_NAME = "lemely_e2e"
-// What `supabase status` reports for a stock local stack; used only if it omits DB_URL.
-const DEFAULT_DB_URL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
-
-/**
- * The SQLAlchemy URL of the e2e database: the local stack's own Postgres (host, port
- * and credentials from `supabase status`), with only the database name swapped, so a
- * customised local stack needs no edit here.
- */
-function e2eDatabaseUrl(statusDbUrl: string | undefined): string {
-  const url = new URL(statusDbUrl ?? DEFAULT_DB_URL)
-  url.pathname = `/${E2E_DATABASE_NAME}`
-  return url.toString().replace(/^postgres(ql)?:/, "postgresql+psycopg:")
+  /** The local API gateway GoTrue sits behind, e.g. `http://127.0.0.1:54321`. */
+  API_URL?: string
 }
 
 function resolveSupabaseStatus(): SupabaseStatus {
@@ -67,6 +59,9 @@ const supabaseStatus = resolveSupabaseStatus()
 const supabaseEnv: Record<string, string> = {
   LEMELY_SUPABASE__SERVICE_ROLE_KEY: supabaseStatus.SERVICE_ROLE_KEY,
   LEMELY_SUPABASE__ANON_KEY: supabaseStatus.ANON_KEY,
+  // The keys and the URL come from the same stack. Left ambient, the URL could name
+  // another local stack, and the reset would purge that stack's e2e accounts.
+  ...(supabaseStatus.API_URL ? { LEMELY_SUPABASE__URL: supabaseStatus.API_URL } : {}),
 }
 // Exported into this process's own env (not just threaded into webServer's
 // `env` below) so `./e2e/global-setup.ts` — a bare module path Playwright
@@ -86,6 +81,10 @@ Object.assign(process.env, supabaseEnv, {
   LEMELY_DATABASE__URL: databaseUrl,
   PYTHONPATH: repoRoot,
 })
+// libpq variables that would override the URL's explicit loopback host, and an ambient
+// HTTP proxy that would carry the service-role-keyed GoTrue calls: see `./e2e/e2e-env.ts`.
+scrubLibpqOverrides(process.env)
+bypassProxyForLoopback(process.env)
 
 /**
  * `process.env` is typed `string | undefined` per key, but Playwright's

@@ -89,11 +89,18 @@ def require_expected_database(settings: Settings, expected: str | None) -> None:
     """Exit unless ``settings`` resolves to the database named ``expected`` (no-op if unset)."""
     if not expected:
         return
-    actual = make_url(settings.database.url).database
+    parsed = make_url(settings.database.url)
+    actual = parsed.database
     if actual != expected:
         raise SystemExit(
             f"e2e_server: refusing to start: the database resolves to {actual!r}, "
             f"but {EXPECT_DATABASE_ENV} requires {expected!r}."
+        )
+    if parsed.query:
+        raise SystemExit(
+            f"e2e_server: refusing to start: the database URL carries a query string "
+            f"({sorted(parsed.query)}) that libpq would apply on top of the name checked "
+            f"for {EXPECT_DATABASE_ENV}."
         )
 
 

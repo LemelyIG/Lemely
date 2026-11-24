@@ -91,6 +91,26 @@ def test_reset_rejects_a_non_loopback_or_missing_host_before_connecting(
     connect.assert_not_called()
 
 
+QUERIES = [
+    "?dbname=postgres",
+    "?hostaddr=10.0.0.5",
+    "?host=db.example.com",
+    "?sslmode=disable",
+    "?options=-c%20search_path%3Dpublic",
+]
+
+
+@pytest.mark.parametrize("query", QUERIES)
+def test_reset_rejects_a_query_string_before_connecting(
+    monkeypatch: pytest.MonkeyPatch, query: str
+) -> None:
+    connect = MagicMock()
+    monkeypatch.setattr(reset_e2e_db.psycopg, "connect", connect)
+    with pytest.raises(ValueError, match="query string"):
+        reset_e2e_db.reset_database(f"{SERVER}/{E2E_DATABASE_NAME}{query}")
+    connect.assert_not_called()
+
+
 @pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "[::1]"])
 def test_reset_accepts_each_loopback_host(monkeypatch: pytest.MonkeyPatch, host: str) -> None:
     connect = MagicMock(return_value=_connection())
@@ -267,6 +287,21 @@ def test_boundary_seed_refuses_any_database_but_lemely_e2e(
     assert "refusing database" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("query", QUERIES)
+def test_boundary_seed_refuses_a_query_string(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], query: str
+) -> None:
+    sessionmaker = MagicMock()
+    monkeypatch.setattr(seed_e2e_boundaries, "get_sessionmaker", sessionmaker)
+    url = f"{SERVER}/{E2E_DATABASE_NAME}{query}"
+    monkeypatch.setattr(seed_e2e_boundaries, "load_settings", lambda: _settings(database_url=url))
+    assert seed_e2e_boundaries.main() == 2
+    sessionmaker.assert_not_called()
+    err = capsys.readouterr().err
+    assert "query string" in err
+    assert "sentinelpw" not in err
+
+
 # --- e2e_server's opt-in database guard ----------------------------------------------------------
 
 
@@ -289,9 +324,28 @@ def test_server_guard_refuses_another_database_without_leaking_the_url() -> None
     assert "sentinelpw" not in message
 
 
+@pytest.mark.parametrize("query", QUERIES)
+def test_server_guard_refuses_a_query_string(query: str) -> None:
+    settings = _settings(database_url=f"{SERVER}/{E2E_DATABASE_NAME}{query}")
+    with pytest.raises(SystemExit) as refused:
+        e2e_server.require_expected_database(settings, E2E_DATABASE_NAME)
+    assert "query string" in str(refused.value)
+    assert "sentinelpw" not in str(refused.value)
+
+
 def test_playwright_config_arms_the_server_guard_for_the_same_database() -> None:
     config = (REPO_ROOT / "web" / "playwright.config.ts").read_text(encoding="utf-8")
-    assert f'const E2E_DATABASE_NAME = "{E2E_DATABASE_NAME}"' in config
+    helpers = (REPO_ROOT / "web" / "e2e" / "e2e-env.ts").read_text(encoding="utf-8")
+    assert f'export const E2E_DATABASE_NAME = "{E2E_DATABASE_NAME}"' in helpers
     assert re.search(rf"{e2e_server.EXPECT_DATABASE_ENV}:\s*E2E_DATABASE_NAME\b", config), (
         "the backend webServer env must set the e2e_server database guard"
     )
+
+
+def test_playwright_config_applies_every_environment_guard_to_the_process_it_spawns() -> None:
+    """The helpers are unit-tested in ``web/tests/unit/e2eEnv.test.ts``; this pins that they run."""
+    config = (REPO_ROOT / "web" / "playwright.config.ts").read_text(encoding="utf-8")
+    for call in ("scrubLibpqOverrides(process.env)", "bypassProxyForLoopback(process.env)"):
+        assert call in config, f"web/playwright.config.ts no longer calls {call}"
+    assert "LEMELY_SUPABASE__URL: supabaseStatus.API_URL" in config
+    assert "e2eDatabaseUrl(supabaseStatus.DB_URL)" in config
