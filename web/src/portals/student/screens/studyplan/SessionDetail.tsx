@@ -53,7 +53,7 @@ export function SessionDetail({
         <div className="min-w-0">
           {titleWrap ? titleWrap(heading) : heading}
           {/* No `gap`: the kit's dot carries its own 6px, and a gap on top made it 12. */}
-          <span className="flex items-center font-sans text-[13px] leading-tight font-medium text-on-surface-variant">
+          <span className="mt-[3px] flex items-center font-sans text-[13px] leading-tight font-medium text-on-surface-variant">
             <SubjectDot subject={session.subjectCode} />
             {session.subjectName} · {session.activityLabel} · {session.minutesLabel}
           </span>
