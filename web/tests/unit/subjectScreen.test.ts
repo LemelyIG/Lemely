@@ -210,6 +210,17 @@ describe("PathSection", () => {
     expect(out).toContain("Heading for")
     expect(out).toContain("up 16 marks since Oct")
   })
+  it("colours only the forecast grade, never the change by its sign, so a decline cannot read as a success (K8)", () => {
+    const base = full.path.trend
+    if (base.kind !== "trend") throw new Error("expected a trend")
+    for (const change of ["up 16 marks since Oct", "down 16 marks since Apr", "level since Oct"]) {
+      const out = html(PathSection, { path: { ...full.path, trend: { ...base, change } }, onSelect: () => {} })
+      const line = /<p class="sj-trend">(.*?)<\/p>/.exec(out)?.[1] ?? ""
+      expect(line.match(/style="/g), change).toHaveLength(1)
+      expect(line, change).toMatch(new RegExp(`<b style="--c:[^"]*">[^<]+</b> · ${change}$`))
+    }
+    expect(declaration(cssRule(".sj-trend"), "color")).toBe("var(--md-on-surface-variant)")
+  })
   it("hides the switch when there is one paper and prints the sparse line", () => {
     const out = html(PathSection, { path: sparse.path, onSelect: () => {} })
     expect(out).not.toContain('role="tablist"')
