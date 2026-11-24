@@ -7,7 +7,10 @@
  *
  * Copy rules (web/scripts/check_copy.mjs): no "!" ending a sentence, no em
  * dash as punctuation. Binny's line is the stage headline from the approved
- * mock (see plan "Needs user decision" item 2).
+ * mock (see plan "Needs user decision" item 2). Owner rule, 2026-11-24: the
+ * line is 2 to 4 words. Whatever a line leaves out is already on the screen
+ * (score and paper in the last-paper row, topic and marks in the win-back
+ * list, the countdown in the top row), so nothing is added to carry it.
  */
 import type { BinnyMood, BinnyMotion } from "@/components/redesign"
 import type {
@@ -161,6 +164,13 @@ function stage(
   return { key, kind, mood, motion: motionFor(mood), greeting, line, action, dismissible }
 }
 
+/** The Binny rule: a line is at most this many words. */
+export const STAGE_LINE_MAX_WORDS = 4
+
+function wordCount(text: string): number {
+  return text.trim().split(/\s+/).length
+}
+
 /** "an A", "an A*", "an E", "an F", "a B", "a U". */
 export function withArticle(grade: string): string {
   return `${/^[AEF]/.test(grade) ? "an" : "a"} ${grade}`
@@ -174,30 +184,30 @@ function paperStage(m: PaperMoment): StageVm {
       `tough:${m.paperId}`,
       "tough",
       "sad",
-      `${m.subjectName} Paper ${m.paperNumber} was a tough one. Let's win back the easy marks first.`,
+      "Win back easy marks",
       { label: focus ? `Start with ${focus}` : "See my result", to },
     )
   }
-  const up =
-    m.previousGrade && m.previousGrade !== m.grade ? `, up from ${withArticle(m.previousGrade)}` : ""
-  const fix = focus ? ` ${focus} is the one to fix.` : ""
-  return stage(
-    `result:${m.paperId}`,
-    "result",
-    "happy",
-    `${m.awarded} out of ${m.maximum}. That's ${withArticle(m.grade)}${up}.${fix}`,
-    { label: focus ? `Fix ${focus}` : "See my result", to },
-  )
+  // The score is in the last-paper row and the question is on the button, so the line keeps the grade move.
+  const line =
+    m.previousGrade && m.previousGrade !== m.grade
+      ? `From ${m.previousGrade} to ${m.grade}`
+      : `That's ${withArticle(m.grade)}`
+  return stage(`result:${m.paperId}`, "result", "happy", line, {
+    label: focus ? `Fix ${focus}` : "See my result",
+    to,
+  })
 }
 
 function momentStage(m: HomeMoment, home: StudentHome): StageVm {
   switch (m.kind) {
     case "marking": {
+      // Progress is on no other Home block, so the count stays; HomeStage sets its numbers in Mono.
       const progress =
-        m.questionsTotal != null && m.questionsDone != null
-          ? `Marking your paper. ${m.questionsDone} of ${plural(m.questionsTotal, "question")} done.`
-          : "Marking your paper now."
-      const line = m.stale ? "Still marking. This one's taking a while." : progress
+        m.questionsTotal != null && m.questionsTotal > 0 && m.questionsDone != null
+          ? `${m.questionsDone} of ${m.questionsTotal} marked`
+          : "Marking your paper"
+      const line = m.stale ? "Still marking your paper" : progress
       return stage(`marking:${m.paperId}`, "marking", "thinking", line, {
         label: "Watch it mark",
         to: homeRoutes.scan,
@@ -208,12 +218,12 @@ function momentStage(m: HomeMoment, home: StudentHome): StageVm {
       return paperStage(m)
     case "teacherReply": {
       const r = m.reply
-      const added = r.marksAdded > 0 ? ` +${plural(r.marksAdded, "mark")}.` : ""
+      // Who and how many marks live in the teacher row under the stage (see alsoRows).
       return stage(
         `teacherReply:${r.reviewId}`,
         "teacherReply",
         "wink",
-        `${r.teacherName} checked your ${questionLabel(r.questionId)}.${added}`,
+        `Your teacher checked ${questionLabel(r.questionId)}`,
         { label: "See the answer", to: r.paperId ? homeRoutes.result(r.paperId) : homeRoutes.notifications },
       )
     }
@@ -222,7 +232,7 @@ function momentStage(m: HomeMoment, home: StudentHome): StageVm {
         `streakAtRisk:${home.localDate}`,
         "streakAtRisk",
         "thinking",
-        `Your ${m.streakDays}-day streak ends at midnight. One quick set keeps it going.`,
+        "Streak ends at midnight",
         { label: "Keep my streak", to: practiceTarget(home) },
       )
     case "goalDone":
@@ -230,7 +240,7 @@ function momentStage(m: HomeMoment, home: StudentHome): StageVm {
         `goalDone:${home.localDate}`,
         "goalDone",
         "happy",
-        "Three for three today. That's you done. See you tomorrow.",
+        "Three for three today",
         { label: "See tomorrow's plan", to: planTarget(home) },
       )
     case "backAfterBreak":
@@ -238,21 +248,28 @@ function momentStage(m: HomeMoment, home: StudentHome): StageVm {
         `backAfterBreak:${home.localDate}`,
         "backAfterBreak",
         "wink",
-        `There you are. ${plural(m.daysAway, "day")} off is fine. Ease back in with five minutes.`,
+        "Ease back in",
         { label: "5-minute warm-up", to: practiceTarget(home) },
       )
   }
 }
 
+/** "Today: Waves". A topic too long to fit the four-word rule gives way to a fixed line; the topic is one tap on. */
+function sessionLine(topic: string): string {
+  const named = `Today: ${topic.trim()}`
+  return wordCount(named) <= STAGE_LINE_MAX_WORDS ? named : "Today's plan is ready"
+}
+
 function fallbackStages(home: StudentHome): StageVm[] {
-  const exam = examInfo(home)
-  const near = exam?.near ? `${plural(exam.days, "day")} to exams. ` : null
+  // A near exam used to prefix every line here. That pushed each past four words, so the bubble drops it:
+  // the countdown pill in the top row already says it. It still holds back the morning greeting.
+  const near = examInfo(home)?.near === true
   const name = firstName(home.studentName)
   const out: StageVm[] = []
 
   if (isFirstRun(home)) {
     out.push(
-      stage("firstRun", "firstRun", "open", near ? `${near}Let's mark a paper.` : `Hi ${name}. Let's mark your first paper.`, {
+      stage("firstRun", "firstRun", "open", "Mark your first paper", {
         label: "Scan a paper",
         to: homeRoutes.scan,
       }, false),
@@ -267,7 +284,7 @@ function fallbackStages(home: StudentHome): StageVm[] {
         `session:${session.sessionId}`,
         "session",
         "open",
-        near ? `${near}Today: ${session.topic}.` : `Today's plan: ${session.topic}, ${session.minutes} minutes.`,
+        sessionLine(session.topic),
         { label: "Start", to: homeRoutes.session(session.subjectCode, session.sessionId) },
       ),
     )
@@ -281,9 +298,7 @@ function fallbackStages(home: StudentHome): StageVm[] {
         `morning:${top.subjectCode}:${top.topic}`,
         "morning",
         "open",
-        near
-          ? `${near}${top.topic} first, +${plural(top.marks, "mark")}.`
-          : `${top.topic} cost you ${plural(top.marks, "mark")} last time. Ten minutes fixes most of it.`,
+        "Win marks back",
         { label: "Start 10 minutes", to: homeRoutes.practiceTopic(top.subjectCode, top.topic) },
         true,
         greeting,
@@ -292,7 +307,7 @@ function fallbackStages(home: StudentHome): StageVm[] {
   }
 
   out.push(
-    stage("scanNext", "scanNext", "open", near ? `${near}Scan your next paper.` : "Nothing to win back yet. Scan your next paper.", {
+    stage("scanNext", "scanNext", "open", "Scan your next paper", {
       label: "Scan a paper",
       to: homeRoutes.scan,
     }, false),
@@ -357,7 +372,7 @@ export function alsoRows(home: StudentHome, current: StageVm, layout: "phone" | 
     })
   }
   if (layout === "phone") {
-    if (current.kind !== "teacherReply") rows.push(teacherRow(home))
+    rows.push(teacherRow(home))
     rows.push(homeworkRow(home))
   }
   if (home.classCount === 0) {

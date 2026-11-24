@@ -4,7 +4,7 @@ import { Walkthrough } from "@/components/redesign"
 import { cn } from "@/lib/utils"
 
 /*
- * First run: the stage already says "Let's mark your first paper" with the
+ * First run: the stage already says "Mark your first paper" with the
  * one action. Below it, a ghost floor shows where grades will sit, and three
  * short steps say what happens next (states-r1 RQ3 pattern).
  */

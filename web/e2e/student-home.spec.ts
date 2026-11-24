@@ -48,9 +48,12 @@ test("Not now moves Binny on to the next suggestion", async ({ page }) => {
   })
   await page.goto("/student")
   const main = page.getByRole("main")
-  await expect(main.getByText("35 out of 40. That's an A. Q3 is the one to fix.")).toBeVisible({ timeout: 15_000 })
+  // The bubble is the one live paragraph in the Binny region. Other Home rows reuse words like "Scan your next paper".
+  const line = main.getByRole("region", { name: "Binny" }).locator("p[aria-live='polite']")
+  await expect(line).toHaveText("That's an A", { timeout: 15_000 })
+  await expect(main.getByTestId("home-stage-action")).toHaveText("Fix Q3")
   await main.getByRole("button", { name: "Not now" }).click()
-  await expect(main.getByText(/35 out of 40/)).toHaveCount(0)
+  await expect(line).not.toHaveText("That's an A")
   // Falls to the next fallback stage: the win-back line if the seed has one, else the default scan line.
-  await expect(main.getByText(/Nothing to win back yet\. Scan your next paper\.|cost you \d+ marks last time/)).toBeVisible()
+  await expect(line).toHaveText(/(Win marks back|Scan your next paper)$/)
 })

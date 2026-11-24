@@ -8,6 +8,13 @@ import type { StageVm } from "./model"
 
 const STAGE_IN = "@keyframes home-stage-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}"
 
+/** Numbers are Mono wherever they render, the bubble line included ("8 of 14 marked"). */
+function MonoNumbers({ text }: { text: string }) {
+  return text
+    .split(/(\d+)/)
+    .map((part, i) => (i % 2 === 1 ? <span key={i} className="font-mono">{part}</span> : part))
+}
+
 export function HomeStage({ stage, onNotNow }: { stage: StageVm; onNotNow: () => void }) {
   const lineRef = useRef<HTMLParagraphElement>(null)
   return (
@@ -28,7 +35,7 @@ export function HomeStage({ stage, onNotNow }: { stage: StageVm; onNotNow: () =>
       </div>
       <p ref={lineRef} tabIndex={-1} aria-live="polite" className="max-w-[26ch] text-balance text-[20px] font-bold leading-[1.38] tracking-[-0.01em] text-on-surface @[900px]/home:max-w-[22ch] @[900px]/home:text-[22px]">
         {stage.greeting ? <span className="@[900px]/home:hidden">{stage.greeting} </span> : null}
-        {stage.line}
+        <MonoNumbers text={stage.line} />
       </p>
       <div className="grid w-full justify-items-center gap-0.5">
         <Link

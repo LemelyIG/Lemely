@@ -40,7 +40,7 @@ test("the corrected-paper student sees their real dashboard data and the parents
   // Lane L1: Home replaced the Overview. The first-run view must NOT render
   // for this student (one seeded paper in 0625), and the grade floor links
   // the subject.
-  await expect(page.getByText("Let's mark your first paper")).toHaveCount(0)
+  await expect(page.getByText("Mark your first paper")).toHaveCount(0)
   const floor = page.getByRole("main").getByRole("navigation", { name: "Your grades" })
   await expect(floor).toBeVisible()
   const subjectDoor = floor.getByRole("link").first()

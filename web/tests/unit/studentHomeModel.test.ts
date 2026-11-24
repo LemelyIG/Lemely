@@ -83,55 +83,68 @@ describe("stage", () => {
   it("result: happy hop, names the question to fix", () => {
     const s = pickStage(makeHome({ moments: [result] }), NONE)
     expect(s).toMatchObject({ kind: "result", mood: "happy", motion: "hop", dismissible: true })
-    expect(s.line).toBe("61 out of 80. That's a B, up from a C. Q8 is the one to fix.")
+    expect(s.line).toBe("From C to B")
     expect(s.action).toEqual({ label: "Fix Q8", to: "/student/result/5?q=lost" })
     const anA = pickStage(makeHome({ moments: [{ ...result, grade: "A", previousGrade: "E" } as HomeMoment] }), NONE)
-    expect(anA.line).toBe("61 out of 80. That's an A, up from an E. Q8 is the one to fix.")
+    expect(anA.line).toBe("From E to A")
   })
 
   it("tough: sad, easiest question first", () => {
     const s = pickStage(makeHome({ moments: [tough] }), NONE)
     expect(s.mood).toBe("sad")
-    expect(s.line).toBe("Physics Paper 4 was a tough one. Let's win back the easy marks first.")
+    expect(s.line).toBe("Win back easy marks")
     expect(s.action.label).toBe("Start with Q3")
   })
 
   it("marking: thinking, never dismissible, shows progress when known", () => {
     const s = pickStage(makeHome({ moments: [marking] }), new Set(["marking:u1"]))
     expect(s).toMatchObject({ kind: "marking", mood: "thinking", dismissible: false })
-    expect(s.line).toBe("Marking your paper. 8 of 14 questions done.")
+    expect(s.line).toBe("8 of 14 marked")
     expect(s.action).toEqual({ label: "Watch it mark", to: "/student/correct" })
   })
 
   it("streak, goal done, back after a break", () => {
     expect(pickStage(makeHome({ moments: [streak] }), NONE)).toMatchObject({
       mood: "thinking",
-      line: "Your 9-day streak ends at midnight. One quick set keeps it going.",
+      line: "Streak ends at midnight",
       action: { label: "Keep my streak", to: "/student/practice/0580?topic=Vectors" },
     })
     expect(pickStage(makeHome({ moments: [done] }), NONE)).toMatchObject({
       mood: "happy",
-      line: "Three for three today. That's you done. See you tomorrow.",
+      line: "Three for three today",
       action: { label: "See tomorrow's plan", to: "/student/plan/0580" },
     })
     expect(pickStage(makeHome({ moments: [back] }), NONE)).toMatchObject({
       mood: "wink",
-      line: "There you are. 6 days off is fine. Ease back in with five minutes.",
+      line: "Ease back in",
       action: { label: "5-minute warm-up" },
     })
   })
 
   it("teacher reply: wink, links the result", () => {
     const s = pickStage(makeHome({ moments: [reply] }), NONE)
-    expect(s.line).toBe("Ms. Hanna checked your Q7. +1 mark.")
+    expect(s.line).toBe("Your teacher checked Q7")
     expect(s.action).toEqual({ label: "See the answer", to: "/student/result/5" })
   })
 
-  it("counts of one never read as a plural", () => {
-    const one = pickStage(makeHome({ moments: [{ kind: "backAfterBreak", daysAway: 1 }] }), NONE)
-    expect(one.line).toBe("There you are. 1 day off is fine. Ease back in with five minutes.")
-    const m = pickStage(makeHome({ moments: [{ ...marking, questionsDone: 0, questionsTotal: 1 }] }), NONE)
-    expect(m.line).toBe("Marking your paper. 0 of 1 question done.")
+  it("result with no grade change just names the grade", () => {
+    const same = pickStage(makeHome({ moments: [{ ...result, previousGrade: null } as HomeMoment] }), NONE)
+    expect(same.line).toBe("That's a B")
+    const unchanged = pickStage(makeHome({ moments: [{ ...result, previousGrade: "B" } as HomeMoment] }), NONE)
+    expect(unchanged.line).toBe("That's a B")
+    const anA = pickStage(makeHome({ moments: [{ ...result, grade: "A*", previousGrade: null } as HomeMoment] }), NONE)
+    expect(anA.line).toBe("That's an A*")
+  })
+
+  it("marking: no progress, no total, and a stale run each keep a short line", () => {
+    const noProgress = pickStage(makeHome({ moments: [{ ...marking, questionsDone: null, questionsTotal: null }] }), NONE)
+    expect(noProgress.line).toBe("Marking your paper")
+    const noTotal = pickStage(makeHome({ moments: [{ ...marking, questionsDone: 0, questionsTotal: 0 }] }), NONE)
+    expect(noTotal.line).toBe("Marking your paper")
+    const zero = pickStage(makeHome({ moments: [{ ...marking, questionsDone: 0, questionsTotal: 1 }] }), NONE)
+    expect(zero.line).toBe("0 of 1 marked")
+    const stale = pickStage(makeHome({ moments: [{ ...marking, stale: true }] }), NONE)
+    expect(stale.line).toBe("Still marking your paper")
   })
 
   it("falls back to today's session, then the top topic (morning), then scan", () => {
@@ -141,7 +154,7 @@ describe("stage", () => {
     })
     expect(pickStage(withSession, NONE)).toMatchObject({
       kind: "session",
-      line: "Today's plan: Waves, 15 minutes.",
+      line: "Today: Waves",
       action: { label: "Start", to: "/student/plan/0625/session/s1" },
     })
     const morning = pickStage(makeHome({ nextExamOn: null }), NONE)
@@ -149,7 +162,7 @@ describe("stage", () => {
       kind: "morning",
       mood: "open",
       greeting: "Morning, Mariam.",
-      line: "Vectors cost you 9 marks last time. Ten minutes fixes most of it.",
+      line: "Win marks back",
       action: { label: "Start 10 minutes", to: "/student/practice/0580?topic=Vectors" },
     })
     expect(pickStage(makeHome({ nextExamOn: null, localHour: 15 }), NONE).greeting).toBeNull()
@@ -160,15 +173,58 @@ describe("stage", () => {
     })
   })
 
-  it("mentions the exam inside 30 days", () => {
+  it("keeps the exam countdown out of the bubble inside 30 days", () => {
     const s = pickStage(makeHome({ nextExamOn: "2026-11-24" }), NONE)
-    expect(s.line).toBe("12 days to exams. Vectors first, +9 marks.")
+    expect(s.line).toBe("Win marks back")
     expect(s.greeting).toBeNull()
+    const scan = pickStage(makeHome({ nextExamOn: "2026-11-24", winBack: [] }), NONE)
+    expect(scan.line).toBe("Scan your next paper")
+    const session = pickStage(
+      makeHome({ nextExamOn: "2026-11-24", todaySessions: [{ sessionId: "s1", subjectCode: "0625", topic: "Waves", minutes: 15, done: false }] }),
+      NONE,
+    )
+    expect(session.line).toBe("Today: Waves")
+    const first = pickStage(
+      makeHome({ nextExamOn: "2026-11-24", floor: [], recentPapers: [], winBack: [], stats: { papersMarked: 0, marksWonBack: 0, bestGrade: null } }),
+      NONE,
+    )
+    expect(first.line).toBe("Mark your first paper")
   })
 
-  it("reads one mark as singular", () => {
-    const one = makeHome({ nextExamOn: null, winBack: [{ ...makeHome({}).winBack[0], marks: 1 }] })
-    expect(pickStage(one, NONE).line).toBe("Vectors cost you 1 mark last time. Ten minutes fixes most of it.")
+  it("a long session topic falls back to a short line instead of running past four words", () => {
+    const long = makeHome({
+      nextExamOn: null,
+      todaySessions: [{ sessionId: "s2", subjectCode: "0625", topic: "Electromagnetic induction and transformers", minutes: 15, done: false }],
+    })
+    expect(pickStage(long, NONE).line).toBe("Today's plan is ready")
+    const three = makeHome({
+      nextExamOn: null,
+      todaySessions: [{ sessionId: "s3", subjectCode: "0625", topic: "Forces and motion", minutes: 15, done: false }],
+    })
+    expect(pickStage(three, NONE).line).toBe("Today: Forces and motion")
+  })
+
+  it("every Binny line is two to four words with no bang or curly apostrophe", () => {
+    const session = { sessionId: "s1", subjectCode: "0625", topic: "Waves", minutes: 15, done: false }
+    const longSession = { ...session, topic: "Electromagnetic induction and transformers" }
+    const firstRun = { floor: [], recentPapers: [], winBack: [], stats: { papersMarked: 0, marksWonBack: 0, bestGrade: null } }
+    const homes = [null, "2026-11-24"].flatMap((nextExamOn) => [
+      makeHome({ nextExamOn, moments: [result, tough, marking, streak, done, back, reply] }),
+      makeHome({ nextExamOn, moments: [{ ...result, previousGrade: null } as HomeMoment, { ...marking, stale: true }] }),
+      makeHome({ nextExamOn, moments: [{ ...marking, questionsDone: null, questionsTotal: null }, { ...tough, focusQuestion: null } as HomeMoment] }),
+      makeHome({ nextExamOn, moments: [], todaySessions: [session] }),
+      makeHome({ nextExamOn, moments: [], todaySessions: [longSession] }),
+      makeHome({ nextExamOn, moments: [], winBack: [] }),
+      makeHome({ nextExamOn, moments: [], ...firstRun }),
+    ])
+    const lines = homes.flatMap((h) => stageCandidates(h).map((s) => s.line))
+    expect(lines.length).toBeGreaterThan(20)
+    for (const line of lines) {
+      const words = line.trim().split(/\s+/).length
+      expect(words, `"${line}"`).toBeGreaterThanOrEqual(2)
+      expect(words, `"${line}"`).toBeLessThanOrEqual(4)
+      expect(line, `"${line}"`).not.toMatch(/[!\u2018\u2019\u2014]/)
+    }
   })
 
   it("skips dismissed moments and never dismisses the last fallback", () => {
@@ -183,7 +239,7 @@ describe("stage", () => {
     expect(pickStage(home, NONE)).toMatchObject({
       kind: "firstRun",
       mood: "open",
-      line: "Hi Mariam. Let's mark your first paper.",
+      line: "Mark your first paper",
       action: { label: "Scan a paper", to: "/student/correct" },
       dismissible: false,
     })
@@ -208,6 +264,14 @@ describe("rows and blocks", () => {
       sub: "Due tomorrow · 12 questions",
       to: "/student/practice/set/a1",
     })
+  })
+
+  it("also rows: a teacher reply stage keeps the teacher row on phone, since the line no longer names who or how many marks", () => {
+    const home = makeHome({ moments: [reply], nextExamOn: null })
+    const stage = pickStage(home, NONE)
+    expect(stage.kind).toBe("teacherReply")
+    const rows = alsoRows(home, stage, "phone")
+    expect(rows[0]).toMatchObject({ kind: "teacher", title: "Ms. Hanna checked your answer", sub: "Q7 · +1 mark" })
   })
 
   it("also rows: join class, sparse nudge, scan nudge", () => {
