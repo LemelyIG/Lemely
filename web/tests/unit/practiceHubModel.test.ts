@@ -428,6 +428,8 @@ describe("practiceHubView", () => {
   })
 
   it("every Binny line is two to four words, whatever the topic is called", () => {
+    // The bound itself is the brand rule; the lines below are checked against it.
+    expect(BINNY_MAX_WORDS).toBeLessThanOrEqual(4)
     const named = (topic: string) =>
       practiceHubView(input({ topics: [{ code: "0580", status: "success", data: topics("0580", [[topic, 6]]) }] })).binny?.line ?? ""
     const lines = [
