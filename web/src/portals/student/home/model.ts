@@ -44,8 +44,7 @@ export interface StageVm {
   kind: StageKind
   mood: BinnyMood
   motion: BinnyMotion
-  /** "Morning, Mariam." Shown before the line on phone and tablet only. */
-  greeting: string | null
+  /** All of Binny's bubble: nothing else is rendered in it (the greeting lives in the desktop page heading). */
   line: string
   action: { label: string; to: string }
   dismissible: boolean
@@ -159,9 +158,8 @@ function stage(
   line: string,
   action: { label: string; to: string },
   dismissible = true,
-  greeting: string | null = null,
 ): StageVm {
-  return { key, kind, mood, motion: motionFor(mood), greeting, line, action, dismissible }
+  return { key, kind, mood, motion: motionFor(mood), line, action, dismissible }
 }
 
 /** The Binny rule: a line is at most this many words. */
@@ -261,10 +259,8 @@ function sessionLine(topic: string): string {
 }
 
 function fallbackStages(home: StudentHome): StageVm[] {
-  // A near exam used to prefix every line here. That pushed each past four words, so the bubble drops it:
-  // the countdown pill in the top row already says it. It still holds back the morning greeting.
-  const near = examInfo(home)?.near === true
-  const name = firstName(home.studentName)
+  // A near exam used to prefix every line here, and mornings a greeting. Either pushed a line past four words,
+  // so the bubble carries neither: the countdown pill in the top row says the first, the desktop heading the second.
   const out: StageVm[] = []
 
   if (isFirstRun(home)) {
@@ -292,7 +288,6 @@ function fallbackStages(home: StudentHome): StageVm[] {
 
   const top = home.winBack[0]
   if (top) {
-    const greeting = !near && home.localHour < 12 ? `${shortGreeting(home.localHour)}, ${name}.` : null
     out.push(
       stage(
         `morning:${top.subjectCode}:${top.topic}`,
@@ -300,8 +295,6 @@ function fallbackStages(home: StudentHome): StageVm[] {
         "open",
         "Win marks back",
         { label: "Start 10 minutes", to: homeRoutes.practiceTopic(top.subjectCode, top.topic) },
-        true,
-        greeting,
       ),
     )
   }

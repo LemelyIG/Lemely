@@ -23,6 +23,7 @@ import {
 } from "@/portals/student/home/model"
 import type { HomeMoment } from "@/lib/studentHomeTypes"
 import { makeHome } from "./studentHomeFixture"
+import { bubbleText, wordsIn } from "./support/homeBubble"
 
 const NONE: ReadonlySet<string> = new Set()
 const result: HomeMoment = {
@@ -161,11 +162,9 @@ describe("stage", () => {
     expect(morning).toMatchObject({
       kind: "morning",
       mood: "open",
-      greeting: "Morning, Mariam.",
       line: "Win marks back",
       action: { label: "Start 10 minutes", to: "/student/practice/0580?topic=Vectors" },
     })
-    expect(pickStage(makeHome({ nextExamOn: null, localHour: 15 }), NONE).greeting).toBeNull()
     expect(pickStage(makeHome({ winBack: [], nextExamOn: null }), NONE)).toMatchObject({
       kind: "scanNext",
       dismissible: false,
@@ -176,7 +175,6 @@ describe("stage", () => {
   it("keeps the exam countdown out of the bubble inside 30 days", () => {
     const s = pickStage(makeHome({ nextExamOn: "2026-11-24" }), NONE)
     expect(s.line).toBe("Win marks back")
-    expect(s.greeting).toBeNull()
     const scan = pickStage(makeHome({ nextExamOn: "2026-11-24", winBack: [] }), NONE)
     expect(scan.line).toBe("Scan your next paper")
     const session = pickStage(
@@ -204,7 +202,7 @@ describe("stage", () => {
     expect(pickStage(three, NONE).line).toBe("Today: Forces and motion")
   })
 
-  it("every Binny line is two to four words with no bang or curly apostrophe", () => {
+  it("everything rendered in Binny's bubble is two to four words with no bang or curly apostrophe", () => {
     const session = { sessionId: "s1", subjectCode: "0625", topic: "Waves", minutes: 15, done: false }
     const longSession = { ...session, topic: "Electromagnetic induction and transformers" }
     const firstRun = { floor: [], recentPapers: [], winBack: [], stats: { papersMarked: 0, marksWonBack: 0, bestGrade: null } }
@@ -217,13 +215,15 @@ describe("stage", () => {
       makeHome({ nextExamOn, moments: [], winBack: [] }),
       makeHome({ nextExamOn, moments: [], ...firstRun }),
     ])
-    const lines = homes.flatMap((h) => stageCandidates(h).map((s) => s.line))
-    expect(lines.length).toBeGreaterThan(20)
-    for (const line of lines) {
-      const words = line.trim().split(/\s+/).length
-      expect(words, `"${line}"`).toBeGreaterThanOrEqual(2)
-      expect(words, `"${line}"`).toBeLessThanOrEqual(4)
-      expect(line, `"${line}"`).not.toMatch(/[!\u2018\u2019\u2014]/)
+    // The rendered bubble, not `s.line`: a greeting or any other text HomeStage adds to the paragraph counts too.
+    const bubbles = homes.flatMap((h) => stageCandidates(h).map((s) => ({ line: s.line, said: bubbleText(s) })))
+    expect(bubbles.length).toBeGreaterThan(20)
+    for (const { line, said } of bubbles) {
+      expect(said, `bubble for line "${line}"`).toBe(line)
+      const words = wordsIn(said)
+      expect(words, `"${said}"`).toBeGreaterThanOrEqual(2)
+      expect(words, `"${said}"`).toBeLessThanOrEqual(4)
+      expect(said, `"${said}"`).not.toMatch(/[!\u2018\u2019\u2014]/)
     }
   })
 

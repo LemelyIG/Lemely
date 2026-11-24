@@ -55,7 +55,8 @@ test("Not now moves Binny on to the next suggestion", async ({ page }) => {
   await main.getByRole("button", { name: "Not now" }).click()
   await expect(line).not.toHaveText("That's an A")
   // Falls to the next fallback stage: the win-back line if the seed has one, else the default scan line.
-  await expect(line).toHaveText(/(Win marks back|Scan your next paper)$/)
+  // The bubble is the line alone, no greeting before it.
+  await expect(line).toHaveText(/^(Win marks back|Scan your next paper)$/)
 })
 
 test("Me's Standings door reads Rankings off for a student who turned rankings off, and opens the board", async ({ page }) => {

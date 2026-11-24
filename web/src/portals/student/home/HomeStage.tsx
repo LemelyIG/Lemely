@@ -34,7 +34,6 @@ export function HomeStage({ stage, onNotNow }: { stage: StageVm; onNotNow: () =>
         <Binny mood={stage.mood} motion={stage.motion} size={200} aria-hidden />
       </div>
       <p ref={lineRef} tabIndex={-1} aria-live="polite" className="max-w-[26ch] text-balance text-[20px] font-bold leading-[1.38] tracking-[-0.01em] text-on-surface @[900px]/home:max-w-[22ch] @[900px]/home:text-[22px]">
-        {stage.greeting ? <span className="@[900px]/home:hidden">{stage.greeting} </span> : null}
         <MonoNumbers text={stage.line} />
       </p>
       <div className="grid w-full justify-items-center gap-0.5">
