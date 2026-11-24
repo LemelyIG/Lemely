@@ -16,7 +16,7 @@ const PROFILE = ["me", "student-profile"] as const
 
 function seeded(): QueryClient {
   const qc = new QueryClient()
-  qc.setQueryData(BOARD, { viewer: null, viewerOptedOut: true })
+  qc.setQueryData(BOARD, { viewer: { rank: null }, viewerOptedOut: true })
   qc.setQueryData(["student", "leaderboard", "friends", "week", null], { viewer: null })
   qc.setQueryData(PROFILE, { profile: { leaderboardOptOut: false } })
   qc.setQueryData(["student", "classes"], { classes: [] })

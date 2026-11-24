@@ -158,20 +158,29 @@ export function standingsSub(rank: StandingsRank, rankingsOff: boolean | undefin
  * and there are none. While the classes or the board are still loading it is `undefined`: unknown, so the door
  * says nothing rather than "Join a class". Once the board is in, a student with a class whom it holds no rank for
  * (no XP this week) is `"unranked"`: they have a class, so never "Join a class". Only a settled board says so: a
- * cached board that is being fetched again may be left over from before a setting changed (an opted-out period
- * holds no rank), so while it is fetching a missing rank stays unknown. A cached number is still a number.
+ * cached board that is being fetched again, or could not be, may be left over from before a setting changed (an
+ * opted-out period holds no rank), so until it settles a missing rank stays unknown. A cached number is still a number.
  */
 export function standingsRank(input: {
   classes: number | undefined
   board: { viewer: { rank: number | null } | null } | undefined
-  boardFetching: boolean
+  boardSettled: boolean
 }): StandingsRank {
   if (input.classes === undefined) return undefined
   if (input.classes === 0) return null
   if (input.board === undefined) return undefined
   const rank = input.board.viewer?.rank
   if (typeof rank === "number") return rank
-  return input.boardFetching ? undefined : "unranked"
+  return input.boardSettled ? "unranked" : undefined
+}
+
+/**
+ * Whether a cached board can be believed about a missing rank. `isFetching` is not enough: offline the refetch is
+ * paused (`fetchStatus` "paused", `isFetching` false), and a failed refetch keeps the old data with `isError`. In
+ * both the stale board is still what the screen holds, so only an idle, error-free query counts as settled.
+ */
+export function isBoardSettled(query: { fetchStatus: "fetching" | "paused" | "idle"; isError: boolean }): boolean {
+  return query.fetchStatus === "idle" && !query.isError
 }
 
 /**

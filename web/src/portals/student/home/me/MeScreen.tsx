@@ -15,7 +15,7 @@ import { AccountRows } from "./AccountRows"
 import { BadgeRow } from "./BadgeRow"
 import { BadgesSheet } from "./BadgesSheet"
 import { MeHero } from "./MeHero"
-import { accountRows, activityVm, deriveBadges, heroName, peopleVm, resolveRankingsOff, standingsRank, statsVm, subjectsVm } from "./meModel"
+import { accountRows, activityVm, deriveBadges, heroName, isBoardSettled, peopleVm, resolveRankingsOff, standingsRank, statsVm, subjectsVm } from "./meModel"
 import { MeSkeleton } from "./MeSkeleton"
 import { PeopleDoors } from "./PeopleDoors"
 import { ProgressSheet } from "./ProgressSheet"
@@ -91,7 +91,7 @@ export function MeScreen() {
                 className="order-4 md:order-none"
                 doors={peopleVm({
                   classes: classes.data?.classes.length,
-                  rank: standingsRank({ classes: classes.data?.classes.length, board: board.data, boardFetching: board.isFetching }),
+                  rank: standingsRank({ classes: classes.data?.classes.length, board: board.data, boardSettled: isBoardSettled(board) }),
                   rankingsOff,
                   friends: friends.data?.friends.length,
                   parents: parents.data?.parents.length,

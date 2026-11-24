@@ -7,6 +7,7 @@ import {
   deriveBadges,
   displayName,
   heroName,
+  isBoardSettled,
   levelLine,
   ordinal,
   peopleVm,
@@ -141,18 +142,18 @@ describe("Me view model", () => {
 
   it("standingsRank: null (Join a class) only once the classes have loaded and there are none", () => {
     const board = { viewer: { rank: 3 } }
-    expect(standingsRank({ classes: undefined, board: undefined, boardFetching: false })).toBeUndefined()
-    expect(standingsRank({ classes: undefined, board, boardFetching: false })).toBeUndefined()
-    expect(standingsRank({ classes: 0, board: undefined, boardFetching: false })).toBeNull()
-    expect(standingsRank({ classes: 2, board: undefined, boardFetching: false })).toBeUndefined()
-    expect(standingsRank({ classes: 2, board, boardFetching: false })).toBe(3)
+    expect(standingsRank({ classes: undefined, board: undefined, boardSettled: true })).toBeUndefined()
+    expect(standingsRank({ classes: undefined, board, boardSettled: true })).toBeUndefined()
+    expect(standingsRank({ classes: 0, board: undefined, boardSettled: true })).toBeNull()
+    expect(standingsRank({ classes: 2, board: undefined, boardSettled: true })).toBeUndefined()
+    expect(standingsRank({ classes: 2, board, boardSettled: true })).toBe(3)
   })
 
   it("standingsRank: a student who has a class never reads Join a class, whatever is still loading or unranked", () => {
-    const door = (input: Omit<Parameters<typeof standingsRank>[0], "boardFetching">) =>
+    const door = (input: Omit<Parameters<typeof standingsRank>[0], "boardSettled">) =>
       peopleVm({
         classes: input.classes,
-        rank: standingsRank({ ...input, boardFetching: false }),
+        rank: standingsRank({ ...input, boardSettled: true }),
         rankingsOff: false,
         friends: 0,
         parents: 0,
@@ -168,11 +169,11 @@ describe("Me view model", () => {
   })
 
   it("standingsRank: a classed student the loaded board has no rank for is unranked, a board still loading is unknown", () => {
-    expect(standingsRank({ classes: 2, board: { viewer: { rank: null } }, boardFetching: false })).toBe("unranked")
-    expect(standingsRank({ classes: 2, board: { viewer: null }, boardFetching: false })).toBe("unranked")
-    expect(standingsRank({ classes: 2, board: undefined, boardFetching: false })).toBeUndefined()
-    expect(standingsRank({ classes: undefined, board: { viewer: { rank: null } }, boardFetching: false })).toBeUndefined()
-    expect(standingsRank({ classes: 0, board: { viewer: { rank: null } }, boardFetching: false })).toBeNull()
+    expect(standingsRank({ classes: 2, board: { viewer: { rank: null } }, boardSettled: true })).toBe("unranked")
+    expect(standingsRank({ classes: 2, board: { viewer: null }, boardSettled: true })).toBe("unranked")
+    expect(standingsRank({ classes: 2, board: undefined, boardSettled: true })).toBeUndefined()
+    expect(standingsRank({ classes: undefined, board: { viewer: { rank: null } }, boardSettled: true })).toBeUndefined()
+    expect(standingsRank({ classes: 0, board: { viewer: { rank: null } }, boardSettled: true })).toBeNull()
   })
 
   it("standingsSub: unranked reads Not ranked yet unless rankings are off or the setting is unread", () => {
@@ -191,7 +192,7 @@ describe("Me view model", () => {
     }) =>
       peopleVm({
         classes: input.classes,
-        rank: standingsRank({ classes: input.classes, board: input.board, boardFetching: input.fetching ?? false }),
+        rank: standingsRank({ classes: input.classes, board: input.board, boardSettled: !(input.fetching ?? false) }),
         rankingsOff: resolveRankingsOff({
           profileOptOut: input.optOut,
           boardOptedOut: input.board?.viewerOptedOut,
@@ -225,7 +226,7 @@ describe("Me view model", () => {
     const standings = (fetching: boolean, board: { viewer: { rank: number | null } | null; viewerOptedOut: boolean }) =>
       peopleVm({
         classes: 2,
-        rank: standingsRank({ classes: 2, board, boardFetching: fetching }),
+        rank: standingsRank({ classes: 2, board, boardSettled: !fetching }),
         rankingsOff: resolveRankingsOff({ profileOptOut: false, boardOptedOut: board.viewerOptedOut, profileFailed: false }),
         friends: 0,
         parents: 0,
@@ -261,9 +262,35 @@ describe("Me view model", () => {
     expect(screen).not.toMatch(/rank:\s*firstClass/)
   })
 
-  it("MeScreen tells standingsRank when the class board is being fetched", () => {
+  it("isBoardSettled: only an idle query with no error is settled, so offline and a failed refetch stay unknown", () => {
+    expect(isBoardSettled({ fetchStatus: "idle", isError: false })).toBe(true)
+    expect(isBoardSettled({ fetchStatus: "fetching", isError: false })).toBe(false)
+    // offline: the refetch is paused, isFetching is false, yet the cached board is still the stale one
+    expect(isBoardSettled({ fetchStatus: "paused", isError: false })).toBe(false)
+    // a failed refetch keeps its old data and goes idle with isError
+    expect(isBoardSettled({ fetchStatus: "idle", isError: true })).toBe(false)
+  })
+
+  it("standings door: a stale opted-out board reads nothing while offline or after a failed refetch, Not ranked yet once settled", () => {
+    const stale = { viewer: { rank: null }, viewerOptedOut: false }
+    const sub = (query: { fetchStatus: "fetching" | "paused" | "idle"; isError: boolean }) =>
+      peopleVm({
+        classes: 2,
+        rank: standingsRank({ classes: 2, board: stale, boardSettled: isBoardSettled(query) }),
+        rankingsOff: resolveRankingsOff({ profileOptOut: false, boardOptedOut: stale.viewerOptedOut, profileFailed: false }),
+        friends: 0,
+        parents: 0,
+      })[1]!.sub
+    expect(sub({ fetchStatus: "paused", isError: false })).toBeNull()
+    expect(sub({ fetchStatus: "idle", isError: true })).toBeNull()
+    expect(sub({ fetchStatus: "fetching", isError: false })).toBeNull()
+    expect(sub({ fetchStatus: "idle", isError: false })).toBe("Not ranked yet")
+  })
+
+  it("MeScreen tells standingsRank whether the class board has settled, from the query's fetchStatus and error", () => {
     const screen = readFileSync(join(process.cwd(), "src/portals/student/home/me/MeScreen.tsx"), "utf8")
-    expect(screen).toContain("boardFetching: board.isFetching")
+    expect(screen).toContain("boardSettled: isBoardSettled(board)")
+    expect(screen).not.toContain("board.isFetching")
   })
 
   it("subjects and activity", () => {

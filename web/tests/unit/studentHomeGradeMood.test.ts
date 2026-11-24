@@ -53,10 +53,10 @@ describe("Binny's mood follows the grade", () => {
     }
   })
 
-  it("a drop does not keep Binny happy and hopping: From A to C", () => {
+  it("From A to C reads C's open Binny, no hop", () => {
     const s = stageFor({ grade: "C", previousGrade: "A" })
     expect(s.line).toBe("From A to C")
-    expect(s.mood).not.toBe("happy")
+    expect(s.mood).toBe("open")
     expect(s.motion).toBe("idle")
   })
 
