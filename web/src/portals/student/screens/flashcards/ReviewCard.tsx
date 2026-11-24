@@ -63,6 +63,14 @@ export function ReviewCard({
         // The flipped state adds its cue as a description, which sits after the name instead of inside it.
         aria-describedby={revealed ? answerHintId : undefined}
         onClick={() => { if (!revealed) onReveal() }}
+        // Space or Enter on the focused card flips it. Handled here and stopped, so the screen's window-level
+        // shortcut does not flip it a second time; once flipped the card ignores both and they scroll or do nothing.
+        onKeyDown={(e) => {
+          if (revealed || e.repeat || (e.key !== " " && e.key !== "Enter")) return
+          e.preventDefault()
+          e.stopPropagation()
+          onReveal()
+        }}
         style={{ transform: leaving ? undefined : `translateX(${dx}px) rotate(${visual.rotateDeg}deg)` }}
         className={[
           "absolute inset-0 focus-visible:!rounded-[28px] flex flex-col items-center justify-center gap-[22px] rounded-[28px] bg-surface-container-lowest p-7 text-center",

@@ -170,7 +170,7 @@ export function FlashcardsScreen() {
                     ) : null}
                   </div>
                   {wide && selectedId ? (
-                    <aside className="hidden min-h-0 lg:flex" aria-label="Deck">
+                    <aside className="flex min-h-0" aria-label="Deck">
                       <DeckPanel deckId={selectedId} onDeleted={() => selectInPlace(null)} />
                     </aside>
                   ) : null}
