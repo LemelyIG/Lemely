@@ -7,7 +7,7 @@ import { MemoryRouter } from "react-router-dom"
 import { describe, expect, it } from "vitest"
 import { BottomNav } from "@/components/ui/nav-shells"
 import { STUDENT_BOTTOM_TABS } from "@/portals/student"
-import { isPlanSection, isPracticeSection, studentOverflowItems } from "@/portals/student/shellNav"
+import { isPlanSection, isPracticeSection, isStudentSubjectRoot, studentOverflowItems } from "@/portals/student/shellNav"
 
 const SRC = join(fileURLToPath(new URL("../../../", import.meta.url)), "src")
 const read = (p: string) => readFileSync(join(SRC, p), "utf8")
@@ -32,9 +32,13 @@ describe("student tab bar (mock h6.js TAB6, Plan in the Subjects slot by user ru
   })
 
   it("Practice covers practice and flashcards; Plan covers the study plan", () => {
-    for (const p of ["/student/practice", "/student/practice/0580", "/student/practice/set/a1", "/student/flashcards/0580", "/student/flashcards/review/0580"])
+    for (const p of ["/student/practice", "/student/practice/0580", "/student/practice/papers", "/student/practice/set/a1", "/student/flashcards/0580", "/student/flashcards/review/0580"])
       expect(isPracticeSection(p), p).toBe(true)
     expect(isPracticeSection("/student/practiced")).toBe(false)
+    // Past papers is a drill-in from the hub, not a tab root; a subject deep link is the builder over the hub.
+    expect(isStudentSubjectRoot("/student/practice/papers")).toBe(false)
+    expect(isStudentSubjectRoot("/student/practice/papers/")).toBe(false)
+    expect(isStudentSubjectRoot("/student/practice/0580")).toBe(true)
     for (const p of ["/student/plan", "/student/plan/0580", "/student/plan/0580/session/s1"]) expect(isPlanSection(p), p).toBe(true)
     expect(isPlanSection("/student/planner")).toBe(false)
     expect(isPlanSection("/student")).toBe(false)
@@ -50,6 +54,11 @@ describe("student tab bar (mock h6.js TAB6, Plan in the Subjects slot by user ru
     const index = read("portals/student/index.tsx")
     expect(index).toMatch(/path: "practice",\s*element: <PracticeHub \/>/)
     expect(index).toMatch(/path: "plan",\s*element: <SubjectEntry section="plan" \/>/)
+    // Past papers is its own screen; the builder deep link is the same hub with the sheet open.
+    expect(index).toMatch(/path: "practice\/papers",\s*element: <PastPapers \/>/)
+    expect(index).toMatch(/path: "practice\/:subjectCode",\s*element: <PracticeHub \/>/)
+    // The sheet replaced the old generator screen; nothing may mount it again.
+    expect(index).not.toContain("PracticeGenerator")
   })
 
   it("the student phone top bar keeps the menu button that opens the navigation sheet", () => {

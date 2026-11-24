@@ -110,11 +110,13 @@ export function currentSubjectCode(pathname: string): string | null {
  *
  * P3.1 removed four keys from this map: `/student/subject`,
  * `/student/practice`, `/student/flashcards` and `/student/result`. All four
- * were dead lookups. Every one of those routes is parameterised
+ * were dead lookups. Every one of those routes was parameterised
  * (`subject/:code`, `practice/:subjectCode`, `flashcards/:subjectCode`,
- * `result/:paperId`), so no pathname the router can produce ever equals the
+ * `result/:paperId`), so no pathname the router could produce equalled the
  * bare key, and `resolveCrumb` was already answering all four from its pattern
- * arms below. This is the same defect the note about `/student/plan` describes
+ * arms below. `/student/practice` has since come back, on purpose: L4 mounts the
+ * Practice hub at the bare path (and `/student/practice/papers`), so those two
+ * keys are live; the other three stay gone. This is the same defect the note about `/student/plan` describes
  * having deliberately avoided when P4.10 parameterised that route; its four
  * siblings kept theirs. Behaviour is unchanged — unreachable entries cannot
  * change what anything renders — but a map with dead keys in it is a map the
