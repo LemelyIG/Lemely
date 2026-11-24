@@ -11,10 +11,10 @@
  * a failed first load is the error screen with a real retry; a failed refetch
  * over a subject already on screen keeps that body and adds a quiet notice.
  *
- * This screen is not routed through `<QueryState>` (see its entry on the
- * queryStateGate allowlist): that component renders one treatment per query
- * status, which would replace a readable body with an error panel on a failed
- * refresh and cannot turn a 404 into the first-run screen.
+ * This screen does not use the shared per-status query wrapper (see its entry
+ * on the queryStateGate allowlist): that wrapper renders one treatment per
+ * query status, which would replace a readable body with an error panel on a
+ * failed refresh and cannot turn a 404 into the first-run screen.
  */
 import { useParams, useSearchParams } from "react-router-dom"
 import { ApiError } from "@/lib/api"
