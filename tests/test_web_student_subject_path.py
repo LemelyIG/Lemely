@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from lemely.core.history import PaperRecord
 from lemely.core.schemas import ExamMetadata, WeakArea
 from lemely.io.history_store import HistoryStore
+from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 from lemely.web import create_app
 from lemely.web.deps import (
     AuthContext,
@@ -250,3 +251,56 @@ def test_only_quizzes_is_still_a_404(tmp_path: Path, monkeypatch: pytest.MonkeyP
     )
 
     assert TestClient(app).get("/api/student/subject/0580").status_code == 404
+
+
+def test_forecast_is_the_weighted_mean_of_papers_only(client: TestClient) -> None:
+    """K7/K16: 203/300 over the four graded papers is 68%; the 3/10 quiz would make it 66%.
+
+    With the fixture's boundaries 68% reads as a B. The latest paper alone
+    (53/70, 75.7%) would read as an A, so this also pins the forecast to the
+    weighted mean rather than the latest result.
+    """
+    header = client.get("/api/student/subject/0580").json()["header"]
+
+    assert header["weightedMean"] == "68"
+    assert header["forecast"] == "B"
+
+
+def test_forecast_resolves_against_the_latest_papers_boundaries(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """K7: the same 68% is an A on Paper 2's table and a B on Paper 4's.
+
+    The latest graded record is Paper 2, so its table decides. Reading the
+    first record's (Paper 4's) table instead would turn this A into a B.
+    """
+
+    class _TablePerPaper(_FakeBoundaryStore):
+        def resolve(self, metadata: ExamMetadata) -> tuple[dict[str, float], BoundarySource]:
+            if metadata.paper_number == 4:
+                return {"A": 70.0, "B": 50.0}, "exact"
+            return {"A": 60.0, "B": 40.0}, "exact"
+
+    monkeypatch.setattr("lemely.web.routers.student.GradeBoundaryStore", _TablePerPaper)
+
+    assert client.get("/api/student/subject/0580").json()["header"]["forecast"] == "A"
+
+
+def test_an_un_ingested_boundary_store_is_a_503_never_invented_boundaries(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """K21: a student with papers cannot be forecast until thresholds are ingested.
+
+    The subject route builds the store itself, so the app's one handler for
+    ``EmptyGradeBoundaryStoreError`` must reach it: 503 naming the ingest, not
+    a 200 whose goal lines and forecast came from made-up boundaries.
+    """
+
+    def _empty(*_args: object, **_kwargs: object) -> None:
+        raise EmptyGradeBoundaryStoreError("component_thresholds has no verified rows")
+
+    monkeypatch.setattr("lemely.web.routers.student.GradeBoundaryStore", _empty)
+    response = client.get("/api/student/subject/0580")
+
+    assert response.status_code == 503, response.text
+    assert "ingest_thresholds" in response.json()["detail"]
