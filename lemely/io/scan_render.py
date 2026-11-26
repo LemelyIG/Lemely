@@ -42,6 +42,7 @@ __all__ = [
     "CROP_RENDER_DPI",
     "EXIF_ORIENTATION_TAG",
     "MAX_CROP_PX",
+    "PAGE_OUTLINE_RGB",
     "PREVIEW_LONG_EDGE_PX",
     "WHOLE_REGION",
     "PdfCropPlan",
@@ -50,6 +51,9 @@ __all__ = [
     "crop_pdf_scan",
     "decode_within_ceiling",
     "fitted_region",
+    "outline_box_png",
+    "page_image_scan",
+    "page_pdf_scan",
     "pdf_crop_plan",
     "refuse_too_large",
     "render_preview_png",
@@ -553,3 +557,51 @@ def crop_image_scan(data: bytes, box: list[int], *, page: int = 0) -> bytes:
     buf = io.BytesIO()
     region.save(buf, format="PNG")
     return upscaled_png(buf.getvalue(), region.width, region.height, page=page)
+
+
+#: The answer's outline on a whole-page render: ``--md-error`` (oklch 0.53 0.20 25)
+#: in sRGB, so the page view uses the same red the review queue uses for "look here".
+PAGE_OUTLINE_RGB = (192, 38, 45)
+
+
+def outline_box_png(png: bytes, box: list[int]) -> bytes:
+    """Draw ``box`` (normalised 0-1000, ``[ymin, xmin, ymax, xmax]``) onto ``png``.
+
+    Run only on this module's own whole-page output (already bounded by
+    :data:`MAX_CROP_PX`), inside the same sandbox call that rendered it. The box
+    is padded by two strokes so the outline never covers the student's ink.
+    """
+    from PIL import Image, ImageDraw
+
+    with Image.open(io.BytesIO(png)) as opened:
+        image = opened.convert("RGB")
+    width, height = image.size
+    ymin, xmin, ymax, xmax = box
+    stroke = max(3, round(min(width, height) / 220))
+    pad = stroke * 2
+    rect = (
+        max(0, round(xmin / 1000 * width) - pad),
+        max(0, round(ymin / 1000 * height) - pad),
+        min(width - 1, round(xmax / 1000 * width) + pad),
+        min(height - 1, round(ymax / 1000 * height) + pad),
+    )
+    ImageDraw.Draw(image).rounded_rectangle(
+        rect, radius=stroke * 3, outline=PAGE_OUTLINE_RGB, width=stroke
+    )
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def page_pdf_scan(data: bytes, page: int, box: list[int]) -> bytes:
+    """The whole of page ``page`` of a PDF scan, with ``box`` outlined.
+
+    Rendered through :func:`crop_pdf_scan` with :data:`WHOLE_REGION`, so the same
+    page checks, content check and pixel ceiling apply as for the crop.
+    """
+    return outline_box_png(crop_pdf_scan(data, page, list(WHOLE_REGION)), list(box))
+
+
+def page_image_scan(data: bytes, box: list[int], *, page: int = 0) -> bytes:
+    """The whole upright image scan, with ``box`` outlined (see :func:`crop_image_scan`)."""
+    return outline_box_png(crop_image_scan(data, list(WHOLE_REGION), page=page), list(box))

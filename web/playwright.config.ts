@@ -177,7 +177,9 @@ export default defineConfig({
     {
       name: "iphone-15",
       use: { ...devices["iPhone 15"], defaultBrowserType: "chromium" },
-      testMatch: /native-feel\.spec\.ts/,
+      // review-queue.spec.ts is matched too: its desktop tests skip on this
+      // project by name and its one phone test skips everywhere else.
+      testMatch: /(native-feel|review-queue)\.spec\.ts/,
     },
     {
       name: "pixel-7",

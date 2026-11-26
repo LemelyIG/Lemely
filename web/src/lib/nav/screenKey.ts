@@ -20,5 +20,8 @@
  * inline in a component the test runner cannot render (D3.20).
  */
 export function screenKey(location: { pathname: string; search: string }): string {
+  // The review queue is one screen: moving between its rows, or filtering it, must not remount it. It owns
+  // the undo hold for the last decision, and a remount flushes that decision at once and drops the toast.
+  if (/^\/teacher\/review(\/[^/]+)?\/?$/.test(location.pathname)) return "/teacher/review"
   return location.pathname + location.search
 }
