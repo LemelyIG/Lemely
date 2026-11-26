@@ -2,12 +2,13 @@ import { describe, expect, it, vi } from "vitest"
 import type { CardDTO } from "@/lib/flashcardTypes"
 
 const gesture = vi.hoisted(() => ({ commit: (_x: number) => {} }))
-// Both refs resolve to this fake element: the card face (gesture hook is mocked) and its scrolling body.
+// Every ref resolves to this fake element: the frame (gesture hook is mocked) and the face, which is also the scroller.
 const body = vi.hoisted(() => ({ scrollHeight: 0, clientHeight: 0, scrollBy: (_o: unknown) => {} }))
 vi.mock("react", async (importOriginal) => ({
   ...await importOriginal<typeof import("react")>(),
   useRef: () => ({ current: body }),
   useEffect: () => {},
+  useLayoutEffect: () => {},
   useState: (value: unknown) => [value, vi.fn()],
 }))
 vi.mock("@/lib/gestures/useDragGesture", () => ({

@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S3 R4 V4 */
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useDragGesture } from "@/lib/gestures/useDragGesture"
 import { GESTURE_INTERACTIVE_SELECTOR } from "@/lib/gestures/interactiveSelector"
 import { GRADE_SWIPE_THRESHOLD, REVEAL_SWIPE_THRESHOLD, flashcardSwipeAction, swipeVisual } from "@/lib/flashcardSwipe"
@@ -15,24 +15,29 @@ const reducedMotion = () => typeof window !== "undefined" && window.matchMedia("
 export function ReviewCard({
   card, revealed, onReveal, onGrade,
 }: { card: CardDTO; revealed: boolean; onReveal: () => void; onGrade: (g: ReviewGrade) => void }) {
-  const surface = useRef<HTMLDivElement>(null)
-  const body = useRef<HTMLDivElement>(null)
+  // `frame` is the visible card: shadow, flip and swipe transform, the swipe stamp and the AI mark. `face` is the one
+  // focusable, scrolling, named element inside it, so a long card is a single tab stop (axe: scrollable-region-focusable).
+  const frame = useRef<HTMLDivElement>(null)
+  const face = useRef<HTMLDivElement>(null)
   const [dx, setDx] = useState(0)
   const [leaving, setLeaving] = useState<"left" | "right" | null>(null)
   const reduced = reducedMotion()
   const visual = swipeVisual(dx, revealed, reduced)
 
+  // The answer side always opens at its top, however far the front was read. Before paint, so no frame shows the old offset.
+  useLayoutEffect(() => { if (face.current) face.current.scrollTop = 0 }, [revealed])
   // Once flipped, focus rests on the card: its name now reads the question then the answer, and Space or Enter does nothing here.
-  useEffect(() => { if (revealed) surface.current?.focus() }, [revealed])
+  useEffect(() => { if (revealed) face.current?.focus() }, [revealed])
 
-  useDragGesture(surface, {
+  // The gesture listens on the frame so a swipe works anywhere on the card, including the strip under an AI card's scroll area.
+  useDragGesture(frame, {
     axis: "x",
     enabled: !leaving,
     commitThreshold: revealed ? GRADE_SWIPE_THRESHOLD : REVEAL_SWIPE_THRESHOLD,
     touchAction: "pan-y",
     startFilter: (e) => {
       const interactive = e.target instanceof Element ? e.target.closest(GESTURE_INTERACTIVE_SELECTOR) : null
-      return interactive === null || interactive === surface.current
+      return interactive === null || interactive === face.current
     },
     onProgress: (x) => setDx(x),
     onCancel: () => setDx(0),
@@ -49,41 +54,19 @@ export function ReviewCard({
   })
 
   const stampGood = visual.stamp === "good"
+  const ai = card.source === "ai"
+  const sourceLabel = cardSourceLabel("ai")
   const answerHintId = `fc-answer-hint-${card.id}`
   return (
     <div className="relative mx-2 mb-2.5 mt-3.5 lg:mx-[22px] min-h-[320px] flex-1 [perspective:1200px]">
       <span aria-hidden className="absolute inset-0 translate-y-3 scale-[0.94] rounded-[28px] bg-surface-container-lowest opacity-60 shadow-[inset_0_0_0_1px_var(--color-outline-variant)]" />
       <div
         key={card.id}
-        ref={surface}
-        role="button"
-        data-review-primary=""
-        tabIndex={0}
-        // No aria-label: the name comes from the visible text (WCAG 2.5.3 label in name), so what a screen reader
-        // announces and what a voice-control user reads on the card are the same words in the same order.
-        // The flipped state adds its cue as a description, which sits after the name instead of inside it.
-        aria-describedby={revealed ? answerHintId : undefined}
-        onClick={() => { if (!revealed) onReveal() }}
-        // Space or Enter on the focused card flips it. Handled here and stopped, so the screen's window-level
-        // shortcut does not flip it a second time; once flipped the card ignores both and they scroll or do nothing.
-        onKeyDown={(e) => {
-          // A card taller than its face scrolls inside it; the focused card forwards the scroll keys to that body.
-          const scroller = body.current
-          const step = scroller && scroller.scrollHeight > scroller.clientHeight ? cardScrollStep(e.key, scroller.clientHeight) : 0
-          if (scroller && step !== 0) {
-            e.preventDefault()
-            e.stopPropagation()
-            scroller.scrollBy({ top: step, behavior: reduced ? "auto" : "smooth" })
-            return
-          }
-          if (revealed || e.repeat || (e.key !== " " && e.key !== "Enter")) return
-          e.preventDefault()
-          e.stopPropagation()
-          onReveal()
-        }}
+        ref={frame}
         style={{ transform: leaving ? undefined : `translateX(${dx}px) rotate(${visual.rotateDeg}deg)` }}
         className={[
-          "absolute inset-0 focus-visible:!rounded-[28px] flex flex-col rounded-[28px] bg-surface-container-lowest text-center",
+          // The focus ring is drawn here, around the whole card: the scrolling face inside ends above the AI mark, so its own ring would be shorter.
+          "absolute inset-0 flex flex-col rounded-[28px] bg-surface-container-lowest text-center has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2",
           "shadow-[0_18px_36px_-18px_oklch(0.3_0.06_242/0.4),inset_0_0_0_1px_var(--color-outline-variant)]",
           visual.armed ? (stampGood ? "!shadow-[0_18px_36px_-18px_oklch(0.3_0.06_242/0.4),inset_0_0_0_3px_var(--color-success-text)]" : "!shadow-[0_18px_36px_-18px_oklch(0.3_0.06_242/0.4),inset_0_0_0_3px_var(--color-on-error-container)]") : "",
           revealed ? "animate-[fc-flip_450ms_var(--ease-out)_both] motion-reduce:animate-none" : "animate-[fc-rise_280ms_var(--ease-out)] motion-reduce:animate-none",
@@ -99,17 +82,47 @@ export function ReviewCard({
             {stampGood ? "Good" : "Again"}
           </span>
         ) : null}
-        {card.source === "ai" ? <span className="absolute bottom-4 right-5"><AiMark label={cardSourceLabel("ai")} /></span> : null}
-        {/* The face never grows: a long question scrolls inside this body instead of spilling into the action row below.
-            `my-auto` centres short content and, unlike justify-center, never pushes the start of tall content out of reach. */}
+        {/* The mark never scrolls and never sits on text: the face below ends 40px above the card's bottom edge on an AI card.
+            Decorative here; the face carries the spoken label (first in its name). */}
+        {ai ? <span aria-hidden className="pointer-events-none absolute bottom-4 right-5"><AiMark label={sourceLabel} /></span> : null}
+        {/* The face never grows: a long question scrolls inside it instead of spilling into the action row below.
+            `my-auto` centres short content and, unlike justify-center, never pushes the start of tall content out of reach.
+            An AI card trades 40px of the bottom for the mark, and takes it back as top padding so short text stays centred. */}
         <div
-          ref={body}
-          data-fc-scroll=""
+          ref={face}
+          role="button"
+          data-review-primary=""
+          tabIndex={0}
+          // No aria-label: the name comes from the visible text (WCAG 2.5.3 label in name), so what a screen reader
+          // announces and what a voice-control user reads on the card are the same words in the same order.
+          // The flipped state adds its cue as a description, which sits after the name instead of inside it.
+          aria-describedby={revealed ? answerHintId : undefined}
+          onClick={() => { if (!revealed) onReveal() }}
+          // Space or Enter on the focused card flips it. Handled here and stopped, so the screen's window-level
+          // shortcut does not flip it a second time; once flipped the card ignores both and they scroll or do nothing.
+          onKeyDown={(e) => {
+            // A card taller than its face scrolls inside it; Arrow and Page keys move it in steps (smooth, unless reduced motion).
+            const scroller = face.current
+            const step = scroller && scroller.scrollHeight > scroller.clientHeight ? cardScrollStep(e.key, scroller.clientHeight) : 0
+            if (scroller && step !== 0) {
+              e.preventDefault()
+              e.stopPropagation()
+              scroller.scrollBy({ top: step, behavior: reduced ? "auto" : "smooth" })
+              return
+            }
+            if (revealed || e.repeat || (e.key !== " " && e.key !== "Enter")) return
+            e.preventDefault()
+            e.stopPropagation()
+            onReveal()
+          }}
           className={[
             "flex min-h-0 w-full flex-1 touch-pan-y flex-col items-center overflow-y-auto overflow-x-hidden overscroll-y-contain rounded-[28px] px-7 [scrollbar-width:thin]",
-            card.source === "ai" ? "py-10" : "py-7",
+            // The ring is on the frame (has-[:focus-visible]); this element keeps its radius and draws no second, shorter ring.
+            "focus-visible:!rounded-[28px] focus-visible:!outline-transparent",
+            ai ? "mb-10 pb-7 pt-[68px]" : "py-7",
           ].join(" ")}
         >
+          {ai ? <span className="sr-only">{sourceLabel} </span> : null}
           <div className="my-auto flex max-w-full flex-col items-center gap-[22px]">
             {revealed ? (
               <>

@@ -55,7 +55,7 @@ export function cardScrollStep(key: string, viewport: number): number {
   }
 }
 
-export type ReviewKeyAction ={ kind: "reveal" } | { kind: "grade"; grade: ReviewGrade }
+export type ReviewKeyAction = { kind: "reveal" } | { kind: "grade"; grade: ReviewGrade }
 
 /** Space/Enter flip before the reveal; 1-4 rate after it. Anything else is ignored. */
 export function reviewKeyAction(key: string, revealed: boolean): ReviewKeyAction | null {

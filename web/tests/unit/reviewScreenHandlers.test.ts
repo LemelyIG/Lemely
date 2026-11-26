@@ -31,6 +31,7 @@ vi.mock("react", async (importOriginal) => ({
     return (h.refs[k] ??= { current: init })
   },
   useEffect: (fn: () => unknown) => { h.effects.push(fn) },
+  useLayoutEffect: (fn: () => unknown) => { h.effects.push(fn) },
 }))
 vi.mock("react-router-dom", () => ({ useNavigate: () => h.navigate, useSearchParams: () => [new URLSearchParams("deck=d1")] }))
 vi.mock("@/lib/haptics", () => ({ haptic: h.haptic }))
@@ -352,9 +353,11 @@ describe("review screen: keyboard", () => {
     h.si = 0; h.ri = 0; h.refs = []; h.effects = []
     ReviewCard({ card: card("a") as never, revealed: true, onReveal: vi.fn(), onGrade: vi.fn() })
     const surfaceFocus = vi.fn()
-    h.refs[0].current = { focus: surfaceFocus }
+    // refs[0] is the card's frame, refs[1] the focusable face that also scrolls.
+    h.refs[1].current = { focus: surfaceFocus, scrollTop: 40 }
     h.effects.forEach((effect) => effect())
     expect(surfaceFocus).toHaveBeenCalled()
+    expect((h.refs[1].current as { scrollTop: number }).scrollTop, "the flip resets the face's scroll to its top").toBe(0)
   })
   it("Space flips, then 1 to 4 rate", () => {
     start()
