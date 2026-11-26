@@ -444,7 +444,7 @@ test("the tutoring group can carry the journeys it was seeded for (T29)", () => 
   expect(suff.changeState).toBe("sufficient")
   expect(suff.nGraded as number).toBeGreaterThanOrEqual(5)
   const buckets = suff.buckets as Record<string, number>
-  expect(Object.keys(buckets)).toEqual(["A*", "A", "B", "C", "D", "E", "U"])
+  expect(Object.keys(buckets)).toEqual(["A*", "A", "B", "C", "D", "E", "F", "G", "U"])
   expect(Object.values(buckets).reduce((a, b) => a + b, 0)).toBe(suff.nGraded)
   expect((suff.higher as number) + (suff.same as number) + (suff.lower as number)).toBe(
     suff.nPaired,
