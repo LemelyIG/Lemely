@@ -19,6 +19,7 @@ import type { StudyPlanOverviewDTO } from "@/lib/studyPlanTypes"
 import { BasedOn } from "./BasedOn"
 import { COPY, nextExamForSubject } from "./planCopy"
 import {
+  chipsControl,
   confirmRebuild,
   dayScrollTarget,
   gateWeek,
@@ -29,6 +30,7 @@ import {
   planListUrl,
   planRoute,
   rebuildFailure,
+  rebuiltHere,
   retryWeek,
   runMoveAll,
   screenNotices,
@@ -184,7 +186,9 @@ function PlanContent({ overview }: { overview: StudyPlanOverviewDTO }) {
       toast,
     })
 
-  const runRebuild = (codes: string[]) => rebuild.mutate({ subjectCodes: codes })
+  // `onSettled` is how the confirm dialog learns the rebuild is over, so it can stay open and show it running.
+  const runRebuild = (codes: string[], onSettled?: () => void) =>
+    rebuild.mutate({ subjectCodes: codes }, onSettled ? { onSettled } : undefined)
   const askRebuild = (codes: string[]) => {
     const scope = all.filter((s) => codes.includes(s.subjectCode))
     if (scope.some((s) => s.status === "done")) setConfirmCodes(codes)
@@ -226,11 +230,11 @@ function PlanContent({ overview }: { overview: StudyPlanOverviewDTO }) {
 
   const rebuilding = rebuild.isPending && rebuild.variables?.week !== "next"
   const rebuildError = rebuildFailure(rebuild)
-  const notices = screenNotices({ kind: screen.kind, missingNote, rebuilding, rebuildError })
+  const notices = screenNotices({ kind: screen.kind, missingNote, rebuiltHere: rebuiltHere(rebuild), rebuilding, rebuildError })
 
   return (
     <>
-      <PlanHeader header={screen.header} wide={wide} now={now} onFilter={onFilter} />
+      <PlanHeader header={screen.header} wide={wide} now={now} onFilter={onFilter} controls={chipsControl(screen.kind)} />
       {notices.missing ? <NotInWeekNote rebuilt={notices.missingRebuilt} /> : null}
       {notices.rebuilding ? <RebuildingBanner /> : null}
       {notices.actionError ? <ActionError message={notices.actionError} /> : null}
@@ -241,7 +245,12 @@ function PlanContent({ overview }: { overview: StudyPlanOverviewDTO }) {
       {screen.kind === "needPaper" ? <NeedPaper copy={screen.copy} placementCode={screen.placementCode} /> : null}
       {screen.kind === "nothingScheduled" ? (
         <>
-          <NothingScheduled practiceCode={screen.practiceCode} />
+          <NothingScheduled
+            practiceCode={screen.practiceCode}
+            pending={screen.pending}
+            busy={rebuild.isPending}
+            onBuild={(code) => runRebuild([code])}
+          />
           <BasedOn line={screen.basedOn} rebuilding={rebuilding} onRebuild={() => askRebuild(screen.scopeCodes)} />
         </>
       ) : null}
@@ -253,6 +262,9 @@ function PlanContent({ overview }: { overview: StudyPlanOverviewDTO }) {
           planning={rebuild.isPending && rebuild.variables?.week === "next"}
           nextWeekReady={nextWeekReady}
           onPlanNextWeek={() => planNextWeek(screen.scopeCodes)}
+          pending={screen.pending}
+          busy={rebuild.isPending}
+          onBuild={(code) => runRebuild([code])}
         />
       ) : null}
       {screen.kind === "plan" ? (

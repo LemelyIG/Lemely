@@ -34,6 +34,7 @@ from lemely.db.models.study_plan import StudyPlanActivityType
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.db.study_plan_repo import (
     StudyPlanError,
+    StudyPlanIdError,
     StudyPlanMoveError,
     StudyPlanNotFoundError,
     StudyPlanOwnershipError,
@@ -242,6 +243,9 @@ def move_study_plan_session(
     malformed id or a ``past_day``/``outside_week`` target, 409 for a
     ``completed`` or ``superseded`` session. Refusals carry
     ``{"code", "message"}`` so the screen can say which.
+
+    Only the bad-id error (``StudyPlanIdError``) is the caller's fault; any other
+    ``ValueError`` is a bug and surfaces as a 500, not a 422 echoing its message.
     """
     try:
         session = service.move_session(auth.user_id, session_id, body.date)
@@ -252,7 +256,7 @@ def move_study_plan_session(
         ) from exc
     except StudyPlanError as exc:
         _raise_for(exc)
-    except ValueError as exc:
+    except StudyPlanIdError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _session_to_dto(session)
 

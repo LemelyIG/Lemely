@@ -11,6 +11,7 @@ import {
   NotInWeekNote,
   NothingScheduled,
   PlanLoadError,
+  PendingNotes,
   PlanLoading,
   RebuildingBanner,
   WeekDone,
@@ -29,6 +30,14 @@ function findAll(node: unknown, type: unknown): ReactElement<Record<string, unkn
   if (!isValidElement<Record<string, unknown>>(node)) return []
   const own = node.type === type ? [node] : []
   return [...own, ...findAll(node.props.children, type)]
+}
+
+/** Every host element of one tag in a returned tree. */
+function findAllByTag(node: unknown, tag: string): ReactElement<Record<string, unknown>>[] {
+  if (Array.isArray(node)) return node.flatMap((n) => findAllByTag(n, tag))
+  if (!isValidElement<Record<string, unknown>>(node)) return []
+  const own = node.type === tag ? [node] : []
+  return [...own, ...findAllByTag(node.props.children, tag)]
 }
 
 /** The one Button a state renders, so a test can read the handler it was wired to. */
@@ -109,8 +118,61 @@ describe("study plan states", () => {
     expect(html).not.toMatch(/<a\b[^>]*>\s*<button/)
   })
 
+  describe("subjects that still need a plan or a paper (#2)", () => {
+    const pending = [
+      { subjectCode: "0625", subjectName: "Physics", kind: "notGenerated" as const },
+      { subjectCode: "0606", subjectName: "Additional Mathematics", kind: "refused" as const },
+    ]
+    const weekDoneProps = {
+      body: "All 2 sessions, 55 min.",
+      stats: [],
+      practiceCode: "0580",
+      planning: false,
+      nextWeekReady: false,
+      onPlanNextWeek: () => {},
+      busy: false,
+      onBuild: () => {},
+    }
+
+    it("week done still names a subject without a plan and offers to build it", () => {
+      const html = render(createElement(WeekDone, { ...weekDoneProps, pending }))
+      expect(html).toContain("Physics: no plan yet")
+      expect(html).toContain(">Build<")
+      expect(html).toContain("Additional Mathematics: needs a paper first")
+      expect(html).toContain(">Rebuild<")
+    })
+
+    it("nothing scheduled still names a subject without a plan and offers to build it", () => {
+      const html = render(createElement(NothingScheduled, { practiceCode: "0580", pending, busy: false, onBuild: () => {} }))
+      expect(html).toContain("Physics: no plan yet")
+      expect(html).toContain(">Build<")
+    })
+
+    it("draws no pending line when nothing is pending", () => {
+      const done = render(createElement(WeekDone, { ...weekDoneProps, pending: [] }))
+      const nothing = render(createElement(NothingScheduled, { practiceCode: "0580", pending: [], busy: false, onBuild: () => {} }))
+      for (const html of [done, nothing]) {
+        expect(html).not.toContain("no plan yet")
+        expect(html).not.toContain("needs a paper first")
+      }
+    })
+
+    it("builds one subject, and waits while a rebuild runs", () => {
+      const built: string[] = []
+      const tree = PendingNotes({ pending, busy: false, onBuild: (code) => built.push(code) })
+      const buttons = findAllByTag(tree, "button")
+      expect(buttons).toHaveLength(2)
+      ;(buttons[0].props.onClick as () => void)()
+      expect(built).toEqual(["0625"])
+      const waiting = render(createElement(PendingNotes, { pending, busy: true, onBuild: () => {} }))
+      const marked = waiting.match(/<button[^>]*>(?:Build|Rebuild)<\/button>/g) ?? []
+      expect(marked).toHaveLength(2)
+      for (const b of marked) expect(b).toMatch(/\sdisabled(?:="")?(?:\s|>)/)
+    })
+  })
+
   it("links the sparse and no-subject states to real routes", () => {
-    const nothing = render(createElement(NothingScheduled, { practiceCode: "0580" }))
+    const nothing = render(createElement(NothingScheduled, { practiceCode: "0580", pending: [], busy: false, onBuild: () => {} }))
     expect(nothing).toContain('href="/student/practice/0580"')
     expect(nothing).toContain(COPY.nothingCta)
     const none = render(createElement(NoSubjects))
@@ -129,6 +191,9 @@ describe("study plan states", () => {
       practiceCode: "0580",
       planning: false,
       onPlanNextWeek,
+      pending: [],
+      busy: false,
+      onBuild: () => {},
     }
 
     it("shows the stats and disables planning once next week is ready", () => {

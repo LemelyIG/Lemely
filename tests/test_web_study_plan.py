@@ -33,7 +33,7 @@ from lemely.db.models.enums import AttemptOrigin, Role
 from lemely.db.models.profiles import StudentSubjectEnrolment
 from lemely.db.models.users import User
 from lemely.db.student_profile_repo import StudentProfileService
-from lemely.db.study_plan_repo import StudyPlanService
+from lemely.db.study_plan_repo import StudyPlanIdError, StudyPlanService
 from lemely.runtime.config import DatabaseSettings
 from lemely.web import create_app
 from lemely.web.deps import (
@@ -742,6 +742,46 @@ def test_move_with_a_malformed_id_or_date_is_422(
 
     assert bad_id.status_code == 422
     assert bad_date.status_code == 422
+
+
+class _MoveStub:
+    """A service whose ``move_session`` raises what it was given (no database needed)."""
+
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    def move_session(self, *_args: object, **_kwargs: object) -> object:
+        raise self._error
+
+
+def test_move_maps_the_bad_identifier_error_to_422(client: TestClient) -> None:
+    _auth_as(client, uuid.uuid4(), Role.student)
+    client.app.dependency_overrides[get_study_plan_service] = lambda: _MoveStub(  # type: ignore[union-attr]
+        StudyPlanIdError("Identifier must be a UUID, got 'x'")
+    )
+
+    resp = client.post(
+        f"/api/student/study-plan/sessions/{uuid.uuid4()}/move", json={"date": "2026-08-09"}
+    )
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "Identifier must be a UUID, got 'x'"
+
+
+def test_move_does_not_turn_any_other_value_error_into_a_422(client: TestClient) -> None:
+    """Only the bad-id error is the caller's fault; any other ``ValueError`` is a bug (500)."""
+    _auth_as(client, uuid.uuid4(), Role.student)
+    client.app.dependency_overrides[get_study_plan_service] = lambda: _MoveStub(  # type: ignore[union-attr]
+        ValueError("internal detail that must not reach the caller")
+    )
+    quiet = TestClient(client.app, raise_server_exceptions=False)
+
+    resp = quiet.post(
+        f"/api/student/study-plan/sessions/{uuid.uuid4()}/move", json={"date": "2026-08-09"}
+    )
+
+    assert resp.status_code == 500
+    assert "internal detail" not in resp.text
 
 
 @pytest.mark.parametrize("role", [Role.teacher, Role.parent])

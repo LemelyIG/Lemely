@@ -122,6 +122,15 @@ class StudyPlanError(Exception):
     """Base class for study-plan service failures."""
 
 
+class StudyPlanIdError(ValueError):
+    """An identifier that is not a UUID: the caller's mistake (→ 422).
+
+    A ``ValueError`` subclass so existing callers that catch ``ValueError``
+    keep working, but distinct so the HTTP layer can map only this one and let
+    any other ``ValueError`` surface as the bug it is.
+    """
+
+
 class StudyPlanNotFoundError(StudyPlanError):
     """No plan/session exists for the supplied id, anywhere (→ 404)."""
 
@@ -779,13 +788,13 @@ def _session_reasons(
 
 
 def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:
-    """Coerce a str/UUID to :class:`uuid.UUID`, raising ``ValueError`` if invalid."""
+    """Coerce a str/UUID to :class:`uuid.UUID`, raising :class:`StudyPlanIdError` if invalid."""
     if isinstance(value, uuid.UUID):
         return value
     try:
         return uuid.UUID(value)
     except (ValueError, AttributeError) as exc:
-        raise ValueError(f"Identifier must be a UUID, got {value!r}") from exc
+        raise StudyPlanIdError(f"Identifier must be a UUID, got {value!r}") from exc
 
 
 __all__ = [
@@ -794,6 +803,7 @@ __all__ = [
     "SessionReason",
     "SessionView",
     "StudyPlanError",
+    "StudyPlanIdError",
     "StudyPlanMoveError",
     "StudyPlanNotFoundError",
     "StudyPlanOwnershipError",

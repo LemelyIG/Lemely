@@ -126,6 +126,12 @@ describe("SubjectFilter", () => {
     expect(out.match(/class="rd-dot"/g)).toHaveLength(2)
     expect(out).toContain("background:var(--md-primary)")
   })
+  it("points aria-controls only at a list that exists (#11)", () => {
+    const withList = html(createElement(SubjectFilter, { filters: chips, onFilter: noop, controls: "plan-list" }))
+    expect(withList.match(/aria-controls="plan-list"/g)).toHaveLength(3)
+    const without = html(createElement(SubjectFilter, { filters: chips, onFilter: noop }))
+    expect(without).not.toContain("aria-controls")
+  })
   /*
    * A scroller clips at its padding edge on both axes, so a focus ring drawn
    * outside a chip needs that much padding on every side or it is cut off.
@@ -168,6 +174,14 @@ describe("PlanHeader", () => {
     for (const wide of [false, true]) {
       const out = html(createElement(PlanHeader, { header: header(), wide, now, onFilter: noop }))
       expect(out, String(wide)).toMatch(/<h1[^>]*class="[^"]*\bleading-\[1\.1\]/)
+    }
+  })
+  it("hands the list it controls to the chips in both layouts, and nothing when there is none (#11)", () => {
+    for (const wide of [false, true]) {
+      const on = html(createElement(PlanHeader, { header: header(), wide, now, onFilter: noop, controls: "plan-list" }))
+      expect(on, String(wide)).toContain('aria-controls="plan-list"')
+      const off = html(createElement(PlanHeader, { header: header(), wide, now, onFilter: noop }))
+      expect(off, String(wide)).not.toContain("aria-controls")
     }
   })
   it("wide: the filter sits inline in the header row", () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 import type { StudentExamCalendar } from "@/lib/announcementTypes"
 import {
+  COPY,
   activityLabel,
   addDays,
   basedOnLine,
@@ -119,10 +120,10 @@ describe("reasons", () => {
 describe("startAction", () => {
   it("routes each activity and offers nothing for review", () => {
     expect(startAction("practice", "0580", { kind: "marks_lost", count: 9 })).toEqual({
-      label: "Start · +9 marks",
+      label: "Start · 9 marks lost",
       path: "/student/practice/0580",
     })
-    expect(startAction("practice", "0580", { kind: "marks_lost", count: 1 })?.label).toBe("Start · +1 mark")
+    expect(startAction("practice", "0580", { kind: "marks_lost", count: 1 })?.label).toBe("Start · 1 mark lost")
     expect(startAction("practice", "0580", null)).toEqual({ label: "Start", path: "/student/practice/0580" })
     expect(startAction("flashcards", "0625", { kind: "cards_due", count: 12 })).toEqual({
       label: "Start · 12 cards",
@@ -182,5 +183,24 @@ describe("one clock: today built with parseDay", () => {
     expect(examLine({ date: "2026-08-07", paperNumber: 2 }, today)).toBe("Paper 2 tomorrow")
     const cal = calendar([{ code: "0580", paper: 2, dates: ["2026-08-06"] }])
     expect(nextExamForSubject(cal, "0580", today)).toEqual({ date: "2026-08-06", paperNumber: 2 })
+  })
+})
+
+describe("first-run walkthrough tells the truth about the planner (#1)", () => {
+  it("states no session length: the planner makes none shorter than 20 or longer than 90 minutes", () => {
+    for (const step of COPY.walk) {
+      expect(`${step.title} ${step.body}`, step.title).not.toMatch(/\b\d+\s*(?:minutes?|mins?|min)\b/i)
+    }
+  })
+  it("keeps the three steps in order", () => {
+    expect(COPY.walk.map((step) => step.title)).toEqual(["Sessions sized to your week", "Weakest topics first", "Rebuilt each week"])
+  })
+})
+
+describe("the Start label never reads as marks gained (#16)", () => {
+  it("names marks already lost, with no plus sign", () => {
+    const label = startAction("practice", "0580", { kind: "marks_lost", count: 9 })?.label ?? ""
+    expect(label).toBe("Start · 9 marks lost")
+    expect(label).not.toContain("+")
   })
 })

@@ -99,8 +99,15 @@ test("phone · move an open session to a later day", async ({ page }) => {
   await expect(sheet.getByText("Why this?")).toBeVisible()
 
   const moveButton = sheet.getByRole("button", { name: "Move", exact: true })
-  // On the last day of the week there is nothing later to move to, and the control is absent.
+  // The server decides "today", so the browser clock cannot be pinned. What can be read is its
+  // weekday. Only on a Sunday (the plan's last day) may the control be missing, and then the test
+  // says so; on any other day its absence is a failure, never a pass.
+  const heading = (await page.getByRole("heading", { name: /^Today · / }).textContent()) ?? ""
+  const lastDay = /Sunday/.test(heading)
+  if (!lastDay) await expect(moveButton).toHaveCount(1)
+
   if ((await moveButton.count()) === 0) {
+    test.info().annotations.push({ type: "note", description: "Sunday: no later day to move to" })
     await expect(moveButton).toHaveCount(0)
   } else {
     await moveButton.click()

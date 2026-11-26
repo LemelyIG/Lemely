@@ -1,8 +1,9 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
 import { useEffect, useState, type ReactElement, type ReactNode } from "react"
+import { X as XIcon } from "@phosphor-icons/react"
 import { BinnyLine, SubjectDot } from "@/components/redesign"
 import { Button } from "@/components/ui/button"
-import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
+import { Sheet, SheetClose, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { useNativeFrame } from "@/lib/useNativeFrame"
 import { cn } from "@/lib/utils"
 import { CalendarGlyph, TickGlyph } from "./icons"
@@ -32,6 +33,7 @@ export function SessionDetail({
   session,
   titleWrap,
   footer,
+  closeButton,
   completing,
   completeError,
   movingTo,
@@ -39,7 +41,13 @@ export function SessionDetail({
   onStart,
   onComplete,
   onMove,
-}: { session: SessionVM; titleWrap?: (heading: ReactElement) => ReactNode; footer?: ReactNode } & SessionActions) {
+}: {
+  session: SessionVM
+  titleWrap?: (heading: ReactElement) => ReactNode
+  footer?: ReactNode
+  /** The sheet's visible way out, at the end of the top row. The desktop panel has none. */
+  closeButton?: ReactNode
+} & SessionActions) {
   const [moveOpen, setMoveOpen] = useState(false)
   // A new session starts with the move choice closed.
   useEffect(() => setMoveOpen(false), [session.id])
@@ -58,6 +66,7 @@ export function SessionDetail({
             {session.subjectName} · {session.activityLabel} · {session.minutesLabel}
           </span>
         </div>
+        {closeButton}
       </div>
 
       {completeError ? (
@@ -159,6 +168,20 @@ function PhoneGrabber() {
   )
 }
 
+/**
+ * From `sm` the sheet floats at the end edge with no grabber, so the only ways out would be Escape or
+ * a tap outside. This draws one: a 44px target at the end of the top row. A phone keeps its grabber, so
+ * the button is hidden there.
+ */
+export function SessionCloseButton() {
+  return (
+    <SheetClose className="-me-2 -mt-1.5 ms-auto flex size-11 shrink-0 items-center justify-center self-start rounded-full text-on-surface-variant transition-colors duration-150 ease-out hover:bg-surface-container-high motion-reduce:transition-none focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary max-sm:hidden">
+      <XIcon weight="bold" size={20} aria-hidden />
+      <span className="sr-only">{COPY.closeSession}</span>
+    </SheetClose>
+  )
+}
+
 /** < 1280px: the session as a sheet (SS, PX). Bottom on phones, floating from `sm`. */
 export function SessionSheet({ session, onClose, ...actions }: { session: SessionVM | null; onClose: () => void } & SessionActions) {
   return (
@@ -180,6 +203,7 @@ export function SessionSheet({ session, onClose, ...actions }: { session: Sessio
                 {heading}
               </SheetTitle>
             )}
+            closeButton={<SessionCloseButton />}
             {...actions}
           />
         </SheetContent>

@@ -76,7 +76,7 @@ export type PlanScreen =
   | { kind: "firstRun"; header: HeaderModel; codesToBuild: string[] }
   | { kind: "needPaper"; header: HeaderModel; placementCode: string; copy: RefusalCopy }
   | { kind: "nothingScheduled"; header: HeaderModel; practiceCode: string; basedOn: string; scopeCodes: string[]; pending: PendingSubject[] }
-  | { kind: "weekDone"; header: HeaderModel; body: string; stats: WeekDoneStat[]; practiceCode: string; scopeCodes: string[]; all: SessionVM[] }
+  | { kind: "weekDone"; header: HeaderModel; body: string; stats: WeekDoneStat[]; practiceCode: string; scopeCodes: string[]; all: SessionVM[]; pending: PendingSubject[] }
   | { kind: "plan"; header: HeaderModel; body: PlanBody; scopeCodes: string[]; all: SessionVM[] }
 
 export interface PlanModelInput {
@@ -270,6 +270,8 @@ export function planScreen(raw: PlanModelInput): PlanScreen {
       practiceCode: available[0].subjectCode,
       scopeCodes,
       all,
+      // A subject that still needs a plan or a paper is not done: the state keeps offering it.
+      pending,
     }
   }
 

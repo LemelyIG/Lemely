@@ -111,10 +111,29 @@ export function useCompleteStudyPlanSession(): UseMutationResult<
   })
 }
 
+/** A move the server refused for a day that is no longer a choice: the week the screen shows is out of date. */
+const STALE_DAY_CODES: readonly string[] = ["past_day", "outside_week"]
+
 /**
- * `POST /api/student/study-plan/sessions/{sessionId}/move`. On a 409 (the
- * plan was rebuilt, or the session is already done) the week is refetched,
- * so the screen shows the truth rather than a stale row.
+ * Whether a refused move means the week on screen is stale. A 409 is a rebuilt plan or an already
+ * finished session; a 422 `past_day` / `outside_week` is the UTC day rolling over while the screen
+ * stayed open, which leaves the day buttons offering a day that has passed. A malformed request
+ * or a dropped connection says nothing about the week.
+ */
+export function staleWeekAfterMoveError(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false
+  if (error.status === 409) return true
+  if (error.status !== 422) return false
+  const detail = error.detail
+  const code = typeof detail === "object" && detail !== null ? (detail as { code?: unknown }).code : undefined
+  return typeof code === "string" && STALE_DAY_CODES.includes(code)
+}
+
+/**
+ * `POST /api/student/study-plan/sessions/{sessionId}/move`. On a refusal that
+ * means the week changed under the student (a 409: the plan was rebuilt or the
+ * session is already done; a 422 for a day that has passed) the week is
+ * refetched, so the screen shows the truth rather than a stale row.
  */
 export function useMoveStudyPlanSession(): UseMutationResult<
   StudyPlanSessionDTO,
@@ -135,7 +154,7 @@ export function useMoveStudyPlanSession(): UseMutationResult<
       )
     },
     onError: (error) => {
-      if (error instanceof ApiError && error.status === 409) {
+      if (staleWeekAfterMoveError(error)) {
         return queryClient.invalidateQueries({ queryKey: studyPlanKeys.week })
       }
       return undefined

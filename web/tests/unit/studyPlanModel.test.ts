@@ -107,6 +107,24 @@ describe("state selection", () => {
       expect(s.header.sub).toBe("2 of 2 done · 55 min")
     }
   })
+  it("weekDone carries a subject that still needs a plan or a paper, so the screen can offer it (#2)", () => {
+    const done = P("0625", [S("a", "2026-08-04", { completedAt: DONE })])
+    const s = planScreen(input(O([SUB("0625", done), SUB("0580", null), SUB("0606", P("0606", [], { available: false, reason: "no_signal" }))])))
+    expect(s.kind).toBe("weekDone")
+    expect(s.kind === "weekDone" && s.pending).toEqual([
+      { subjectCode: "0580", subjectName: "Mathematics", kind: "notGenerated" },
+      { subjectCode: "0606", subjectName: "Additional Maths", kind: "refused" },
+    ])
+  })
+  it("weekDone has nothing pending when every subject has its plan (#2)", () => {
+    const s = planScreen(input(O([SUB("0625", P("0625", [S("a", "2026-08-04", { completedAt: DONE })]))])))
+    expect(s.kind === "weekDone" && s.pending).toEqual([])
+  })
+  it("nothingScheduled carries a pending subject too (#2)", () => {
+    const s = planScreen(input(O([SUB("0625", P("0625", [])), SUB("0580", null)])))
+    expect(s.kind).toBe("nothingScheduled")
+    expect(s.kind === "nothingScheduled" && s.pending).toEqual([{ subjectCode: "0580", subjectName: "Mathematics", kind: "notGenerated" }])
+  })
   it("weekDone without XP has no stats at all", () => {
     const s = planScreen(input(O([SUB("0625", P("0625", [S("a", "2026-08-04", { completedAt: DONE })]))]), { xp: null }))
     expect(s.kind).toBe("weekDone")
@@ -137,7 +155,7 @@ describe("the all-subjects week (WA)", () => {
   it("writes each row's reason and start action", () => {
     const [vectors, waves] = b.today.sessions
     expect(vectors.why).toBe("Cost you 9 marks")
-    expect(vectors.start).toEqual({ label: "Start · +9 marks", path: "/student/practice/0580" })
+    expect(vectors.start).toEqual({ label: "Start · 9 marks lost", path: "/student/practice/0580" })
     expect(vectors.whyBody).toBe("Vectors has cost you 9 marks so far. Win them back on the way to your A*.")
     expect(waves.why).toBe("12 cards due")
     expect(waves.subjectName).toBe("Physics")

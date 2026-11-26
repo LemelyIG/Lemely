@@ -3,7 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
 import { Sheet } from "@/components/ui/sheet"
 import type { SessionVM } from "@/portals/student/screens/studyplan/planModel"
-import { MoveChoices, SessionDetail, SessionPanel, SessionSheet, type SessionActions } from "@/portals/student/screens/studyplan/SessionDetail"
+import { COPY } from "@/portals/student/screens/studyplan/planCopy"
+import { MoveChoices, SessionCloseButton, SessionDetail, SessionPanel, SessionSheet, type SessionActions } from "@/portals/student/screens/studyplan/SessionDetail"
 
 const session: SessionVM = {
   id: "s1", subjectCode: "0580", subjectName: "Mathematics", dotIndex: 0,
@@ -34,8 +35,8 @@ describe("session detail", () => {
     expect(html).not.toContain("Start")
   })
   it("offers the start action with the model's own label when the session can be started", () => {
-    const html = detail({ start: { label: "Start · +9 marks", path: "/student/practice" } })
-    expect(html).toContain("Start · +9 marks")
+    const html = detail({ start: { label: "Start · 9 marks lost", path: "/student/practice" } })
+    expect(html).toContain("Start · 9 marks lost")
   })
   it("omits the start action when there is nothing to start", () => {
     expect(detail({ start: null })).not.toContain("Start")
@@ -109,11 +110,41 @@ describe("session sheet (below 1280px)", () => {
     expect(el.props.open).toBe(false)
     expect(el.props.children).toBeNull()
   })
-  it("opens an adaptive sheet with no close button, since the overlay, Escape and the grabber dismiss it", () => {
+  it("opens an adaptive sheet without the primitive's own close button, which a phone does not want next to its grabber", () => {
     const el = sheet(session)
     expect(el.props.open).toBe(true)
     expect(el.props.children?.props.side).toBe("adaptive")
     expect(el.props.children?.props.showCloseButton).toBe(false)
+  })
+  const findDetailEl = (node: unknown): ReactElement<{ closeButton?: ReactElement }> | null => {
+    if (Array.isArray(node)) return node.map(findDetailEl).find((hit) => hit !== null) ?? null
+    if (typeof node !== "object" || node === null || !("props" in node)) return null
+    const el = node as ReactElement<{ children?: unknown; closeButton?: ReactElement }>
+    return el.type === SessionDetail ? el : findDetailEl(el.props.children)
+  }
+  it("hands the session body its own close button, so the floating sheet from sm up can be dismissed by sight (#12)", () => {
+    const closeEl = findDetailEl(sheet(session))?.props.closeButton
+    expect(closeEl).toBeDefined()
+    expect(closeEl?.type).toBe(SessionCloseButton)
+  })
+  it("draws that button at a 44px target, named for assistive tech, and only from sm up", () => {
+    const html = renderToStaticMarkup(createElement(Sheet, { open: true }, createElement(SessionCloseButton)))
+    expect(html).toMatch(/<button[^>]*type="button"/)
+    expect(html).toMatch(/\bsize-11\b/)
+    // A phone keeps its grabber; the button would only crowd it.
+    expect(html).toMatch(/\bmax-sm:hidden\b/)
+    expect(html).toContain(`>${COPY.closeSession}<`)
+    expect(html).toContain('aria-hidden="true"')
+    // Logical properties only: it sits at the end edge in a right-to-left page too.
+    expect(html).not.toMatch(/\b(?:ml|mr|pl|pr|left|right)-/)
+  })
+  it("puts the close button in the session body's top row, and leaves the desktop panel without one", () => {
+    const withClose = renderToStaticMarkup(
+      createElement(SessionDetail, { session, ...actions, closeButton: createElement("i", { id: "stand-in-close" }) }),
+    )
+    expect(withClose).toContain('id="stand-in-close"')
+    expect(detail()).not.toContain("stand-in-close")
+    expect(panel(session, null)).not.toContain(COPY.closeSession)
   })
   it("lets the session heading keep its own weight, not the sheet title's font-semibold default", () => {
     // Walk the real sheet tree to the SessionDetail it mounts, then render the title wrapper it hands down.

@@ -127,7 +127,7 @@ export function startAction(
       return {
         label:
           reason?.kind === "marks_lost"
-            ? `Start · +${reason.count} ${plural(reason.count, "mark", "marks")}`
+            ? `Start · ${reason.count} ${plural(reason.count, "mark", "marks")} lost`
             : "Start",
         path: `/student/practice/${subjectCode}`,
       }
@@ -224,6 +224,7 @@ export const COPY = {
   whyTopics: "Why these topics",
   whyThis: "Why this?",
   markDone: "Mark done",
+  closeSession: "Close",
   saving: "Saving…",
   tryAgain: "Try again",
   done: "Done",
@@ -250,7 +251,7 @@ export const COPY = {
   /** Spoken only: the visible button says "Building…", which says nothing of what is being built. */
   buildingAnnounce: "Building your week…",
   walk: [
-    { title: "Short sessions", body: "10 minutes of practice, 5 of flashcards." },
+    { title: "Sessions sized to your week", body: "Your study time is shared out across the topics that need it." },
     { title: "Weakest topics first", body: "The ones that cost you the most marks." },
     { title: "Rebuilt each week", body: "Every new paper sharpens the plan." },
   ],

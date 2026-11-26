@@ -106,6 +106,7 @@ const SCANNED_FILES_CURATED = [
   "src/portals/student/screens/studyplan/MissedGroup.tsx",
   "src/portals/student/screens/studyplan/BasedOn.tsx",
   "src/portals/student/screens/studyplan/icons.tsx",
+  "src/portals/student/screens/studyplan/planStyles.ts",
   // Phase 4, surface 4 — gamification.
   "src/components/ui/celebration.tsx",
   "src/components/ui/xp-streak.tsx",

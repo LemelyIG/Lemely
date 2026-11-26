@@ -8,6 +8,8 @@ import * as studyPlanApi from "@/lib/hooks/useStudyPlanApi"
 import { COPY, movedToast } from "@/portals/student/screens/studyplan/planCopy"
 import {
   confirmRebuild,
+  PLAN_LIST_ID,
+  chipsControl,
   dayScrollTarget,
   gateWeek,
   moveBusy,
@@ -19,6 +21,7 @@ import {
   planRoute,
   planSessionUrl,
   rebuildFailure,
+  rebuiltHere,
   retryWeek,
   runMoveAll,
   screenNotices,
@@ -160,6 +163,27 @@ describe("move failures", () => {
   })
 })
 
+describe("which refused moves refresh the week (#6)", () => {
+  it("refreshes on any 409: the plan was rebuilt or the session is done", () => {
+    expect(studyPlanApi.staleWeekAfterMoveError(new ApiError(409, "409", { code: "superseded" }))).toBe(true)
+    expect(studyPlanApi.staleWeekAfterMoveError(new ApiError(409, "409", { code: "completed" }))).toBe(true)
+  })
+  it("refreshes on a 422 past_day or outside_week, which a day rollover leaves the buttons stale for", () => {
+    expect(studyPlanApi.staleWeekAfterMoveError(new ApiError(422, "422", { code: "past_day", message: "x" }))).toBe(true)
+    expect(studyPlanApi.staleWeekAfterMoveError(new ApiError(422, "422", { code: "outside_week", message: "x" }))).toBe(true)
+  })
+  it("leaves the week alone for a malformed request, a dropped connection or a plain error", () => {
+    expect(studyPlanApi.staleWeekAfterMoveError(new ApiError(422, "422", "Identifier must be a UUID"))).toBe(false)
+    expect(studyPlanApi.staleWeekAfterMoveError(new ApiError(422, "422", { code: "something_else" }))).toBe(false)
+    expect(studyPlanApi.staleWeekAfterMoveError(new ApiError(0, "offline", undefined))).toBe(false)
+    expect(studyPlanApi.staleWeekAfterMoveError(new ApiError(500, "500", undefined))).toBe(false)
+    expect(studyPlanApi.staleWeekAfterMoveError(new Error("boom"))).toBe(false)
+  })
+  it("is what the move mutation's onError asks", () => {
+    expect(read("src/lib/hooks/useStudyPlanApi.ts")).toMatch(/onError: \(error\) => \{\s*if \(staleWeekAfterMoveError\(error\)\)/)
+  })
+})
+
 describe("the move confirmation", () => {
   it("names the day, and says today for today", () => {
     expect(movedToast("2026-08-08", "2026-08-06")).toBe("Moved to Sat")
@@ -178,6 +202,22 @@ describe("urls", () => {
   it("puts an open session in the url, under its filter", () => {
     expect(planSessionUrl(null, "s1")).toBe("/student/plan/session/s1")
     expect(planSessionUrl("0625", "s1")).toBe("/student/plan/0625/session/s1")
+  })
+})
+
+describe("what the subject chips control (#11)", () => {
+  it("is the plan list, which exists only in the plan state", () => {
+    expect(PLAN_LIST_ID).toBe("plan-list")
+    expect(chipsControl("plan")).toBe("plan-list")
+  })
+  it("is nothing in every state that draws no list, so aria-controls never dangles", () => {
+    for (const kind of ["firstRun", "needPaper", "nothingScheduled", "weekDone", "noSubjects"]) {
+      expect(chipsControl(kind), kind).toBeUndefined()
+    }
+  })
+  it("is wired from the screen to the header, and the list takes its id from the same constant", () => {
+    expect(SCREEN).toMatch(/<PlanHeader[^>]*controls=\{chipsControl\(screen\.kind\)\}/)
+    expect(read("src/portals/student/screens/studyplan/PlanList.tsx")).toMatch(/id=\{PLAN_LIST_ID\}/)
   })
 })
 
@@ -365,9 +405,19 @@ describe("the next week and rebuild flows", () => {
     expect(toast).toHaveBeenCalledWith({ title: COPY.nextWeekReady, variant: "success" })
   })
 
-  it("rebuilds the confirmed subjects, then closes the dialog", () => {
+  it("rebuilds the confirmed subjects and keeps the dialog open until the rebuild settles (#4)", () => {
     const order: string[] = []
-    confirmRebuild(["0625", "0580"], { run: (codes) => order.push(`run ${codes.join(",")}`), close: () => order.push("close") })
+    let settle: (() => void) | undefined
+    confirmRebuild(["0625", "0580"], {
+      run: (codes, onSettled) => {
+        order.push(`run ${codes.join(",")}`)
+        settle = onSettled
+      },
+      close: () => order.push("close"),
+    })
+    // Still pending: the dialog is open, showing its pending state.
+    expect(order).toEqual(["run 0625,0580"])
+    settle?.()
     expect(order).toEqual(["run 0625,0580", "close"])
   })
   it("rebuilds nothing when the dialog was not holding subjects, but still closes", () => {
@@ -396,18 +446,35 @@ describe("the next week and rebuild flows", () => {
   })
 })
 
+describe("did this screen rebuild the plan (#3)", () => {
+  it("is true after this week's plan was rebuilt", () => {
+    expect(rebuiltHere({ isSuccess: true, variables: { subjectCodes: ["0625"] } })).toBe(true)
+    expect(rebuiltHere({ isSuccess: true, variables: { subjectCodes: ["0625"], week: "current" } })).toBe(true)
+  })
+  it("is false before any rebuild, after a failed one, and after planning next week, which leaves this week's sessions alone", () => {
+    expect(rebuiltHere({ isSuccess: false, variables: undefined })).toBe(false)
+    expect(rebuiltHere({ isSuccess: false, variables: { subjectCodes: ["0625"] } })).toBe(false)
+    expect(rebuiltHere({ isSuccess: true, variables: { subjectCodes: ["0625"], week: "next" } })).toBe(false)
+  })
+})
+
 describe("which notices the screen shows", () => {
-  const base = { kind: "plan", missingNote: false, rebuilding: false, rebuildError: null }
+  const base = { kind: "plan", missingNote: false, rebuiltHere: false, rebuilding: false, rebuildError: null }
   it("shows nothing on a quiet plan", () => {
     expect(screenNotices(base)).toEqual({ missing: false, missingRebuilt: false, rebuilding: false, actionError: null })
   })
-  it("shows the not-in-week note, and says the plan was rebuilt over a plan", () => {
+  it("says the plan was rebuilt only when this screen rebuilt it (#3)", () => {
     expect(screenNotices({ ...base, missingNote: true }).missing).toBe(true)
-    expect(screenNotices({ ...base, missingNote: true }).missingRebuilt).toBe(true)
+    // A link from last week names a session no plan ever rebuilt away.
+    expect(screenNotices({ ...base, missingNote: true }).missingRebuilt).toBe(false)
+    expect(screenNotices({ ...base, missingNote: true, rebuiltHere: true }).missingRebuilt).toBe(true)
+  })
+  it("never says it for a rebuild that was not one: nothing was missing, or nothing was rebuilt", () => {
+    expect(screenNotices({ ...base, rebuiltHere: true }).missingRebuilt).toBe(false)
   })
   it("keeps the note but drops the rebuilt sentence where no plan exists to have been rebuilt (K24)", () => {
     for (const kind of ["firstRun", "needPaper"]) {
-      const n = screenNotices({ ...base, kind, missingNote: true })
+      const n = screenNotices({ ...base, kind, missingNote: true, rebuiltHere: true })
       expect(n.missing, kind).toBe(true)
       expect(n.missingRebuilt, kind).toBe(false)
     }
@@ -475,6 +542,16 @@ describe("the orchestrator's source", () => {
     expect(SCREEN).toMatch(/openSessionNav\(/)
     expect(SCREEN).toMatch(/moveBusy\(/)
     expect(SCREEN).toMatch(/shouldResetRebuild\(/)
+  })
+
+  it("hands the pending subjects to the two states that used to hide them (#2)", () => {
+    expect(SCREEN).toMatch(/<NothingScheduled[\s\S]*?pending=\{screen\.pending\}[\s\S]*?\/>/)
+    expect(SCREEN).toMatch(/<WeekDone[\s\S]*?pending=\{screen\.pending\}[\s\S]*?\/>/)
+  })
+
+  it("passes the rebuild's own outcome to the notices, so an old link never claims a rebuild (#3)", () => {
+    expect(SCREEN).toMatch(/rebuiltHere: rebuiltHere\(rebuild\)|rebuiltHere\(rebuild\)/)
+    expect(SCREEN).toMatch(/screenNotices\(\{[^}]*rebuiltHere/)
   })
 
   it("keeps no second copy of the open session, so the url decides what the panel shows", () => {

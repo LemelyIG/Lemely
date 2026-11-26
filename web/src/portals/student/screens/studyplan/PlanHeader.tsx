@@ -22,10 +22,13 @@ export function SubjectFilter({
   filters,
   onFilter,
   inline = false,
+  controls,
 }: {
   filters: FilterChip[]
   onFilter: (code: string | null) => void
   inline?: boolean
+  /** The id of the list the chips filter. Left out where the state draws no list, so the reference never dangles. */
+  controls?: string
 }) {
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const step = NEXT[e.key]
@@ -55,7 +58,7 @@ export function SubjectFilter({
           type="button"
           role="tab"
           aria-selected={f.selected}
-          aria-controls="plan-list"
+          aria-controls={controls}
           tabIndex={f.selected ? 0 : -1}
           onClick={() => onFilter(f.code)}
           className={cn(
@@ -85,11 +88,13 @@ export function PlanHeader({
   wide,
   now,
   onFilter,
+  controls,
 }: {
   header: HeaderModel
   wide: boolean
   now: Date
   onFilter: (code: string | null) => void
+  controls?: string
 }) {
   const title = (size: string) => (
     // `size` goes first: tailwind-merge drops an earlier `leading-*` once a later `text-[..px]` sets the size, which left the heading on the body's 1.5.
@@ -111,7 +116,7 @@ export function PlanHeader({
           {title("text-[32px]")}
           {sub}
         </div>
-        {filter ? <SubjectFilter filters={header.filters} onFilter={onFilter} inline /> : null}
+        {filter ? <SubjectFilter filters={header.filters} onFilter={onFilter} controls={controls} inline /> : null}
         {pill}
       </header>
     )
@@ -125,7 +130,7 @@ export function PlanHeader({
         </div>
         {pill}
       </div>
-      {filter ? <SubjectFilter filters={header.filters} onFilter={onFilter} /> : null}
+      {filter ? <SubjectFilter filters={header.filters} onFilter={onFilter} controls={controls} /> : null}
     </header>
   )
 }

@@ -6,7 +6,9 @@ import { BasedOn } from "./BasedOn"
 import { TickGlyph } from "./icons"
 import { MissedGroup } from "./MissedGroup"
 import { COPY } from "./planCopy"
+import { PLAN_LIST_ID } from "./planFlow"
 import type { PlanBody, SessionVM } from "./planModel"
+import { PendingNotes } from "./PlanStates"
 import { SessionRow } from "./SessionRow"
 import { WeekStrip } from "./WeekStrip"
 
@@ -26,7 +28,6 @@ export interface PlanListProps {
 }
 
 const TODAY_HEADING_ID = "plan-today-heading"
-const PENDING_COPY = { notGenerated: "no plan yet", refused: "needs a paper first", build: "Build" } as const
 
 /**
  * The subject a filtered week belongs to. The model only fills `whyTopics` for one subject,
@@ -65,7 +66,7 @@ export function PlanList(p: PlanListProps) {
   }
 
   return (
-    <div id="plan-list" aria-busy={p.rebuilding || undefined} className={cn("flex flex-col gap-6 xl:gap-[22px]", p.rebuilding && "opacity-50")}>
+    <div id={PLAN_LIST_ID} aria-busy={p.rebuilding || undefined} className={cn("flex flex-col gap-6 xl:gap-[22px]", p.rebuilding && "opacity-50")}>
       {body.subjectTop ? (
         <p className="m-0 flex flex-wrap gap-x-3.5 font-sans text-[13.5px] font-medium text-on-surface-variant [&>span+span]:before:me-3.5 [&>span+span]:before:text-outline [&>span+span]:before:content-['·']">
           {body.subjectTop.targetGrade ? (
@@ -139,19 +140,7 @@ export function PlanList(p: PlanListProps) {
         </section>
       ) : null}
 
-      {body.pending.map((s) => (
-        <p key={s.subjectCode} className="m-0 flex min-h-11 items-center gap-1.5 font-sans text-[13px] text-on-surface-variant">
-          {s.subjectName}: {PENDING_COPY[s.kind === "refused" ? "refused" : "notGenerated"]} ·
-          <button
-            type="button"
-            disabled={p.rebuilding}
-            className="min-h-11 rounded-[10px] px-1 font-bold text-primary disabled:opacity-60 focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
-            onClick={() => p.onBuild(s.subjectCode)}
-          >
-            {s.kind === "refused" ? COPY.rebuild : PENDING_COPY.build}
-          </button>
-        </p>
-      ))}
+      <PendingNotes pending={body.pending} busy={p.rebuilding} onBuild={p.onBuild} />
 
       {!p.wide ? <BasedOn line={body.basedOn} rebuilding={p.rebuilding} onRebuild={p.onRebuild} /> : null}
     </div>

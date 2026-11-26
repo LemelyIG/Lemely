@@ -7,7 +7,7 @@ import { Button, buttonVariants } from "@/components/ui/button"
 import { SkeletonBlock } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { COPY, type RefusalCopy } from "./planCopy"
-import type { WeekDoneStat } from "./planModel"
+import type { PendingSubject, WeekDoneStat } from "./planModel"
 import { CTA } from "./planStyles"
 
 const go = cn(CTA, "max-w-[360px]")
@@ -108,11 +108,48 @@ export function NeedPaper({ copy, placementCode }: { copy: RefusalCopy; placemen
   )
 }
 
+const PENDING_COPY = { notGenerated: "no plan yet", refused: "needs a paper first", build: "Build" } as const
+
+/**
+ * One line per subject that still needs a plan or a paper, each with its one action. Shared by the
+ * plan list and the two states that stand in for it, so no state hides a subject that needs a build (#2).
+ */
+export function PendingNotes({ pending, busy, onBuild }: { pending: PendingSubject[]; busy: boolean; onBuild: (code: string) => void }) {
+  return (
+    <>
+      {pending.map((s) => (
+        <p key={s.subjectCode} className="m-0 flex min-h-11 items-center gap-1.5 font-sans text-[13px] text-on-surface-variant">
+          {s.subjectName}: {PENDING_COPY[s.kind === "refused" ? "refused" : "notGenerated"]} ·
+          <button
+            type="button"
+            disabled={busy}
+            className="min-h-11 rounded-[10px] px-1 font-bold text-primary disabled:opacity-60 focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
+            onClick={() => onBuild(s.subjectCode)}
+          >
+            {s.kind === "refused" ? COPY.rebuild : PENDING_COPY.build}
+          </button>
+        </p>
+      ))}
+    </>
+  )
+}
+
 /** A real plan with nothing in it (K5). No mock frame. */
-export function NothingScheduled({ practiceCode }: { practiceCode: string }) {
+export function NothingScheduled({
+  practiceCode,
+  pending,
+  busy,
+  onBuild,
+}: {
+  practiceCode: string
+  pending: PendingSubject[]
+  busy: boolean
+  onBuild: (code: string) => void
+}) {
   return (
     <StateStack mood="happy" title={COPY.nothingTitle} body={COPY.nothingBody}>
       <Link to={`/student/practice/${practiceCode}`} className={cn(buttonVariants({ variant: "primary" }), go)}>{COPY.nothingCta}</Link>
+      <PendingNotes pending={pending} busy={busy} onBuild={onBuild} />
     </StateStack>
   )
 }
@@ -134,6 +171,9 @@ export function WeekDone({
   planning,
   nextWeekReady,
   onPlanNextWeek,
+  pending,
+  busy,
+  onBuild,
 }: {
   body: string
   stats: WeekDoneStat[]
@@ -141,6 +181,9 @@ export function WeekDone({
   planning: boolean
   nextWeekReady: boolean
   onPlanNextWeek: () => void
+  pending: PendingSubject[]
+  busy: boolean
+  onBuild: (code: string) => void
 }) {
   return (
     <StateStack mood="happy" motion="hop" size={110} title={COPY.weekDoneTitle} body={body} className="pt-3">
@@ -159,6 +202,7 @@ export function WeekDone({
         {nextWeekReady ? COPY.nextWeekReady : COPY.planNextWeek}
       </Button>
       <Link to={`/student/practice/${practiceCode}`} className={quiet}>{COPY.bonusPractice}</Link>
+      <PendingNotes pending={pending} busy={busy} onBuild={onBuild} />
     </StateStack>
   )
 }

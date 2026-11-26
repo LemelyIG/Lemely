@@ -37,6 +37,13 @@ export function moveFailureMessage(error: unknown): string {
   return COPY.moveError
 }
 
+/** The id of the plan list, the one element the subject chips control. */
+export const PLAN_LIST_ID = "plan-list"
+/**
+ * What the subject chips `aria-controls`. Only the plan state draws the list, so every other state
+ * (first run, need a paper, nothing scheduled, week done) gives the chips nothing to point at.
+ */
+export const chipsControl = (kind: string): string | undefined => (kind === "plan" ? PLAN_LIST_ID : undefined)
 /** The list for a filter: `null` is all subjects. */
 export const planListUrl = (filter: string | null): string => (filter ? `/student/plan/${filter}` : "/student/plan")
 
@@ -154,14 +161,27 @@ export function nextWeekCallbacks(p: { setReady: (ready: boolean) => void; toast
   }
 }
 
-/** The confirm button of the rebuild dialog: rebuild what it was holding, and close either way. */
+/**
+ * The confirm button of the rebuild dialog. With subjects it holds, the rebuild runs and the dialog
+ * stays open, showing its pending state, until the mutation settles (`run` calls `onSettled` then,
+ * success or failure; a failure is shown above the plan). With none there is nothing to wait for.
+ */
 export function confirmRebuild(
   codes: string[] | null,
-  p: { run: (codes: string[]) => void; close: () => void },
+  p: { run: (codes: string[], onSettled: () => void) => void; close: () => void },
 ): void {
-  if (codes) p.run(codes)
-  p.close()
+  if (codes) p.run(codes, p.close)
+  else p.close()
 }
+/**
+ * Whether a rebuild of this week's plan has run on this screen. Planning next week uses the same
+ * mutation but leaves this week's sessions alone, so it does not count.
+ */
+export const rebuiltHere = (rebuild: {
+  isSuccess: boolean
+  variables?: { subjectCodes: string[]; week?: "current" | "next" }
+}): boolean =>
+  rebuild.isSuccess && rebuild.variables?.week !== "next"
 
 /**
  * The sentence for a failed rebuild, or null. Planning next week uses the same mutation, so the
@@ -186,10 +206,17 @@ export const shouldResetRebuild = (p: { previous: string | null; current: string
 
 /**
  * The notices above the plan. First run draws its own failure inside its card. The not-in-week
- * note adds "Your plan was rebuilt." only over a plan: with first run or need-a-paper there is
- * none, so the sentence would be false (K24).
+ * note adds "Your plan was rebuilt." only when this screen rebuilt the plan, and only over a
+ * plan: a link from last week, or one with first run or need-a-paper behind it, names a session
+ * no rebuild here took away, so the sentence would be false (K24, #3).
  */
-export function screenNotices(p: { kind: string; missingNote: boolean; rebuilding: boolean; rebuildError: string | null }): {
+export function screenNotices(p: {
+  kind: string
+  missingNote: boolean
+  rebuiltHere: boolean
+  rebuilding: boolean
+  rebuildError: string | null
+}): {
   missing: boolean
   missingRebuilt: boolean
   rebuilding: boolean
@@ -197,7 +224,7 @@ export function screenNotices(p: { kind: string; missingNote: boolean; rebuildin
 } {
   return {
     missing: p.missingNote,
-    missingRebuilt: p.missingNote && p.kind !== "firstRun" && p.kind !== "needPaper",
+    missingRebuilt: p.missingNote && p.rebuiltHere && p.kind !== "firstRun" && p.kind !== "needPaper",
     rebuilding: p.rebuilding && p.kind === "plan",
     actionError: p.kind === "firstRun" ? null : p.rebuildError,
   }
