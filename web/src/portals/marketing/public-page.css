@@ -1,0 +1,32 @@
+.marketing-brand .brand-public-page {
+  font: 400 1rem/1.65 var(--brand-body);
+}
+
+.marketing-brand .brand-public-page h1 {
+  font-size: clamp(2.25rem, 1.8rem + 2vw, 3rem);
+  line-height: 1.08;
+  letter-spacing: -.035em;
+  text-wrap: balance;
+}
+
+.marketing-brand .brand-public-page h2 {
+  margin: 0 0 .5rem;
+  font: 700 clamp(1.3125rem, 1.2rem + .45vw, 1.5rem)/1.25 var(--brand-body);
+  letter-spacing: -.02em;
+  text-wrap: balance;
+}
+
+.marketing-brand .brand-public-page .brand-public-intro {
+  font-size: 1.125rem;
+  line-height: 1.55;
+}
+
+.marketing-brand .brand-public-page p + p {
+  margin-block-start: .75rem;
+}
+
+.marketing-brand .brand-public-page a {
+  text-decoration: underline;
+  text-underline-offset: .18em;
+  overflow-wrap: anywhere;
+}

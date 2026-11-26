@@ -20,7 +20,7 @@ const SCAN_PATH = path.resolve(
 )
 const SCREENS_DIR = screensDir()
 
-const email = `e2e-${Date.now()}@example.com`
+const email = `e2e-${Date.now()}@e2e.lemely.local`
 const password = "CorrectHorseBattery9!"
 
 test.beforeAll(async ({ playwright }) => {

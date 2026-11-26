@@ -413,8 +413,14 @@ def _seed_ambient_grade_boundaries() -> Iterator[None]:
     feature/backend-served-reference-data (component_thresholds' own migration)
     and every branch built on develop since.
 
-    The rows below are clearly-fake fixture data (`example.invalid` source
-    URLs) standing in for that ingest, mirroring facts already documented
+    **Run pytest with `LEMELY_DATABASE__URL` set to a throwaway `lemely_test_*`
+    database.** This fixture is autouse and writes to whatever database is
+    configured, which is the shared development `postgres` by default -- even for a
+    test file whose own tests are fully mocked.
+
+    The rows (`scripts/e2e_fixtures.py`'s `BOUNDARY_FIXTURE_ROWS`, shared with the
+    Playwright database seed so the two cannot drift) are clearly-fake fixture data
+    (`example.invalid` source URLs) standing in for that ingest, mirroring facts already documented
     elsewhere in this codebase so behaviour that depends on them stays correct:
 
     - 0625 paper 1 is Core-tier only (C-G, no A/B) on every recent session --
@@ -455,6 +461,7 @@ def _seed_ambient_grade_boundaries() -> Iterator[None]:
     from lemely.db.session import get_sessionmaker
     from lemely.io.grade_boundaries import invalidate_reference_cache
     from lemely.runtime.config import DatabaseSettings
+    from scripts.e2e_fixtures import BOUNDARY_FIXTURE_ROWS
 
     base_url = DatabaseSettings().url
     server_url = make_url(base_url).set(database="postgres")
@@ -473,49 +480,17 @@ def _seed_ambient_grade_boundaries() -> Iterator[None]:
         with sm() as session:
             rows = [
                 ComponentThreshold(
-                    subject_code="0625",
+                    subject_code=subject,
                     session_month=SessionMonth.may_june,
-                    session_year=2023,
-                    paper_number=1,
+                    session_year=year,
+                    paper_number=paper,
                     paper_variant=1,
-                    max_mark=40,
-                    thresholds={"C": 25, "D": 22, "E": 19, "F": 16, "G": 13},
+                    max_mark=max_mark,
+                    thresholds=thresholds,
                     verified=True,
-                    source_url="https://example.invalid/test-fixture/0625_s23_p11.pdf",
-                ),
-                ComponentThreshold(
-                    subject_code="0625",
-                    session_month=SessionMonth.may_june,
-                    session_year=2024,
-                    paper_number=1,
-                    paper_variant=1,
-                    max_mark=40,
-                    thresholds={"C": 26, "D": 23, "E": 20, "F": 17, "G": 14},
-                    verified=True,
-                    source_url="https://example.invalid/test-fixture/0625_s24_p11.pdf",
-                ),
-                ComponentThreshold(
-                    subject_code="0625",
-                    session_month=SessionMonth.may_june,
-                    session_year=2019,
-                    paper_number=2,
-                    paper_variant=1,
-                    max_mark=50,
-                    thresholds={"A": 35, "B": 29, "C": 25, "D": 21, "E": 17, "F": 13, "G": 9},
-                    verified=True,
-                    source_url="https://example.invalid/test-fixture/0625_s19_p21.pdf",
-                ),
-                ComponentThreshold(
-                    subject_code="0000",
-                    session_month=SessionMonth.may_june,
-                    session_year=2024,
-                    paper_number=1,
-                    paper_variant=1,
-                    max_mark=100,
-                    thresholds={"A": 80, "B": 70, "C": 60, "D": 50, "E": 40, "F": 30, "G": 20},
-                    verified=True,
-                    source_url="https://example.invalid/test-fixture/0000_s24_p11.pdf",
-                ),
+                    source_url=source_url,
+                )
+                for subject, year, paper, max_mark, thresholds, source_url in BOUNDARY_FIXTURE_ROWS
             ]
             session.add_all(rows)
             session.commit()

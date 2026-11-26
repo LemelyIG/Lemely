@@ -16,18 +16,19 @@ function sourceOf(relativePath: string): string {
   return stripComments(readFileSync(join(ROOT, relativePath), "utf8"))
 }
 
-describe("Overview.tsx", () => {
-  const source = sourceOf("src/portals/student/screens/Overview.tsx")
+describe("Home top row", () => {
+  // Lane L1: the streak chip became Home's streak pill. It must still be a
+  // real link to the student's training log (Me), on every viewport.
+  const source = sourceOf("src/portals/student/home/HomeTopRow.tsx")
 
-  it("renders XPStreak", () => {
-    expect(source).toContain("<XPStreak")
+  it("renders the streak pill as a Link to Me", () => {
+    expect(source).toContain("<Link")
+    expect(source).toContain("to={pill.to}")
   })
 
-  it("hides its streak chip at sm and above (sm:hidden), the inverse of the header's", () => {
-    const xpAt = source.indexOf("<XPStreak")
-    expect(xpAt).toBeGreaterThan(-1)
-    const nearby = source.slice(Math.max(0, xpAt - 400), xpAt)
-    expect(nearby).toContain("sm:hidden")
+  it("never hides the pill at a breakpoint", () => {
+    const pillAt = source.indexOf("to={pill.to}")
+    expect(source.slice(pillAt, pillAt + 400)).not.toMatch(/\b(?:sm|md|lg|xl):hidden\b/)
   })
 })
 

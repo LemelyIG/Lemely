@@ -231,7 +231,8 @@ export function BinnyFaq() {
               })}
             </div>
           </section>
-          <div className="brand-contact">
+          <section className="brand-contact" aria-labelledby="landing-contact-heading">
+            <h3 id="landing-contact-heading">Contact us</h3>
             {sentTo === '' ? (
               <>
                 <Textarea
@@ -291,7 +292,10 @@ export function BinnyFaq() {
                 </span>
               </div>
             )}
-          </div>
+            <span className="brand-contact-alt">
+              Call us at <a href={marketingLinks.phone}>+201067661974</a>
+            </span>
+          </section>
         </div>
       </div>
     </section>

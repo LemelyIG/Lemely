@@ -108,9 +108,9 @@ describe("the data page is public and reachable — P6.5", () => {
     expect(containsComponent(route!.element, "RequireAuth")).toBe(false)
   })
 
-  it("is linked from the marketing footer, so it is not an orphan route", () => {
+  it("is linked from the Privacy Policy, so it is not an orphan route", () => {
     const source = fs.readFileSync(
-      path.resolve(__dirname, "../../src/portals/marketing/MarketingFooter.tsx"),
+      path.resolve(__dirname, "../../src/portals/marketing/PublicPage.tsx"),
       "utf8",
     )
     expect(source).toMatch(/to="\/data"/)
@@ -221,11 +221,18 @@ describe("the access it describes is the access the backend grants — #243", ()
    * school_admin every class in their schools. A page that named only
    * class-scoped teachers was narrower than the code.
    */
-  it("names the school administrator and the platform administrator", () => {
+  it("discloses administrator access to student work and uploaded papers", () => {
     const section = dataHandlingSections.find((s) => s.heading === "Who else can see your work")
     expect(section).toBeDefined()
-    expect(section!.body).toMatch(/school administrator/i)
+    expect(section!.body).toMatch(/administrators with the appropriate access can see student work in the classes they manage and papers uploaded by teachers they oversee/i)
     expect(section!.body).toMatch(/platform administrator/i)
+  })
+
+  it("keeps class notices and leaving subject to eligibility", () => {
+    const joins = tutoringSections.find((s) => s.heading === "Parent links and class joins")!
+    const leaving = tutoringSections.find((s) => s.heading === "Teachers who can see your progress through a class")!
+    expect(joins.body).toMatch(/joins an eligible class/)
+    expect(leaving.body).toMatch(/leave a class from the tutoring data screen if that option is available/)
   })
 })
 

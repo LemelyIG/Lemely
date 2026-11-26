@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { isIntegrityReason, reasonLabel } from "@/portals/teacher/screens/Review"
+import { isIntegrityReason, reasonLabel } from "@/portals/teacher/screens/review/reviewLabels"
 
 /*
  * F4 — the AI-generated-answer detector is gone.

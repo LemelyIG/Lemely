@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { confidenceTone } from "@/portals/teacher/screens/Review"
+import { confidenceTone } from "@/portals/teacher/screens/review/reviewLabels"
 
 /*
  * US-039 finding G. `confidenceTone` used to call
