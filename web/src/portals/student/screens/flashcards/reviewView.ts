@@ -42,7 +42,20 @@ export const SHORT_ANSWER_CHARS = 14
 export const answerSize = (back: string) =>
   back.trim().length <= SHORT_ANSWER_CHARS ? "text-[34px]" : "text-[clamp(18px,6vw,34px)]"
 
-export type ReviewKeyAction = { kind: "reveal" } | { kind: "grade"; grade: ReviewGrade }
+/** How far a key scrolls a card face that is taller than the card: arrows move a few lines, Page keys most of a
+ * screenful, anything else 0. Safari does not focus a scroller, so the focused card forwards these itself. */
+export const CARD_SCROLL_LINE = 48
+export function cardScrollStep(key: string, viewport: number): number {
+  switch (key) {
+    case "ArrowDown": return CARD_SCROLL_LINE
+    case "ArrowUp": return -CARD_SCROLL_LINE
+    case "PageDown": return Math.round(viewport * 0.85)
+    case "PageUp": return -Math.round(viewport * 0.85)
+    default: return 0
+  }
+}
+
+export type ReviewKeyAction ={ kind: "reveal" } | { kind: "grade"; grade: ReviewGrade }
 
 /** Space/Enter flip before the reveal; 1-4 rate after it. Anything else is ignored. */
 export function reviewKeyAction(key: string, revealed: boolean): ReviewKeyAction | null {

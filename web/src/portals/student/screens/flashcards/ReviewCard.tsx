@@ -5,7 +5,7 @@ import { GESTURE_INTERACTIVE_SELECTOR } from "@/lib/gestures/interactiveSelector
 import { GRADE_SWIPE_THRESHOLD, REVEAL_SWIPE_THRESHOLD, flashcardSwipeAction, swipeVisual } from "@/lib/flashcardSwipe"
 import type { CardDTO, ReviewGrade } from "@/lib/flashcardTypes"
 import { cardSourceLabel } from "./deckView"
-import { answerSize } from "./reviewView"
+import { answerSize, cardScrollStep } from "./reviewView"
 import { AiMark } from "./parts/AiMark"
 import "./flashcards.css"
 
@@ -16,6 +16,7 @@ export function ReviewCard({
   card, revealed, onReveal, onGrade,
 }: { card: CardDTO; revealed: boolean; onReveal: () => void; onGrade: (g: ReviewGrade) => void }) {
   const surface = useRef<HTMLDivElement>(null)
+  const body = useRef<HTMLDivElement>(null)
   const [dx, setDx] = useState(0)
   const [leaving, setLeaving] = useState<"left" | "right" | null>(null)
   const reduced = reducedMotion()
@@ -66,6 +67,15 @@ export function ReviewCard({
         // Space or Enter on the focused card flips it. Handled here and stopped, so the screen's window-level
         // shortcut does not flip it a second time; once flipped the card ignores both and they scroll or do nothing.
         onKeyDown={(e) => {
+          // A card taller than its face scrolls inside it; the focused card forwards the scroll keys to that body.
+          const scroller = body.current
+          const step = scroller && scroller.scrollHeight > scroller.clientHeight ? cardScrollStep(e.key, scroller.clientHeight) : 0
+          if (scroller && step !== 0) {
+            e.preventDefault()
+            e.stopPropagation()
+            scroller.scrollBy({ top: step, behavior: reduced ? "auto" : "smooth" })
+            return
+          }
           if (revealed || e.repeat || (e.key !== " " && e.key !== "Enter")) return
           e.preventDefault()
           e.stopPropagation()
@@ -73,7 +83,7 @@ export function ReviewCard({
         }}
         style={{ transform: leaving ? undefined : `translateX(${dx}px) rotate(${visual.rotateDeg}deg)` }}
         className={[
-          "absolute inset-0 focus-visible:!rounded-[28px] flex flex-col items-center justify-center gap-[22px] rounded-[28px] bg-surface-container-lowest p-7 text-center",
+          "absolute inset-0 focus-visible:!rounded-[28px] flex flex-col rounded-[28px] bg-surface-container-lowest text-center",
           "shadow-[0_18px_36px_-18px_oklch(0.3_0.06_242/0.4),inset_0_0_0_1px_var(--color-outline-variant)]",
           visual.armed ? (stampGood ? "!shadow-[0_18px_36px_-18px_oklch(0.3_0.06_242/0.4),inset_0_0_0_3px_var(--color-success-text)]" : "!shadow-[0_18px_36px_-18px_oklch(0.3_0.06_242/0.4),inset_0_0_0_3px_var(--color-on-error-container)]") : "",
           revealed ? "animate-[fc-flip_450ms_var(--ease-out)_both] motion-reduce:animate-none" : "animate-[fc-rise_280ms_var(--ease-out)] motion-reduce:animate-none",
@@ -90,19 +100,32 @@ export function ReviewCard({
           </span>
         ) : null}
         {card.source === "ai" ? <span className="absolute bottom-4 right-5"><AiMark label={cardSourceLabel("ai")} /></span> : null}
-        {revealed ? (
-          <>
-            <span className="text-balance text-[20px] font-bold leading-[1.35] text-on-surface-variant">{card.front}</span>
-            {" "}
-            <span className={`max-w-full break-words font-mono ${answerSize(card.back)} font-bold leading-[1.2] text-on-surface`}>{card.back}</span>
-          </>
-        ) : (
-          <>
-            <span className="text-balance font-display text-[28px] font-extrabold leading-[1.2] tracking-[-0.02em] text-primary">{card.front}</span>
-            {" "}
-            <span className="text-[13px] font-semibold text-on-surface-variant">Tap to flip</span>
-          </>
-        )}
+        {/* The face never grows: a long question scrolls inside this body instead of spilling into the action row below.
+            `my-auto` centres short content and, unlike justify-center, never pushes the start of tall content out of reach. */}
+        <div
+          ref={body}
+          data-fc-scroll=""
+          className={[
+            "flex min-h-0 w-full flex-1 touch-pan-y flex-col items-center overflow-y-auto overflow-x-hidden overscroll-y-contain rounded-[28px] px-7 [scrollbar-width:thin]",
+            card.source === "ai" ? "py-10" : "py-7",
+          ].join(" ")}
+        >
+          <div className="my-auto flex max-w-full flex-col items-center gap-[22px]">
+            {revealed ? (
+              <>
+                <span className="max-w-full text-balance break-words text-[20px] font-bold leading-[1.35] text-on-surface-variant">{card.front}</span>
+                {" "}
+                <span className={`max-w-full break-words font-mono ${answerSize(card.back)} font-bold leading-[1.2] text-on-surface`}>{card.back}</span>
+              </>
+            ) : (
+              <>
+                <span className="max-w-full text-balance break-words font-display text-[28px] font-extrabold leading-[1.2] tracking-[-0.02em] text-primary">{card.front}</span>
+                {" "}
+                <span className="text-[13px] font-semibold text-on-surface-variant">Tap to flip</span>
+              </>
+            )}
+          </div>
+        </div>
       </div>
       {revealed ? <span id={answerHintId} className="sr-only">Answer shown. Rate how well you knew it.</span> : null}
     </div>

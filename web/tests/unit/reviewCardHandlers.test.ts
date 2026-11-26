@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from "vitest"
 import type { CardDTO } from "@/lib/flashcardTypes"
 
 const gesture = vi.hoisted(() => ({ commit: (_x: number) => {} }))
+// Both refs resolve to this fake element: the card face (gesture hook is mocked) and its scrolling body.
+const body = vi.hoisted(() => ({ scrollHeight: 0, clientHeight: 0, scrollBy: (_o: unknown) => {} }))
 vi.mock("react", async (importOriginal) => ({
   ...await importOriginal<typeof import("react")>(),
-  useRef: () => ({ current: null }),
+  useRef: () => ({ current: body }),
   useEffect: () => {},
   useState: (value: unknown) => [value, vi.fn()],
 }))
@@ -66,5 +68,30 @@ describe("review card interactions", () => {
       expect(reveal).not.toHaveBeenCalled()
       expect(event.preventDefault).not.toHaveBeenCalled()
     }
+  })
+
+  it("scrolls a card taller than its face from the arrow and Page keys, and leaves the key alone otherwise", () => {
+    const run = (key: string) => {
+      const scrollBy = vi.fn()
+      body.scrollBy = scrollBy
+      const event = { key, repeat: false, preventDefault: vi.fn(), stopPropagation: vi.fn() }
+      const reveal = vi.fn()
+      findButton(ReviewCard({ card, revealed: false, onReveal: reveal, onGrade: vi.fn() }))?.props.onKeyDown?.(event)
+      return { scrollBy, event, reveal }
+    }
+    body.scrollHeight = 900
+    body.clientHeight = 300
+    const down = run("ArrowDown")
+    expect(down.scrollBy).toHaveBeenCalledWith(expect.objectContaining({ top: 48 }))
+    expect(down.event.preventDefault).toHaveBeenCalled()
+    expect(down.event.stopPropagation).toHaveBeenCalled()
+    expect(run("PageUp").scrollBy).toHaveBeenCalledWith(expect.objectContaining({ top: -255 }))
+    // Flipping still works on a long card.
+    expect(run(" ").reveal).toHaveBeenCalledTimes(1)
+
+    body.scrollHeight = 300
+    const fits = run("ArrowDown")
+    expect(fits.scrollBy).not.toHaveBeenCalled()
+    expect(fits.event.preventDefault).not.toHaveBeenCalled()
   })
 })

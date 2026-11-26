@@ -1,4 +1,4 @@
-import { expect, test, type BrowserContext, type Page } from "@playwright/test"
+import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test"
 
 /*
  * Rendered geometry of the flashcards review screens against the bottom tabs. DB-free: every
@@ -6,6 +6,12 @@ import { expect, test, type BrowserContext, type Page } from "@playwright/test"
  * none of the acceptance suite's global setup. The regression it guards: the shell's banners
  * (iOS install, offline, verify email) sit above the screen inside <main>, so a viewport-height
  * calculation that only subtracts bars pushed "Show answer" under the tabs on first paint.
+ *
+ * Two kinds of case, kept apart: "fits" cases promise the action is on screen at first paint, so the page
+ * must not scroll (and bringing the action into view must not scroll it either); "scrolls" cases are the
+ * intentional ones (stacked banners, a 480px-tall viewport) where the document scrolls and only its end is checked.
+ * Card-content cases additionally prove the question and hint stay inside the card, the card ends above the
+ * action and the action ends above the tabs, however long the question is.
  */
 
 // Set GEOMETRY_ARTIFACTS to keep the screenshots somewhere durable; otherwise they go to the test output folder.
@@ -38,14 +44,31 @@ async function open(context: BrowserContext, options: Options = {}): Promise<Pag
   return page
 }
 
+type Mode = "fits" | "scrolls"
+
+/** A "fits" case: the page starts unscrolled and scrolling the action into view moves nothing, so the action is on screen at first paint. */
+async function expectNoPageScroll(target: ReturnType<Page["getByRole"]>) {
+  const probe = await target.evaluate((el) => {
+    const before = window.scrollY
+    el.scrollIntoView({ block: "nearest", inline: "nearest" })
+    const after = window.scrollY
+    window.scrollTo(0, 0)
+    return { before, after }
+  })
+  expect(probe.before, "the page starts unscrolled").toBe(0)
+  expect(probe.after, "bringing the action into view must not scroll the page").toBe(0)
+}
+
 /** Bottom edge of `target` against the top of the bottom tabs (or the viewport where there are none). */
-async function measure(page: Page, name: string, target: ReturnType<Page["getByRole"]>, hasNav: boolean) {
+async function measure(page: Page, name: string, target: ReturnType<Page["getByRole"]>, hasNav: boolean, mode: Mode) {
+  if (mode === "fits") await expectNoPageScroll(target)
   const box = await target.boundingBox()
   expect(box).not.toBeNull()
   const navBox = hasNav ? await page.getByRole("navigation", { name: "Primary" }).boundingBox() : null
-  const measurement = { name, bottom: box!.y + box!.height, navTop: navBox?.y ?? null, scrollY: await page.evaluate(() => window.scrollY), viewport: page.viewportSize() }
+  const measurement = { name, mode, bottom: box!.y + box!.height, navTop: navBox?.y ?? null, scrollY: await page.evaluate(() => window.scrollY), viewport: page.viewportSize() }
   console.log("MEASUREMENT", JSON.stringify(measurement))
   await page.screenshot({ path: artifacts ? `${artifacts}/${name}.png` : test.info().outputPath(`${name}.png`) })
+  if (mode === "fits") expect(measurement.scrollY, "a fits case never scrolls").toBe(0)
   if (hasNav) {
     expect(navBox).not.toBeNull()
     expect(measurement.bottom).toBeLessThanOrEqual(navBox!.y)
@@ -53,6 +76,86 @@ async function measure(page: Page, name: string, target: ReturnType<Page["getByR
     expect(measurement.bottom).toBeLessThanOrEqual(page.viewportSize()!.height)
   }
 }
+
+const BACK = "A quantity with magnitude and direction"
+const HINT = "Tap to flip"
+const LONG_244 = "A particle starts from rest and moves in a straight line with constant acceleration, covering 36 metres in the first 4 seconds. Find the acceleration, the speed after 6 seconds, and the distance travelled in that time. Show all of your working."
+const ARABIC_LONG = "يبدأ جسيم من السكون ويتحرك في خط مستقيم بتسارع ثابت فيقطع ستة وثلاثين مترا في أول أربع ثوان. أوجد التسارع والسرعة بعد ست ثوان والمسافة التي يقطعها الجسيم في ذلك الزمن. اكتب جميع خطوات الحل بالتفصيل مع ذكر القوانين المستخدمة في كل خطوة."
+
+interface Rect { top: number; bottom: number; left: number; right: number }
+interface CardReport {
+  card: Rect; action: Rect; nav: Rect | null; viewportHeight: number
+  atStart: { question: Rect; last: Rect }; atEnd: { question: Rect; last: Rect }
+  scrolls: boolean; coveredAtEnd: boolean; centerDelta: number
+}
+
+/**
+ * Where everything sits on a card screen. The scrolling body (if the face has one) is driven to its start and
+ * to its end so the question's first line and the last line (the hint, or the answer once flipped) are both
+ * measured where a reader would see them; the body is put back at its start before returning.
+ */
+async function inspectCard(page: Page, front: string, action: ReturnType<Page["getByRole"]>, revealed: boolean, hasNav: boolean): Promise<CardReport> {
+  const handle = await action.elementHandle()
+  expect(handle).not.toBeNull()
+  const navHandle = hasNav ? await page.getByRole("navigation", { name: "Primary" }).elementHandle() : null
+  return page.evaluate(({ front, lastText, action, nav }) => {
+    const rect = (el: Element): Rect => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right } }
+    const card = document.querySelector('[role="button"][data-review-primary]')!
+    const spans = [...card.querySelectorAll("span")]
+    const question = spans.find((s) => s.textContent === front)!
+    const last = spans.find((s) => s.textContent === lastText)!
+    let scroller: Element | null = null
+    for (let node = question.parentElement; node && node !== card; node = node.parentElement) {
+      if (/(auto|scroll)/.test(getComputedStyle(node).overflowY)) { scroller = node; break }
+    }
+    const scrolls = scroller !== null && scroller.scrollHeight > scroller.clientHeight + 1
+    if (scroller) scroller.scrollTop = 0
+    const atStart = { question: rect(question), last: rect(last) }
+    const centerDelta = Math.abs((atStart.question.top + atStart.last.bottom) / 2 - (rect(card).top + rect(card).bottom) / 2)
+    if (scroller) scroller.scrollTop = scroller.scrollHeight
+    const atEnd = { question: rect(question), last: rect(last) }
+    const hit = document.elementFromPoint((atEnd.last.left + atEnd.last.right) / 2, (atEnd.last.top + atEnd.last.bottom) / 2)
+    const coveredAtEnd = !(hit !== null && last.contains(hit))
+    if (scroller) scroller.scrollTop = 0
+    return { card: rect(card), action: rect(action), nav: nav ? rect(nav) : null, viewportHeight: window.innerHeight, atStart, atEnd, scrolls, coveredAtEnd, centerDelta }
+  }, { front, lastText: revealed ? BACK : HINT, action: handle!, nav: navHandle })
+}
+
+/** The brief's geometry: question and hint inside the card, card above the action, action above the tabs. */
+async function expectCardReadable(page: Page, front: string, action: ReturnType<Page["getByRole"]>, opts: { revealed?: boolean; hasNav: boolean; expectScroll?: boolean }) {
+  const r = await inspectCard(page, front, action, opts.revealed ?? false, opts.hasNav)
+  console.log("CARD", JSON.stringify({ front: front.length, card: r.card, action: r.action, scrolls: r.scrolls, centerDelta: r.centerDelta }))
+  if (opts.expectScroll !== undefined) expect(r.scrolls, "the face scrolls its own content").toBe(opts.expectScroll)
+  for (const [label, at] of [["start", r.atStart], ["end", r.atEnd]] as const) {
+    expect(at.question.left, `question inside the card at the ${label}`).toBeGreaterThanOrEqual(r.card.left)
+    expect(at.question.right, `question inside the card at the ${label}`).toBeLessThanOrEqual(r.card.right)
+    expect(at.last.left, `last line inside the card at the ${label}`).toBeGreaterThanOrEqual(r.card.left)
+    expect(at.last.right, `last line inside the card at the ${label}`).toBeLessThanOrEqual(r.card.right)
+  }
+  expect(r.atStart.question.top, "the top of the question is readable at the start").toBeGreaterThanOrEqual(r.card.top)
+  expect(r.atEnd.last.bottom, "the hint (or answer) is readable at the end").toBeLessThanOrEqual(r.card.bottom)
+  expect(r.coveredAtEnd, "nothing covers the last line").toBe(false)
+  expect(r.card.bottom, "the card ends above the action").toBeLessThanOrEqual(r.action.top)
+  expect(r.action.bottom, "the action ends above the tabs").toBeLessThanOrEqual(r.nav ? r.nav.top : r.viewportHeight)
+  return r
+}
+
+/** 44px targets: every button in the action area (the lone Show answer, or the four grades). */
+async function expectTargets(buttons: ReturnType<Page["getByRole"]>) {
+  const count = await buttons.count()
+  expect(count).toBeGreaterThan(0)
+  for (let i = 0; i < count; i++) {
+    const box = await buttons.nth(i).boundingBox()
+    expect(box!.height).toBeGreaterThanOrEqual(44)
+    expect(box!.width).toBeGreaterThanOrEqual(44)
+  }
+}
+
+interface Env { width: number; height?: number; ua?: string; mobile: boolean; colorScheme?: "dark" | "light" }
+const newContext = (browser: Browser, env: Env) => browser.newContext({
+  viewport: { width: env.width, height: env.height ?? 844 }, userAgent: env.ua, isMobile: env.mobile, hasTouch: env.mobile, reducedMotion: "reduce", colorScheme: env.colorScheme,
+})
+const IOS_380: Env = { width: 380, ua: ios, mobile: true }
 
 const showAnswer = (page: Page) => page.getByRole("button", { name: /^Show answer/ })
 
@@ -71,11 +174,11 @@ for (const item of [
     const dismiss = page.getByRole("button", { name: "Dismiss install banner" })
     if (item.banner) await expect(dismiss).toBeVisible()
     else await expect(dismiss).toHaveCount(0)
-    await measure(page, `${item.name}-shown`, showAnswer(page), item.nav)
+    await measure(page, `${item.name}-shown`, showAnswer(page), item.nav, "fits")
     if (item.banner) {
       await dismiss.click()
       await expect(dismiss).toHaveCount(0)
-      await measure(page, `${item.name}-dismissed`, showAnswer(page), item.nav)
+      await measure(page, `${item.name}-dismissed`, showAnswer(page), item.nav, "fits")
     }
     await context.close()
   })
@@ -87,7 +190,7 @@ test("ios-380 revealed grade buttons clear the tabs under the install banner", a
   await expect(page.getByRole("button", { name: "Dismiss install banner" })).toBeVisible()
   await showAnswer(page).click()
   await expect(page.getByRole("group", { name: "How well did you know it?" })).toBeVisible()
-  await measure(page, "ios-380-revealed", page.getByRole("group", { name: "How well did you know it?" }), true)
+  await measure(page, "ios-380-revealed", page.getByRole("group", { name: "How well did you know it?" }), true, "fits")
   await context.close()
 })
 
@@ -99,7 +202,7 @@ test("ios-380 done screen clears the tabs under the install banner", async ({ br
   await page.getByRole("group", { name: "How well did you know it?" }).getByRole("button").nth(2).click()
   const back = page.getByRole("button", { name: "Back to decks" })
   await expect(back).toBeVisible()
-  await measure(page, "ios-380-done", back, true)
+  await measure(page, "ios-380-done", back, true, "fits")
   await context.close()
 })
 
@@ -113,7 +216,7 @@ test("ios-380 clears navigation with the offline, verify-email and install banne
   // Three banners plus the card's 320px minimum no longer fit: the page must scroll, and the end of it must clear the tabs.
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0)
-  await measure(page, "ios-380-all-banners", showAnswer(page), true)
+  await measure(page, "ios-380-all-banners", showAnswer(page), true, "scrolls")
   await context.close()
 })
 
@@ -122,7 +225,7 @@ test("android-380 clears navigation under the offline banner", async ({ browser 
   const page = await open(context)
   await context.setOffline(true)
   await expect(page.getByText("You're offline.")).toBeVisible()
-  await measure(page, "android-380-offline", showAnswer(page), true)
+  await measure(page, "android-380-offline", showAnswer(page), true, "fits")
   await context.close()
 })
 
@@ -130,7 +233,7 @@ test("web-380 clears navigation under the verify-email banner", async ({ browser
   const context = await browser.newContext({ viewport: { width: 380, height: 844 }, reducedMotion: "reduce" })
   const page = await open(context, { unverified: true })
   await expect(page.getByText("Your email isn't verified yet.")).toBeVisible()
-  await measure(page, "web-380-verify", showAnswer(page), true)
+  await measure(page, "web-380-verify", showAnswer(page), true, "fits")
   await context.close()
 })
 
@@ -140,15 +243,119 @@ test("short viewport keeps ordinary document scrolling", async ({ browser }) => 
   expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeGreaterThan(480)
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0)
-  await measure(page, "ios-short-scrolled", showAnswer(page), true)
+  await measure(page, "ios-short-scrolled", showAnswer(page), true, "scrolls")
   await context.close()
 })
 
-test("long card content stays inside the card and above the tabs", async ({ browser }) => {
-  const context = await browser.newContext({ viewport: { width: 380, height: 844 }, userAgent: ios, isMobile: true, hasTouch: true, reducedMotion: "reduce" })
-  const front = Array.from({ length: 60 }, (_, i) => `Line ${i + 1} of a very long question about vectors.`).join(" ")
-  const page = await open(context, { front })
-  await expect(page.getByRole("button", { name: "Dismiss install banner" })).toBeVisible()
-  await measure(page, "ios-380-long-content", showAnswer(page), true)
-  await context.close()
+test.describe("card content stays inside the card, above the action, above the tabs", () => {
+  test("ios-380 244-character question under the install banner scrolls inside the card, never into Show answer", async ({ browser }) => {
+    const context = await newContext(browser, IOS_380)
+    const page = await open(context, { front: LONG_244 })
+    await expect(page.getByRole("button", { name: "Dismiss install banner" })).toBeVisible()
+    await expectCardReadable(page, LONG_244, showAnswer(page), { hasNav: true })
+    await expectTargets(showAnswer(page))
+    await measure(page, "ios-380-long-244", showAnswer(page), true, "fits")
+    await context.close()
+  })
+
+  test("an extreme 60-line question must scroll inside the face and still clear the action and tabs", async ({ browser }) => {
+    const context = await newContext(browser, IOS_380)
+    const front = Array.from({ length: 60 }, (_, i) => `Line ${i + 1} of a very long question about vectors.`).join(" ")
+    const page = await open(context, { front })
+    await expect(page.getByRole("button", { name: "Dismiss install banner" })).toBeVisible()
+    await expectCardReadable(page, front, showAnswer(page), { hasNav: true, expectScroll: true })
+    await measure(page, "ios-380-long-content", showAnswer(page), true, "fits")
+    await context.close()
+  })
+
+  for (const env of [
+    { name: "ios-380", ...IOS_380 },
+    { name: "web-768", width: 768, mobile: false },
+    { name: "web-1440", width: 1440, mobile: false },
+  ]) {
+    for (const [label, front] of [["short", "What is a vector?"], ["word", "Vector"]] as const) {
+      test(`${env.name} ${label} card stays centred, unscrolled and above the action`, async ({ browser }) => {
+        const context = await newContext(browser, env)
+        const page = await open(context, { front })
+        const hasNav = env.width < 1024
+        const r = await expectCardReadable(page, front, showAnswer(page), { hasNav, expectScroll: false })
+        expect(r.centerDelta, "a short card keeps its text centred in the face").toBeLessThanOrEqual(2)
+        await expectTargets(showAnswer(page))
+        await measure(page, label === "short" ? `${env.name}-short` : `${env.name}-short-word`, showAnswer(page), hasNav, "fits")
+        await context.close()
+      })
+    }
+  }
+
+  test("ios-380 flipped 244-character card keeps question and answer inside the face above the grades", async ({ browser }) => {
+    const context = await newContext(browser, IOS_380)
+    const page = await open(context, { front: LONG_244 })
+    await showAnswer(page).click()
+    const grades = page.getByRole("group", { name: "How well did you know it?" })
+    await expect(grades).toBeVisible()
+    await expectCardReadable(page, LONG_244, grades, { revealed: true, hasNav: true })
+    await expectTargets(grades.getByRole("button"))
+    await measure(page, "ios-380-long-244-revealed", grades, true, "fits")
+    await context.close()
+  })
+
+  test("ios-380 244-character question in dark mode is readable and really dark", async ({ browser }) => {
+    const light = await newContext(browser, IOS_380)
+    const lightPage = await open(light, { front: LONG_244 })
+    const lightBg = await lightPage.locator('[role="button"][data-review-primary]').evaluate((el) => getComputedStyle(el).backgroundColor)
+    await light.close()
+    const context = await newContext(browser, { ...IOS_380, colorScheme: "dark" })
+    const page = await open(context, { front: LONG_244 })
+    expect(await page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches)).toBe(true)
+    const darkBg = await page.locator('[role="button"][data-review-primary]').evaluate((el) => getComputedStyle(el).backgroundColor)
+    expect(darkBg, "the card surface changes with the theme").not.toBe(lightBg)
+    await expectCardReadable(page, LONG_244, showAnswer(page), { hasNav: true })
+    await measure(page, "ios-380-long-244-dark", showAnswer(page), true, "fits")
+    await context.close()
+  })
+
+  test("ios-380 244-character Arabic question in RTL is readable and stays inside the card", async ({ browser }) => {
+    const context = await newContext(browser, IOS_380)
+    const page = await open(context, { front: ARABIC_LONG })
+    await page.evaluate(() => { document.documentElement.dir = "rtl"; document.documentElement.lang = "ar" })
+    await expectCardReadable(page, ARABIC_LONG, showAnswer(page), { hasNav: true })
+    await expectTargets(showAnswer(page))
+    await measure(page, "ios-380-long-244-rtl", showAnswer(page), true, "fits")
+    await context.close()
+  })
+
+  test("a long card scrolls from the keyboard and the wheel without moving the page", async ({ browser }) => {
+    const context = await newContext(browser, { width: 380, mobile: false })
+    const front = Array.from({ length: 12 }, (_, i) => `Line ${i + 1} of a long question about vectors and their uses.`).join(" ")
+    const page = await open(context, { front })
+    const card = page.locator('[role="button"][data-review-primary]')
+    const body = card.locator("[data-fc-scroll]")
+    const top = () => body.evaluate((el) => el.scrollTop)
+    expect(await body.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true)
+    await card.focus()
+    await page.keyboard.press("PageDown")
+    await expect.poll(top).toBeGreaterThan(0)
+    await page.keyboard.press("PageUp")
+    await expect.poll(top).toBe(0)
+    await expect(page.getByRole("group", { name: "How well did you know it?" })).toHaveCount(0)
+    const box = (await card.boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.wheel(0, 240)
+    await expect.poll(top).toBeGreaterThan(0)
+    expect(await page.evaluate(() => window.scrollY)).toBe(0)
+    await context.close()
+  })
+
+  test("a right swipe over the scrolling body still flips the card", async ({ browser }) => {
+    const context = await newContext(browser, { width: 380, mobile: false })
+    const page = await open(context, { front: LONG_244 })
+    const box = (await page.locator('[role="button"][data-review-primary]').boundingBox())!
+    const y = box.y + box.height / 2
+    await page.mouse.move(box.x + 60, y)
+    await page.mouse.down()
+    await page.mouse.move(box.x + 300, y, { steps: 12 })
+    await page.mouse.up()
+    await expect(page.getByRole("group", { name: "How well did you know it?" })).toBeVisible()
+    await context.close()
+  })
 })
