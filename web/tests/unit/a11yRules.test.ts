@@ -276,32 +276,101 @@ describe("icon-only controls carry an accessible name", () => {
   })
 })
 
+/**
+ * The one host exempt because its keyboard path lives on a descendant (owner
+ * decision, L10 Task 17, option a). The review card's frame tracks the pointer
+ * (press, slop, drag) and reveals the answer on a clean tap anywhere on the
+ * card; Space and Enter do the same on the face inside it, which is a focusable
+ * `role="button"` with its own key handler. Making the frame a second tab stop
+ * would put two controls on one card that announce the same action.
+ *
+ * Narrow on purpose, both halves must hold: the file is named here, and the
+ * host must contain a descendant that is itself focusable and key-operable.
+ * The same `onClick` on a bare div, in this file or any other, still fails.
+ */
+const KEYBOARD_ON_DESCENDANT = ["src/portals/student/screens/flashcards/ReviewCard.tsx"]
+
+/** True when something inside `inner` takes focus and answers Space or Enter on its own. */
+function hasKeyOperableDescendant(inner: string): boolean {
+  if (elements(inner, "button").length > 0) return true
+  return NON_INTERACTIVE_HOSTS.some((host) =>
+    elements(inner, host).some(
+      ({ openTag }) =>
+        /\brole\s*=\s*"button"/.test(openTag) &&
+        /\btabIndex\s*=/.test(openTag) &&
+        /\bonKey(?:Down|Up|Press)\s*=/.test(openTag),
+    ),
+  )
+}
+
+/** Every click handler on a non-interactive host that a keyboard cannot reach. */
+function clickHostOffenders(file: string, source: string): string[] {
+  const offenders: string[] = []
+  for (const tag of NON_INTERACTIVE_HOSTS) {
+    for (const el of elements(source, tag)) {
+      if (!/\bonClick\s*=/.test(el.openTag)) continue
+      // A scrim is hidden from the accessibility tree outright, and the
+      // keyboard equivalent of clicking it is the Escape its own dialog
+      // handles (`modal.tsx`, `nav-drawer.tsx` both do). Making it a tab
+      // stop would add a focusable element that announces nothing and sits
+      // between the reader and the dialog.
+      if (/\baria-hidden\s*=\s*(?:"true"|\{true\})/.test(el.openTag)) continue
+      if (KEYBOARD_ON_DESCENDANT.includes(file) && hasKeyOperableDescendant(el.inner)) continue
+      const missing = [
+        !/\brole\s*=/.test(el.openTag) && "role",
+        !/\btabIndex\s*=/.test(el.openTag) && "tabIndex",
+        !/\bonKey(?:Down|Up|Press)\s*=/.test(el.openTag) && "a key handler",
+      ].filter(Boolean)
+      if (missing.length === 0) continue
+      offenders.push(
+        `${file}:${lineOf(source, el.index)} — <${tag} onClick> is missing ${missing.join(", ")}`,
+      )
+    }
+  }
+  return offenders
+}
+
 describe("every flow is completable from the keyboard", () => {
   it("a click handler on a non-interactive host is focusable and key-operable", () => {
     const offenders: string[] = []
-    for (const { file, source } of PARSED) {
-      for (const tag of NON_INTERACTIVE_HOSTS) {
-        for (const el of elements(source, tag)) {
-          if (!/\bonClick\s*=/.test(el.openTag)) continue
-          // A scrim is hidden from the accessibility tree outright, and the
-          // keyboard equivalent of clicking it is the Escape its own dialog
-          // handles (`modal.tsx`, `nav-drawer.tsx` both do). Making it a tab
-          // stop would add a focusable element that announces nothing and sits
-          // between the reader and the dialog.
-          if (/\baria-hidden\s*=\s*(?:"true"|\{true\})/.test(el.openTag)) continue
-          const missing = [
-            !/\brole\s*=/.test(el.openTag) && "role",
-            !/\btabIndex\s*=/.test(el.openTag) && "tabIndex",
-            !/\bonKey(?:Down|Up|Press)\s*=/.test(el.openTag) && "a key handler",
-          ].filter(Boolean)
-          if (missing.length === 0) continue
-          offenders.push(
-            `${relativeTo(file)}:${lineOf(source, el.index)} — <${tag} onClick> is missing ${missing.join(", ")}`,
-          )
-        }
-      }
-    }
+    for (const { file, source } of PARSED) offenders.push(...clickHostOffenders(relativeTo(file), source))
     expect(offenders).toEqual([])
+  })
+
+  describe("the descendant-keyboard exemption stays narrow", () => {
+    const CARD = KEYBOARD_ON_DESCENDANT[0]
+    const FACE = '<div role="button" tabIndex={0} onKeyDown={k}>q</div>'
+    const frame = (inner: string) => stripComments(`<div onPointerDown={p} onClick={reveal}>${inner}</div>`)
+
+    it("exempts the named file's frame when a key-operable descendant exists", () => {
+      expect(clickHostOffenders(CARD, frame(FACE))).toEqual([])
+      expect(clickHostOffenders(CARD, frame('<button onClick={x}>q</button>'))).toEqual([])
+    })
+
+    it("still fails the same onClick on a div with no descendant button", () => {
+      expect(clickHostOffenders(CARD, frame("<span>q</span>"))).toHaveLength(1)
+      expect(clickHostOffenders(CARD, frame(""))).toHaveLength(1)
+    })
+
+    it("still fails when the descendant is not focusable or has no key handler", () => {
+      expect(clickHostOffenders(CARD, frame('<div role="button" onKeyDown={k}>q</div>'))).toHaveLength(1)
+      expect(clickHostOffenders(CARD, frame('<div role="button" tabIndex={0}>q</div>'))).toHaveLength(1)
+      expect(clickHostOffenders(CARD, frame('<div tabIndex={0} onKeyDown={k}>q</div>'))).toHaveLength(1)
+    })
+
+    it("still fails the same shape in any other file", () => {
+      expect(clickHostOffenders("src/portals/student/screens/Other.tsx", frame(FACE))).toHaveLength(1)
+    })
+
+    it("is not dead: the named file still holds the exempted frame", () => {
+      // An exemption nobody uses is a hole nobody notices. If the frame moves
+      // or loses its onClick, this fails and the entry should be deleted.
+      const { source } = PARSED.find(({ file }) => relativeTo(file) === CARD) ?? { source: "" }
+      const hosts = NON_INTERACTIVE_HOSTS.flatMap((tag) => elements(source, tag)).filter(
+        ({ openTag, inner }) => /\bonClick\s*=/.test(openTag) && hasKeyOperableDescendant(inner),
+      )
+      expect(hosts).toHaveLength(1)
+    })
   })
 })
 
