@@ -19,6 +19,7 @@ import lemely.db.subscription_repo  # noqa: F401
 from lemely.db.billing_repo import BillingService
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from datetime import datetime
 
     from sqlalchemy.orm import Session, sessionmaker
@@ -33,10 +34,16 @@ def reconcile_pending_payments(
     settings: PaymobSettings,
     *,
     now: datetime,
+    should_stop: Callable[[], bool] | None = None,
 ) -> int:
-    """One pass of ``billing.reconcile_pending``; returns the payments inquired."""
+    """One pass of ``billing.reconcile_pending``; returns the payments inquired.
+
+    ``should_stop`` ends the batch between rows (see ``BillingService.reconcile_pending``).
+    """
     with sessionmaker() as session:
-        return BillingService(session, client, settings, now=lambda: now).reconcile_pending(now=now)
+        return BillingService(session, client, settings, now=lambda: now).reconcile_pending(
+            now=now, should_stop=should_stop
+        )
 
 
 __all__ = ["reconcile_pending_payments"]

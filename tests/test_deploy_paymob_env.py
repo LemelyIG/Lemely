@@ -28,11 +28,16 @@ _VARIABLES = {
 #: Fields that keep their code default in every environment. ``expect_live`` stays off until
 #: live keys are installed; then set ``LEMELY_PAYMOB__EXPECT_LIVE=true`` for production (see
 #: the go-live checklist, L1). ``subscription_amount_updatable`` defaults to true everywhere
-#: until sandbox S14 answers R19; set the env var only if Paymob refuses amount PUTs.
+#: until sandbox S14 answers R19; set the env var only if Paymob refuses amount PUTs. The four
+#: timeouts keep their defaults so the settings check on the sweep budget holds in every
+#: environment.
 _DEFAULTED = {
     "api_base",
     "checkout_base",
     "timeout_seconds",
+    "connect_timeout_seconds",
+    "write_timeout_seconds",
+    "pool_timeout_seconds",
     "expect_live",
     "subscription_amount_updatable",
 }

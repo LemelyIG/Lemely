@@ -16,6 +16,7 @@ from lemely.io.paymob.client import (
     PaymobClient,
     PaymobError,
     PaymobNotConfigured,
+    with_fresh_token,
 )
 from lemely.runtime.config import PaymobSettings
 from tests.paymob_fixtures import (
@@ -325,6 +326,69 @@ def test_the_auth_token_is_cached_under_an_hour_then_renewed() -> None:
     clock.now += 2 * 60
     client.inquire_by_order_ref("c")
     assert rec.hits("/api/auth/tokens") == 2
+
+
+def test_ensure_auth_token_renews_a_token_that_would_expire_within_the_window() -> None:
+    clock = Clock()
+    client, rec = _client({("POST", INQUIRY_PATH): (200, transaction_obj())}, clock=clock)
+    client.ensure_auth_token(valid_for=240)
+    assert rec.hits("/api/auth/tokens") == 1
+    clock.now += AUTH_TOKEN_TTL_SECONDS - 241
+    client.ensure_auth_token(valid_for=240)  # 241 s left: still enough
+    assert rec.hits("/api/auth/tokens") == 1
+    clock.now += 2
+    client.ensure_auth_token(valid_for=240)  # 239 s left: renewed now, not mid-batch
+    assert rec.hits("/api/auth/tokens") == 2
+    client.inquire_by_order_ref("a")
+    assert rec.hits("/api/auth/tokens") == 2
+
+
+def test_a_failed_early_renewal_keeps_the_token_that_is_still_valid() -> None:
+    clock = Clock()
+    client, rec = _client(
+        {
+            AUTH: [(200, {"token": "tok_old"}), (500, {"detail": "down"}), (200, {"token": "x"})],
+            ("POST", INQUIRY_PATH): (200, transaction_obj()),
+        },
+        clock=clock,
+    )
+    client.ensure_auth_token(valid_for=0)
+    clock.now += AUTH_TOKEN_TTL_SECONDS - 60
+    with pytest.raises(PaymobError):
+        client.ensure_auth_token(valid_for=240)
+    client.inquire_by_order_ref("a")  # the old token has 60 s left and is used
+    assert rec.requests[-1].headers["authorization"] == "Bearer tok_old"
+    assert rec.hits("/api/auth/tokens") == 2
+
+
+def test_with_fresh_token_mints_before_the_first_stop_check_only() -> None:
+    clock = Clock()
+    client, rec = _client({}, clock=clock)
+    order: list[str] = []
+
+    def should_stop() -> bool:
+        order.append(f"check after {rec.hits('/api/auth/tokens')} mint(s)")
+        return False
+
+    stop = with_fresh_token(client, should_stop, valid_for=240)
+    assert rec.hits("/api/auth/tokens") == 0  # nothing until the batch asks
+    assert stop() is False
+    clock.now += AUTH_TOKEN_TTL_SECONDS  # even with the token gone stale
+    assert stop() is False
+    assert order == ["check after 1 mint(s)", "check after 1 mint(s)"]
+
+
+def test_with_fresh_token_still_asks_the_stop_check_when_the_mint_fails() -> None:
+    client, rec = _client({AUTH: (500, {"detail": "down"})})
+    stop = with_fresh_token(client, lambda: True)
+    assert stop() is True
+    assert rec.hits("/api/auth/tokens") == 1
+
+    unconfigured = PaymobClient(
+        PAYMOB_SETTINGS.model_copy(update={"api_key": None}),
+        http=httpx.Client(transport=httpx.MockTransport(rec)),
+    )
+    assert with_fresh_token(unconfigured, lambda: False)() is False
 
 
 def test_a_401_on_an_idempotent_get_refreshes_the_token_and_retries_once() -> None:

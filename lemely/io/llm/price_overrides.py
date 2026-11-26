@@ -19,6 +19,7 @@ the dearest one.
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from dataclasses import dataclass
 from datetime import datetime  # noqa: TC003 - the dataclass field is read at runtime
@@ -27,7 +28,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from lemely.io.llm.pricing import PriceRow
 
@@ -196,6 +197,7 @@ class Snapshot:
 
 _lock = threading.Lock()
 _current: Snapshot | None = None
+_read_hook: Callable[[], None] | None = None
 
 
 def install(snapshot: Snapshot | None) -> None:
@@ -205,9 +207,28 @@ def install(snapshot: Snapshot | None) -> None:
         _current = snapshot
 
 
+def set_read_hook(hook: Callable[[], None] | None) -> None:
+    """Call ``hook`` before every price read; ``None`` removes it.
+
+    The web app sets one that starts a refresh when the installed snapshot is older than its time
+    to live, so every process follows an admin write by itself. The hook must return quickly and
+    is never allowed to fail a read: an exception from it is ignored.
+    """
+    global _read_hook
+    _read_hook = hook
+
+
+def _installed() -> Snapshot | None:
+    hook = _read_hook
+    if hook is not None:
+        with contextlib.suppress(Exception):
+            hook()
+    return _current
+
+
 def current() -> Snapshot | None:
     """The installed snapshot, or ``None`` when none was ever installed."""
-    return _current
+    return _installed()
 
 
 def resolve_in(
@@ -233,12 +254,12 @@ def resolve(
 
     ``None`` only when all three are absent (an unknown model).
     """
-    return resolve_in(_current, model, code_row, config_row)
+    return resolve_in(_installed(), model, code_row, config_row)
 
 
 def has_override(model: str) -> bool:
     """True when the installed snapshot holds an override for exactly ``model``."""
-    snapshot = _current
+    snapshot = _installed()
     return snapshot is not None and model in snapshot.overrides
 
 
@@ -251,4 +272,4 @@ def code_execution_hour_in(snapshot: Snapshot | None) -> float | None:
 
 def code_execution_usd_per_hour() -> float | None:
     """The admin's container-hour price, or ``None`` for the code value."""
-    return code_execution_hour_in(_current)
+    return code_execution_hour_in(_installed())

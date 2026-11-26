@@ -842,6 +842,38 @@ def test_queued_payments_are_charged_once_across_runs(
 
 
 @pytest.mark.usefixtures("clean_queue")
+def test_a_spent_budget_stops_the_queue_between_rows_and_the_rest_wait(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    payer = seed_user(pg_sessionmaker, Role.student)
+    seed_saved_card(pg_sessionmaker, payer, token=TOKEN)
+    ids = [_queue(pg_sessionmaker, payer) for _ in range(3)]
+    client = FakeMotoClient()
+
+    def out_of_time() -> bool:
+        return len(client.calls_to("pay_with_token")) >= 1
+
+    stopped = charge_queued_payments(
+        pg_sessionmaker,
+        client,
+        PAYMOB_SETTINGS,
+        purpose=PaymentPurpose.auto_topup,
+        dedupe_prefix="auto_topup:",
+        card_for=_active_card,
+        now=NOW,
+        should_stop=out_of_time,
+    )
+
+    assert stopped == 1
+    assert len(client.calls_to("pay_with_token")) == 1
+    statuses = [_row(pg_sessionmaker, i).status for i in ids]
+    # Never stopped inside a claimed charge: the one started is whole, the rest untouched.
+    assert statuses == [PaymentStatus.pending, PaymentStatus.created, PaymentStatus.created]
+    assert _run_queue(pg_sessionmaker, client) == 2  # the next pass takes exactly the rest
+    assert {_row(pg_sessionmaker, i).status for i in ids} == {PaymentStatus.pending}
+
+
+@pytest.mark.usefixtures("clean_queue")
 def test_two_replicas_interleaved_charge_each_queued_payment_once(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:

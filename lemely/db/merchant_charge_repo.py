@@ -60,7 +60,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, NamedTuple
 
 import sqlalchemy as sa
 import structlog
@@ -307,6 +307,18 @@ def fail_unsent(session: Session, payment_id: uuid.UUID, *, reason: str) -> bool
     return failed is not None
 
 
+class BatchStops(NamedTuple):
+    """The stop checks of a batch that has database-only rows and saved-card charges.
+
+    ``row`` is asked before each row that touches only the database, ``charge`` before each
+    charge is claimed. They differ because a charge is far longer and must not start unless the
+    pass has room for it, while a row costs about a second.
+    """
+
+    row: Callable[[], bool]
+    charge: Callable[[], bool]
+
+
 def charge_queued_payments(
     sessionmaker: sessionmaker[Session],
     client: PaymobClient,
@@ -317,8 +329,12 @@ def charge_queued_payments(
     card_for: Callable[[Session, Payment], SavedCard | None],
     now: datetime,
     limit: int = MERCHANT_SWEEP_BATCH,
+    should_stop: Callable[[], bool] | None = None,
 ) -> int:
     """Charge up to ``limit`` queued ``created`` payments, oldest first; returns how many handled.
+
+    ``should_stop`` is asked before each payment is claimed (never inside a claimed charge); once
+    it says stop, the payments not yet started stay ``created`` and are taken by the next run.
 
     One transaction per payment, so a row that fails cannot block or undo the others. Safe to run
     on several replicas at once: each payment is claimed by a conditional update, and a replica that
@@ -346,6 +362,8 @@ def charge_queued_payments(
         )
     handled = 0
     for payment_id in payment_ids:
+        if should_stop is not None and should_stop():
+            break
         if _charge_queued_one(
             sessionmaker, client, settings, payment_id, card_for=card_for, now=now
         ):
@@ -2641,6 +2659,8 @@ def run_extra_seat_renewal_job(
     *,
     now: datetime,
     limit: int = MERCHANT_SWEEP_BATCH,
+    should_stop: Callable[[], bool] | None = None,
+    should_stop_row: Callable[[], bool] | None = None,
 ) -> int:
     """Charge the seats a fixed-amount renewal left unpaid, with a grace and a drop; the count.
 
@@ -2652,7 +2672,12 @@ def run_extra_seat_renewal_job(
     transaction under ``FOR UPDATE SKIP LOCKED`` (a row another worker holds is left to it, a
     failing row is rolled back and alerted alone), and then the queued attempts are charged to
     the payer's active card over MOTO. Returns the rows changed plus the attempts handled.
+    ``should_stop`` is asked before each charge is claimed and ``should_stop_row`` (by default
+    ``should_stop``) before each subscription row, never inside either; whatever has not started
+    is left for the next run. The charges still run after the rows stop early, as they do when
+    more rows are due than ``limit``: each claim checks the attempt it charges.
     """
+    row_stop = should_stop_row if should_stop_row is not None else should_stop
     fallback = not settings.subscription_amount_updatable
     with sessionmaker() as session:
         try:
@@ -2662,10 +2687,12 @@ def run_extra_seat_renewal_job(
         candidates = _seat_candidate_ids(session, fallback=fallback, now=now, limit=limit)
         if fallback:
             _alert_unknown_terms(session, limit=limit)
-    handled = sum(
-        _seat_row_one(sessionmaker, subscription_id, fallback=fallback, now=now)
-        for subscription_id in candidates
-    )
+    handled = 0
+    for subscription_id in candidates:
+        # Asked between rows only: a row, once started, runs to its commit or rollback.
+        if row_stop is not None and row_stop():
+            break
+        handled += _seat_row_one(sessionmaker, subscription_id, fallback=fallback, now=now)
 
     def active_card(session: Session, payment: Payment) -> SavedCard | None:
         return MerchantChargeService(session, client, settings).active_card(payment.payer_user_id)
@@ -2679,6 +2706,7 @@ def run_extra_seat_renewal_job(
         card_for=active_card,
         now=now,
         limit=limit,
+        should_stop=should_stop,
     )
 
 
@@ -2693,6 +2721,7 @@ __all__ = [
     "SEATS_ITEM_NAME",
     "SEAT_RETRY_INTERVAL",
     "UPGRADE_ITEM_NAME",
+    "BatchStops",
     "ChargeAlreadyAttempted",
     "ChargeQuote",
     "ChargesUnavailable",

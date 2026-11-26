@@ -1222,8 +1222,20 @@ class BillingService:
 
     # -- reconciliation (spec §5.10) -------------------------------------------
 
-    def reconcile_pending(self, *, now: datetime, limit: int = RECONCILE_BATCH) -> int:
+    def reconcile_pending(
+        self,
+        *,
+        now: datetime,
+        limit: int = RECONCILE_BATCH,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> int:
         """Inquire every open payment that is due; commit after each. Returns how many.
+
+        ``should_stop`` is asked before each row, never mid-row: once it says so the batch ends
+        with the current row finished and committed. The sweeper uses it to end the batch at
+        its share of the pass budget (a batch is up to ``limit`` serial inquiries at up to the
+        client timeout each). The rows left are still due, and the select orders by
+        ``next_reconcile_at``, so the next pass takes them first and nothing is starved.
 
         ``FOR UPDATE SKIP LOCKED`` lets two replicas run this at once without
         inquiring the same payment twice. A payment still open after the inquiry
@@ -1248,6 +1260,8 @@ class BillingService:
         """
         handled = 0
         for _ in range(limit):
+            if should_stop is not None and should_stop():
+                break
             payment = self._session.scalars(
                 select(Payment)
                 .where(Payment.status.in_(_OPEN), Payment.next_reconcile_at <= now)

@@ -790,6 +790,31 @@ def test_a_sweep_processes_at_most_limit_rows_oldest_deadline_first(
     assert _sub(pg_sessionmaker, newer).status is SubscriptionStatus.expired
 
 
+def test_a_spent_budget_stops_the_expiry_between_rows_and_the_rest_wait(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    first = _past_due(pg_sessionmaker, 1, END + GRACE)
+    second = _past_due(pg_sessionmaker, 2, END + GRACE + timedelta(hours=1))
+    third = _past_due(pg_sessionmaker, 3, END + GRACE + timedelta(hours=2))
+    now = END + GRACE + timedelta(days=1)
+    client = _client()
+    asked: list[list[str]] = []
+
+    def should_stop() -> bool:
+        # The check sees what Paymob was told so far: it runs between rows, never mid-row.
+        asked.append(client.names())
+        return len(asked) > 1
+
+    assert _sweep(pg_sessionmaker, now, client, should_stop=should_stop) == 1
+    assert asked == [[], ["cancel_subscription"]]
+    assert client.names() == ["cancel_subscription"]  # only the first row reached Paymob
+    assert _sub(pg_sessionmaker, first).status is SubscriptionStatus.expired
+    for waiting in (second, third):
+        assert _sub(pg_sessionmaker, waiting).status is SubscriptionStatus.past_due
+
+    assert _sweep(pg_sessionmaker, now, client) == 2  # the next pass takes the rest
+
+
 def test_the_default_sweep_batch_is_bounded() -> None:
     assert SUBSCRIPTION_SWEEP_BATCH == 200
 

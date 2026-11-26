@@ -79,9 +79,10 @@ SettingsService = Annotated[BillingSettingsService, Depends(get_billing_settings
 def llm_price_scope(factory: sessionmaker[Session]) -> Iterator[LlmPriceService]:
     """One price service on one transaction; after a committed write, refresh this process.
 
-    The other instances pick the change up from the ``billing.llm_price_refresh`` job within one
-    sweep pass (normally about 60 seconds, longer when a pass is slow). A refused request raises
-    inside the ``with``, rolls back and never refreshes.
+    The other instances pick the change up on their own: a price read that finds the installed
+    prices a minute old refreshes them (``install_stale_refresh``), and the instance serving a sweep
+    pass refreshes in its ``billing.llm_price_refresh`` job. A refused request raises inside the
+    ``with``, rolls back and never refreshes.
     """
     with factory.begin() as session:
         service = LlmPriceService(session)

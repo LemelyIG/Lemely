@@ -40,7 +40,7 @@ from tests.subscription_fixtures import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -91,7 +91,7 @@ def _sweeper(
 def test_jobs_run_in_dv32_order_after_the_existing_ones(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    results = _sweeper(pg_sessionmaker, FakePaymobClient(), DEC_1).sweep_once()
+    results = _sweeper(pg_sessionmaker, FakePaymobClient(), DEC_1).sweep_unbounded_for_tests()
     assert list(results)[-5:] == JOBS
     assert all(results[name] == 0 for name in JOBS)
 
@@ -105,7 +105,7 @@ def test_without_either_collaborator_the_job_set_is_unchanged(
         DEC_1,
         with_subscriptions=False,
         seat_allowances=False,
-    ).sweep_once()
+    ).sweep_unbounded_for_tests()
     assert not set(JOBS) & set(results)
 
 
@@ -113,7 +113,7 @@ def test_seat_jobs_run_without_paymob(pg_sessionmaker: sessionmaker[Session]) ->
     """DV-22: a manual teacher plan still gets its seats released and granted."""
     results = _sweeper(
         pg_sessionmaker, FakePaymobClient(), DEC_1, with_subscriptions=False
-    ).sweep_once()
+    ).sweep_unbounded_for_tests()
     assert list(results)[-2:] == SEAT_JOBS
     assert not set(SUBSCRIPTION_JOBS) & set(results)
 
@@ -123,7 +123,7 @@ def test_subscription_jobs_do_not_need_the_seat_flag(
 ) -> None:
     results = _sweeper(
         pg_sessionmaker, FakePaymobClient(), DEC_1, seat_allowances=False
-    ).sweep_once()
+    ).sweep_unbounded_for_tests()
     assert list(results)[-3:] == SUBSCRIPTION_JOBS
     assert not set(SEAT_JOBS) & set(results)
 
@@ -135,7 +135,7 @@ def test_the_terms_jobs_run_before_the_expiry_and_period_end_sweeps(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     """UD13-A: announce, then schedule the fixed-path cancels, before the sweep pushes cancels."""
-    results = _sweeper(pg_sessionmaker, FakePaymobClient(), DEC_1).sweep_once()
+    results = _sweeper(pg_sessionmaker, FakePaymobClient(), DEC_1).sweep_unbounded_for_tests()
     order = list(results)
     assert all(results[name] == 0 for name in TERMS_JOBS)
     assert order.index(TERMS_JOBS[0]) + 1 == order.index(TERMS_JOBS[1])
@@ -148,7 +148,7 @@ def test_the_terms_jobs_need_the_subscription_collaborator_and_are_listed_for_he
 ) -> None:
     results = _sweeper(
         pg_sessionmaker, FakePaymobClient(), DEC_1, with_subscriptions=False
-    ).sweep_once()
+    ).sweep_unbounded_for_tests()
     assert not set(TERMS_JOBS) & set(results)
     assert set(TERMS_JOBS) <= set(BILLING_JOB_NAMES)
 
@@ -161,7 +161,7 @@ def test_every_job_is_recorded_in_job_runs(pg_sessionmaker: sessionmaker[Session
     sweeper = _sweeper(
         pg_sessionmaker, FakePaymobClient(), DEC_1, recorder=JobRunRecorder(pg_sessionmaker)
     )
-    results = sweeper.sweep_once()
+    results = sweeper.sweep_unbounded_for_tests()
     with pg_sessionmaker() as session:
         rows = {r.name: r for r in session.scalars(select(JobRun))}
     assert set(JOBS) <= set(rows)
@@ -172,11 +172,17 @@ def test_every_job_is_recorded_in_job_runs(pg_sessionmaker: sessionmaker[Session
 def test_a_job_that_throws_does_not_stop_the_others(
     pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def boom(self: SubscriptionService, *, now: datetime, limit: int = 1) -> int:
+    def boom(
+        self: SubscriptionService,
+        *,
+        now: datetime,
+        limit: int = 1,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> int:
         raise RuntimeError("paymob is down")
 
     monkeypatch.setattr(SubscriptionService, "expire_overdue", boom)
-    results = _sweeper(pg_sessionmaker, FakePaymobClient(), DEC_1).sweep_once()
+    results = _sweeper(pg_sessionmaker, FakePaymobClient(), DEC_1).sweep_unbounded_for_tests()
     assert results["subscriptions.expire_overdue"] is None
     assert [results[name] for name in JOBS[1:]] == [0, 0, 0, 0]
 
@@ -224,12 +230,12 @@ def test_drift_check_runs_once_per_utc_day(pg_sessionmaker: sessionmaker[Session
     client.subscriptions[4321] = remote_subscription(4321, amount_cents=12_345)
     client.last_transactions[4321] = charge(1, 10_000, success=False)
     sweeper = _sweeper(pg_sessionmaker, client, DEC_1)
-    assert sweeper.sweep_once()["subscriptions.drift_check"] == 1
+    assert sweeper.sweep_unbounded_for_tests()["subscriptions.drift_check"] == 1
     calls = len(client.calls)
-    assert sweeper.sweep_once()["subscriptions.drift_check"] == 0
+    assert sweeper.sweep_unbounded_for_tests()["subscriptions.drift_check"] == 0
     assert len(client.calls) == calls  # memo: no Paymob call the same day
     sweeper.now = lambda: DEC_1 + timedelta(days=1)
-    assert sweeper.sweep_once()["subscriptions.drift_check"] == 0  # in sync now
+    assert sweeper.sweep_unbounded_for_tests()["subscriptions.drift_check"] == 0  # in sync now
     assert len(client.calls) > calls  # but it did check
 
 
@@ -238,7 +244,13 @@ def test_a_drift_pass_that_raises_is_retried_on_the_next_tick(
 ) -> None:
     attempts: list[datetime] = []
 
-    def flaky(self: SubscriptionService, *, now: datetime, limit: int = 1) -> int:
+    def flaky(
+        self: SubscriptionService,
+        *,
+        now: datetime,
+        limit: int = 1,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> int:
         attempts.append(now)
         if len(attempts) == 1:
             raise RuntimeError("paymob is down")
@@ -246,8 +258,8 @@ def test_a_drift_pass_that_raises_is_retried_on_the_next_tick(
 
     monkeypatch.setattr(SubscriptionService, "check_drift", flaky)
     sweeper = _sweeper(pg_sessionmaker, FakePaymobClient(), DEC_1)
-    assert sweeper.sweep_once()["subscriptions.drift_check"] is None
-    assert sweeper.sweep_once()["subscriptions.drift_check"] == 2
+    assert sweeper.sweep_unbounded_for_tests()["subscriptions.drift_check"] is None
+    assert sweeper.sweep_unbounded_for_tests()["subscriptions.drift_check"] == 2
     assert len(attempts) == 2
 
 
@@ -273,7 +285,7 @@ def test_drift_covers_every_row_each_day_whatever_the_count(
     sweeper = _sweeper(pg_sessionmaker, client, DEC_1)
     for minutes in (0, 1, 300, 1300):
         sweeper.now = lambda m=minutes: DEC_1 + timedelta(minutes=m)
-        sweeper.sweep_once()
+        sweeper.sweep_unbounded_for_tests()
 
     def unchecked() -> int:
         with pg_sessionmaker() as session:
@@ -286,10 +298,10 @@ def test_drift_covers_every_row_each_day_whatever_the_count(
     assert unchecked() == 0
     calls = len(client.calls)
     sweeper.now = lambda: DEC_1 + timedelta(minutes=1400)
-    sweeper.sweep_once()
+    sweeper.sweep_unbounded_for_tests()
     assert len(client.calls) == calls  # all checked today: nothing to read
     sweeper.now = lambda: DEC_1 + timedelta(days=1, minutes=1)
-    sweeper.sweep_once()
+    sweeper.sweep_unbounded_for_tests()
     assert len(client.calls) > calls  # the next UTC day starts over
 
 
@@ -316,7 +328,7 @@ def test_an_expiring_teacher_plan_gets_no_new_month_of_seat_allowance(
     )
     student = seed_user(pg_sessionmaker, Role.student)
     seed_seat(pg_sessionmaker, teacher_id=teacher, student_id=student)
-    results = _sweeper(pg_sessionmaker, FakePaymobClient(), DEC_1).sweep_once()
+    results = _sweeper(pg_sessionmaker, FakePaymobClient(), DEC_1).sweep_unbounded_for_tests()
     assert results["subscriptions.expire_overdue"] == 1
     assert results["seats.monthly_allowance"] == 0
     with pg_sessionmaker() as session:
@@ -347,7 +359,7 @@ def test_a_seat_leaving_at_month_end_is_released_before_the_new_grant(
         leaves_at=DEC_1 - timedelta(minutes=1),
     )
     seed_seat(pg_sessionmaker, teacher_id=teacher, student_id=stayer)
-    results = _sweeper(pg_sessionmaker, FakePaymobClient(), DEC_1).sweep_once()
+    results = _sweeper(pg_sessionmaker, FakePaymobClient(), DEC_1).sweep_unbounded_for_tests()
     assert (results["seats.release_due"], results["seats.monthly_allowance"]) == (1, 1)
     with pg_sessionmaker() as session:
         member = session.get(TeacherMember, leaving)
@@ -384,7 +396,7 @@ def test_unconfigured_paymob_still_expires_an_overdue_plan_and_stops_its_allowan
     seed_seat(pg_sessionmaker, teacher_id=teacher, student_id=student)
     sweeper = _sweeper(pg_sessionmaker, FakePaymobClient(), DEC_1, with_subscriptions=False)
     sweeper.expiry = SubscriptionDeps(pg_sessionmaker, PaymobClient(unconfigured), unconfigured)
-    results = sweeper.sweep_once()
+    results = sweeper.sweep_unbounded_for_tests()
     assert list(results)[-3:] == ["subscriptions.expire_overdue", *SEAT_JOBS]
     assert results["subscriptions.expire_overdue"] == 1
     assert results["seats.monthly_allowance"] == 0
@@ -406,7 +418,13 @@ def test_the_underlying_calls_happen_in_dv32_order(
     """
     calls: list[str] = []
 
-    def expire(self: SubscriptionService, *, now: datetime, limit: int = 1) -> int:
+    def expire(
+        self: SubscriptionService,
+        *,
+        now: datetime,
+        limit: int = 1,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> int:
         calls.append("expire_overdue")
         return 0
 
@@ -421,7 +439,7 @@ def test_the_underlying_calls_happen_in_dv32_order(
     monkeypatch.setattr(SubscriptionService, "expire_overdue", expire)
     monkeypatch.setattr(TeacherTeamService, "release_due", release)
     monkeypatch.setattr(subscription_jobs, "grant_monthly_seat_allowances", grant)
-    _sweeper(pg_sessionmaker, FakePaymobClient(), DEC_1).sweep_once()
+    _sweeper(pg_sessionmaker, FakePaymobClient(), DEC_1).sweep_unbounded_for_tests()
     assert calls == ["expire_overdue", "release_due", "monthly_allowance"]
 
 

@@ -536,6 +536,32 @@ def test_the_limit_bounds_one_pass(pg_sessionmaker: sessionmaker[Session]) -> No
     assert all(_sub(pg_sessionmaker, sid).cancel_at_period_end for sid in (first, second))
 
 
+def test_a_spent_budget_stops_the_drift_check_between_rows_and_the_rest_wait(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    first = _linked(pg_sessionmaker, pid=1)
+    second = _linked(pg_sessionmaker, pid=2)
+    client = _client(pid=1, state="canceled")
+    client.subscriptions[2] = remote_subscription(2, state="canceled", initial_transaction=702)
+    client.last_transactions[2] = charge(702, 10_000)
+    asked: list[int] = []
+
+    def should_stop() -> bool:
+        asked.append(len(client.calls))  # Paymob calls made before each check
+        return len(asked) > 1
+
+    with pg_sessionmaker() as session:
+        service = SubscriptionService(session, client, paymob_settings())
+        assert service.check_drift(now=DAY, should_stop=should_stop) == 1
+    # The first row's reads and repair all ran before the second check; nothing after it.
+    assert asked[0] == 0
+    assert asked[1] == len(client.calls) > 0
+    repaired = [_sub(pg_sessionmaker, sid).cancel_at_period_end for sid in (first, second)]
+    assert sorted(repaired) == [False, True]
+    assert _drift(pg_sessionmaker, client) == 1  # the next pass, same day, takes the other row
+    assert all(_sub(pg_sessionmaker, sid).cancel_at_period_end for sid in (first, second))
+
+
 def test_a_limit_below_one_is_refused(pg_sessionmaker: sessionmaker[Session]) -> None:
     with pytest.raises(ValueError, match="limit"):
         _drift(pg_sessionmaker, FakePaymobClient(), limit=0)

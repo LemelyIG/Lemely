@@ -325,13 +325,13 @@ def _sweeper(sm: sessionmaker[Session], *, recorder: JobRunRecorder | None) -> S
         transport=RecordingPushTransport(),
         settings=NotificationsSettings(),
         now=lambda: NOW,
-        billing_reconcile=lambda moment: 2,
+        billing_reconcile=lambda moment, should_stop: 2,
         job_recorder=recorder,
     )
 
 
 def test_a_sweep_writes_one_job_run_per_job(sm: sessionmaker[Session]) -> None:
-    results = _sweeper(sm, recorder=JobRunRecorder(sm)).sweep_once()
+    results = _sweeper(sm, recorder=JobRunRecorder(sm)).sweep_unbounded_for_tests()
     with sm() as session:
         rows = {r.name: r for r in session.scalars(select(JobRun))}
     assert set(rows) == set(results)
@@ -341,7 +341,7 @@ def test_a_sweep_writes_one_job_run_per_job(sm: sessionmaker[Session]) -> None:
 
 
 def test_a_sweep_without_a_recorder_writes_nothing(sm: sessionmaker[Session]) -> None:
-    _sweeper(sm, recorder=None).sweep_once()
+    _sweeper(sm, recorder=None).sweep_unbounded_for_tests()
     with sm() as session:
         assert session.scalars(select(JobRun)).all() == []
 
@@ -548,7 +548,7 @@ def test_prune_is_bounded_per_pass_and_finishes_over_the_next(sm: sessionmaker[S
 def test_the_sweeper_prunes_old_failures_as_a_recorded_job(sm: sessionmaker[Session]) -> None:
     _failure_at(sm, NOW - timedelta(days=120))
     _failure_at(sm, NOW - timedelta(days=1))
-    results = _sweeper(sm, recorder=JobRunRecorder(sm)).sweep_once()
+    results = _sweeper(sm, recorder=JobRunRecorder(sm)).sweep_unbounded_for_tests()
     assert results["billing.prune_webhook_failures"] == 1
     assert len(_failures(sm)) == 1
     assert _row(sm, "billing.prune_webhook_failures").last_result_count == 1

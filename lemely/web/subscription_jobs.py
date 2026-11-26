@@ -22,8 +22,10 @@ from lemely.db.plan_terms_repo import (
 )
 from lemely.db.seat_allowance_repo import grant_monthly_seat_allowances
 from lemely.db.teacher_team_repo import TeacherTeamService
+from lemely.io.paymob.client import with_fresh_token
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from datetime import datetime
 
     from sqlalchemy.orm import Session, sessionmaker
@@ -33,26 +35,48 @@ if TYPE_CHECKING:
 log = structlog.get_logger("lemely.web.subscription_jobs")
 
 
-def expire_overdue_job(deps: SubscriptionDeps, *, now: datetime) -> int:
-    """Expire ``past_due`` subscriptions whose grace has elapsed; the count."""
+def expire_overdue_job(
+    deps: SubscriptionDeps, *, now: datetime, should_stop: Callable[[], bool] | None = None
+) -> int:
+    """Expire ``past_due`` subscriptions whose grace has elapsed; the count.
+
+    ``should_stop`` is asked before each row (each may cancel at Paymob), after the auth token
+    is made fresh, so the token request never runs inside a row (:func:`with_fresh_token`).
+    """
     with deps.sessionmaker() as session:
-        return deps.service(session).expire_overdue(now=now)
+        return deps.service(session).expire_overdue(now=now, should_stop=_fresh(deps, should_stop))
 
 
-def period_end_job(deps: SubscriptionDeps, *, now: datetime) -> int:
-    """Push amounts and cancels to Paymob and end cancelled plans at period end; the count."""
+def period_end_job(
+    deps: SubscriptionDeps, *, now: datetime, should_stop: Callable[[], bool] | None = None
+) -> int:
+    """Push amounts and cancels to Paymob and end cancelled plans at period end; the count.
+
+    ``should_stop`` is asked before each row, as in :func:`expire_overdue_job`.
+    """
     with deps.sessionmaker() as session:
-        return deps.service(session).apply_period_end_changes(now=now)
+        return deps.service(session).apply_period_end_changes(
+            now=now, should_stop=_fresh(deps, should_stop)
+        )
 
 
-def drift_check_job(deps: SubscriptionDeps, *, now: datetime) -> int:
+def drift_check_job(
+    deps: SubscriptionDeps, *, now: datetime, should_stop: Callable[[], bool] | None = None
+) -> int:
     """Run the drift check; the database, not the process, makes it once a row a UTC day.
 
     ``check_drift`` takes only rows not yet checked on ``now``'s UTC day, so calling it every
     tick drains any backlog over successive ticks and costs one indexed query when none is left.
+    ``should_stop`` is asked before each row, as in :func:`expire_overdue_job`.
     """
     with deps.sessionmaker() as session:
-        return deps.service(session).check_drift(now=now)
+        return deps.service(session).check_drift(now=now, should_stop=_fresh(deps, should_stop))
+
+
+def _fresh(
+    deps: SubscriptionDeps, should_stop: Callable[[], bool] | None
+) -> Callable[[], bool] | None:
+    return None if should_stop is None else with_fresh_token(deps.client, should_stop)
 
 
 def terms_change_notices_job(deps: SubscriptionDeps, *, now: datetime) -> int:

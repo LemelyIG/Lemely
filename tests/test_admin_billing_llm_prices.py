@@ -473,6 +473,146 @@ def test_a_failing_refresh_after_commit_does_not_fail_the_request(
     assert _put(client).status_code == 200  # committed; the 60 s job retries
 
 
+# --- every replica follows a write within the TTL, whoever runs the sweep ------------------
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _inline(run: Callable[[], None]) -> None:
+    run()
+
+
+class _Replica:
+    """One process: its own installed prices, refreshed from the shared table by its own guard.
+
+    ``price`` is what costing a call does: it reads the process's prices, and a stale read
+    starts a refresh. Nothing here is the sweeper: a replica Cloud Scheduler never calls.
+    """
+
+    def __init__(self, sm: sessionmaker[Session], clock: _Clock, *, failing: int = 0) -> None:
+        self.sm = sm
+        self.failing = failing
+        self.snapshot: price_overrides.Snapshot | None = None
+        self.guard = llm_price_refresh.StaleGuard(ttl=60, backoff=30, clock=clock)
+
+    def _load(self) -> None:
+        if self.failing:
+            self.failing -= 1
+            raise RuntimeError("db down")
+        with self.sm() as session:
+            self.snapshot = llm_price_refresh.load_snapshot(session, now=datetime.now(UTC))
+
+    def price(self, model: str) -> Decimal | None:
+        if self.guard.claim():
+            self.guard.run(self._load)
+        override = self.snapshot.overrides.get(model) if self.snapshot else None
+        return override.input_usd_per_mtok if override else None
+
+
+def test_two_replicas_pick_up_an_admin_price_within_the_ttl_even_after_a_failed_start(
+    client: TestClient, sm: sessionmaker[Session]
+) -> None:
+    clock = _Clock()
+    one = _Replica(sm, clock)
+    two = _Replica(sm, clock, failing=1)  # its startup refresh fails
+    assert (one.price(SONNET), two.price(SONNET)) == (None, None)
+
+    assert _put(client).status_code == 200  # an admin, on some other process
+
+    clock.now = 29
+    assert (one.price(SONNET), two.price(SONNET)) == (None, None)
+    clock.now = 30  # the failed replica's backoff is over: it recovers on its own
+    assert two.price(SONNET) == Decimal("3")
+    clock.now = 59.9
+    assert one.price(SONNET) is None
+    clock.now = 60  # one TTL after its last refresh
+    assert one.price(SONNET) == Decimal("3")
+
+
+def test_one_refresh_at_a_time_and_none_while_fresh() -> None:
+    clock = _Clock()
+    guard = llm_price_refresh.StaleGuard(ttl=60, backoff=30, clock=clock)
+    assert guard.claim() is True  # never refreshed
+    assert guard.claim() is False  # one is already in flight
+    guard.run(lambda: None)
+    assert guard.claim() is False  # fresh
+    clock.now = 60
+    assert guard.claim() is True
+    guard.run(lambda: (_ for _ in ()).throw(RuntimeError("db down")))  # never raises
+    clock.now = 89.9
+    assert guard.claim() is False  # backing off
+    clock.now = 90
+    assert guard.claim() is True
+
+
+def _fake_row(input_usd: str) -> object:
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        model=SONNET,
+        input_usd_per_mtok=Decimal(input_usd),
+        output_usd_per_mtok=Decimal("15"),
+        cached_input_usd_per_mtok=Decimal("0.3"),
+        cache_write_5m_usd_per_mtok=Decimal("3.75"),
+        cache_write_1h_usd_per_mtok=Decimal("6"),
+        tier_threshold_tokens=200000,
+        tier2_input_usd_per_mtok=Decimal("6"),
+        tier2_output_usd_per_mtok=Decimal("22.5"),
+    )
+
+
+def test_a_stale_price_read_refreshes_this_process_in_the_background(
+    sm: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = _Clock()
+    rows: list[object] = []
+    loads: list[float] = []
+
+    def list_overrides(_session: Session) -> list[object]:
+        loads.append(clock.now)
+        if rows == ["down"]:
+            raise RuntimeError("db down")
+        return list(rows)
+
+    monkeypatch.setattr(llm_price_refresh, "list_overrides", list_overrides)
+    llm_price_refresh.install_stale_refresh(sm, clock=clock, start=_inline)
+    try:
+        assert claude_row(SONNET) == CLAUDE_PRICING[SONNET]  # first read loads the table
+        rows.append(_fake_row("4"))
+        clock.now = 59
+        assert claude_row(SONNET) == CLAUDE_PRICING[SONNET]  # still fresh: no load
+        clock.now = 60
+        row = claude_row(SONNET)
+        assert row is not None
+        assert row.input == 0.004  # stale: this read refreshed the process
+        assert loads == [0, 60]
+
+        rows[:] = ["down"]
+        clock.now = 120
+        row = claude_row(SONNET)  # the failure is logged, never raised into the call
+        assert row is not None
+        assert row.input == 0.004  # the previous prices stay installed
+        clock.now = 149
+        claude_row(SONNET)
+        assert loads == [0, 60, 120]  # backing off
+        rows[:] = [_fake_row("5")]
+        clock.now = 150
+        row = claude_row(SONNET)
+        assert row is not None
+        assert row.input == 0.005
+    finally:
+        llm_price_refresh.uninstall_stale_refresh()
+    clock.now = 10_000
+    claude_row(SONNET)
+    assert loads == [0, 60, 120, 150]  # uninstalled: reads no longer refresh
+
+
 # --- the container hour setting ---------------------------------------------------------------
 
 

@@ -879,6 +879,7 @@ def get_sweeper() -> Sweeper:
         billing_reconcile=get_billing_reconcile_job(),
         billing_extra_seat_renewal=get_extra_seat_renewal_job(),
         billing_auto_topup=get_auto_topup_job(),
+        paymob=settings.paymob,
         subscriptions=get_subscription_jobs(),
         expiry=get_subscription_deps(),
         seat_allowances=True,

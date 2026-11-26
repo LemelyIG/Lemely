@@ -26,7 +26,11 @@ from lemely.runtime.config import anthropic_key_missing_tags, log_marking_flags
 from lemely.runtime.errors import AccessRestrictedError, EmptyGradeBoundaryStoreError
 from lemely.web.deps import access_restricted_detail, get_settings, get_sweeper
 from lemely.web.edge import BodyLimitMiddleware
-from lemely.web.llm_price_refresh import refresh_prices
+from lemely.web.llm_price_refresh import (
+    install_stale_refresh,
+    refresh_prices,
+    uninstall_stale_refresh,
+)
 from lemely.web.routers import (
     access,
     admin,
@@ -50,6 +54,7 @@ from lemely.web.routers import (
     exam_calendar,
     flashcards,
     friends,
+    internal_jobs,
     invites,
     leaderboard,
     me,
@@ -175,7 +180,10 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
             ", ".join(missing_claude),
         )
     # UD13-D: the admin AI price overrides are installed before the first call is priced; a failure
-    # is logged and the code and config prices apply until the 60 s job succeeds.
+    # is logged and the code and config prices apply until a later refresh succeeds. From here on
+    # a price read that finds them a minute old refreshes them, so this instance follows admin
+    # writes even when Cloud Scheduler sends its sweeps to another one.
+    install_stale_refresh(get_sessionmaker(settings))
     with contextlib.suppress(Exception):
         await asyncio.to_thread(refresh_prices, get_sessionmaker(settings))
     stop = asyncio.Event()
@@ -195,6 +203,7 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        uninstall_stale_refresh()
         if task is not None:
             stop.set()
             await task
@@ -230,6 +239,7 @@ def create_app() -> FastAPI:
     app.include_router(contact.router)
     app.include_router(waitlist.router)
     app.include_router(admin_waitlist.router)
+    app.include_router(internal_jobs.router)
     app.include_router(auth.router)
     app.include_router(teacher.router)
     app.include_router(classes.router)

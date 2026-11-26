@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import enum
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_FLOOR, Decimal
@@ -2403,13 +2403,20 @@ class SubscriptionService:
         self._mark_past_due(subscription, now=now)
         return subscription
 
-    def expire_overdue(self, *, now: datetime, limit: int = SUBSCRIPTION_SWEEP_BATCH) -> int:
+    def expire_overdue(
+        self,
+        *,
+        now: datetime,
+        limit: int = SUBSCRIPTION_SWEEP_BATCH,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> int:
         """Expire ``past_due`` subscriptions whose grace has elapsed, and cancel them at Paymob.
 
         Takes at most ``limit`` rows, oldest ``grace_until`` first; the rest wait for the next
         pass. Each row is its own transaction (:meth:`_sweep_one`), so one Paymob failure cannot
         undo another row's expiry. Returns how many rows were expired. The session must hold no
-        uncommitted work: every row commits.
+        uncommitted work: every row commits. ``should_stop`` is asked before each row, never
+        inside one; the rows not started wait for the next pass.
 
         Raises:
             ValueError: ``limit`` is below 1.
@@ -2427,7 +2434,10 @@ class SubscriptionService:
             .order_by(Subscription.grace_until, Subscription.id)
             .limit(limit)
         ).all()
-        return sum(self._sweep_one(sid, self._expire_if_due, now) for sid in ids)
+        return sum(
+            self._sweep_one(sid, self._expire_if_due, now)
+            for sid in until_stopped(ids, should_stop)
+        )
 
     # -- plan changes (spec §5.3) ------------------------------------------------------
 
@@ -2734,13 +2744,18 @@ class SubscriptionService:
         return AmountPush.SENT
 
     def apply_period_end_changes(
-        self, *, now: datetime, limit: int = SUBSCRIPTION_SWEEP_BATCH
+        self,
+        *,
+        now: datetime,
+        limit: int = SUBSCRIPTION_SWEEP_BATCH,
+        should_stop: Callable[[], bool] | None = None,
     ) -> int:
         """Push amounts and cancels to Paymob, and end cancelled plans at their period end.
 
         Four candidate sets, each bounded to ``limit`` rows and each row its own skip-locked
         transaction (:meth:`_sweep_one`); returns how many rows changed. The session must hold no
-        uncommitted work.
+        uncommitted work. ``should_stop`` is asked before each row, never inside one; once it
+        says so, no further row of any set is started and the rest wait for the next pass.
 
         * **Amount** (DV-16): an active, linked, not-cancelling row whose period has not ended
           and that has a pending tier or seat change, no stamp, an uncertain last PUT, or a
@@ -2805,9 +2820,13 @@ class SubscriptionService:
             .order_by(S.current_period_end, S.id)
             .limit(limit)
         ).all()
-        changed = sum(self._sweep_one(sid, self._push_amount, now) for sid in amount_ids)
-        changed += sum(self._sweep_one(sid, self._push_cancel, now) for sid in cancel_live)
-        changed += sum(self._sweep_one(sid, self._end_cancelled, now) for sid in end_ids)
+
+        def sweep(ids: Iterable[uuid.UUID], step: Callable[[Subscription, datetime], bool]) -> int:
+            return sum(self._sweep_one(sid, step, now) for sid in until_stopped(ids, should_stop))
+
+        changed = sweep(amount_ids, self._push_amount)
+        changed += sweep(cancel_live, self._push_cancel)
+        changed += sweep(end_ids, self._end_cancelled)
         # After the end step, so a row it just ended gets its cancel in the same pass.
         cancel_ended = self._cancel_candidates(
             sa.and_(
@@ -2818,7 +2837,7 @@ class SubscriptionService:
             now,
             limit,
         )
-        for sid in cancel_ended:
+        for sid in until_stopped(cancel_ended, should_stop):
             changed += self._cancel_ended_one(sid, now)
         return changed
 
@@ -2993,7 +3012,13 @@ class SubscriptionService:
 
     # -- daily drift check (spec §5.2) ---------------------------------------------------
 
-    def check_drift(self, *, now: datetime, limit: int = SUBSCRIPTION_SWEEP_BATCH) -> int:
+    def check_drift(
+        self,
+        *,
+        now: datetime,
+        limit: int = SUBSCRIPTION_SWEEP_BATCH,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> int:
         """Compare Paymob-linked subscriptions with Paymob and repair what webhooks missed.
 
         Candidates, at most ``limit`` and not yet checked on ``now``'s UTC day, least recently
@@ -3027,8 +3052,8 @@ class SubscriptionService:
         ``Subscription Created`` event was stored unprocessed) is linked through the stored event
         (T5-I2), at most ``limit`` of them; each counts as a repair.
 
-        Returns how many rows were repaired. The session must hold no uncommitted work: every
-        row commits.
+        Returns how many rows were repaired. ``should_stop`` is asked before each row, never inside
+        one. The session must hold no uncommitted work: every row commits.
 
         Raises:
             ValueError: ``limit`` is below 1.
@@ -3062,7 +3087,7 @@ class SubscriptionService:
             .order_by(S.drift_checked_at.asc().nulls_first(), S.updated_at, S.id)
             .limit(limit)
         ).all()
-        for subscription_id, paymob_id in rows:
+        for subscription_id, paymob_id in until_stopped(rows, should_stop):
             if paymob_id is None:
                 continue
             reads = self._read_for_drift(subscription_id, paymob_id)
@@ -3969,6 +3994,17 @@ def _fingerprint(trigger: str, state: RemoteState) -> str | None:
     return f"{remote_state}:{updated_at}"[:100]
 
 
+def until_stopped[T](items: Iterable[T], should_stop: Callable[[], bool] | None) -> Iterator[T]:
+    """``items`` in order, asking ``should_stop`` before each and ending once it says so.
+
+    The sweep's time check, asked only between rows: a row once started always finishes.
+    """
+    for item in items:
+        if should_stop is not None and should_stop():
+            return
+        yield item
+
+
 def _violates_one_live(exc: IntegrityError) -> bool:
     """Whether ``exc`` is the one-live-subscription-per-user unique index (not any other error)."""
     diag = getattr(exc.orig, "diag", None)
@@ -4012,6 +4048,7 @@ __all__ = [
     "parse_subscription_webhook",
     "subscription_webhook_url",
     "sync_paymob_plan",
+    "until_stopped",
 ]
 
 # Registered at import, so any process that settles a payment reaches the handler. The reconcile

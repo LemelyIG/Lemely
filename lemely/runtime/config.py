@@ -8,7 +8,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Final, Literal
 from urllib.parse import urlsplit
 
 import structlog
@@ -693,6 +693,22 @@ class DatabaseSettings(BaseModel):
     # default is 30). Same reasoning: fail fast rather than pile up.
     pool_timeout_seconds: int = Field(default=5, ge=1)
 
+    @model_validator(mode="after")
+    def _pool_holds_a_sweep_pass(self) -> DatabaseSettings:
+        """At least two connections: one for the sweep lock, one for the jobs it runs.
+
+        ``POST /api/internal/jobs/sweep`` (and the in-process loop) holds one pooled connection,
+        idle in its transaction, for the whole pass for the advisory lock, while every job opens
+        its own session. With ``pool_size + max_overflow`` of 1 the first job would wait out
+        ``pool_timeout_seconds`` for a connection the pass itself holds, on every pass.
+        """
+        if self.pool_size + self.max_overflow < 2:
+            raise ValueError(
+                "pool_size + max_overflow must be at least 2: a sweep pass holds one connection "
+                "for its lock while its jobs use another"
+            )
+        return self
+
 
 class SupabaseSettings(BaseModel):
     """Supabase Auth (GoTrue) validation + admin settings.
@@ -1256,6 +1272,58 @@ class NotificationsSettings(BaseModel):
     # ``study_plan_reminder`` fires once the recipient's local time is at or
     # past this hour, for every incomplete session dated today.
     study_plan_reminder_hour: int = Field(default=8, ge=0, le=23)
+    # Guards ``POST /api/internal/jobs/sweep``, which Cloud Scheduler calls every minute with
+    # this value in an ``X-Cron-Secret`` header to run one sweeper pass (Cloud Run scales the
+    # in-process loop to nothing when idle). Unset (the default) the endpoint answers 503.
+    # Never put it in ``lemely.toml``: deployed it is ``LEMELY_NOTIFICATIONS__JOBS_SECRET``.
+    jobs_secret: OptionalSecret = None
+    # The value ``jobs_secret`` had before a rotation, accepted beside it while Cloud Scheduler is
+    # still sending it (docs/deployment.md section 5.2: set this to the old value and
+    # ``jobs_secret`` to the new one, deploy, confirm one Scheduler run, clear this, deploy).
+    # Unset or blank means
+    # no rotation is in progress. Deployed it is ``LEMELY_NOTIFICATIONS__JOBS_SECRET_PREVIOUS``.
+    jobs_secret_previous: OptionalSecret = None
+    # Wall-clock budget of one sweep pass through ``Sweeper.sweep_exclusive`` (the trigger route
+    # and the loop). Once spent, the jobs not yet started are skipped and run next tick. It must
+    # leave at least 30 s under Cloud Scheduler's attempt deadline (90 s in ``scheduler-jobs.json``)
+    # for the cold start, the proxy and the job in flight when the budget runs out.
+    sweep_pass_budget_seconds: int = Field(default=60, ge=1)
+    # What the sweep expects one unit of work to take, so it starts a unit only while the pass
+    # budget still has room for it: a database-only row, plus this much for each outbound Paymob
+    # request the unit makes. A saved-card charge (two requests) comes to about 15 s.
+    sweep_row_seconds: float = Field(default=1.0, gt=0)
+    sweep_paymob_request_seconds: float = Field(default=7.0, gt=0)
+    # The longest one unit's database work may take, part of a unit's worst case. The worst case
+    # of every unit the sweep starts must end under the sweep lock's idle timeout.
+    sweep_row_hard_seconds: float = Field(default=5.0, gt=0)
+
+
+#: Postgres ends the sweep's lock transaction after it has been idle this long
+#: (``Sweeper.sweep_exclusive`` sets it for that transaction alone). The lock connection is idle
+#: for the whole pass, so past this the lock is gone and the pass fails at commit. Postgres
+#: enforces it whatever the process does; the sweep's own timeout arithmetic only plans under it.
+SWEEP_LOCK_IDLE_TIMEOUT_SECONDS: Final = 240
+#: Kept free under that limit for the commit and for scheduling slack.
+SWEEP_HARD_LIMIT_MARGIN_SECONDS: Final = 30
+#: Outbound requests inside one claimed saved-card charge: the intention, then the payment.
+CHARGE_REQUESTS: Final = 2
+
+
+def sweep_unit_typical_seconds(notifications: NotificationsSettings, *, requests: int) -> float:
+    """What a sweep unit with ``requests`` outbound Paymob requests is expected to take."""
+    return notifications.sweep_row_seconds + requests * notifications.sweep_paymob_request_seconds
+
+
+def sweep_unit_hard_seconds(
+    notifications: NotificationsSettings, paymob: PaymobSettings, *, requests: int
+) -> float:
+    """The longest a sweep unit with ``requests`` Paymob requests can take before it gives up.
+
+    Each request is bounded by the sum of its four client timeouts (a read timeout bounds each
+    read, so a server that trickles bytes can exceed it; that case is not covered). This is an
+    estimate for planning, not a wall-clock guarantee: it assumes the process keeps its CPU.
+    """
+    return notifications.sweep_row_hard_seconds + requests * paymob.request_hard_seconds
 
 
 class UsageSettings(BaseModel):
@@ -1523,7 +1591,14 @@ class PaymobSettings(BaseModel):
     checkout_base: AbsoluteOrigin = "https://eg.checkout.paymob.com"
     notification_base_url: AbsoluteOrigin = "https://lemelyig.com"
     redirection_base_url: AbsoluteOrigin = "https://lemelyig.com"
+    # ``timeout_seconds`` bounds each read. Connecting, sending the body and waiting for a pooled
+    # connection have their own shorter limits, because the sweep starts a saved-card charge only
+    # when the worst case of its requests, the sum of all four limits each, still ends well under
+    # the sweep lock's idle timeout (``Settings`` checks this).
     timeout_seconds: float = Field(default=20.0, gt=0)
+    connect_timeout_seconds: float = Field(default=5.0, gt=0)
+    write_timeout_seconds: float = Field(default=5.0, gt=0)
+    pool_timeout_seconds: float = Field(default=5.0, gt=0)
     # Whether Paymob's ``PUT subscriptions/{id}`` can change ``amount_cents`` on a
     # ``use_transaction_amount=true`` plan (spec section 10 question 7, sandbox S14). When
     # false, upgrades are refused, seat reductions that need a lower amount are refused, and
@@ -1534,6 +1609,16 @@ class PaymobSettings(BaseModel):
     # IDs. ``deploy.yml`` sets this for production alone: a production start on test keys
     # would sell real credits for test cards (skill audit I2).
     expect_live: bool = False
+
+    @property
+    def request_hard_seconds(self) -> float:
+        """The longest one request can take before the client gives up on it."""
+        return (
+            self.connect_timeout_seconds
+            + self.write_timeout_seconds
+            + self.timeout_seconds
+            + self.pool_timeout_seconds
+        )
 
     @property
     def key_mode_mismatch(self) -> bool:
@@ -1678,6 +1763,25 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("LEMELY_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY"),
     )
+
+    @model_validator(mode="after")
+    def _a_charge_ends_inside_the_sweep_lock(self) -> Settings:
+        """A charge started at the end of the pass budget must end before the lock is lost.
+
+        The sweep starts a saved-card charge only while the pass budget has room for it, and
+        never stops one once it is claimed, so the latest a charge can end is the budget plus
+        the charge's worst case. That must stay under the lock's idle timeout less its margin.
+        """
+        budget = self.notifications.sweep_pass_budget_seconds
+        worst = sweep_unit_hard_seconds(self.notifications, self.paymob, requests=CHARGE_REQUESTS)
+        limit = SWEEP_LOCK_IDLE_TIMEOUT_SECONDS - SWEEP_HARD_LIMIT_MARGIN_SECONDS
+        if budget + worst > limit:
+            raise ValueError(
+                f"a sweep pass budget of {budget} s plus the worst case of one saved-card charge "
+                f"({worst:g} s from the Paymob timeouts) exceeds {limit} s, the sweep lock's "
+                "idle timeout less its margin: lower the budget or the Paymob timeouts"
+            )
+        return self
 
     @classmethod
     def settings_customise_sources(

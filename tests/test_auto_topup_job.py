@@ -67,7 +67,7 @@ from tests.paymob_fixtures import (
 from tests.usage_db import add_debt
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -141,8 +141,22 @@ def _queued(sm: sessionmaker[Session], **kwargs: Any) -> dict[str, uuid.UUID]:
     return ids
 
 
-def _run(sm: sessionmaker[Session], client: FakeMotoClient, *, now: datetime = NOW) -> int:
-    return run_auto_topup_job(sm, client, PAYMOB_SETTINGS, now=now)
+def _run(
+    sm: sessionmaker[Session],
+    client: FakeMotoClient,
+    *,
+    now: datetime = NOW,
+    should_stop: Callable[[], bool] | None = None,
+    should_stop_row: Callable[[], bool] | None = None,
+) -> int:
+    return run_auto_topup_job(
+        sm,
+        client,
+        PAYMOB_SETTINGS,
+        now=now,
+        should_stop=should_stop,
+        should_stop_row=should_stop_row,
+    )
 
 
 def _client(sm: sessionmaker[Session]) -> FakeMotoClient:
@@ -243,6 +257,51 @@ def _assert_failed_unsent(
 # ---------------------------------------------------------------------------
 # The charge.
 # ---------------------------------------------------------------------------
+
+
+def test_a_spent_budget_stops_the_charges_between_rows_and_the_rest_wait(
+    sm: sessionmaker[Session],
+) -> None:
+    scenes = [_queued(sm) for _ in range(3)]
+    client = _client(sm)
+
+    def out_of_time() -> bool:
+        return len(client.calls_to("pay_with_token")) >= 1
+
+    _run(sm, client, should_stop=out_of_time)
+
+    statuses = [_payment(sm, ids["payment"]).status for ids in scenes]
+    # One charge ran whole; the others were never claimed, so they are still queued, not stuck.
+    assert sorted(s.value for s in statuses) == ["created", "created", "pending"]
+    assert len(client.calls_to("pay_with_token")) == 1
+
+    _run(sm, client)  # the next pass charges exactly the rest
+
+    assert {_payment(sm, ids["payment"]).status for ids in scenes} == {PaymentStatus.pending}
+    assert len(client.calls_to("pay_with_token")) == 3
+
+
+def test_no_top_up_is_charged_in_a_run_whose_refusal_step_ran_out_of_time(
+    sm: sessionmaker[Session],
+) -> None:
+    scenes = [_queued(sm) for _ in range(3)]
+    client = _client(sm)
+    asked: list[int] = []
+
+    def row_out_of_time() -> bool:
+        asked.append(1)
+        return len(asked) > 1  # room for one refusal check, not three
+
+    _run(sm, client, should_stop=lambda: False, should_stop_row=row_out_of_time)
+
+    # Two queued top-ups were never checked for refusal, so none may be charged in this run.
+    assert client.calls_to("pay_with_token") == []
+    assert {_payment(sm, ids["payment"]).status for ids in scenes} == {PaymentStatus.created}
+
+    _run(sm, client)  # a run with time to check them all charges all three
+
+    assert {_payment(sm, ids["payment"]).status for ids in scenes} == {PaymentStatus.pending}
+    assert len(client.calls_to("pay_with_token")) == 3
 
 
 def test_the_job_charges_the_payers_card_once_and_not_again(sm: sessionmaker[Session]) -> None:

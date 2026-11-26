@@ -33,6 +33,8 @@ calls it for a post that is due the moment it is written.
 from __future__ import annotations
 
 import asyncio
+import math
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from functools import partial
@@ -45,12 +47,21 @@ from sqlalchemy import select
 from lemely.db.admin_customer_repo import expire_manual_subscriptions
 from lemely.db.announcement_repo import DEFAULT_CLAIM_LIMIT
 from lemely.db.billing_observability_repo import prune_webhook_failures
+from lemely.db.merchant_charge_repo import BatchStops
 from lemely.db.models.engagement import Streak
 from lemely.db.models.enums import NotificationType
 from lemely.db.models.study_plan import StudyPlan as DbStudyPlan
 from lemely.db.models.study_plan import StudyPlanSession
 from lemely.db.models.users import User
 from lemely.db.xp_repo import DEFAULT_ZONE, resolve_zone
+from lemely.runtime.config import (
+    CHARGE_REQUESTS,
+    SWEEP_HARD_LIMIT_MARGIN_SECONDS,
+    SWEEP_LOCK_IDLE_TIMEOUT_SECONDS,
+    PaymobSettings,
+    sweep_unit_hard_seconds,
+    sweep_unit_typical_seconds,
+)
 from lemely.web.llm_price_refresh import refresh_prices
 from lemely.web.notify import notify_safely
 from lemely.web.purge import purge_expired_papers, purge_expired_teacher_papers
@@ -82,6 +93,162 @@ if TYPE_CHECKING:
     from lemely.web.subscription_deps import SubscriptionDeps
 
 log = structlog.get_logger(__name__)
+
+#: Bounds the idle time of the sweep's lock transaction, and of nothing else (``SET LOCAL``).
+_LOCK_IDLE_TIMEOUT_SQL = (
+    f"SET LOCAL idle_in_transaction_session_timeout = '{SWEEP_LOCK_IDLE_TIMEOUT_SECONDS}s'"
+)
+
+#: Text key (hashed by ``hashtextextended``, as ``subscription_repo`` keys its locks) of the
+#: advisory lock :meth:`Sweeper.sweep_exclusive` holds for the length of one pass.
+SWEEP_LOCK_KEY = "lemely.sweeper.pass"
+
+#: Each payment batch's slice of a pass's budget, a fairness cap measured from the job's start.
+#: Once a batch has used its slice it starts no further unit, so a long backlog in one batch
+#: cannot take the time of the batches behind it; the units it leaves stay due and are the first
+#: it takes on the next pass. The first unit of each kind is exempt, so every batch does some
+#: work on a pass that has room for it. The job order is neither changed nor rotated: it is
+#: load-bearing (an expired plan's seats are handled before the next month's grant, DV-32).
+#:
+#: The two saved-card batches (extra-seat renewal, then auto top-up) do not both fit a full pass
+#: when every backlog is full, so they alternate priority (:data:`PAYMENT_TURN_MINUTES`): the
+#: batches before the one with priority keep a planning reserve free for it, the expected time
+#: (:class:`UnitCost`) of one database row (for the top-up, one refusal row) and one charge, and
+#: the subscription batches give up their later units to that reserve first. Priority is not a
+#: minimum charge per pass: a refusal step with more than one row, or a later job that does not
+#: check the budget, can use up the reserve. Under the modelled timings on the default 60 s
+#: budget, the batch with priority starts a charge while the jobs before the reconcile batch take
+#: no more than about 44 s. The windows assume the shipped once-a-minute trigger; a trigger
+#: aligned to every 10 minutes would always land in the same window and starve one batch. When
+#: the Paymob calls are faster than expected, each slice fits several units.
+RECONCILE_SHARE = 0.13
+EXPIRE_OVERDUE_SHARE = 0.1
+PERIOD_END_SHARE = 0.1
+DRIFT_CHECK_SHARE = 0.15
+EXTRA_SEAT_RENEWAL_SHARE = 0.1
+
+#: Length of one payment turn. The turn comes from the pass's own clock, in alternating windows
+#: counted from the Unix epoch (the extra-seat renewal has the even ones), so it needs no stored
+#: state and every replica agrees on it. Five minutes holds at least two passes on the
+#: once-a-minute schedule even when Cloud Scheduler skips a minute behind a slow pass.
+PAYMENT_TURN_MINUTES = 5
+
+
+def seat_charges_have_the_turn(moment: datetime) -> bool:
+    """Whether the extra-seat renewal, not the auto top-up, has the payment turn at ``moment``."""
+    window = int(moment.timestamp() // 60) // PAYMENT_TURN_MINUTES
+    return window % 2 == 0
+
+
+@dataclass(frozen=True, slots=True)
+class UnitRequests:
+    """The outbound Paymob requests of one unit of a batch: usually, and at most."""
+
+    typical: int
+    most: int
+
+
+#: One inquiry. Paymob rejecting the auth token costs a mint and a repeat.
+RECONCILE_ROW = UnitRequests(1, 3)
+#: One cancel, with the same allowance for a rejected token.
+EXPIRE_ROW = UnitRequests(1, 3)
+#: An amount push or a cancel. Cancelling a plan that has ended reads it twice first.
+PERIOD_END_ROW = UnitRequests(1, 5)
+#: Two reads, then a repair that may write the plan and its amount.
+DRIFT_ROW = UnitRequests(2, 5)
+#: A row that touches only the database.
+DATABASE_ROW = UnitRequests(0, 0)
+#: A saved-card charge: the intention, then the payment. Both use the secret key, not the auth
+#: token, and neither is ever repeated, so the count is fixed once the charge is claimed.
+CHARGE = UnitRequests(CHARGE_REQUESTS, CHARGE_REQUESTS)
+
+
+@dataclass(frozen=True, slots=True)
+class UnitCost:
+    """What one unit of a batch is expected to take, and the longest it can take, in seconds."""
+
+    typical: float
+    hard: float
+
+
+@dataclass(slots=True)
+class PassBudget:
+    """The wall-clock allowance of one sweep pass, on a monotonic clock.
+
+    ``seconds`` is what a pass is planned to take: a unit of work starts only if its expected
+    time still fits. ``hard_seconds`` is a planning ceiling (the sweep lock's idle timeout less a
+    margin): a unit starts only if its worst case, the sum of its client timeouts, ends under it
+    as well. That arithmetic assumes the process keeps running; it is not a wall-clock guarantee
+    (a stalled or CPU-throttled process, or a server that trickles bytes, can take longer). A unit
+    once started always finishes, so a pass can run past ``seconds``. ``started`` defaults to the
+    moment the budget is made.
+    """
+
+    seconds: float
+    clock: Callable[[], float] = time.monotonic
+    hard_seconds: float = math.inf
+    started: float = math.nan
+
+    def __post_init__(self) -> None:
+        """Start the clock, unless the caller read it already."""
+        if math.isnan(self.started):
+            self.started = self.clock()
+
+    def elapsed(self) -> float:
+        return self.clock() - self.started
+
+    def spent(self) -> bool:
+        return self.elapsed() >= self.seconds
+
+    def admits(self, unit: UnitCost, *, reserve: float = 0.0) -> bool:
+        """Whether ``unit`` may start now, keeping ``reserve`` seconds for the jobs after it."""
+        elapsed = self.elapsed()
+        return (
+            elapsed + unit.typical + reserve <= self.seconds
+            and elapsed + unit.hard <= self.hard_seconds
+        )
+
+    def job(self, fraction: float | None = None) -> JobAllowance:
+        """The allowance of a job starting now: ``fraction`` of the budget, or no cap."""
+        cap = math.inf if fraction is None else self.seconds * fraction
+        return JobAllowance(self, cap, began=self.clock())
+
+
+@dataclass(slots=True)
+class JobAllowance:
+    """One job's slice of a pass, a cap on top of the pass budget."""
+
+    budget: PassBudget
+    seconds: float
+    began: float
+
+    def stop_before(self, unit: UnitCost, *, reserve: float = 0.0) -> Callable[[], bool]:
+        """The stop check a batch asks before each unit of one kind; ``True`` means stop.
+
+        A unit starts only if the pass budget admits it with ``reserve`` seconds left for the
+        jobs after this one (:meth:`PassBudget.admits`), and, after the first unit of its kind,
+        only while the job has used less than its slice. Each ``False`` answer is a unit started.
+        """
+        started = False
+
+        def stop() -> bool:
+            nonlocal started
+            if not self.budget.admits(unit, reserve=reserve):
+                return True
+            if started and self.budget.clock() - self.began >= self.seconds:
+                return True
+            started = True
+            return False
+
+        return stop
+
+
+@dataclass(frozen=True, slots=True)
+class SweepPass:
+    """What one bounded pass did: counts per job that ran, and the jobs it ran out of time for."""
+
+    results: dict[str, int | None]
+    skipped: list[str]
 
 
 # ---------------------------------------------------------------------------
@@ -445,6 +612,11 @@ def remind_study_plans(
 # ---------------------------------------------------------------------------
 
 
+def _never() -> bool:
+    """The stop check of an unbounded pass: never."""
+    return False
+
+
 def _utcnow() -> datetime:
     """Default clock: aware UTC now. Production wiring only — tests inject their own."""
     return datetime.now(UTC)
@@ -493,6 +665,7 @@ def run_jobs(
     *,
     recorder: JobRunRecorder | None = None,
     now: Callable[[], datetime] = _utcnow,
+    spent: Callable[[], bool] | None = None,
 ) -> dict[str, int | None]:
     """Run each job in turn, each wrapped individually.
 
@@ -500,11 +673,19 @@ def run_jobs(
     returned map carries each job's count, or ``None`` for one that threw, so
     a caller (and a test) can see exactly which did what.
 
+    ``spent`` is asked before each job starts; once it says so, every job not yet started is
+    left out of the map (neither run nor failed: the caller reports them as skipped).
+
     ``recorder`` (the admin health view's ``job_runs`` writer) hears about the start and
     the end of every job, success or failure. It never changes a result: a recorder that
     raises is logged as ``job_run_record_failed`` and ignored.
     """
-    return {name: _run_one(name, job, recorder, now) for name, job in jobs}
+    results: dict[str, int | None] = {}
+    for name, job in jobs:
+        if spent is not None and spent():
+            break
+        results[name] = _run_one(name, job, recorder, now)
+    return results
 
 
 @dataclass(slots=True)
@@ -537,7 +718,9 @@ class Sweeper:
     email_daily_cap: int = 60
     #: ``billing.reconcile_pending`` (billing spec §5.10), given only when Paymob is
     #: configured, the same optional-collaborator pattern as ``email_provider``.
-    billing_reconcile: Callable[[datetime], int] | None = None
+    #: Called with the pass moment and a stop check it asks before each row, so a long batch
+    #: ends at its slice of the pass budget (:data:`RECONCILE_SHARE`).
+    billing_reconcile: Callable[[datetime, Callable[[], bool]], int] | None = None
     #: Billing spec §5.7: the usage ledger's sweeps run only where metering is enforced
     #: (``deps.get_sweeper``); a sweeper built for notifications alone, as most tests
     #: build one, keeps exactly the jobs it had.
@@ -560,13 +743,61 @@ class Sweeper:
     expiry: SubscriptionDeps | None = None
     #: Paymob billing Phase 06, given only where saved-card charges are configured: the fallback
     #: renewal seat charge, then the auto top-up. Both run after every Phase 05 job, so an
-    #: expired plan's seats are handled first.
-    billing_extra_seat_renewal: Callable[[datetime], int] | None = None
-    billing_auto_topup: Callable[[datetime], int] | None = None
+    #: expired plan's seats are handled first. Each is called with the pass moment and the stop
+    #: checks it asks before each database row and each charge claim (:class:`BatchStops`).
+    billing_extra_seat_renewal: Callable[[datetime, BatchStops], int] | None = None
+    billing_auto_topup: Callable[[datetime, BatchStops], int] | None = None
+    #: The clock the pass budget runs on; tests inject their own.
+    monotonic: Callable[[], float] = time.monotonic
+    #: The Paymob timeouts, which bound the longest a unit calling Paymob can take.
+    paymob: PaymobSettings = field(default_factory=PaymobSettings)
 
-    def sweep_once(self) -> dict[str, int | None]:
-        """Run every job given (notifications, purge, email, billing, usage, subscription, seat)."""
+    def sweep_unbounded_for_tests(self) -> dict[str, int | None]:
+        """Run every job given once, with no lock and no pass budget. For tests only.
+
+        Production passes go through :meth:`sweep_exclusive`, which takes the advisory lock and
+        bounds the pass. This entry point does neither, so a test can run the full job set and
+        read each job's count without a time limit cutting the pass short.
+        """
+        return self._sweep(None).results
+
+    def _cost(self, requests: UnitRequests) -> UnitCost:
+        return UnitCost(
+            typical=sweep_unit_typical_seconds(self.settings, requests=requests.typical),
+            hard=sweep_unit_hard_seconds(self.settings, self.paymob, requests=requests.most),
+        )
+
+    def _sweep(self, budget: PassBudget | None) -> SweepPass:
         moment = self.now()
+        # The saved-card batch whose turn it is (see PAYMENT_TURN_MINUTES) gets room for one
+        # database row and one charge: every batch before it keeps that much of the budget free.
+        # The other batch still runs in its place in the order and uses whatever is left.
+        row_time, charge_time = self._cost(DATABASE_ROW).typical, self._cost(CHARGE).typical
+        seats_turn = self.billing_extra_seat_renewal is not None and (
+            self.billing_auto_topup is None or seat_charges_have_the_turn(moment)
+        )
+        paying = self.billing_extra_seat_renewal is not None or self.billing_auto_topup is not None
+        reserve = row_time + charge_time if paying else 0.0
+        # On its turn the seat batch keeps its charge's time free while it works through rows and
+        # then charges up to its slice; off its turn it keeps the top-up's reserve throughout.
+        seat_row_keep, seat_charge_keep = (charge_time, 0.0) if seats_turn else (reserve, reserve)
+
+        def gate(fraction: float, requests: UnitRequests) -> Callable[[], bool] | None:
+            if budget is None:
+                return None
+            return budget.job(fraction).stop_before(self._cost(requests), reserve=reserve)
+
+        def charge_stops(
+            fraction: float | None, *, row_keep: float, charge_keep: float
+        ) -> BatchStops:
+            if budget is None:
+                return BatchStops(row=_never, charge=_never)
+            allowance = budget.job(fraction)
+            return BatchStops(
+                row=allowance.stop_before(self._cost(DATABASE_ROW), reserve=row_keep),
+                charge=allowance.stop_before(self._cost(CHARGE), reserve=charge_keep),
+            )
+
         jobs: list[tuple[str, Callable[[], int]]] = [
             (
                 "publish_due_announcements",
@@ -632,7 +863,14 @@ class Sweeper:
             )
         billing_reconcile = self.billing_reconcile
         if billing_reconcile is not None:
-            jobs.append(("billing.reconcile_pending", lambda: billing_reconcile(moment)))
+            jobs.append(
+                (
+                    "billing.reconcile_pending",
+                    lambda: billing_reconcile(
+                        moment, gate(RECONCILE_SHARE, RECONCILE_ROW) or _never
+                    ),
+                )
+            )
         if self.job_recorder is not None:
             # The admin health surface: ``job_runs`` is written for every job, and the
             # refused-callback table it reads beside it is bounded (UD-6, 90 days). Wired
@@ -644,7 +882,8 @@ class Sweeper:
                     lambda: prune_webhook_failures(self.sessionmaker, now=moment),
                 )
             )
-            # UD13-D, DV-6: other instances pick up an admin AI price change within one sweep pass.
+            # UD13-D, DV-6: refreshes the instance serving this pass; the others refresh on a stale
+            # price read (lemely.web.llm_price_refresh.install_stale_refresh).
             jobs.append(("billing.llm_price_refresh", lambda: refresh_prices(self.sessionmaker)))
         if self.usage_metering:
             jobs.extend(
@@ -678,7 +917,9 @@ class Sweeper:
             jobs.append(
                 (
                     "subscriptions.expire_overdue",
-                    lambda: expire_overdue_job(expiry, now=moment),
+                    lambda: expire_overdue_job(
+                        expiry, now=moment, should_stop=gate(EXPIRE_OVERDUE_SHARE, EXPIRE_ROW)
+                    ),
                 )
             )
         if subscriptions is not None:
@@ -686,11 +927,19 @@ class Sweeper:
                 [
                     (
                         "subscriptions.period_end",
-                        lambda: period_end_job(subscriptions, now=moment),
+                        lambda: period_end_job(
+                            subscriptions,
+                            now=moment,
+                            should_stop=gate(PERIOD_END_SHARE, PERIOD_END_ROW),
+                        ),
                     ),
                     (
                         "subscriptions.drift_check",
-                        lambda: drift_check_job(subscriptions, now=moment),
+                        lambda: drift_check_job(
+                            subscriptions,
+                            now=moment,
+                            should_stop=gate(DRIFT_CHECK_SHARE, DRIFT_ROW),
+                        ),
                     ),
                 ]
             )
@@ -709,11 +958,101 @@ class Sweeper:
             )
         extra_seat_renewal = self.billing_extra_seat_renewal
         if extra_seat_renewal is not None:
-            jobs.append(("billing.extra_seat_renewal_charge", lambda: extra_seat_renewal(moment)))
+            jobs.append(
+                (
+                    "billing.extra_seat_renewal_charge",
+                    lambda: extra_seat_renewal(
+                        moment,
+                        charge_stops(
+                            EXTRA_SEAT_RENEWAL_SHARE,
+                            row_keep=seat_row_keep,
+                            charge_keep=seat_charge_keep,
+                        ),
+                    ),
+                )
+            )
         auto_topup = self.billing_auto_topup
         if auto_topup is not None:
-            jobs.append(("billing.auto_topup", lambda: auto_topup(moment)))
-        return run_jobs(jobs, recorder=self.job_recorder, now=self.now)
+            # Last in the pass, so it may use whatever the budget has left: on its turn the batches
+            # before it kept room for one row and one charge, otherwise that is what remains.
+            jobs.append(
+                (
+                    "billing.auto_topup",
+                    lambda: auto_topup(moment, charge_stops(None, row_keep=0.0, charge_keep=0.0)),
+                )
+            )
+        results = run_jobs(
+            jobs,
+            recorder=self.job_recorder,
+            now=self.now,
+            spent=budget.spent if budget else None,
+        )
+        skipped = [name for name, _job in jobs if name not in results]
+        if skipped:
+            log.warning("sweep_pass_budget_spent", skipped=skipped, ran=len(results))
+        return SweepPass(results=results, skipped=skipped)
+
+    def sweep_exclusive(self) -> SweepPass | None:
+        """One bounded pass, unless another exclusive pass is already running; ``None`` then.
+
+        The one entry point of both the in-process loop and the Cloud Scheduler trigger
+        (``POST /api/internal/jobs/sweep``), so a loop pass and a trigger, on this replica or
+        another, never run side by side: the second returns at once. A transaction-scoped
+        advisory lock on :data:`SWEEP_LOCK_KEY` is held for the whole pass. It lives on one
+        connection that sits idle in its transaction meanwhile (the jobs use their own
+        sessions, so the pool needs two connections: ``DatabaseSettings`` enforces it), which
+        also works behind a transaction-mode pooler. It is released when the pass ends, however
+        it ends, or the connection dies.
+
+        That transaction sets ``idle_in_transaction_session_timeout`` for itself alone (``SET
+        LOCAL``) to :data:`~lemely.runtime.config.SWEEP_LOCK_IDLE_TIMEOUT_SECONDS`. If the process
+        stalls mid-pass (CPU throttled outside a request, a hung worker thread), Postgres ends the
+        transaction and frees the lock, so a stalled pass cannot hold off every later trigger. The
+        stalled pass then fails when it tries to commit, which is reported as a failed pass; the
+        jobs it already ran stay done.
+
+        The pass is planned to ``settings.sweep_pass_budget_seconds`` of wall clock, counted from
+        the moment this method is entered, so waiting for a pooled connection or the lock counts
+        too. A unit of work (a row, a charge) starts only if its expected time fits in what is
+        left and its worst case, from the Paymob timeouts, would end under the lock's idle timeout
+        less :data:`~lemely.runtime.config.SWEEP_HARD_LIMIT_MARGIN_SECONDS`. That is a planning
+        bound for a process that keeps its CPU, not a wall-clock guarantee: the only limit actually
+        enforced is Postgres ending the idle lock transaction. A unit once started is never
+        interrupted, so a pass can overrun its budget; that is logged as
+        ``sweep_pass_overran``, apart from job failures. Jobs not started because the budget was
+        spent are returned as ``skipped`` and run on the next tick.
+
+        It is an overlap guard, not a correctness one. A pass whose connection dropped loses
+        the lock, and every job stays safe then: each is idempotent by row state (see
+        ``billing_jobs`` and ``usage_sweeps``), exactly as with two replicas' loops.
+        """
+        budget = PassBudget(
+            self.settings.sweep_pass_budget_seconds,
+            clock=self.monotonic,
+            hard_seconds=SWEEP_LOCK_IDLE_TIMEOUT_SECONDS - SWEEP_HARD_LIMIT_MARGIN_SECONDS,
+        )
+        ran = False
+        try:
+            with self.sessionmaker() as session, session.begin():
+                # Well above a healthy pass, and under Cloud Run's 300 s request timeout, so a
+                # stalled pass frees the lock before the platform would end the request.
+                session.execute(sa.text(_LOCK_IDLE_TIMEOUT_SQL))
+                locked = session.scalar(
+                    sa.text("SELECT pg_try_advisory_xact_lock(hashtextextended(:key, 0))"),
+                    {"key": SWEEP_LOCK_KEY},
+                )
+                if not locked:
+                    return None
+                ran = True
+                return self._sweep(budget)
+        finally:
+            elapsed = budget.elapsed()
+            if ran and elapsed > budget.seconds:
+                log.warning(
+                    "sweep_pass_overran",
+                    elapsed_seconds=round(elapsed, 1),
+                    budget_seconds=budget.seconds,
+                )
 
 
 async def run_sweeper(sweeper: Sweeper, *, poll_seconds: float, stop: asyncio.Event) -> None:
@@ -726,11 +1065,14 @@ async def run_sweeper(sweeper: Sweeper, *, poll_seconds: float, stop: asyncio.Ev
 
     Each pass runs in a worker thread (``asyncio.to_thread``): every job is
     synchronous SQLAlchemy, and running it on the event loop would stall every
-    request for the duration of a fan-out.
+    request for the duration of a fan-out. It goes through
+    :meth:`Sweeper.sweep_exclusive`, the entry point of the Cloud Scheduler trigger too,
+    so the loop and a trigger never run a pass side by side; a pass skipped because
+    another holds the lock is not an error.
     """
     while not stop.is_set():
         try:
-            await asyncio.to_thread(sweeper.sweep_once)
+            await asyncio.to_thread(sweeper.sweep_exclusive)
         except Exception:
             # ``run_jobs`` already wraps each job; this catches the pass
             # itself dying (the clock, a thread failure) so the loop lives.
@@ -742,9 +1084,27 @@ async def run_sweeper(sweeper: Sweeper, *, poll_seconds: float, stop: asyncio.Ev
 
 
 __all__ = [
+    "CHARGE",
+    "DATABASE_ROW",
+    "DRIFT_CHECK_SHARE",
+    "DRIFT_ROW",
+    "EXPIRE_OVERDUE_SHARE",
+    "EXPIRE_ROW",
+    "EXTRA_SEAT_RENEWAL_SHARE",
+    "PAYMENT_TURN_MINUTES",
+    "PERIOD_END_ROW",
+    "PERIOD_END_SHARE",
+    "RECONCILE_ROW",
+    "RECONCILE_SHARE",
     "STREAK_WARNING_TITLE",
     "STUDY_PLAN_REMINDER_TITLE",
+    "SWEEP_LOCK_KEY",
+    "JobAllowance",
+    "PassBudget",
+    "SweepPass",
     "Sweeper",
+    "UnitCost",
+    "UnitRequests",
     "ZoneDateMemo",
     "deliver_announcements_now",
     "due_zones",
@@ -753,6 +1113,7 @@ __all__ = [
     "remind_study_plans",
     "run_jobs",
     "run_sweeper",
+    "seat_charges_have_the_turn",
     "streak_tonight",
     "streak_warning_body",
     "study_plan_reminder_body",

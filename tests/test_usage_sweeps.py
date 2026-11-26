@@ -387,8 +387,8 @@ def _sweeper(sm: sessionmaker[Session], *, metering: bool) -> Sweeper:
 def test_the_sweeper_runs_the_usage_jobs_only_when_metering(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:
-    on = _sweeper(migrated_sessionmaker, metering=True).sweep_once()
-    off = _sweeper(migrated_sessionmaker, metering=False).sweep_once()
+    on = _sweeper(migrated_sessionmaker, metering=True).sweep_unbounded_for_tests()
+    off = _sweeper(migrated_sessionmaker, metering=False).sweep_unbounded_for_tests()
     assert {*EVERY_PASS, "usage.reconcile_balances"} <= set(on)
     assert not any(name.startswith("usage.") for name in off)
 
@@ -401,7 +401,7 @@ def test_a_failing_usage_job_never_stops_the_pass(
 
     # The web sweeper's entry point into the ledger for stale jobs.
     monkeypatch.setattr(UsageLedger, "sweep_stale_jobs", boom)
-    results = _sweeper(migrated_sessionmaker, metering=True).sweep_once()
+    results = _sweeper(migrated_sessionmaker, metering=True).sweep_unbounded_for_tests()
     assert results["usage.expire_stale_jobs"] is None
     assert results["usage.expire_grants"] == 0
     assert results["usage.repair_signup_grants"] == 0
@@ -412,5 +412,5 @@ def test_the_sweeper_remembers_the_reconcile_between_passes(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:
     sweeper = _sweeper(migrated_sessionmaker, metering=True)
-    assert "usage.reconcile_balances" in sweeper.sweep_once()
-    assert "usage.reconcile_balances" not in sweeper.sweep_once()
+    assert "usage.reconcile_balances" in sweeper.sweep_unbounded_for_tests()
+    assert "usage.reconcile_balances" not in sweeper.sweep_unbounded_for_tests()

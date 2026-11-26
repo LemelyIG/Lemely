@@ -55,6 +55,7 @@ key, API key, auth token, card token, payment token) is replaced first, as is an
 
 from __future__ import annotations
 
+import contextlib
 import re
 import threading
 import time
@@ -62,6 +63,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal
 
 import httpx
 
+from lemely.runtime.config import SWEEP_LOCK_IDLE_TIMEOUT_SECONDS
 from lemely.runtime.errors import ExternalServiceError
 
 if TYPE_CHECKING:
@@ -153,7 +155,13 @@ class PaymobClient:
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._settings = settings
-        self._http = http if http is not None else httpx.Client(timeout=settings.timeout_seconds)
+        self._timeout = httpx.Timeout(
+            settings.timeout_seconds,
+            connect=settings.connect_timeout_seconds,
+            write=settings.write_timeout_seconds,
+            pool=settings.pool_timeout_seconds,
+        )
+        self._http = http if http is not None else httpx.Client(timeout=self._timeout)
         self._clock = clock
         self._token: str | None = None
         self._token_expires_at = 0.0
@@ -172,13 +180,18 @@ class PaymobClient:
             raise PaymobNotConfigured("Paymob secret key is not configured")
         return {"Authorization": f"Token {self._settings.secret_key.get_secret_value()}"}
 
-    def _auth_token(self) -> str:
-        """The cached auth token, minted from the API key when absent or stale."""
+    def _auth_token(self, *, fresh_for: float = 0.0) -> str:
+        """The cached auth token, minted from the API key when absent or stale.
+
+        With ``fresh_for``, a token expiring within that many seconds is renewed too; if that
+        renewal fails, the old token is kept for as long as it is still valid.
+        """
         with self._lock:
             now = self._clock()
-            if self._token is not None and now < self._token_expires_at:
+            if self._token is not None and now + fresh_for < self._token_expires_at:
                 return self._token
-            self._token = None
+            if self._token is not None and now >= self._token_expires_at:
+                self._token = None
             if self._settings.api_key is None:
                 raise PaymobNotConfigured("Paymob API key is not configured")
             data = self._send(
@@ -192,6 +205,15 @@ class PaymobClient:
             self._token = token
             self._token_expires_at = now + AUTH_TOKEN_TTL_SECONDS
             return token
+
+    def ensure_auth_token(self, *, valid_for: float) -> None:
+        """Mint the auth token now unless the cached one stays valid ``valid_for`` more seconds.
+
+        The sweep calls this before it decides whether to start a unit of work, so the token
+        request is made, and timed, before that decision rather than inside the unit, where it
+        would add a request the unit's time allowance does not count. Raises like any call.
+        """
+        self._auth_token(fresh_for=valid_for)
 
     def _forget_token(self, rejected: str) -> None:
         """Drop the cached token, unless another thread already replaced it."""
@@ -223,7 +245,7 @@ class PaymobClient:
                 self._url(path),
                 headers=dict(headers),
                 json=dict(json) if json is not None else None,
-                timeout=self._settings.timeout_seconds,
+                timeout=self._timeout,
             )
         except httpx.TimeoutException as exc:
             raise PaymobError(f"Paymob {method} {path} timed out", timeout=True) from exc
@@ -507,10 +529,39 @@ class PaymobClient:
         )
 
 
+def with_fresh_token(
+    client: PaymobClient,
+    should_stop: Callable[[], bool],
+    *,
+    valid_for: float = SWEEP_LOCK_IDLE_TIMEOUT_SECONDS,
+) -> Callable[[], bool]:
+    """``should_stop`` for a sweep batch whose rows call Paymob under the auth token.
+
+    Before the batch's first row the token is minted if it would expire within ``valid_for``
+    seconds (by default the sweep lock's idle timeout, which outlasts any batch of a pass), and
+    the stop check runs after that, so the time the mint took is counted before the first row is
+    started rather than inside it. Later rows then find the token valid, short of Paymob
+    rejecting it, which each row's own request already allows for. A failed mint does not stop
+    the batch: the row's request tries again or fails as it would have.
+    """
+    first = True
+
+    def stop() -> bool:
+        nonlocal first
+        if first:
+            first = False
+            with contextlib.suppress(PaymobError):
+                client.ensure_auth_token(valid_for=valid_for)
+        return should_stop()
+
+    return stop
+
+
 __all__ = [
     "AUTH_TOKEN_TTL_SECONDS",
     "SUBSCRIPTION_FREQUENCIES",
     "PaymobClient",
     "PaymobError",
     "PaymobNotConfigured",
+    "with_fresh_token",
 ]

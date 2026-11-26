@@ -29,7 +29,7 @@ from lemely.db.admin_health_repo import BILLING_JOB_NAMES
 from lemely.db.announcement_repo import AnnouncementService
 from lemely.db.billing_repo import BillingService
 from lemely.db.class_repo import ClassService
-from lemely.db.merchant_charge_repo import MerchantChargeService
+from lemely.db.merchant_charge_repo import BatchStops, MerchantChargeService
 from lemely.db.models.billing import Payment, PaymentPurpose, PaymentStatus, Subscription
 from lemely.db.models.billing_ops import CreditConversionRate
 from lemely.db.models.enums import Role
@@ -117,15 +117,19 @@ def test_the_sweeper_runs_both_charge_jobs_after_every_phase_05_job(
 ) -> None:
     seen: list[tuple[str, datetime]] = []
 
-    def seats(now: datetime) -> int:
+    def seats(now: datetime, stops: BatchStops) -> int:
         seen.append(("seats", now))
+        assert (stops.row(), stops.charge()) == (False, False)
         return 3
 
-    def topup(now: datetime) -> int:
+    def topup(now: datetime, stops: BatchStops) -> int:
         seen.append(("topup", now))
+        assert (stops.row(), stops.charge()) == (False, False)
         return 4
 
-    results = _sweeper(pg_sessionmaker, extra_seat_renewal=seats, auto_topup=topup).sweep_once()
+    results = _sweeper(
+        pg_sessionmaker, extra_seat_renewal=seats, auto_topup=topup
+    ).sweep_unbounded_for_tests()
 
     assert list(results)[-7:] == [*PHASE_05_JOBS, *PHASE_06_JOBS]
     assert results["billing.extra_seat_renewal_charge"] == 3
@@ -136,7 +140,7 @@ def test_the_sweeper_runs_both_charge_jobs_after_every_phase_05_job(
 def test_without_the_callables_neither_charge_job_runs(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    results = _sweeper(pg_sessionmaker).sweep_once()
+    results = _sweeper(pg_sessionmaker).sweep_unbounded_for_tests()
     assert not set(PHASE_06_JOBS) & set(results)
     assert list(results)[-5:] == PHASE_05_JOBS
 
@@ -144,10 +148,14 @@ def test_without_the_callables_neither_charge_job_runs(
 def test_each_charge_job_is_independent_of_the_other(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    only_topup = _sweeper(pg_sessionmaker, auto_topup=lambda now: 0).sweep_once()
+    only_topup = _sweeper(
+        pg_sessionmaker, auto_topup=lambda now, stops: 0
+    ).sweep_unbounded_for_tests()
     assert "billing.auto_topup" in only_topup
     assert "billing.extra_seat_renewal_charge" not in only_topup
-    only_seats = _sweeper(pg_sessionmaker, extra_seat_renewal=lambda now: 0).sweep_once()
+    only_seats = _sweeper(
+        pg_sessionmaker, extra_seat_renewal=lambda now, stops: 0
+    ).sweep_unbounded_for_tests()
     assert "billing.extra_seat_renewal_charge" in only_seats
     assert "billing.auto_topup" not in only_seats
 
@@ -200,13 +208,20 @@ def test_the_providers_run_their_job_with_the_process_collaborators(
     _use_paymob(monkeypatch, PAYMOB_SETTINGS)
     client = FakePaymobClient()
     factory = SimpleNamespace(name="sessionmaker")
-    calls: list[tuple[str, object, object, object, datetime]] = []
+    calls: list[tuple[str, object, object, object, datetime, object, object]] = []
 
     def fake(name: str, result: int) -> Any:
         def run(
-            sm: object, client_: object, settings_: object, *, now: datetime, **_: object
+            sm: object,
+            client_: object,
+            settings_: object,
+            *,
+            now: datetime,
+            should_stop: object = None,
+            should_stop_row: object = None,
+            **_: object,
         ) -> int:
-            calls.append((name, sm, client_, settings_, now))
+            calls.append((name, sm, client_, settings_, now, should_stop, should_stop_row))
             return result
 
         return run
@@ -221,19 +236,26 @@ def test_the_providers_run_their_job_with_the_process_collaborators(
 
     assert topup is not None
     assert seats is not None
-    assert topup(DEC_1) == 5
-    assert seats(DEC_1) == 6
+
+    def never() -> bool:
+        return False
+
+    topup_stops = BatchStops(row=never, charge=lambda: False)
+    seat_stops = BatchStops(row=never, charge=lambda: False)
+    assert topup(DEC_1, topup_stops) == 5
+    assert seats(DEC_1, seat_stops) == 6
+    # The charge check goes to the claim, the row check to the database-only rows.
     assert calls == [
-        ("topup", factory, client, PAYMOB_SETTINGS, DEC_1),
-        ("seats", factory, client, PAYMOB_SETTINGS, DEC_1),
+        ("topup", factory, client, PAYMOB_SETTINGS, DEC_1, topup_stops.charge, never),
+        ("seats", factory, client, PAYMOB_SETTINGS, DEC_1, seat_stops.charge, never),
     ]
 
 
 def test_get_sweeper_passes_both_providers(monkeypatch: pytest.MonkeyPatch) -> None:
-    def topup(now: datetime) -> int:
+    def topup(now: datetime, stops: BatchStops) -> int:
         return 1
 
-    def seats(now: datetime) -> int:
+    def seats(now: datetime, stops: BatchStops) -> int:
         return 2
 
     try:

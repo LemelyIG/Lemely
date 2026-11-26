@@ -20,7 +20,11 @@ from lemely.db.models.usage import UsageGrant
 from lemely.db.notification_prefs_repo import NotificationPreferencesService
 from lemely.db.notification_repo import NotificationService
 from lemely.io.paymob.client import PaymobClient, PaymobError, PaymobNotConfigured
-from lemely.runtime.config import NotificationsSettings, PaymobSettings
+from lemely.runtime.config import (
+    SWEEP_LOCK_IDLE_TIMEOUT_SECONDS,
+    NotificationsSettings,
+    PaymobSettings,
+)
 from lemely.web import deps, deps_billing
 from lemely.web.billing_jobs import reconcile_pending_payments
 from lemely.web.push import RecordingPushTransport
@@ -587,6 +591,38 @@ def test_the_batch_limit_bounds_one_pass(migrated_sessionmaker: sessionmaker[Ses
     assert len(client.inquiries) == 2
 
 
+def test_the_batch_stops_between_rows_when_asked_and_the_rest_wait_for_the_next_pass(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    for _ in range(3):
+        _due_payment(sm, age=timedelta(minutes=20))
+    client = FakePaymobClient()
+    with sm() as session:
+        handled = BillingService(
+            session, client, PAYMOB_SETTINGS, now=lambda: FIXED_NOW
+        ).reconcile_pending(now=FIXED_NOW, should_stop=lambda: len(client.inquiries) >= 1)
+    assert handled == 1  # stopped between rows: the first row was finished and committed
+    assert len(client.inquiries) == 1
+    # The two it left are still due, so the next pass takes them: nothing is starved.
+    assert _reconcile(sm, client) == 2
+    assert len(client.inquiries) == 3
+
+
+def test_a_batch_told_to_stop_before_it_starts_inquires_nothing(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = migrated_sessionmaker
+    _due_payment(sm, age=timedelta(minutes=20))
+    client = FakePaymobClient()
+    with sm() as session:
+        handled = BillingService(
+            session, client, PAYMOB_SETTINGS, now=lambda: FIXED_NOW
+        ).reconcile_pending(now=FIXED_NOW, should_stop=lambda: True)
+    assert handled == 0
+    assert client.inquiries == []
+
+
 # -- amendment A: lock order is payment row, then event insert ----------------------
 
 
@@ -796,7 +832,8 @@ def test_the_job_function_opens_its_own_session(
 
 
 def _sweeper(
-    sm: sessionmaker[Session], billing_reconcile: Callable[[datetime], int] | None = None
+    sm: sessionmaker[Session],
+    billing_reconcile: Callable[[datetime, Callable[[], bool]], int] | None = None,
 ) -> Sweeper:
     return Sweeper(
         sessionmaker=sm,
@@ -814,11 +851,11 @@ def test_the_sweeper_runs_billing_reconcile_pending_when_wired(
 ) -> None:
     seen: list[datetime] = []
 
-    def job(now: datetime) -> int:
+    def job(now: datetime, should_stop: Callable[[], bool]) -> int:
         seen.append(now)
         return 3
 
-    results = _sweeper(migrated_sessionmaker, job).sweep_once()
+    results = _sweeper(migrated_sessionmaker, job).sweep_unbounded_for_tests()
     assert results["billing.reconcile_pending"] == 3
     assert seen == [FIXED_NOW]
 
@@ -826,16 +863,19 @@ def test_the_sweeper_runs_billing_reconcile_pending_when_wired(
 def test_the_sweeper_leaves_billing_out_when_paymob_is_unconfigured(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:
-    assert "billing.reconcile_pending" not in _sweeper(migrated_sessionmaker).sweep_once()
+    assert (
+        "billing.reconcile_pending"
+        not in _sweeper(migrated_sessionmaker).sweep_unbounded_for_tests()
+    )
 
 
 def test_a_failing_billing_job_does_not_stop_the_other_sweeper_jobs(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:
-    def job(now: datetime) -> int:
+    def job(now: datetime, should_stop: Callable[[], bool]) -> int:
         raise RuntimeError("billing down")
 
-    results = _sweeper(migrated_sessionmaker, job).sweep_once()
+    results = _sweeper(migrated_sessionmaker, job).sweep_unbounded_for_tests()
     assert results["billing.reconcile_pending"] is None
     assert results["publish_due_announcements"] is not None
 
@@ -926,10 +966,30 @@ def test_the_reconcile_job_runs_the_pass_with_the_process_collaborators(
     sentinel = SimpleNamespace(name="sessionmaker")
     seen: list[tuple[object, object, object, datetime]] = []
 
+    stops: list[Callable[[], bool]] = []
+    asked: list[str] = []
+    mints: list[float] = []
+
+    def stop_check() -> bool:
+        asked.append("stop")
+        return False
+
+    def ensure_auth_token(*, valid_for: float) -> None:
+        asked.append("mint")
+        mints.append(valid_for)
+
+    monkeypatch.setattr(client, "ensure_auth_token", ensure_auth_token)
+
     def fake_pass(
-        sessionmaker_: object, client_: object, settings_: object, *, now: datetime
+        sessionmaker_: object,
+        client_: object,
+        settings_: object,
+        *,
+        now: datetime,
+        should_stop: Callable[[], bool],
     ) -> int:
         seen.append((sessionmaker_, client_, settings_, now))
+        stops.append(should_stop)
         return 7
 
     monkeypatch.setattr(deps_billing, "get_settings", lambda: settings)
@@ -938,14 +998,21 @@ def test_the_reconcile_job_runs_the_pass_with_the_process_collaborators(
     monkeypatch.setattr(deps_billing, "reconcile_pending_payments", fake_pass)
     job = deps_billing.get_billing_reconcile_job()
     assert job is not None
-    assert job(FIXED_NOW) == 7
+    assert job(FIXED_NOW, stop_check) == 7
     assert seen == [(sentinel, client, PAYMOB_SETTINGS, FIXED_NOW)]
+    # The pass gets the sweep's stop check, behind a token fetch made before its first row.
+    (should_stop,) = stops
+    assert asked == []
+    assert should_stop() is False
+    assert should_stop() is False
+    assert asked == ["mint", "stop", "stop"]
+    assert mints == [SWEEP_LOCK_IDLE_TIMEOUT_SECONDS]
 
 
 def test_get_sweeper_wires_the_billing_job_only_when_one_exists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def job(now: datetime) -> int:
+    def job(now: datetime, should_stop: Callable[[], bool]) -> int:
         return 1
 
     try:

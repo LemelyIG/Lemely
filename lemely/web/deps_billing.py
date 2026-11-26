@@ -20,7 +20,7 @@ from lemely.db.merchant_charge_repo import (
     run_extra_seat_renewal_job,
 )
 from lemely.db.session import get_sessionmaker
-from lemely.io.paymob.client import PaymobClient
+from lemely.io.paymob.client import PaymobClient, with_fresh_token
 from lemely.web.billing_jobs import reconcile_pending_payments
 from lemely.web.deps import get_settings
 from lemely.web.merchant_charge_deps import MerchantChargeDeps
@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
     from lemely.core.usage_types import Payer
+    from lemely.db.merchant_charge_repo import BatchStops
     from lemely.db.models.usage import UsageJob
     from lemely.web.schemas_billing import PublicCatalogueDTO
 
@@ -221,51 +222,73 @@ def auto_topup_post_settle(
         auto_topup_post_settle_hook(session, job, payers, now)
 
 
-def get_auto_topup_job() -> Callable[[datetime], int] | None:
+def get_auto_topup_job() -> Callable[[datetime, BatchStops], int] | None:
     """The ``billing.auto_topup`` job, or ``None`` unless saved-card charges are configured.
 
     Checkout alone is not enough: a MOTO charge also needs the MOTO integration id and the key
-    that opens the stored card token (DV-13).
+    that opens the stored card token (DV-13). The job takes the pass moment and the stop checks
+    it consults before each database-only row and before each charge is claimed.
     """
     settings = get_settings().paymob
     if not charges_configured(settings):
         return None
 
-    def job(now: datetime) -> int:
+    def job(now: datetime, stops: BatchStops) -> int:
         return run_auto_topup_job(
-            get_billing_sessionmaker(), get_paymob_client(), settings, now=now
+            get_billing_sessionmaker(),
+            get_paymob_client(),
+            settings,
+            now=now,
+            should_stop=stops.charge,
+            should_stop_row=stops.row,
         )
 
     return job
 
 
-def get_extra_seat_renewal_job() -> Callable[[datetime], int] | None:
-    """The ``billing.extra_seat_renewal_charge`` job, or ``None`` unless charges are configured."""
+def get_extra_seat_renewal_job() -> Callable[[datetime, BatchStops], int] | None:
+    """The ``billing.extra_seat_renewal_charge`` job, or ``None`` unless charges are configured.
+
+    The job takes the pass moment and the stop checks it consults between rows and before each
+    charge is claimed.
+    """
     settings = get_settings().paymob
     if not charges_configured(settings):
         return None
 
-    def job(now: datetime) -> int:
+    def job(now: datetime, stops: BatchStops) -> int:
         return run_extra_seat_renewal_job(
-            get_billing_sessionmaker(), get_paymob_client(), settings, now=now
+            get_billing_sessionmaker(),
+            get_paymob_client(),
+            settings,
+            now=now,
+            should_stop=stops.charge,
+            should_stop_row=stops.row,
         )
 
     return job
 
 
-def get_billing_reconcile_job() -> Callable[[datetime], int] | None:
+def get_billing_reconcile_job() -> Callable[[datetime, Callable[[], bool]], int] | None:
     """The ``billing.reconcile_pending`` job, or ``None`` when Paymob is unconfigured.
 
-    Reconcile settles payments, so building the job also registers the amount pusher.
+    Reconcile settles payments, so building the job also registers the amount pusher. Each row
+    is a Paymob inquiry under the auth token, so the token is made fresh before the stop check
+    of the first row (:func:`~lemely.io.paymob.client.with_fresh_token`).
     """
     register_billing_amount_pusher()
     settings = get_settings().paymob
     if not settings.checkout_configured:
         return None
 
-    def job(now: datetime) -> int:
+    def job(now: datetime, should_stop: Callable[[], bool]) -> int:
+        client = get_paymob_client()
         return reconcile_pending_payments(
-            get_billing_sessionmaker(), get_paymob_client(), settings, now=now
+            get_billing_sessionmaker(),
+            client,
+            settings,
+            now=now,
+            should_stop=with_fresh_token(client, should_stop),
         )
 
     return job

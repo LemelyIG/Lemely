@@ -680,6 +680,34 @@ def test_the_sweeper_is_started_on_startup_and_stopped_on_shutdown(
 
 
 @pytest.mark.usefixtures("_fresh_settings")
+def test_price_reads_refresh_stale_prices_while_the_app_runs_and_not_after(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every instance follows admin price writes itself, whether or not it serves the sweeps."""
+    from lemely.web import app as app_module
+
+    monkeypatch.setenv("LEMELY_NOTIFICATIONS__SWEEPER_ENABLED", "0")
+    events: list[str] = []
+
+    def installed(factory: object) -> None:
+        events.append("install")
+
+    def first_load(factory: object) -> int:
+        events.append("load")
+        return 0
+
+    monkeypatch.setattr(app_module, "install_stale_refresh", installed)
+    monkeypatch.setattr(app_module, "uninstall_stale_refresh", lambda: events.append("uninstall"))
+    monkeypatch.setattr(app_module, "refresh_prices", first_load)
+
+    with TestClient(create_app()) as client:
+        assert client.get("/api/health").status_code == 200
+        assert events == ["install", "load"]
+
+    assert events == ["install", "load", "uninstall"]
+
+
+@pytest.mark.usefixtures("_fresh_settings")
 def test_startup_logs_the_marking_flags(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every revision records which marking mode it runs, in its own logs."""
     from structlog.testing import capture_logs

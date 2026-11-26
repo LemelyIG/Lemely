@@ -607,6 +607,22 @@ def test_the_sweep_is_bounded(pg_sessionmaker: sessionmaker[Session]) -> None:
         _sweep(pg_sessionmaker, NOW, client, limit=0)
 
 
+def test_a_spent_budget_stops_the_period_end_sweep_between_rows_and_the_rest_wait(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    for pid in (1, 2, 3):
+        _student_sub(pg_sessionmaker, pid=pid, cancel_at_period_end=True)
+    client = FakePaymobClient()
+    asked: list[int] = []
+
+    def should_stop() -> bool:
+        asked.append(1)
+        return len(asked) > 1
+
+    assert _sweep(pg_sessionmaker, NOW, client, should_stop=should_stop) == 1
+    assert _sweep(pg_sessionmaker, NOW, client) == 2  # the next pass takes the rest
+
+
 # -- UD-4 (b): a cancel made in Paymob, and a suspension, end as "cancelled" ---------------
 
 

@@ -533,9 +533,8 @@ def test_the_sweeper_loop_sweeps_immediately_and_stops_when_asked() -> None:
     sweeps: list[int] = []
 
     class _Fake:
-        def sweep_once(self) -> dict[str, int | None]:
+        def sweep_exclusive(self) -> None:
             sweeps.append(len(sweeps))
-            return {}
 
     async def scenario() -> None:
         stop = asyncio.Event()
@@ -566,7 +565,7 @@ def test_a_sweeper_pass_runs_all_three_jobs_against_an_empty_database(
         now=lambda: CAIRO_EVENING,
     )
 
-    assert sweeper.sweep_once() == {
+    assert sweeper.sweep_unbounded_for_tests() == {
         "publish_due_announcements": 0,
         "warn_streaks": 0,
         "remind_study_plans": 0,
@@ -596,7 +595,7 @@ def test_a_sweeper_with_storage_also_runs_the_purge_job(
         bucket="lemely-uploads-test",
     )
 
-    assert sweeper.sweep_once() == {
+    assert sweeper.sweep_unbounded_for_tests() == {
         "publish_due_announcements": 0,
         "warn_streaks": 0,
         "remind_study_plans": 0,
@@ -609,7 +608,7 @@ def test_a_sweeper_with_storage_also_runs_the_purge_job(
 # -- the tutoring email job (SPEC §b.4) ----------------------------------------
 
 
-def test_sweep_once_without_provider_keeps_existing_job_set(
+def test_unbounded_pass_without_provider_keeps_existing_job_set(
     pg_sessionmaker: sessionmaker[Session],
     notifications: NotificationService,
     transport: RecordingPushTransport,
@@ -631,7 +630,7 @@ def test_sweep_once_without_provider_keeps_existing_job_set(
         bucket="lemely-uploads-test",
     )
 
-    assert list(sweeper.sweep_once()) == [
+    assert list(sweeper.sweep_unbounded_for_tests()) == [
         "publish_due_announcements",
         "warn_streaks",
         "remind_study_plans",
@@ -641,7 +640,7 @@ def test_sweep_once_without_provider_keeps_existing_job_set(
     ]
 
 
-def test_sweep_once_runs_email_job_only_with_provider(
+def test_unbounded_pass_runs_email_job_only_with_provider(
     pg_sessionmaker: sessionmaker[Session],
     notifications: NotificationService,
     transport: RecordingPushTransport,
@@ -681,7 +680,7 @@ def test_sweep_once_runs_email_job_only_with_provider(
         email_daily_cap=5,
     )
 
-    assert sweeper.sweep_once() == {
+    assert sweeper.sweep_unbounded_for_tests() == {
         "publish_due_announcements": 0,
         "warn_streaks": 0,
         "remind_study_plans": 0,
@@ -692,5 +691,5 @@ def test_sweep_once_runs_email_job_only_with_provider(
     with pg_sessionmaker() as session:
         assert session.scalar(sa.select(EmailOutbox.status)) is EmailOutboxStatus.sent
     # The second pass has nothing left to do and sends nothing again.
-    assert sweeper.sweep_once()["deliver_tutoring_email"] == 0
+    assert sweeper.sweep_unbounded_for_tests()["deliver_tutoring_email"] == 0
     assert len(provider.calls) == 1

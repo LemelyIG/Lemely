@@ -58,6 +58,7 @@ from lemely.db.models.billing import (
     SavedCard,
 )
 from lemely.db.models.usage import GrantKind
+from lemely.db.subscription_repo import until_stopped
 from lemely.db.usage_ledger_repo import UsageLedger
 
 if TYPE_CHECKING:
@@ -483,11 +484,17 @@ def _card_for_charge(now: datetime) -> Callable[[Session, Payment], SavedCard | 
     return card_for
 
 
-def _refuse_queued_payments(sessionmaker: sessionmaker[Session], *, now: datetime) -> int:
+def _refuse_queued_payments(
+    sessionmaker: sessionmaker[Session],
+    *,
+    now: datetime,
+    should_stop: Callable[[], bool] | None = None,
+) -> int:
     """Fail unsent each queued top-up that must not be charged, with its real reason (DV-23, DV-24).
 
     One transaction per payment (payment lock, then setting lock), so a bad row cannot block the
-    others. The consequence for the setting is applied in the same transaction.
+    others. The consequence for the setting is applied in the same transaction. ``should_stop``
+    is asked before each row, never inside one.
     """
     with sessionmaker() as session:
         payment_ids = list(
@@ -502,7 +509,10 @@ def _refuse_queued_payments(sessionmaker: sessionmaker[Session], *, now: datetim
                 .limit(MERCHANT_SWEEP_BATCH)
             )
         )
-    return sum(_refuse_one(sessionmaker, payment_id, now=now) for payment_id in payment_ids)
+    return sum(
+        _refuse_one(sessionmaker, payment_id, now=now)
+        for payment_id in until_stopped(payment_ids, should_stop)
+    )
 
 
 def _refuse_one(
@@ -537,14 +547,19 @@ def _refuse_one(
     return True
 
 
-def _settle_failed_auto_topups(sessionmaker: sessionmaker[Session], *, now: datetime) -> int:
+def _settle_failed_auto_topups(
+    sessionmaker: sessionmaker[Session],
+    *,
+    now: datetime,
+    should_stop: Callable[[], bool] | None = None,
+) -> int:
     """Settle each enabled setting whose latest top-up failed (DV-23).
 
     A charge that was attempted and failed switches the setting off and tells the payer. A top-up
     refused before any charge (``sent_at`` is never stamped) is a refusal, not a failed charge, and
     is handled by :func:`_apply_refusal`. At most ``MERCHANT_SWEEP_BATCH`` settings per run, one
     transaction each, so a bad row cannot block or undo the others. A failure of an older top-up
-    (not ``last_payment_id``) is ignored.
+    (not ``last_payment_id``) is ignored. ``should_stop`` is asked before each setting.
     """
     with sessionmaker() as session:
         setting_ids = list(
@@ -556,7 +571,10 @@ def _settle_failed_auto_topups(sessionmaker: sessionmaker[Session], *, now: date
                 .limit(MERCHANT_SWEEP_BATCH)
             )
         )
-    return sum(_settle_one(sessionmaker, setting_id, now=now) for setting_id in setting_ids)
+    return sum(
+        _settle_one(sessionmaker, setting_id, now=now)
+        for setting_id in until_stopped(setting_ids, should_stop)
+    )
 
 
 def _settle_one(
@@ -619,16 +637,32 @@ def run_auto_topup_job(
     settings: PaymobSettings,
     *,
     now: datetime,
+    should_stop: Callable[[], bool] | None = None,
+    should_stop_row: Callable[[], bool] | None = None,
 ) -> int:
     """Job ``billing.auto_topup``: refuse what must not be charged, charge the rest, then settle.
 
     Returns the queued top-ups refused, charged or failed unsent, plus the settings settled after
     a failed top-up. Runs only where charges are configured (the provider decides, T10); without
-    it the queued rows wait.
+    it the queued rows wait. ``should_stop`` is asked before each charge is claimed, never inside
+    one; the top-ups not yet claimed stay queued for the next run. ``should_stop_row`` (by default
+    ``should_stop``) is asked before each database-only row of the refusal and settlement steps.
+    No charge is started in a run whose refusal step stopped early: a top-up it did not look at
+    may be one that must not be charged.
     """
+    row_stop = should_stop_row if should_stop_row is not None else should_stop
+    refusal_cut = False
+
+    def refusal_stop() -> bool:
+        nonlocal refusal_cut
+        refusal_cut = row_stop is not None and row_stop()
+        return refusal_cut
+
     handled = 0
     if charges_configured(settings):
-        handled += _refuse_queued_payments(sessionmaker, now=now)
+        handled += _refuse_queued_payments(sessionmaker, now=now, should_stop=refusal_stop)
+    if refusal_cut:
+        return handled
     handled += charge_queued_payments(
         sessionmaker,
         client,
@@ -637,8 +671,9 @@ def run_auto_topup_job(
         dedupe_prefix=AUTO_TOPUP_DEDUPE_PREFIX,
         card_for=_card_for_charge(now),
         now=now,
+        should_stop=should_stop,
     )
-    return handled + _settle_failed_auto_topups(sessionmaker, now=now)
+    return handled + _settle_failed_auto_topups(sessionmaker, now=now, should_stop=row_stop)
 
 
 # ---------------------------------------------------------------------------

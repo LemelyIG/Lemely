@@ -67,7 +67,7 @@ from tests.paymob_fixtures import PAYMOB_SETTINGS
 from tests.subscription_fixtures import T0, grants_of, paymob_settings
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Callable, Iterator, Mapping
 
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -175,8 +175,11 @@ def _run(
     settings: Any = FALLBACK,
     now: datetime = NOW,
     limit: int = MERCHANT_SWEEP_BATCH,
+    should_stop: Callable[[], bool] | None = None,
 ) -> int:
-    return run_extra_seat_renewal_job(sm, client, settings, now=now, limit=limit)
+    return run_extra_seat_renewal_job(
+        sm, client, settings, now=now, limit=limit, should_stop=should_stop
+    )
 
 
 def _attempts(sm: sessionmaker[Session], scene: Mapping[str, uuid.UUID]) -> list[Payment]:
@@ -1211,6 +1214,32 @@ def test_the_limit_bounds_the_batch(pg_sessionmaker: sessionmaker[Session]) -> N
     _run(sm, client, limit=2, now=NOW + timedelta(minutes=5))
 
     assert all(_attempts(sm, scene) for scene in scenes)
+
+
+def test_a_spent_budget_stops_the_batch_between_rows_and_the_rest_wait(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    sm = pg_sessionmaker
+    scenes = [
+        _scene(sm, start=T0 - timedelta(days=n), end=T0 + timedelta(days=30 - n)) for n in range(3)
+    ]
+    client = FakeMotoClient()
+    checks: list[None] = []
+
+    def out_of_time() -> bool:
+        checks.append(None)
+        return len(checks) > 1  # time for the first row only
+
+    _run(sm, client, should_stop=out_of_time)
+
+    queued = [bool(_attempts(sm, scene)) for scene in scenes]
+    # The oldest period ran whole; the others were never started.
+    assert queued == [False, False, True]
+    assert client.calls_to("pay_with_token") == []  # the charge phase honours the stop too
+
+    _run(sm, client, now=NOW + timedelta(minutes=5))
+
+    assert all(_attempts(sm, scene) for scene in scenes)  # the next pass takes the rest
 
 
 def test_a_row_locked_by_another_session_is_skipped(
