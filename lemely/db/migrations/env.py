@@ -36,8 +36,10 @@ if config.config_file_name is not None:
 import_all_models()
 target_metadata = Base.metadata
 
-# Resolve the URL from Settings, overriding any placeholder in alembic.ini.
-config.set_main_option("sqlalchemy.url", load_settings().database.url)
+# Resolve the URL from Settings, overriding any placeholder in alembic.ini. ConfigParser
+# interpolates `%`, so a percent-encoded password (`p%40ss`) must be escaped as `%%`;
+# `get_main_option` un-escapes it again on the way out.
+config.set_main_option("sqlalchemy.url", load_settings().database.url.replace("%", "%%"))
 
 
 def run_migrations_offline() -> None:

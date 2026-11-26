@@ -53,7 +53,7 @@ const BREAKPOINTS: { width: number; height: number }[] = [
 ]
 
 function uniqueEmail(tag: string): string {
-  return `e2e-shots-${tag}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.com`
+  return `e2e-shots-${tag}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@e2e.lemely.local`
 }
 
 interface SignedUpAccount {

@@ -2,6 +2,12 @@ import { execSync } from "node:child_process"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { defineConfig, devices } from "@playwright/test"
+import {
+  E2E_DATABASE_NAME,
+  bypassProxyForLoopback,
+  e2eDatabaseUrl,
+  scrubLibpqOverrides,
+} from "./e2e/e2e-env"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -21,9 +27,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 interface SupabaseStatus {
   ANON_KEY: string
   SERVICE_ROLE_KEY: string
+  /** The local Postgres, e.g. `postgresql://postgres:postgres@127.0.0.1:54322/postgres`. */
+  DB_URL?: string
+  /** The local API gateway GoTrue sits behind, e.g. `http://127.0.0.1:54321`. */
+  API_URL?: string
 }
 
-function resolveSupabaseEnv(): Record<string, string> {
+function resolveSupabaseStatus(): SupabaseStatus {
   try {
     // The Supabase CLI is installed at ~/.local/bin/supabase, which this
     // sandbox's non-interactive/non-login shells do not put on PATH
@@ -34,11 +44,7 @@ function resolveSupabaseEnv(): Record<string, string> {
       stdio: ["ignore", "pipe", "ignore"],
       env: { ...process.env, PATH: `${process.env.HOME}/.local/bin:${process.env.PATH}` },
     }).toString()
-    const status = JSON.parse(raw) as SupabaseStatus
-    return {
-      LEMELY_SUPABASE__SERVICE_ROLE_KEY: status.SERVICE_ROLE_KEY,
-      LEMELY_SUPABASE__ANON_KEY: status.ANON_KEY,
-    }
+    return JSON.parse(raw) as SupabaseStatus
   } catch (err) {
     // Surface a clear failure at config-eval time rather than a confusing
     // "service-role key is not configured" error deep in a test run.
@@ -49,13 +55,36 @@ function resolveSupabaseEnv(): Record<string, string> {
 }
 
 const repoRoot = path.resolve(__dirname, "..")
-const supabaseEnv = resolveSupabaseEnv()
+const supabaseStatus = resolveSupabaseStatus()
+const supabaseEnv: Record<string, string> = {
+  LEMELY_SUPABASE__SERVICE_ROLE_KEY: supabaseStatus.SERVICE_ROLE_KEY,
+  LEMELY_SUPABASE__ANON_KEY: supabaseStatus.ANON_KEY,
+  // The keys and the URL come from the same stack. Left ambient, the URL could name
+  // another local stack, and the reset would purge that stack's e2e accounts.
+  ...(supabaseStatus.API_URL ? { LEMELY_SUPABASE__URL: supabaseStatus.API_URL } : {}),
+}
 // Exported into this process's own env (not just threaded into webServer's
 // `env` below) so `./e2e/global-setup.ts` — a bare module path Playwright
 // invokes directly, which cannot receive config-module-scoped values any
 // other way — inherits them without re-shelling out to `supabase status`
 // itself.
-Object.assign(process.env, supabaseEnv)
+//
+// The app's own data lives in a database of its own (`lemely_e2e`, recreated by
+// `./e2e/global-setup.ts` on every run), never in the shared `postgres`
+// database. The URL is the local stack's own Postgres (from `supabase status`)
+// with only the database name changed, and it overrides any
+// `LEMELY_DATABASE__URL` already exported in the invoking shell. `PYTHONPATH`
+// pins the helper scripts to this checkout, because every worktree shares one
+// venv whose editable install may point at another one.
+const databaseUrl = e2eDatabaseUrl(supabaseStatus.DB_URL)
+Object.assign(process.env, supabaseEnv, {
+  LEMELY_DATABASE__URL: databaseUrl,
+  PYTHONPATH: repoRoot,
+})
+// libpq variables that would override the URL's explicit loopback host, and an ambient
+// HTTP proxy that would carry the service-role-keyed GoTrue calls: see `./e2e/e2e-env.ts`.
+scrubLibpqOverrides(process.env)
+bypassProxyForLoopback(process.env)
 
 /**
  * `process.env` is typed `string | undefined` per key, but Playwright's
@@ -162,8 +191,20 @@ export default defineConfig({
       cwd: repoRoot,
       port: 8000,
       timeout: 60_000,
-      reuseExistingServer: !process.env.CI,
-      env: definedEnv({ ...process.env, ...supabaseEnv }),
+      // Never reuse: a server already on :8000 belongs to another session and
+      // points at whatever database it was started with, not `lemely_e2e`.
+      reuseExistingServer: false,
+      env: definedEnv({
+        ...process.env,
+        ...supabaseEnv,
+        LEMELY_DATABASE__URL: databaseUrl,
+        // The server refuses to start on any other database (scripts/e2e_server.py).
+        LEMELY_E2E_EXPECT_DATABASE: E2E_DATABASE_NAME,
+        // This server boots before global setup drops and recreates `lemely_e2e`. The
+        // notification sweeper would sweep that database immediately, and log failures
+        // while it is dropped and migrated underneath it. No spec depends on it.
+        LEMELY_NOTIFICATIONS__SWEEPER_ENABLED: "false",
+      }),
     },
     {
       // vite (v8) binds "localhost" to [::1] only by default, which Playwright's
@@ -172,7 +213,9 @@ export default defineConfig({
       cwd: __dirname,
       url: "http://127.0.0.1:5173",
       timeout: 60_000,
-      reuseExistingServer: !process.env.CI,
+      // Never reuse: a vite already on :5173 may serve another worktree's frontend,
+      // so the run would silently test the wrong checkout.
+      reuseExistingServer: false,
     },
   ],
 })
