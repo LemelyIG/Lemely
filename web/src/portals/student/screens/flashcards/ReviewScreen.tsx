@@ -19,6 +19,7 @@ import { ReviewDone } from "./ReviewDone"
 import { comingBackLine, topicName } from "./flashcardsView"
 import { doneView, gradeButtons, progressView, reviewKeyAction, syncBannerText } from "./reviewView"
 import { PRIMARY_BTN } from "./parts/buttonStyles"
+import { PAGE_SKELETON } from "./parts/skeletonStyles"
 
 const GRADE_TONE: Record<ReviewGrade, string> = {
   again: "bg-error-container text-on-error-container",
@@ -159,7 +160,7 @@ export function ReviewScreen() {
 
   if (!cards) {
     return withStatus(<QueryState query={due} srHeading="Review flashcards"
-      skeleton={<div className="grid gap-4 p-5" aria-busy="true" aria-label="Loading your cards"><SkeletonBlock className="h-2 rounded" /><SkeletonBlock className="h-[360px] rounded-[28px]" /></div>}
+      skeleton={<div className="grid gap-4 p-5" aria-busy="true" aria-label="Loading your cards"><SkeletonBlock className={`h-2 rounded ${PAGE_SKELETON}`} /><SkeletonBlock className={`h-[360px] rounded-[28px] ${PAGE_SKELETON}`} /></div>}
       error={{ heading: "Couldn’t load your cards", secondaryAction: { label: "Back to decks", onClick: () => navigate(backTo) } }}>
       {() => null}
     </QueryState>)
