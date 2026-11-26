@@ -28,7 +28,7 @@ import { cn } from "@/lib/utils"
  *   - nothing requires a teacher to check it. `needs_teacher_review` is a
  *     ROUTING boolean; it withholds nothing. The review queue's own
  *     bulk-approve "accepts each selected mark exactly as Lemely awarded
- *     it" (`portals/teacher/screens/Review.tsx`), unopened.
+ *     it" (`portals/teacher/screens/review/QueueRow.tsx`), unopened.
  *
  * So this component states CONFIDENCE and nothing about what happens next.
  * A tier may carry no explanation at all — that is deliberate, not an

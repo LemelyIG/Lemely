@@ -91,6 +91,7 @@ export const ADOPTED_ROUTES: readonly string[] = [
   "/teacher/review/bulk-approve",
   "/teacher/review/:id",
   "/teacher/review/:id/crop",
+  "/teacher/review/:id/page",
   "/teacher/review/:id/resolve",
   "/teacher/review/:id/dismiss",
   // announcements.py

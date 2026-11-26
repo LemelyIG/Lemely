@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import {
+  queryOptions,
   useMutation,
   useQuery,
   useQueryClient,
@@ -7,6 +8,7 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query"
 import { fetchBlobUrl, request } from "@/lib/api"
+import { filterKey, reviewQueuePath, type ReviewQueueFilters } from "@/lib/reviewQueueQuery"
 import type {
   AcknowledgeAtRiskRequest,
   AnnouncementCreateRequest,
@@ -41,6 +43,7 @@ import type {
   ResolveReviewRequest,
   ReviewItemDetail,
   ReviewQueueItem,
+  ReviewQueueList,
   RosterEntry,
   SchemeList,
   SchemeRow,
@@ -368,9 +371,15 @@ export interface ReviewItemCrop {
   onDecodeError: () => void
 }
 
+function reviewImagePath(itemId: string, kind: "crop" | "page"): string {
+  return kind === "page" ? `/teacher/review/${itemId}/page` : `/teacher/review/${itemId}/crop`
+}
+
 /**
- * `GET /teacher/review/{itemId}/crop` (task #71/#72) — the boxed region of
- * the student's scan the question's answer was read from, fetched as a blob
+ * The crop's object-URL lifecycle, for either image the review item serves:
+ * `crop` (`GET /teacher/review/{itemId}/crop`, task #71/#72, the boxed region
+ * of the student's scan) or `page` (`GET /teacher/review/{itemId}/page`, L5,
+ * the whole page with the region outlined), fetched as a blob
  * and handed to `<img src>` as an object URL. Same reason and the same
  * ownership pattern as `useScanPreview` below: the route sits behind
  * `require_role`, and `<img src>` cannot send an `Authorization` header on
@@ -414,7 +423,11 @@ export interface ReviewItemCrop {
  * The effect-time reset is kept anyway, harmless and no longer load-bearing:
  * see its own comment.
  */
-export function useReviewItemCrop(itemId: string | undefined, enabled: boolean): ReviewItemCrop {
+export function useReviewItemImage(
+  itemId: string | undefined,
+  kind: "crop" | "page",
+  enabled: boolean,
+): ReviewItemCrop {
   const [fetched, setFetched] = useState<FetchedCrop | null>(null)
 
   useEffect(() => {
@@ -432,7 +445,7 @@ export function useReviewItemCrop(itemId: string | undefined, enabled: boolean):
     let cancelled = false
     let objectUrl: string | null = null
 
-    fetchBlobUrl(`/teacher/review/${itemId}/crop`)
+    fetchBlobUrl(reviewImagePath(itemId, kind))
       .then((fetchedUrl) => {
         if (cancelled) {
           // Unmounted, or `itemId`/`enabled` changed, while in flight —
@@ -455,7 +468,7 @@ export function useReviewItemCrop(itemId: string | undefined, enabled: boolean):
       cancelled = true
       if (objectUrl !== null) URL.revokeObjectURL(objectUrl)
     }
-  }, [itemId, enabled])
+  }, [itemId, kind, enabled])
 
   // A decoded 2xx blob can still fail to render (see this hook's own doc).
   // The functional updater reads the CURRENT `fetched` without needing it in
@@ -469,6 +482,50 @@ export function useReviewItemCrop(itemId: string | undefined, enabled: boolean):
   }, [])
 
   return { url: cropUrlFor(itemId, fetched), onDecodeError }
+}
+
+/** The boxed-region crop; a thin wrapper over `useReviewItemImage`. */
+export function useReviewItemCrop(itemId: string | undefined, enabled: boolean): ReviewItemCrop {
+  return useReviewItemImage(itemId, "crop", enabled)
+}
+
+/**
+ * L5: one page of the redesigned queue (`GET /teacher/review` with repeatable
+ * `class_id`/`reason`/`subject`, `q`, `sort`, `limit`, `cursor`). The key starts
+ * `["teacher", "review", ...]` so every resolve/dismiss/bulk invalidation that
+ * already targets `["teacher", "review"]` refreshes it too.
+ *
+ * `placeholderData: previous` keeps the last page on screen while the next one
+ * loads, but a page that then fails has no data of its own, so the screen holds
+ * the merged rows itself (see `queueLoad`).
+ */
+export function reviewQueuePageOptions(filters: ReviewQueueFilters, cursor: string | undefined) {
+  return queryOptions({
+    queryKey: ["teacher", "review", "queue-page", filterKey(filters), cursor ?? null],
+    queryFn: () => request<ReviewQueueList>(reviewQueuePath(filters, { limit: 50, cursor })),
+    placeholderData: (previous) => previous,
+  })
+}
+
+export function useReviewQueuePage(
+  filters: ReviewQueueFilters,
+  cursor: string | undefined,
+): UseQueryResult<ReviewQueueList, Error> {
+  return useQuery(reviewQueuePageOptions(filters, cursor))
+}
+
+/** Everything a resolved mark can change (B6). Shared by `useResolveReviewItem`
+ * and the review queue's deferred commit. */
+export function invalidateAfterResolve(
+  queryClient: ReturnType<typeof useQueryClient>,
+  row: Pick<ReviewQueueItem, "studentId" | "classId">,
+): void {
+  queryClient.invalidateQueries({ queryKey: ["teacher", "review"] })
+  queryClient.invalidateQueries({ queryKey: ["teacher", "student", row.studentId] })
+  queryClient.invalidateQueries({ queryKey: ["teacher", "class", row.classId] })
+  queryClient.invalidateQueries({ queryKey: ["teacher", "classes"] })
+  queryClient.invalidateQueries({ queryKey: ["teacher", "at-risk"] })
+  queryClient.invalidateQueries({ queryKey: ["teacher", "overview"] })
 }
 
 /**
@@ -514,14 +571,7 @@ export function useResolveReviewItem(
         method: "POST",
         body: JSON.stringify(body satisfies ResolveReviewRequest),
       }),
-    onSuccess: (row) => {
-      queryClient.invalidateQueries({ queryKey: ["teacher", "review"] })
-      queryClient.invalidateQueries({ queryKey: ["teacher", "student", row.studentId] })
-      queryClient.invalidateQueries({ queryKey: ["teacher", "class", row.classId] })
-      queryClient.invalidateQueries({ queryKey: ["teacher", "classes"] })
-      queryClient.invalidateQueries({ queryKey: ["teacher", "at-risk"] })
-      queryClient.invalidateQueries({ queryKey: ["teacher", "overview"] })
-    },
+    onSuccess: (row) => invalidateAfterResolve(queryClient, row),
   })
 }
 

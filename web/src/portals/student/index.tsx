@@ -247,7 +247,7 @@ export const studentRoute: RouteObject = {
     {
       index: true,
       element: <Overview />,
-      handle: { title: "Dashboard", skeleton: "card-grid" },
+      handle: { title: "Home", skeleton: "card-grid" },
     },
     {
       path: "classes",
@@ -320,7 +320,7 @@ export const studentRoute: RouteObject = {
     {
       path: "profile",
       element: <Profile />,
-      handle: { title: "Your profile", skeleton: "page-header" },
+      handle: { title: "Me", skeleton: "page-header" },
     },
     // The only place a parent_child_links row is created (D3.11).
     {

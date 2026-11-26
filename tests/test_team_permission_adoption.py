@@ -89,6 +89,7 @@ ADOPTED: dict[tuple[str, str], TeamPermission] = {
     ("GET", "/api/teacher/review"): VIEW,
     ("GET", "/api/teacher/review/{item_id}"): VIEW,
     ("GET", "/api/teacher/review/{item_id}/crop"): VIEW,
+    ("GET", "/api/teacher/review/{item_id}/page"): VIEW,
     ("POST", "/api/teacher/review/bulk-approve"): MARK,
     ("POST", "/api/teacher/review/{item_id}/resolve"): MARK,
     ("POST", "/api/teacher/review/{item_id}/dismiss"): MARK,

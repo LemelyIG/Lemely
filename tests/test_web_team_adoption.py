@@ -65,7 +65,12 @@ from tests.team_db import (
     enrol,
     team_database,
 )
-from tests.test_web_review import _question, _seed_console_paper
+from tests.test_web_review import (
+    _question,
+    _seed_boxed_review_item,
+    _seed_console_paper,
+    _synthetic_scan,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -943,6 +948,28 @@ def test_the_header_cannot_reach_another_leads_review_items(
     assert bulk.status_code == 200
     assert bulk.json()["approved"] == []
     assert _review_items(_console_app(sm, other, tmp_path)) == foreign_ids
+
+
+def test_a_viewer_reads_the_leads_whole_page_only_when_acting_for_the_lead(
+    sm: sessionmaker[Session], tmp_path: Path
+) -> None:
+    storage = FakeStorageBackend()
+    lead, item_id = _seed_boxed_review_item(
+        sm, ClassService(sm), storage=storage, scan=_synthetic_scan()
+    )
+    helper = add_user(sm, Role.teacher)
+    add_assistant(sm, teacher_id=lead, assistant_id=helper, role=AssistantRole.viewer)
+    client = _console_app(sm, helper, tmp_path, storage=storage)
+    page_path = f"/api/teacher/review/{item_id}/page"
+    allowed = client.get(page_path, headers=acting_for(lead))
+    assert allowed.status_code == 200
+    assert allowed.headers["content-type"] == "image/png"
+    assert allowed.content.startswith(b"\x89PNG\r\n\x1a\n")
+    # As themselves the assistant has no claim on the lead's student: refused, never an image.
+    own = client.get(page_path)
+    assert own.status_code == client.get(f"/api/teacher/review/{item_id}").status_code
+    assert own.status_code in (403, 404)
+    assert own.headers["content-type"] != "image/png"
 
 
 def test_a_non_uuid_token_subject_is_rejected_by_the_guard_with_401(

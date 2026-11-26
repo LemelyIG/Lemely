@@ -6,6 +6,7 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query"
 import { request } from "@/lib/api"
+import { STUDENT_HOME_KEY } from "@/lib/hooks/useStudentHomeApi"
 import type { DeletedPapers } from "@/lib/studentTypes"
 
 /*
@@ -62,6 +63,7 @@ export function useDeletePaper(): UseMutationResult<void, Error, { attemptId: st
       queryClient.removeQueries({ queryKey: ["student", "result"] })
       return Promise.all([
         queryClient.invalidateQueries({ queryKey: ["student", "overview"] }),
+        queryClient.invalidateQueries({ queryKey: STUDENT_HOME_KEY }),
         queryClient.invalidateQueries({ queryKey: ["student", "subject"] }),
         queryClient.invalidateQueries({ queryKey: deletedPapersKey }),
       ])
@@ -86,6 +88,7 @@ export function useRestorePaper(): UseMutationResult<void, Error, { attemptId: s
       queryClient.removeQueries({ queryKey: ["student", "result"] })
       return Promise.all([
         queryClient.invalidateQueries({ queryKey: ["student", "overview"] }),
+        queryClient.invalidateQueries({ queryKey: STUDENT_HOME_KEY }),
         queryClient.invalidateQueries({ queryKey: ["student", "subject"] }),
         queryClient.invalidateQueries({ queryKey: deletedPapersKey }),
       ])

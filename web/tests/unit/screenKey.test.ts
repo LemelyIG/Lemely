@@ -50,8 +50,15 @@ describe("screenKey", () => {
   })
 
   it("distinguishes two screens that differ only by query string", () => {
-    expect(screenKey({ pathname: "/teacher/review", search: "?class=3" })).not.toBe(
-      screenKey({ pathname: "/teacher/review", search: "?class=4" }),
+    expect(screenKey({ pathname: "/teacher/quizzes", search: "?class=3" })).not.toBe(
+      screenKey({ pathname: "/teacher/quizzes", search: "?class=4" }),
     )
+  })
+
+  it("keeps the review queue one screen across rows and filters", () => {
+    const list = screenKey({ pathname: "/teacher/review", search: "" })
+    expect(screenKey({ pathname: "/teacher/review/r2", search: "?sort=oldest" })).toBe(list)
+    expect(screenKey({ pathname: "/teacher/review", search: "?q=amina" })).toBe(list)
+    expect(screenKey({ pathname: "/teacher/reviewing", search: "" })).not.toBe(list)
   })
 })

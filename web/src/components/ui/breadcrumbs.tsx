@@ -121,7 +121,7 @@ export function Breadcrumbs({ items, collapse = true, className }: BreadcrumbsPr
                   to={item.to}
                   viewTransition
                   className={cn(
-                    "whitespace-nowrap rounded-sm transition-colors hover:text-on-surface",
+                    "flex min-h-6 items-center whitespace-nowrap rounded-sm transition-colors hover:text-on-surface",
                     "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
                     /* §6.1's 44px floor; a crumb measured 65x20. The `<li>` is
                        a flex container, so this link is a flex item and its

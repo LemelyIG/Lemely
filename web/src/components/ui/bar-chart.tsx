@@ -65,9 +65,12 @@ export interface BarChartProps {
   /** How many ticks the value axis aims for (default 4). A narrow horizontal chart, whose
    * value labels sit side by side, asks for fewer. */
   valueTickCount?: number
-  /** Space in px right of the plot (default 12). A horizontal chart's last value label is
-   * centred on the plot's end and spills past it by half its width. */
+  /** Space in px right of the plot (default 12, or 24 when tickEvery > 1). A horizontal chart's
+   * last value label is centred on the plot's end and spills past it by half its width. */
   rightMargin?: number
+  /** Axis tick and legend size in px; the shared theme is 11. Raise it where the chart sits on a
+   * surface that holds the 12px text floor. */
+  tickFontSize?: number
   ariaLabel: string
   className?: string
 }
@@ -85,11 +88,23 @@ export function BarChart({
   tickEvery = 1,
   leftMargin,
   valueTickCount = 4,
-  rightMargin = 12,
+  rightMargin,
+  tickFontSize,
   ariaLabel,
   className,
 }: BarChartProps) {
-  const { theme, singleSeriesColor, tokens, ready } = useNivoTheme()
+  const { theme: baseTheme, singleSeriesColor, tokens, ready } = useNivoTheme()
+  const theme = useMemo(() => {
+    if (!tickFontSize) return baseTheme
+    return {
+      ...baseTheme,
+      axis: {
+        ...baseTheme.axis,
+        ticks: { ...baseTheme.axis?.ticks, text: { ...baseTheme.axis?.ticks?.text, fontSize: tickFontSize } },
+        legend: { ...baseTheme.axis?.legend, text: { ...baseTheme.axis?.legend?.text, fontSize: tickFontSize } },
+      },
+    }
+  }, [baseTheme, tickFontSize])
   const animate = useChartAnimation()
 
   const rows = useMemo(
@@ -142,11 +157,12 @@ export function BarChart({
   const margin = useMemo(
     () => ({
       top: 8,
-      right: rightMargin,
+      // A thinned category axis centres its last label on the last bar, so it overhangs.
+      right: rightMargin ?? (tickEvery > 1 ? 24 : 12),
       bottom: axisBottomLegend ? 44 : 28,
       left: leftMargin ?? (axisLeftLegend ? 56 : 44),
     }),
-    [axisBottomLegend, axisLeftLegend, leftMargin, rightMargin],
+    [axisBottomLegend, axisLeftLegend, leftMargin, rightMargin, tickEvery],
   )
 
   if (!ready) {

@@ -17,12 +17,13 @@ from __future__ import annotations
 
 import base64
 import binascii
+import math
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, NoReturn
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from lemely.core.team_permissions import TeamPermission
 from lemely.db.models.enums import Role
@@ -36,7 +37,10 @@ from lemely.db.review_repo import (
     ReviewOwnershipError,
     ReviewQueueRow,
     ReviewService,
+    ReviewSort,
     ReviewValidationError,
+    SortKey,
+    review_sort_key,
 )
 from lemely.io.rasterise import looks_like_pdf
 from lemely.io.scan_limits import ScanRejectedError
@@ -53,6 +57,7 @@ from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 from lemely.runtime import sandbox
 from lemely.runtime.config import Settings  # noqa: TC001
 from lemely.web.deps import (
+    AuthContext,
     TeamActor,
     get_review_service,
     get_settings,
@@ -115,24 +120,59 @@ def _raise_for(exc: ReviewError) -> NoReturn:
 # ---------------------------------------------------------------------------
 
 _CURSOR_SEP = "|"
+_CURSOR_V2 = "v2"
 
 
-def _encode_cursor(created_at: datetime, item_id: uuid.UUID) -> str:
-    """Opaque keyset cursor: urlsafe-base64 of ``"<iso created_at>|<uuid>"``."""
-    raw = f"{created_at.isoformat()}{_CURSOR_SEP}{item_id}"
+def _encode_cursor(row: ReviewQueueRow, sort: ReviewSort) -> str:
+    """Opaque keyset cursor for ``row`` under ``sort``.
+
+    ``oldest`` keeps the original urlsafe-base64 ``"<iso created_at>|<uuid>"``
+    so a cursor issued before L5 still continues. The other sorts carry the
+    full :data:`~lemely.db.review_repo.SortKey` and the sort it belongs to, so a
+    cursor can never be replayed under a different order.
+    """
+    if sort == "oldest":
+        raw = f"{row.created_at.isoformat()}{_CURSOR_SEP}{row.item_id}"
+    else:
+        flag, value, created_at, item_id = review_sort_key(row, sort)
+        raw = _CURSOR_SEP.join(
+            [_CURSOR_V2, sort, str(flag), repr(value), created_at.isoformat(), str(item_id)]
+        )
     return base64.urlsafe_b64encode(raw.encode()).decode()
 
 
-def _decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
+def _decode_cursor(cursor: str, sort: ReviewSort) -> SortKey:
     """Inverse of :func:`_encode_cursor`.
 
-    Raises ``HTTPException(422)`` on anything that does not round-trip — a
-    malformed cursor is a client error, never a 500.
+    A 422 for anything that does not round-trip or that was issued for another sort.
     """
     try:
         raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+        parts = raw.split(_CURSOR_SEP)
+
+        def aware_datetime(value: str) -> datetime:
+            parsed = datetime.fromisoformat(value)
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                raise ValueError("cursor timestamp must have a timezone")
+            return parsed
+
+        if parts[0] == _CURSOR_V2:
+            _, cursor_sort, flag, value, created_at_str, item_id_str = parts
+            if cursor_sort != sort:
+                raise ValueError("cursor belongs to another sort")
+            sort_value = float(value)
+            if not math.isfinite(sort_value):
+                raise ValueError("cursor sort value is not finite")
+            return (
+                int(flag),
+                sort_value,
+                aware_datetime(created_at_str),
+                uuid.UUID(item_id_str),
+            )
+        if sort != "oldest":
+            raise ValueError("cursor belongs to another sort")
         created_at_str, item_id_str = raw.split(_CURSOR_SEP, 1)
-        return datetime.fromisoformat(created_at_str), uuid.UUID(item_id_str)
+        return (0, 0.0, aware_datetime(created_at_str), uuid.UUID(item_id_str))
     except (ValueError, UnicodeDecodeError, binascii.Error) as exc:
         raise HTTPException(status_code=422, detail="Malformed cursor") from exc
 
@@ -166,6 +206,7 @@ def _row_to_dto(row: ReviewQueueRow) -> ReviewQueueItemDTO:
         aiAwardedMarks=row.ai_awarded_marks,
         maximumMarks=row.maximum_marks,
         confidenceScore=row.confidence_score,
+        reviewReason=row.review_reason,
     )
 
 
@@ -187,6 +228,11 @@ def _point_to_dto(point: ReviewItemPoint) -> ReviewItemPointDTO:
         evidenceSpan=point.evidence_span,
         ecfApplied=point.ecf_applied,
         rationale=point.rationale,
+        ordinal=point.ordinal,
+        markType=point.mark_type,
+        tariff=point.tariff,
+        groupKey=point.group_key,
+        groupMaxMarks=point.group_max_marks,
     )
 
 
@@ -233,6 +279,7 @@ def _detail_to_dto(detail: ReviewItemDetail) -> ReviewItemDetailDTO:
         resolvedAt=detail.resolved_at.isoformat() if detail.resolved_at else None,
         points=[_point_to_dto(p) for p in detail.points],
         hasSourceBox=detail.has_source_box,
+        sourcePage=detail.source_page + 1 if detail.source_page is not None else None,
     )
 
 
@@ -245,9 +292,12 @@ def _detail_to_dto(detail: ReviewItemDetail) -> ReviewItemDetailDTO:
 def list_review_queue(
     actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     service: Annotated[ReviewService, Depends(get_review_service)],
-    class_id: str | None = None,
-    reason: str | None = None,
+    class_id: Annotated[list[str] | None, Query()] = None,
+    reason: Annotated[list[str] | None, Query()] = None,
+    subject: Annotated[list[str] | None, Query()] = None,
+    q: Annotated[str | None, Query(max_length=100)] = None,
     min_age_hours: float | None = None,
+    sort: ReviewSort = "oldest",
     limit: int = 50,
     cursor: str | None = None,
 ) -> ReviewQueueListDTO:
@@ -259,26 +309,37 @@ def list_review_queue(
     previous page (an unparseable cursor is a 422, never a 500 or a silent
     reset to page one).
 
-    ``total`` (C3d) is the count of every item matching ``class_id``/
-    ``reason``/``min_age_hours``, ignoring ``limit``/``cursor`` — computed by
+    ``total`` (C3d) is the count of every item matching every filter
+    (``class_id``/``reason``/``subject``/``q``/``min_age_hours``), ignoring
+    ``limit``/``cursor`` — computed by
     ``service.list_queue`` from the same single query that produces the page,
     so `total` can never drift from (or leak beyond) what the page itself is
     allowed to see. Cursor filtering and limit padding/slicing live entirely
     in ``ReviewService.list_queue`` (the keyset-cursor predicate is not
     re-implemented here); this route only turns its ``ReviewQueuePage`` into
     the wire DTO.
+
+    L5: ``class_id``, ``reason`` and ``subject`` may repeat (any of). ``q``
+    searches name, class, paper code and question. ``sort`` is one of
+    :data:`~lemely.db.review_repo.REVIEW_SORTS` (``oldest`` is the default and
+    unchanged); an unknown value is a 422. ``cursor`` is tied to the sort it was
+    issued under. ``subjectCodes`` feeds the Paper filter; ``hasHistory`` is
+    false only on first run.
     """
     auth = actor.auth
     if not 1 <= limit <= 200:
         raise HTTPException(status_code=422, detail="limit must be between 1 and 200")
-    parsed_cursor = _decode_cursor(cursor) if cursor is not None else None
+    parsed_cursor = _decode_cursor(cursor, sort) if cursor is not None else None
     try:
         result = service.list_queue(
             auth.user_id,
             auth.role,
-            class_id=class_id,
-            reason=reason,
+            class_ids=class_id,
+            reasons=reason,
+            subject_codes=subject,
+            search=q,
             min_age_hours=min_age_hours,
+            sort=sort,
             limit=limit,
             cursor=parsed_cursor,
         )
@@ -286,9 +347,13 @@ def list_review_queue(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     has_more = len(result.rows) > limit
     page = result.rows[:limit]
-    next_cursor = _encode_cursor(page[-1].created_at, page[-1].item_id) if has_more else None
+    next_cursor = _encode_cursor(page[-1], sort) if has_more else None
     return ReviewQueueListDTO(
-        items=[_row_to_dto(row) for row in page], nextCursor=next_cursor, total=result.total
+        items=[_row_to_dto(row) for row in page],
+        nextCursor=next_cursor,
+        total=result.total,
+        subjectCodes=result.subject_codes,
+        hasHistory=result.has_history,
     )
 
 
@@ -344,12 +409,133 @@ def _require_renderable_box(box: SourceBox, *, item_id: str) -> None:
 #: (#260). Named by dotted path: the worker imports them in its child.
 CROP_PDF_TARGET = "lemely.io.scan_render.crop_pdf_scan"
 CROP_IMAGE_TARGET = "lemely.io.scan_render.crop_image_scan"
+PAGE_PDF_TARGET = "lemely.io.scan_render.page_pdf_scan"
+PAGE_IMAGE_TARGET = "lemely.io.scan_render.page_image_scan"
 
 #: The log event for each :class:`RenderRefused` reason the crop can meet.
 _RENDER_REFUSED_EVENTS = {
-    "page_out_of_range": "review_crop_page_out_of_range",
-    "page_too_large": "review_crop_page_too_large",
+    "page_out_of_range": "page_out_of_range",
+    "page_too_large": "page_too_large",
 }
+
+
+def _render_item_scan(
+    item_id: str,
+    auth: AuthContext,
+    settings: Settings,
+    service: ReviewService,
+    storage: StorageBackend,
+    *,
+    pdf_target: str,
+    image_target: str,
+    event: str,
+) -> Response:
+    """Shared body of the crop and page routes: one ownership check, one render path.
+
+    ``event`` prefixes every log line (``review_crop`` / ``review_page``) so the
+    crop's existing events keep their exact names. Every docstring paragraph of
+    :func:`get_review_item_crop` about authorization, the uniform 404 and
+    ``no-store`` applies to both routes.
+    """
+    try:
+        object_path, box = service.get_item_crop_source(auth.user_id, auth.role, item_id)
+    except ReviewError as exc:
+        _raise_for(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # One spelling of the id in everything this request emits. The lookup logs the
+    # canonical form; logging the caller's raw path string here as well would make
+    # a single request carry two spellings of one id, for no reason other than that
+    # nobody normalised it -- and a reader joining the two lines pays for that.
+    # `uuid.UUID` cannot raise: the lookup above already parsed this same value.
+    logged_id = str(uuid.UUID(item_id))
+
+    _require_renderable_box(box, item_id=logged_id)
+
+    try:
+        data = storage.download(settings.storage.bucket, object_path)
+    except StorageObjectNotFoundError:
+        # A stored scan is not forever (GCS lifecycle, a cleared dev
+        # filesystem). 404 with the same body as every other absence; the
+        # reason is here in the log, where "the object expired" and "this item
+        # never had a box" need different operational responses.
+        log.warning(f"{event}_object_missing", item_id=logged_id, object_path=object_path)
+        # Canonicalised (see `logged_id`) so this body is byte-identical to the
+        # one the lookup's own absences produce, whatever spelling of the id the
+        # caller sent — a difference there would be the oracle this collapse
+        # exists to close.
+        raise HTTPException(
+            status_code=404, detail=CROP_ABSENT_DETAIL.format(item_id=logged_id)
+        ) from None
+
+    try:
+        # Sniffed from the bytes, not from ``uploads.content_type``, the same
+        # way ``rasterise_scan_to_pages`` dispatches, and through the same
+        # ``looks_like_pdf``. Anything that is not a PDF is decoded the way
+        # extraction decoded it (see ``scan_render.crop_image_scan``).
+        #
+        # Inside this ``try``: everything PIL does is PIL raising, and
+        # ``Image.open`` enforces its own ``MAX_IMAGE_PIXELS`` ceiling. Left
+        # outside, a page large enough to trip it escaped as a 500 instead of
+        # the 422 every other unrenderable scan gets.
+        #
+        # Rendered in the interactive worker (#260), which passes arguments by
+        # position only. ``crop_image_scan`` takes ``page`` by keyword, and an
+        # image has one page, so its page bound is checked here, from the box
+        # alone, and the worker crops page 0 (its default).
+        timeout = sandbox.sandbox_settings().crop_timeout_seconds
+        target: str
+        args: tuple[object, ...]
+        if looks_like_pdf(data):
+            target, args = pdf_target, (data, box.page, list(box.box))
+        else:
+            require_page_in_range(box.page, 1)
+            target, args = image_target, (data, list(box.box))
+        crop = sandbox.INTERACTIVE_WORKER.call(target, *args, timeout=timeout, result_type=bytes)
+    except RenderRefused as exc:
+        # The refusal's message is the user's; its reason picks the log event.
+        # ``page`` is the stored box's, which the render does not echo back.
+        log.warning(
+            f"{event}_{_RENDER_REFUSED_EVENTS.get(exc.reason, 'render_refused')}",
+            item_id=logged_id,
+            page=box.page,
+            **exc.fields,
+        )
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ScanRejectedError as exc:
+        log.warning(
+            f"{event}_scan_rejected",
+            item_id=logged_id,
+            page=box.page,
+            reason=exc.reason,
+            detail=str(exc),
+        )
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except sandbox.SandboxFailure as exc:
+        # Timeout, memory, a crashed child or an unexpected error in it: a fixed
+        # 422. No worker to render in: 503. The failure itself goes to the log.
+        raise sandbox_failure_to_http(
+            exc, event=f"{event}_render_failed", item_id=logged_id
+        ) from exc
+    except Exception as exc:
+        # The in-process path (sandbox disabled), where the renderer's own
+        # exceptions arrive unchanged. A scan that cannot be rendered is not a
+        # server fault — it is a stored file that is not the document type it
+        # claimed to be, or one whose page geometry no renderer will accept.
+        # The renderer's own message is for the log; the client gets a fixed one.
+        log.warning(f"{event}_render_failed", item_id=logged_id, error=str(exc))
+        raise HTTPException(status_code=422, detail=SANDBOX_FAILED_DETAIL) from exc
+
+    # Never stored. The bytes do not change for an item id, but who may see
+    # them does: a student leaves a class, a teacher signs out of a shared
+    # school computer. The browser cache is keyed by URL, not by the bearer
+    # token, so a cached crop would reopen with no authorization check at all.
+    return Response(
+        content=crop,
+        media_type="image/png",
+        headers={"Cache-Control": "private, no-store"},
+    )
 
 
 @router.get(
@@ -392,105 +578,47 @@ def get_review_item_crop(
     absences is evaluated, so an out-of-scope caller learns nothing about
     scans at all (triage F9; the broader 403-vs-404 question is #248).
     """
-    auth = actor.auth
-    try:
-        object_path, box = service.get_item_crop_source(auth.user_id, auth.role, item_id)
-    except ReviewError as exc:
-        _raise_for(exc)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _render_item_scan(
+        item_id,
+        actor.auth,
+        settings,
+        service,
+        storage,
+        pdf_target=CROP_PDF_TARGET,
+        image_target=CROP_IMAGE_TARGET,
+        event="review_crop",
+    )
 
-    # One spelling of the id in everything this request emits. The lookup logs the
-    # canonical form; logging the caller's raw path string here as well would make
-    # a single request carry two spellings of one id, for no reason other than that
-    # nobody normalised it -- and a reader joining the two lines pays for that.
-    # `uuid.UUID` cannot raise: the lookup above already parsed this same value.
-    logged_id = str(uuid.UUID(item_id))
 
-    _require_renderable_box(box, item_id=logged_id)
+@router.get(
+    "/{item_id}/page",
+    responses={
+        200: {"content": {"image/png": {}}, "description": "The whole page, answer outlined"}
+    },
+)
+def get_review_item_page(
+    item_id: str,
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    service: Annotated[ReviewService, Depends(get_review_service)],
+    storage: Annotated[StorageBackend, Depends(get_storage_backend)],
+) -> Response:
+    """The whole page this answer is on, with its region outlined (L5 "Whole page").
 
-    try:
-        data = storage.download(settings.storage.bucket, object_path)
-    except StorageObjectNotFoundError:
-        # A stored scan is not forever (GCS lifecycle, a cleared dev
-        # filesystem). 404 with the same body as every other absence; the
-        # reason is here in the log, where "the object expired" and "this item
-        # never had a box" need different operational responses.
-        log.warning("review_crop_object_missing", item_id=logged_id, object_path=object_path)
-        # Canonicalised (see `logged_id`) so this body is byte-identical to the
-        # one the lookup's own absences produce, whatever spelling of the id the
-        # caller sent — a difference there would be the oracle this collapse
-        # exists to close.
-        raise HTTPException(
-            status_code=404, detail=CROP_ABSENT_DETAIL.format(item_id=logged_id)
-        ) from None
-
-    try:
-        # Sniffed from the bytes, not from ``uploads.content_type``, the same
-        # way ``rasterise_scan_to_pages`` dispatches, and through the same
-        # ``looks_like_pdf``. Anything that is not a PDF is decoded the way
-        # extraction decoded it (see ``scan_render.crop_image_scan``).
-        #
-        # Inside this ``try``: everything PIL does is PIL raising, and
-        # ``Image.open`` enforces its own ``MAX_IMAGE_PIXELS`` ceiling. Left
-        # outside, a page large enough to trip it escaped as a 500 instead of
-        # the 422 every other unrenderable scan gets.
-        #
-        # Rendered in the interactive worker (#260), which passes arguments by
-        # position only. ``crop_image_scan`` takes ``page`` by keyword, and an
-        # image has one page, so its page bound is checked here, from the box
-        # alone, and the worker crops page 0 (its default).
-        timeout = sandbox.sandbox_settings().crop_timeout_seconds
-        target: str
-        args: tuple[object, ...]
-        if looks_like_pdf(data):
-            target, args = CROP_PDF_TARGET, (data, box.page, list(box.box))
-        else:
-            require_page_in_range(box.page, 1)
-            target, args = CROP_IMAGE_TARGET, (data, list(box.box))
-        crop = sandbox.INTERACTIVE_WORKER.call(target, *args, timeout=timeout, result_type=bytes)
-    except RenderRefused as exc:
-        # The refusal's message is the user's; its reason picks the log event.
-        # ``page`` is the stored box's, which the render does not echo back.
-        log.warning(
-            _RENDER_REFUSED_EVENTS.get(exc.reason, "review_crop_render_refused"),
-            item_id=logged_id,
-            page=box.page,
-            **exc.fields,
-        )
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except ScanRejectedError as exc:
-        log.warning(
-            "review_crop_scan_rejected",
-            item_id=logged_id,
-            page=box.page,
-            reason=exc.reason,
-            detail=str(exc),
-        )
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except sandbox.SandboxFailure as exc:
-        # Timeout, memory, a crashed child or an unexpected error in it: a fixed
-        # 422. No worker to render in: 503. The failure itself goes to the log.
-        raise sandbox_failure_to_http(
-            exc, event="review_crop_render_failed", item_id=logged_id
-        ) from exc
-    except Exception as exc:
-        # The in-process path (sandbox disabled), where the renderer's own
-        # exceptions arrive unchanged. A scan that cannot be rendered is not a
-        # server fault — it is a stored file that is not the document type it
-        # claimed to be, or one whose page geometry no renderer will accept.
-        # The renderer's own message is for the log; the client gets a fixed one.
-        log.warning("review_crop_render_failed", item_id=logged_id, error=str(exc))
-        raise HTTPException(status_code=422, detail=SANDBOX_FAILED_DETAIL) from exc
-
-    # Never stored. The bytes do not change for an item id, but who may see
-    # them does: a student leaves a class, a teacher signs out of a shared
-    # school computer. The browser cache is keyed by URL, not by the bearer
-    # token, so a cached crop would reopen with no authorization check at all.
-    return Response(
-        content=crop,
-        media_type="image/png",
-        headers={"Cache-Control": "private, no-store"},
+    Same ownership rule, absences, status codes, sandbox and ``no-store`` as
+    :func:`get_review_item_crop`: both go through :func:`_render_item_scan` and
+    :meth:`ReviewService.get_item_crop_source`. The box is drawn server-side so
+    the client still never receives coordinates.
+    """
+    return _render_item_scan(
+        item_id,
+        actor.auth,
+        settings,
+        service,
+        storage,
+        pdf_target=PAGE_PDF_TARGET,
+        image_target=PAGE_IMAGE_TARGET,
+        event="review_page",
     )
 
 

@@ -5,6 +5,7 @@ import {
   type UseMutationResult,
   type UseQueryResult,
 } from "@tanstack/react-query"
+import { STUDENT_HOME_KEY } from "@/lib/hooks/useStudentHomeApi"
 import { request, streamActivity, uploadWithProgress, type UploadProgress } from "@/lib/api"
 import { CLASSES_KEY } from "@/lib/hooks/useLeaderboardApi"
 import type { JoinClassResponse } from "@/lib/leaderboardTypes"
@@ -197,6 +198,7 @@ export function useJoinClass(): UseMutationResult<
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: CLASSES_KEY })
       queryClient.invalidateQueries({ queryKey: ["student", "overview"] })
+      queryClient.invalidateQueries({ queryKey: STUDENT_HOME_KEY })
       queryClient.invalidateQueries({ queryKey: ["student", "announcements"] })
     },
   })

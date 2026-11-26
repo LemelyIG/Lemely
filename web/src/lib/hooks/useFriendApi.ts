@@ -6,6 +6,7 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query"
 import { request } from "@/lib/api"
+import { LEADERBOARD_KEY } from "@/lib/hooks/useLeaderboardApi"
 import type {
   Friend,
   FriendRequest,
@@ -28,7 +29,6 @@ import type {
  */
 
 const FRIENDS_KEY = ["student", "friends"] as const
-const LEADERBOARD_KEY = ["student", "leaderboard"] as const
 
 export function useFriends(): UseQueryResult<FriendsPage, Error> {
   return useQuery({

@@ -98,6 +98,7 @@ describe("the adopted-route allow-list", () => {
     "/teacher/review/bulk-approve",
     "/teacher/review/:id",
     "/teacher/review/:id/crop",
+    "/teacher/review/:id/page",
     "/teacher/review/:id/resolve",
     "/teacher/review/:id/dismiss",
     // announcements.py
@@ -305,16 +306,18 @@ describe("request()", () => {
 })
 
 describe("the other transports", () => {
-  it("fetchBlobUrl sends it for a paper preview and a review crop, and not elsewhere", async () => {
+  it("fetchBlobUrl sends it for a paper preview, a review crop and a review page, and not elsewhere", async () => {
     vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: () => "blob:x" }))
     fetchMock.mockImplementation(async () => new Response(new Blob(["x"]), { status: 200 }))
     setActingLead(LEAD)
     await fetchBlobUrl("/papers/abc123/preview")
     await fetchBlobUrl("/teacher/review/abc123/crop")
+    await fetchBlobUrl("/teacher/review/abc123/page")
     await fetchBlobUrl("/billing/receipts/abc123/pdf")
     expect(sentHeader(0)).toBe(LEAD.leadId)
     expect(sentHeader(1)).toBe(LEAD.leadId)
-    expect(sentHeader(2)).toBeUndefined()
+    expect(sentHeader(2)).toBe(LEAD.leadId)
+    expect(sentHeader(3)).toBeUndefined()
   })
 
   it("streamActivity sends it on an adopted route and not on a billing one", async () => {

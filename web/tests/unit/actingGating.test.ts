@@ -20,7 +20,13 @@ const OWN_DATA = new Map([
   ["Notifications.tsx", "the caller's own notification inbox"],
 ])
 
-const files = readdirSync(SCREENS).filter((f) => f.endsWith(".tsx"))
+/** The redesigned review queue lives in a subfolder, so the scan reads that folder too; other subfolders are not scanned here. */
+const SCANNED_DIRS = ["", "review"]
+const files = SCANNED_DIRS.flatMap((dir) =>
+  readdirSync(join(SCREENS, dir))
+    .filter((f) => f.endsWith(".tsx"))
+    .map((f) => (dir ? `${dir}/${f}` : f)),
+)
 
 describe("teacher screens that write", () => {
   it("finds the screens", () => {
@@ -30,7 +36,7 @@ describe("teacher screens that write", () => {
   const writers = files.filter((f) => /\.mutate(Async)?\(|uploadPaper\(/.test(readFileSync(join(SCREENS, f), "utf8")))
 
   it("finds the writing screens", () => {
-    expect(writers).toEqual(expect.arrayContaining(["Grading.tsx", "Classes.tsx", "QuizBuilder.tsx", "ReviewItem.tsx", "Announcements.tsx"]))
+    expect(writers).toEqual(expect.arrayContaining(["Grading.tsx", "Classes.tsx", "QuizBuilder.tsx", "review/ReviewQueue.tsx", "Announcements.tsx"]))
   })
 
   it.each(writers.filter((f) => !OWN_DATA.has(f)))("%s reads the acting role", (file) => {

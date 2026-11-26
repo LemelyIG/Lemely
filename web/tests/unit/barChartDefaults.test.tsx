@@ -56,6 +56,21 @@ describe("BarChart layout defaults", () => {
   it("lets a caller set the left and right margins", () => {
     expect(render({ leftMargin: 104, rightMargin: 24 }).margin).toMatchObject({ left: 104, right: 24 })
   })
+
+  it("widens the right margin for a thinned category axis", () => {
+    expect(render({ tickEvery: 2 }).margin.right).toBe(24)
+  })
+
+  it("honours an explicit right margin including zero on a thinned axis", () => {
+    expect(render({ tickEvery: 2, rightMargin: 18 }).margin.right).toBe(18)
+    expect(render({ tickEvery: 2, rightMargin: 0 }).margin.right).toBe(0)
+  })
+
+  it("applies the tick font size to axis ticks and legends", () => {
+    const { theme } = render({ tickFontSize: 12 })
+    expect(theme.axis.ticks.text.fontSize).toBe(12)
+    expect(theme.axis.legend.text.fontSize).toBe(12)
+  })
 })
 
 describe("BarChart value ticks", () => {

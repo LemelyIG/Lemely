@@ -46,7 +46,7 @@ test("a fresh visitor joins via a child's invite code, signs up with an emailed 
   // check) would re-run from the top, hit `Send code` with an email that now
   // has an account, and stall on the 400 `parentRequestCodeFailure` reports
   // as `hasAccount` — a symptom with nothing to do with the real failure.
-  const email = `parent-fresh-${seed.runTag}-${Date.now().toString(36)}-${testInfo.retry}@example.com`
+  const email = `parent-fresh-${seed.runTag}-${Date.now().toString(36)}-${testInfo.retry}@e2e.lemely.local`
 
   // G-08: a signed-out visitor opens the child's own invite link directly,
   // exactly as a parent would from a link their child shared with them.

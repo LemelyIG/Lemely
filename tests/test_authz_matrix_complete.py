@@ -443,7 +443,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # bearer credential than the link's opaque token, so it is scoped to the
     # caller's own session rather than redeemable by anyone who has it.
     ("POST", "/api/auth/verify-email/code"): AUTH_ANY,
-    # ── STAFF (44) ────────────────────
+    # ── STAFF (45) ────────────────────
     ("GET", "/api/classes/{class_id}"): STAFF,
     ("GET", "/api/classes/{class_id}/analytics"): STAFF,
     # Console paper deletion (Task 17, R2). Row-level: only the uploader may
@@ -505,10 +505,18 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # which this table's role sweep cannot reach (it never gets past
     # `require_role`).
     ("GET", "/api/teacher/review/{item_id}/crop"): STAFF,
+    # L5 "Whole page": the same image-of-a-script surface as `/crop`, behind the
+    # same router-level staff triple. The row-level guard is shared too: both
+    # routes go through `_render_item_scan` and
+    # `ReviewService.get_item_crop_source`, so a caller who cannot see the
+    # student gets no page either. Proven in
+    # `tests/test_web_review.py` (the `/page` ownership cases), which this
+    # table's role sweep cannot reach.
+    ("GET", "/api/teacher/review/{item_id}/page"): STAFF,
     ("POST", "/api/teacher/review/{item_id}/dismiss"): STAFF,
     ("POST", "/api/teacher/review/{item_id}/resolve"): STAFF,
     ("GET", "/api/teacher/students/{student_id}"): STAFF,
-    # ── STUDENT (80) ────────────────────
+    # ── STUDENT (81) ────────────────────
     # Tutoring S1-S5, S14, S15 (SPEC §c.1): the caller's own bookings only (O5); a
     # parent reads them through PA1-PA3. S15 records the safety notice (row 16 ii).
     ("GET", "/api/student/bookings"): STUDENT,
@@ -579,6 +587,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/student/attempts/{attempt_id}/restore"): STUDENT,
     ("GET", "/api/student/attempts/deleted"): STUDENT,
     ("GET", "/api/student/overview"): STUDENT,
+    ("GET", "/api/student/home"): STUDENT,
     ("GET", "/api/student/parent-links"): STUDENT,
     ("DELETE", "/api/student/parent-links/{parent_id}"): STUDENT,
     # spec §4: the child-issued parent-invite surface (P3.6a's "Your parent
