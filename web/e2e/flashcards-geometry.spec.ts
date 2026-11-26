@@ -537,3 +537,126 @@ test.describe("card content stays inside the card, above the action, above the t
     })
   }
 })
+
+// Round 7: the face is a named button inside the frame that owns the swipe gesture, and that gesture captures the pointer on
+// the frame, so a real mouse or trackpad click is dispatched on the frame and never on the face. These drive a real
+// page.mouse.click (the unit tests call the handler directly and cannot see where the browser delivers the click).
+test.describe("a mouse or trackpad click flips the card", () => {
+  const grades = (page: Page) => page.getByRole("group", { name: "How well did you know it?" })
+  const FACE = '[role="button"][data-review-primary]'
+
+  for (const source of ["manual", "ai"] as const) {
+    for (const [label, front] of [["short", "What is a vector?"], ["long", LONG_244]] as const) {
+      test(`a click on the centre of a ${label} ${source} card flips it`, async ({ browser }) => {
+        const context = await newContext(browser, { width: 1440, mobile: false })
+        const page = await open(context, { front, source })
+        const box = (await page.locator(FACE).boundingBox())!
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+        await expect(grades(page), "a mouse click on the card face reveals the answer").toBeVisible()
+        await expect(page.locator(FACE), "focus rests on the flipped card").toBeFocused()
+        await context.close()
+      })
+    }
+  }
+
+  test("a click on the 40px strip under an AI card's face flips it, and so does one beside the mark", async ({ browser }) => {
+    const context = await newContext(browser, { width: 1440, mobile: false })
+    const page = await open(context, { front: LONG_244, source: "ai" })
+    const strip = await page.evaluate(() => {
+      const face = document.querySelector('[role="button"][data-review-primary]')!
+      const frame = face.parentElement!
+      const f = face.getBoundingClientRect(), c = frame.getBoundingClientRect()
+      return { x: c.left + 60, y: (f.bottom + c.bottom) / 2, faceBottom: f.bottom, frameBottom: c.bottom }
+    })
+    expect(strip.frameBottom - strip.faceBottom, "the strip under the face is the AI mark's 40px").toBeGreaterThanOrEqual(39)
+    expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.matches('[role="button"][data-review-primary]'), strip), "the point is under the face, on the frame").toBe(false)
+    await page.mouse.click(strip.x, strip.y)
+    await expect(grades(page), "a click on the strip is a click on the card").toBeVisible()
+    await context.close()
+  })
+
+  test("a second click on a flipped card changes nothing", async ({ browser }) => {
+    const context = await newContext(browser, { width: 1440, mobile: false })
+    const page = await open(context, { front: "What is a vector?", source: "manual" })
+    const box = (await page.locator(FACE).boundingBox())!
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+    await expect(grades(page)).toBeVisible()
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+    await expect(grades(page), "a second click on a flipped card changes nothing").toBeVisible()
+    await context.close()
+  })
+
+  test("a mouse drag to the left over the card does not flip it", async ({ browser }) => {
+    const context = await newContext(browser, { width: 380, mobile: false })
+    const page = await open(context, { front: LONG_244, source: "manual" })
+    const box = (await page.locator(FACE).boundingBox())!
+    const y = box.y + box.height / 2
+    await page.mouse.move(box.x + 300, y)
+    await page.mouse.down()
+    await page.mouse.move(box.x + 60, y, { steps: 12 })
+    await page.mouse.up()
+    await expect(grades(page)).toHaveCount(0)
+    await expect(showAnswer(page)).toBeVisible()
+    await context.close()
+  })
+})
+
+// A key scroll still animating when the card flips must not leave the answer side part-way down. Motion is allowed here
+// (every other case runs reduced), so End, Home, Page and Arrow keys really animate before Space lands.
+test.describe("the answer side opens at its top even when the flip lands on an in-flight scroll", () => {
+  for (const key of ["End", "PageDown", "ArrowDown"]) {
+    for (const gap of [0, 60, 150]) {
+      test(`${key} then Space ${gap}ms later, on a long AI card`, async ({ browser }) => {
+        const context = await browser.newContext({ viewport: { width: 380, height: 844 }, userAgent: ios, isMobile: true, hasTouch: true, reducedMotion: "no-preference" })
+        const page = await open(context, { front: LONG_244, source: "ai" })
+        const face = page.locator('[role="button"][data-review-primary]')
+        await face.focus()
+        await page.keyboard.press(key)
+        if (gap) await page.waitForTimeout(gap)
+        await page.keyboard.press("Space")
+        await expect(page.getByRole("group", { name: "How well did you know it?" })).toBeVisible()
+        // Sample the offset for 1.5s: the reset must win and stay won once any animation would have finished.
+        const { worst, trace } = await face.evaluate((el) => new Promise<{ worst: number; trace: string }>((resolve) => {
+          let max = 0
+          const seen: string[] = []
+          const started = performance.now()
+          const tick = () => {
+            const top = el.scrollTop
+            max = Math.max(max, top)
+            if (top !== 0 && seen.length < 12) seen.push(`${Math.round(performance.now() - started)}ms:${top}`)
+            if (performance.now() - started < 1500) setTimeout(tick, 25)
+            else resolve({ worst: max, trace: seen.join(" ") })
+          }
+          tick()
+        }))
+        expect(worst, `the flipped card never shows an offset (scrollTop after the flip: ${trace || "always 0"})`).toBe(0)
+        await context.close()
+      })
+    }
+  }
+})
+
+// Windows High Contrast: outlines are kept and recoloured to system colours, so a transparent ring on the face becomes a
+// visible second ring inside the frame's. Exactly one ring may show, around the whole card.
+test.describe("forced colors", () => {
+  for (const source of ["manual", "ai"] as const) {
+    test(`a focused ${source} card shows one ring, around the whole card`, async ({ browser }) => {
+      const context = await browser.newContext({ viewport: { width: 380, height: 844 }, userAgent: ios, isMobile: true, hasTouch: true, reducedMotion: "reduce", forcedColors: "active" })
+      const page = await open(context, { front: LONG_244, source })
+      expect(await page.evaluate(() => matchMedia("(forced-colors: active)").matches), "forced colors is emulated").toBe(true)
+      const face = page.locator('[role="button"][data-review-primary]')
+      for (let i = 0; i < 25 && !(await face.evaluate((el) => el === document.activeElement)); i++) await page.keyboard.press("Tab")
+      await expect(face).toBeFocused()
+      await capture(page, `forced-colors-${source}-focus-ring`)
+      const ring = await face.evaluate((el) => {
+        const frame = el.parentElement!
+        const drawn = (node: Element) => { const cs = getComputedStyle(node); return cs.outlineStyle !== "none" && parseFloat(cs.outlineWidth) > 0 }
+        const box = (node: Element) => { const r = node.getBoundingClientRect(); return { top: r.top, bottom: r.bottom } }
+        return { face: drawn(el), frame: drawn(frame), frameBox: box(frame), faceStyle: getComputedStyle(el).outlineStyle, frameColor: getComputedStyle(frame).outlineColor }
+      })
+      expect(ring.face, "the face draws no ring of its own").toBe(false)
+      expect(ring.frame, "the frame draws the one ring").toBe(true)
+      await context.close()
+    })
+  }
+})

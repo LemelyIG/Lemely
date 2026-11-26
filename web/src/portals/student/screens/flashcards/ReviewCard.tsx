@@ -9,6 +9,9 @@ import { answerSize, cardScrollStep } from "./reviewView"
 import { AiMark } from "./parts/AiMark"
 import "./flashcards.css"
 
+/** How long a flip keeps resetting the card's scroll: longer than any smooth key scroll the browser animates. */
+const SCROLL_SETTLE_MS = 500
+
 const reducedMotion = () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
 
 /** The stack: an under-card plus the live card (fc.css `.fstage`, `.fcard`, `.under`, `.stamp`). */
@@ -19,13 +22,36 @@ export function ReviewCard({
   // focusable, scrolling, named element inside it, so a long card is a single tab stop (axe: scrollable-region-focusable).
   const frame = useRef<HTMLDivElement>(null)
   const face = useRef<HTMLDivElement>(null)
+  const press = useRef<{ x: number; y: number; moved: boolean } | null>(null)
   const [dx, setDx] = useState(0)
   const [leaving, setLeaving] = useState<"left" | "right" | null>(null)
   const reduced = reducedMotion()
   const visual = swipeVisual(dx, revealed, reduced)
 
   // The answer side always opens at its top, however far the front was read. Before paint, so no frame shows the old offset.
-  useLayoutEffect(() => { if (face.current) face.current.scrollTop = 0 }, [revealed])
+  // A key scroll still animating (End, Page, Arrow) is not stopped by writing scrollTop: the browser lets it run on, or lands it
+  // back on the offset it had reached, and the answer would open part-way down. So the reset is held for the animation's life
+  // (a frame at a time, never longer than SCROLL_SETTLE_MS) and let go the moment the reader scrolls for themselves.
+  useLayoutEffect(() => {
+    const scroller = face.current
+    if (!scroller) return
+    scroller.scrollTop = 0
+    if (!revealed) return
+    let timer = 0
+    const started = performance.now()
+    const hold = () => {
+      if (scroller.scrollTop !== 0) scroller.scrollTop = 0
+      if (performance.now() - started < SCROLL_SETTLE_MS) timer = requestAnimationFrame(hold)
+    }
+    timer = requestAnimationFrame(hold)
+    const release = () => cancelAnimationFrame(timer)
+    const inputs = ["wheel", "touchstart", "pointerdown", "keydown"] as const
+    for (const type of inputs) scroller.addEventListener(type, release, { passive: true, once: true })
+    return () => {
+      release()
+      for (const type of inputs) scroller.removeEventListener(type, release)
+    }
+  }, [revealed])
   // Once flipped, focus rests on the card: its name now reads the question then the answer, and Space or Enter does nothing here.
   useEffect(() => { if (revealed) face.current?.focus() }, [revealed])
 
@@ -63,10 +89,21 @@ export function ReviewCard({
       <div
         key={card.id}
         ref={frame}
+        onPointerDown={(e) => { press.current = { x: e.clientX, y: e.clientY, moved: false } }}
+        onPointerMove={(e) => {
+          const start = press.current
+          if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 10) start.moved = true
+        }}
+        onPointerCancel={() => { press.current = null }}
+        onClick={(e) => {
+          const start = press.current
+          press.current = null
+          if (!revealed && (!start || (!start.moved && Math.hypot(e.clientX - start.x, e.clientY - start.y) <= 10))) onReveal()
+        }}
         style={{ transform: leaving ? undefined : `translateX(${dx}px) rotate(${visual.rotateDeg}deg)` }}
         className={[
           // The focus ring is drawn here, around the whole card: the scrolling face inside ends above the AI mark, so its own ring would be shorter.
-          "absolute inset-0 flex flex-col rounded-[28px] bg-surface-container-lowest text-center has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2",
+          "absolute inset-0 flex flex-col rounded-[28px] bg-surface-container-lowest text-center has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 forced-colors:has-[:focus-visible]:outline-[CanvasText]",
           "shadow-[0_18px_36px_-18px_oklch(0.3_0.06_242/0.4),inset_0_0_0_1px_var(--color-outline-variant)]",
           visual.armed ? (stampGood ? "!shadow-[0_18px_36px_-18px_oklch(0.3_0.06_242/0.4),inset_0_0_0_3px_var(--color-success-text)]" : "!shadow-[0_18px_36px_-18px_oklch(0.3_0.06_242/0.4),inset_0_0_0_3px_var(--color-on-error-container)]") : "",
           revealed ? "animate-[fc-flip_450ms_var(--ease-out)_both] motion-reduce:animate-none" : "animate-[fc-rise_280ms_var(--ease-out)] motion-reduce:animate-none",
@@ -97,7 +134,6 @@ export function ReviewCard({
           // announces and what a voice-control user reads on the card are the same words in the same order.
           // The flipped state adds its cue as a description, which sits after the name instead of inside it.
           aria-describedby={revealed ? answerHintId : undefined}
-          onClick={() => { if (!revealed) onReveal() }}
           // Space or Enter on the focused card flips it. Handled here and stopped, so the screen's window-level
           // shortcut does not flip it a second time; once flipped the card ignores both and they scroll or do nothing.
           onKeyDown={(e) => {
@@ -118,7 +154,8 @@ export function ReviewCard({
           className={[
             "flex min-h-0 w-full flex-1 touch-pan-y flex-col items-center overflow-y-auto overflow-x-hidden overscroll-y-contain rounded-[28px] px-7 [scrollbar-width:thin]",
             // The ring is on the frame (has-[:focus-visible]); this element keeps its radius and draws no second, shorter ring.
-            "focus-visible:!rounded-[28px] focus-visible:!outline-transparent",
+            // Windows High Contrast redraws a transparent outline in a system colour: `.fc-card-face` removes the second ring there.
+            "fc-card-face focus-visible:!rounded-[28px] focus-visible:!outline-transparent",
             ai ? "mb-10 pb-7 pt-[68px]" : "py-7",
           ].join(" ")}
         >

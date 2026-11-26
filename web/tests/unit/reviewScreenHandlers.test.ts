@@ -354,10 +354,32 @@ describe("review screen: keyboard", () => {
     ReviewCard({ card: card("a") as never, revealed: true, onReveal: vi.fn(), onGrade: vi.fn() })
     const surfaceFocus = vi.fn()
     // refs[0] is the card's frame, refs[1] the focusable face that also scrolls.
-    h.refs[1].current = { focus: surfaceFocus, scrollTop: 40 }
-    h.effects.forEach((effect) => effect())
-    expect(surfaceFocus).toHaveBeenCalled()
-    expect((h.refs[1].current as { scrollTop: number }).scrollTop, "the flip resets the face's scroll to its top").toBe(0)
+    const frames: Array<() => void> = []
+    const cancelFrame = vi.fn()
+    // Only these two are replaced and put back: the file stubs other globals (window) that the later tests need.
+    const g = globalThis as unknown as Record<string, unknown>
+    const saved = { requestAnimationFrame: g.requestAnimationFrame, cancelAnimationFrame: g.cancelAnimationFrame }
+    g.requestAnimationFrame = (callback: () => void) => frames.push(callback)
+    g.cancelAnimationFrame = cancelFrame
+    const listeners = new Map<string, () => void>()
+    const face = { focus: surfaceFocus, scrollTop: 40, addEventListener: (type: string, fn: () => void) => { listeners.set(type, fn) }, removeEventListener: vi.fn() }
+    h.refs[1].current = face
+    try {
+      h.effects.forEach((effect) => effect())
+      expect(surfaceFocus).toHaveBeenCalled()
+      expect(face.scrollTop, "the flip resets the face's scroll to its top").toBe(0)
+      // A key scroll that was still animating lands after the reset: the held reset takes it straight back.
+      face.scrollTop = 13
+      frames.shift()!()
+      expect(face.scrollTop, "an in-flight scroll does not leave the answer part-way down").toBe(0)
+      // The reader scrolls for themselves: the hold lets go.
+      expect([...listeners.keys()].sort()).toEqual(["keydown", "pointerdown", "touchstart", "wheel"])
+      listeners.get("wheel")!()
+      expect(cancelFrame).toHaveBeenCalled()
+    } finally {
+      g.requestAnimationFrame = saved.requestAnimationFrame
+      g.cancelAnimationFrame = saved.cancelAnimationFrame
+    }
   })
   it("Space flips, then 1 to 4 rate", () => {
     start()

@@ -18,7 +18,8 @@ import { ReviewCard } from "@/portals/student/screens/flashcards/ReviewCard"
 
 const card = { id: "one", front: "Question", back: "Answer", source: "manual" } as CardDTO
 type KeyEvent = { key: string; repeat: boolean; preventDefault: () => void; stopPropagation: () => void }
-type ElementNode = { type: unknown; props: { children?: unknown; onClick?: () => void; onKeyDown?: (e: KeyEvent) => void; role?: string } }
+type PointerPoint = { clientX: number; clientY: number }
+type ElementNode = { type: unknown; props: { children?: unknown; onClick?: (e: PointerPoint) => void; onPointerDown?: (e: PointerPoint) => void; onKeyDown?: (e: KeyEvent) => void; role?: string } }
 function findButton(node: unknown): ElementNode | undefined {
   if (Array.isArray(node)) return node.map(findButton).find(Boolean)
   if (!node || typeof node !== "object" || !("props" in node)) return undefined
@@ -26,15 +27,53 @@ function findButton(node: unknown): ElementNode | undefined {
   return element.props.role === "button" ? element : findButton(element.props.children)
 }
 
+// The click handler lives on the frame, not on the face: the swipe gesture captures the pointer on the frame, so a real click
+// is dispatched there and never reaches the face (the Playwright "mouse or trackpad click" cases drive the real thing).
+function findClickable(node: unknown): ElementNode | undefined {
+  if (Array.isArray(node)) return node.map(findClickable).find(Boolean)
+  if (!node || typeof node !== "object" || !("props" in node)) return undefined
+  const element = node as ElementNode
+  return element.props.onClick ? element : findClickable(element.props.children)
+}
+
 describe("review card interactions", () => {
   it("reveals the front on tap and on a right swipe", () => {
     const reveal = vi.fn()
     const grade = vi.fn()
     const tree = ReviewCard({ card, revealed: false, onReveal: reveal, onGrade: grade })
-    findButton(tree)?.props.onClick?.()
+    findClickable(tree)?.props.onPointerDown?.({ clientX: 10, clientY: 10 })
+    findClickable(tree)?.props.onClick?.({ clientX: 10, clientY: 10 })
     gesture.commit(80)
     expect(reveal).toHaveBeenCalledTimes(2)
     expect(grade).not.toHaveBeenCalled()
+  })
+
+  it("puts the click on the frame that owns the gesture, never on the face, which is the one named button", () => {
+    const tree = ReviewCard({ card, revealed: false, onReveal: vi.fn(), onGrade: vi.fn() })
+    const clickable = findClickable(tree)
+    const face = findButton(tree)
+    expect(clickable, "something handles the click").toBeDefined()
+    expect(face, "the face is the named button").toBeDefined()
+    expect(clickable, "the click handler is not on the face").not.toBe(face)
+    expect(face?.props.onClick, "a click on the face bubbles to the frame").toBeUndefined()
+    expect(clickable?.props.role, "the frame is not a second control").toBeUndefined()
+  })
+
+  it("ignores a click once the card is flipped", () => {
+    const reveal = vi.fn()
+    findClickable(ReviewCard({ card, revealed: true, onReveal: reveal, onGrade: vi.fn() }))?.props.onClick?.({ clientX: 10, clientY: 10 })
+    expect(reveal).not.toHaveBeenCalled()
+  })
+
+  it("treats a press that travelled as a swipe, not a tap, and a press that barely moved as a tap", () => {
+    const reveal = vi.fn()
+    const frame = findClickable(ReviewCard({ card, revealed: false, onReveal: reveal, onGrade: vi.fn() }))
+    frame?.props.onPointerDown?.({ clientX: 200, clientY: 100 })
+    frame?.props.onClick?.({ clientX: 40, clientY: 100 })
+    expect(reveal, "a mouse drag to the left ends in a click that must not flip the card").not.toHaveBeenCalled()
+    frame?.props.onPointerDown?.({ clientX: 200, clientY: 100 })
+    frame?.props.onClick?.({ clientX: 203, clientY: 98 })
+    expect(reveal).toHaveBeenCalledTimes(1)
   })
 
   it("does not reveal on a left swipe", () => {

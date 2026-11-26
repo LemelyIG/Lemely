@@ -53,3 +53,8 @@ main:has(.fc-review-fill) .lm-screen:has(.fc-review-fill) {
 @media (max-width: 819px) {
   .fc-review-fill:not(.fc-review-done) { padding-bottom: 8px; }
 }
+/* The review face's transparent outline is redrawn as a visible system colour in High Contrast. The frame draws the focus
+   indicator around the whole card, so suppress only the face's shorter duplicate in this mode. */
+@media (forced-colors: active) {
+  .fc-card-face:focus-visible { outline: none !important; }
+}
