@@ -18,15 +18,15 @@ import { deckDetailView, type CardRowView } from "./deckView"
 import { NewDeckSheet, type NewDeckSeed } from "./NewDeckSheet"
 import { failedDeckSeed } from "./newDeckView"
 import { DeckContent } from "./parts/DeckContent"
-import { PAGE_SKELETON } from "./parts/skeletonStyles"
+import { SKELETON_FILL } from "./parts/skeletonStyles"
 
 /** FL-style loading: the header, the bar, three rows. One status line for the whole region. */
 function DeckLoading() {
   return (
     <div className="grid w-full gap-3" role="status" aria-busy="true" aria-label="Loading this deck">
-      <SkeletonBlock announce={false} className={`h-8 w-40 rounded-[10px] ${PAGE_SKELETON}`} />
-      <SkeletonBlock announce={false} className={`h-14 rounded-2xl ${PAGE_SKELETON}`} />
-      {[0, 1, 2].map((i) => <SkeletonBlock key={i} announce={false} className={`h-12 rounded-[14px] ${PAGE_SKELETON}`} />)}
+      <SkeletonBlock announce={false} className={`h-8 w-40 rounded-[10px] ${SKELETON_FILL}`} />
+      <SkeletonBlock announce={false} className={`h-14 rounded-2xl ${SKELETON_FILL}`} />
+      {[0, 1, 2].map((i) => <SkeletonBlock key={i} announce={false} className={`h-12 rounded-[14px] ${SKELETON_FILL}`} />)}
     </div>
   )
 }

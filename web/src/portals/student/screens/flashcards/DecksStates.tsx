@@ -5,7 +5,7 @@ import { Binny, Walkthrough } from "@/components/redesign"
 import { SkeletonBlock } from "@/components/ui/skeleton"
 import type { NewDeckMode } from "./newDeckView"
 import { FOCUS, PRIMARY_BTN } from "./parts/buttonStyles"
-import { PAGE_SKELETON } from "./parts/skeletonStyles"
+import { SKELETON_FILL } from "./parts/skeletonStyles"
 
 /**
  * FL: 64 r16, 56 r16, 120×20, 4 × 60 r14 (fc.js `put('FL',…)`). One status region for the
@@ -14,10 +14,10 @@ import { PAGE_SKELETON } from "./parts/skeletonStyles"
 export function DecksLoading() {
   return (
     <div className="grid gap-3.5" role="status" aria-busy="true" aria-label="Loading your decks">
-      <SkeletonBlock announce={false} className={`h-16 rounded-2xl ${PAGE_SKELETON}`} />
-      <SkeletonBlock announce={false} className={`h-14 rounded-2xl ${PAGE_SKELETON}`} />
-      <SkeletonBlock announce={false} className={`h-5 w-[120px] rounded-[10px] ${PAGE_SKELETON}`} />
-      {[0, 1, 2, 3].map((i) => <SkeletonBlock key={i} announce={false} className={`h-[60px] rounded-[14px] ${PAGE_SKELETON}`} />)}
+      <SkeletonBlock announce={false} className={`h-16 rounded-2xl ${SKELETON_FILL}`} />
+      <SkeletonBlock announce={false} className={`h-14 rounded-2xl ${SKELETON_FILL}`} />
+      <SkeletonBlock announce={false} className={`h-5 w-[120px] rounded-[10px] ${SKELETON_FILL}`} />
+      {[0, 1, 2, 3].map((i) => <SkeletonBlock key={i} announce={false} className={`h-[60px] rounded-[14px] ${SKELETON_FILL}`} />)}
     </div>
   )
 }

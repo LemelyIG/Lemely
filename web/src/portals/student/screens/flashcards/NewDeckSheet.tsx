@@ -18,6 +18,7 @@ import {
   submitLabel, topicChips, topicInForce, weaknessChips, type DeckSelection, type NewDeckMode,
 } from "./newDeckView"
 import { FOCUS, PRIMARY_BTN } from "./parts/buttonStyles"
+import { SKELETON_FILL } from "./parts/skeletonStyles"
 
 export interface NewDeckSeed {
   mode: NewDeckMode | null
@@ -37,7 +38,7 @@ const TONES = {
 function TopicsSkeleton() {
   return (
     <div className="flex flex-wrap gap-1.5" role="status" aria-label="Loading topics">
-      {["w-24", "w-32", "w-20"].map((w) => <SkeletonBlock key={w} announce={false} className={`h-11 rounded-xl ${w}`} />)}
+      {["w-24", "w-32", "w-20"].map((w) => <SkeletonBlock key={w} announce={false} className={`h-11 rounded-xl ${w} ${SKELETON_FILL}`} />)}
     </div>
   )
 }
@@ -51,7 +52,7 @@ function NoSubjects({ overview }: { overview: ReturnType<typeof useOverview> }) 
     <QueryState
       query={overview}
       skeleton={<div className="grid gap-2" role="status" aria-label="Loading subjects">
-        {[0, 1, 2].map((i) => <SkeletonBlock key={i} announce={false} className="h-[60px] rounded-2xl" />)}
+        {[0, 1, 2].map((i) => <SkeletonBlock key={i} announce={false} className={`h-[60px] rounded-2xl ${SKELETON_FILL}`} />)}
       </div>}
       error={{ heading: "Couldn’t load your subjects", retryLabel: "Try again", compact: true }}
       isEmpty={(data) => data.subjects.length === 0}

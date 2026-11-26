@@ -10,6 +10,7 @@ import { DeleteDeckSheet } from "./DeleteDeckSheet"
 import { RenameDeckSheet } from "./RenameDeckSheet"
 import { FOCUS } from "./parts/buttonStyles"
 import { FcSheet } from "./parts/FcSheet"
+import { SKELETON_FILL } from "./parts/skeletonStyles"
 
 const ITEM = `block min-h-11 w-full rounded-md px-3 py-2 text-start text-[15px] font-semibold hover:bg-surface-container-low ${FOCUS}`
 const itemTone = (destructive: boolean) => (destructive ? "text-on-error-container" : "text-on-surface")
@@ -108,7 +109,7 @@ export function DeckMenu({ deckId, onClose, onDeleted }: {
         <QueryState
           query={query}
           skeleton={<div className="grid gap-2" role="status" aria-label="Loading deck">
-            <SkeletonBlock announce={false} className="h-11 rounded-md" /><SkeletonBlock announce={false} className="h-11 rounded-md" />
+            <SkeletonBlock announce={false} className={`h-11 rounded-md ${SKELETON_FILL}`} /><SkeletonBlock announce={false} className={`h-11 rounded-md ${SKELETON_FILL}`} />
           </div>}
           error={{ heading: "Couldn’t load this deck", retryLabel: "Try again", compact: true }}
         >
