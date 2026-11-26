@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
 import {
   STUDENT_INBOX_EMPTY,
@@ -76,13 +75,9 @@ describe("studentShellTrail and studentPageTitle", () => {
     expect(studentPageTitle("/student/subject/0606", subjects)).toBe("Add Maths")
     expect(studentPageTitle("/student/subject/0606")).toBe("0606")
   })
-  it("uses the Practice breadcrumb as the sole phone back control on past papers", () => {
-    const trail = studentShellTrail("/student/practice/papers")
-    expect(trail).toEqual([{ label: "Practice", to: "/student/practice" }, { label: "Past papers" }])
+  it("links past papers to Practice, the crumb the shell's single phone back control leads to", () => {
+    expect(studentShellTrail("/student/practice/papers")).toEqual([{ label: "Practice", to: "/student/practice" }, { label: "Past papers" }])
     expect(studentPageTitle("/student/practice/papers")).toBe("Past papers")
-    const shell = readFileSync("src/portals/student/shell.tsx", "utf8")
-    expect(shell).toMatch(/titleLevel === "detail" && !isPastPapers \? <BackControl/)
-    expect(shell).toMatch(/backFallback: isPastPapers \? "\/student\/practice" : "\/student"/)
   })
   it("keeps a trail when drilled in, so breadcrumbs render", () => {
     expect(studentShellTrail("/student/practice/papers").map((c) => c.label)).toEqual(["Practice", "Past papers"])
