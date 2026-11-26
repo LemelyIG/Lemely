@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
@@ -140,6 +141,47 @@ def marker_scored(marker_source: str) -> bool:
     ``lemely.db.models.enums.MarkerSource``'s ``.value``.
     """
     return marker_source not in UNSCORED_MARKER_SOURCES
+
+
+ConfidenceTierValue = Literal["confident", "uncertain", "needs-review", "not-marked"]
+
+
+def confidence_tier_for(
+    *,
+    marker_source: str,
+    confidence_score: float | None,
+    review_reason: str | None,
+    needs_teacher_review: bool | None,
+    pending_teacher: bool | None,
+) -> ConfidenceTierValue:
+    """The confidence tier of one question, by the result screen's rules.
+
+    The backend mirror of ``confidenceTierFor`` in ``web/src/lib/markingConfidence.ts``,
+    the function the result screen colours a question with, so a summary built
+    here can never disagree with the page it links to. The same four checks in
+    the same order; the order matters (see the frontend function's note):
+
+    1. A question no marker read and nobody flagged is ``"not-marked"``.
+    2. ``pending_teacher is False`` is ``"confident"``: no teacher review is open,
+       because a self-mark, a teacher's accept or a dismissal settled it.
+    3. A ``review_reason`` on a question not explicitly unflagged is ``"needs-review"``
+       at any score.
+    4. Otherwise the score decides: under
+       :data:`REVIEW_CONFIDENCE_THRESHOLD` is ``"uncertain"``; a missing or
+       non-finite score is ``"confident"``.
+
+    ``pending_teacher`` is whether an open review-queue row exists for the
+    question (``None`` when the caller cannot know, which skips check 2).
+    """
+    if needs_teacher_review is False and not marker_scored(marker_source):
+        return "not-marked"
+    if pending_teacher is False:
+        return "confident"
+    if review_reason and needs_teacher_review is not False:
+        return "needs-review"
+    if confidence_score is None or not math.isfinite(confidence_score):
+        return "confident"
+    return "uncertain" if confidence_score < REVIEW_CONFIDENCE_THRESHOLD else "confident"
 
 
 class ExamMetadata(StrictModel):

@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E3 S4 R4 V4 */
-import { useId, useState, type ReactNode } from "react"
+import { useEffect, useId, useRef, useState, type ReactNode } from "react"
 import { SlidersHorizontal } from "@phosphor-icons/react"
 import {
   PERIODS,
@@ -8,6 +8,7 @@ import {
   type FilterOptions,
   type PapersFilters,
 } from "./papersModel"
+import { scrollDeltaToReveal } from "../subject/subjectModel"
 import "../subject/subject.css"
 import "./papers.css"
 
@@ -23,12 +24,29 @@ function Choice<T extends string | number | null>({
   onPick: (key: T) => void
 }) {
   const id = useId()
+  const tray = useRef<HTMLDivElement>(null)
+  /** More choices run past the tray's end: the edge fades, which is the cue that it scrolls. */
+  const [more, setMore] = useState(false)
+  const measure = () => {
+    const el = tray.current
+    if (el) setMore(el.scrollWidth - el.clientWidth - Math.abs(el.scrollLeft) > 1)
+  }
+  // A picked choice (from the address, or after a tap) must not sit past the tray's edge.
+  useEffect(() => {
+    const el = tray.current
+    const on = el?.querySelector<HTMLElement>('[aria-pressed="true"]')
+    if (el && on) {
+      const delta = scrollDeltaToReveal(el.getBoundingClientRect(), on.getBoundingClientRect())
+      if (delta !== 0) el.scrollLeft += delta
+    }
+    measure()
+  }, [value, options.length])
   return (
     <div className="ap-group" role="group" aria-labelledby={id}>
       <span id={id} className="ap-label">
         {label}
       </span>
-      <div className="ap-seg">
+      <div ref={tray} className="ap-seg" data-more={more} onScroll={measure}>
         {options.map((o) => (
           <button key={String(o.key)} type="button" aria-pressed={o.key === value} aria-label={`${label}: ${o.name}`} onClick={() => onPick(o.key)}>
             {o.text}

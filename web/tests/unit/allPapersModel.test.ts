@@ -14,7 +14,9 @@ import {
   papersLinks,
   papersMode,
   parseFilters,
+  prunePicks,
   rowViews,
+  sortSessions,
   toggleSelected,
 } from "@/portals/student/screens/papers/papersModel"
 
@@ -52,9 +54,9 @@ const mk = (
 // Newest first, as the endpoint returns them.
 const HISTORY: PaperHistoryRow[] = [
   mk("6", "2024-11-02T10:00:00+00:00", 4, 2, "May/Jun 2024", 61, 80, "A"),
-  mk("5", "2024-09-15T10:00:00+00:00", 2, 1, "Feb/Mar 2024", 53, 70, "A", { confidence: { scored: 14, uncertain: 2 } }),
+  mk("5", "2024-09-15T10:00:00+00:00", 2, 1, "Feb/Mar 2024", 53, 70, "A", { confidence: { scored: 14, uncertain: 2, needsReview: 0 } }),
   mk("4", "2024-06-15T10:00:00+00:00", 4, 2, "Feb/Mar 2024", 50, 80, "B", { teacherCorrected: 3 }),
-  mk("3", "2024-01-15T10:00:00+00:00", 4, 3, "Oct/Nov 2023", 48, 80, "B", { confidence: { scored: 10, uncertain: 0 } }),
+  mk("3", "2024-01-15T10:00:00+00:00", 4, 3, "Oct/Nov 2023", 48, 80, "B", { confidence: { scored: 10, uncertain: 0, needsReview: 0 } }),
   mk("0", "2023-10-15T10:00:00+00:00", 4, 1, "Oct/Nov 2023", 45, 80, "C"),
 ]
 const ids = (rows: PaperHistoryRow[]) => rows.map((r) => r.id)
@@ -167,11 +169,44 @@ describe("rows", () => {
 describe("confidenceLine", () => {
   it("is silent for no evidence and for an attempt nothing scored", () => {
     expect(confidenceLine(null)).toBeNull()
-    expect(confidenceLine({ scored: 0, uncertain: 0 })).toBeNull()
+    expect(confidenceLine({ scored: 0, uncertain: 0, needsReview: 0 })).toBeNull()
   })
   it("counts the unsure ones, or says all are sure", () => {
-    expect(confidenceLine({ scored: 14, uncertain: 1 })).toBe("1 of 14 unsure")
-    expect(confidenceLine({ scored: 14, uncertain: 0 })).toBe("All 14 sure")
+    expect(confidenceLine({ scored: 14, uncertain: 1, needsReview: 0 })).toBe("1 of 14 unsure")
+    expect(confidenceLine({ scored: 14, uncertain: 0, needsReview: 0 })).toBe("All 14 sure")
+  })
+  it("names the result screen's needs-review tier on its own, never as sure", () => {
+    expect(confidenceLine({ scored: 14, uncertain: 0, needsReview: 1 })).toBe("1 of 14 needs review")
+    expect(confidenceLine({ scored: 14, uncertain: 0, needsReview: 3 })).toBe("3 of 14 need review")
+    expect(confidenceLine({ scored: 14, uncertain: 2, needsReview: 1 })).toBe("2 of 14 unsure, 1 needs review")
+    expect(confidenceLine({ scored: 14, uncertain: 2, needsReview: 3 })).toBe("2 of 14 unsure, 3 need review")
+  })
+})
+
+describe("session options follow exam order, not attempt order", () => {
+  it("lists the newest session first even when an older one was attempted last", () => {
+    expect(sortSessions(["Oct/Nov 2023", "May/Jun 2024", "Feb/Mar 2024", "Oct/Nov 2024", "May/Jun 2023"])).toEqual([
+      "Oct/Nov 2024",
+      "May/Jun 2024",
+      "Feb/Mar 2024",
+      "Oct/Nov 2023",
+      "May/Jun 2023",
+    ])
+  })
+  it("puts a label it cannot read last, in the order given", () => {
+    expect(sortSessions(["Specimen", "Feb/Mar 2024", "Other"])).toEqual(["Feb/Mar 2024", "Specimen", "Other"])
+  })
+  it("is what the Session filter offers", () => {
+    const old = mk("9", "2025-01-10T10:00:00+00:00", 4, 1, "Oct/Nov 2023", 40, 80, "C")
+    expect(filterOptions([old, HISTORY[0], HISTORY[2]]).sessions).toEqual(["May/Jun 2024", "Feb/Mar 2024", "Oct/Nov 2023"])
+  })
+})
+
+describe("picks follow the rows on screen", () => {
+  it("drops the picks a filter hides and keeps the rest in their order", () => {
+    expect(prunePicks(["6", "5"], [HISTORY[0], HISTORY[2]])).toEqual(["6"])
+    expect(prunePicks(["5", "6"], [HISTORY[0], HISTORY[1]])).toEqual(["5", "6"])
+    expect(prunePicks(["5", "6"], [])).toEqual([])
   })
 })
 

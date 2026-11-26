@@ -169,6 +169,8 @@ export function Breadcrumbs({ items, collapse = true, className }: BreadcrumbsPr
             <Link
               to={parent.to!}
               viewTransition
+              // The visible label is only the parent's name (a code, on a subject): the link says what it does.
+              aria-label={`Back to ${parent.label}`}
               className={cn(
                 "-ms-2 flex min-h-11 min-w-0 items-center gap-1 px-2 py-1 text-on-surface-variant transition-colors",
                 "hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",

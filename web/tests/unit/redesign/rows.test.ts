@@ -61,6 +61,13 @@ describe("HairRows / HairRow", () => {
     const out = html(createElement(HairRow, { title: "Vectors", onClick: () => {}, selected: true }))
     expect(out).toMatch(/<button type="button" class="rd-hairrow rd-selected" aria-current="true">/)
   })
+  it("a pressed row is a toggle: aria-pressed, the selected look, no aria-current and no chevron", () => {
+    const on = html(createElement(HairRow, { title: "Pick", onClick: () => {}, pressed: true }))
+    expect(on).toMatch(/<button type="button" class="rd-hairrow rd-selected" aria-pressed="true">/)
+    expect(on).not.toContain("rd-chev")
+    const off = html(createElement(HairRow, { title: "Pick", onClick: () => {}, pressed: false }))
+    expect(off).toMatch(/<button type="button" class="rd-hairrow" aria-pressed="false">/)
+  })
 })
 
 describe("RankRow", () => {

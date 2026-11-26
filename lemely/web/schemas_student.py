@@ -178,12 +178,14 @@ class PaperBreakdownDTO(ApiModel):
 class ConfidenceSummaryDTO(ApiModel):
     """How sure the marker was across one attempt's questions (S-09).
 
-    ``scored`` questions had a marker form an opinion; ``uncertain`` of those
-    were under the review threshold and not re-marked by a teacher.
+    ``scored`` questions carry a confidence tier on the result screen; ``uncertain``
+    and ``needsReview`` of those carry that tier there. Same rules as the result
+    screen (``confidence_tier_for``), so the list cannot disagree with it.
     """
 
     scored: int
     uncertain: int
+    needsReview: int
 
 
 class PaperHistoryRowDTO(ApiModel):

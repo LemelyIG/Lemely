@@ -246,7 +246,7 @@ who is also a parent).
 | S-06 | Student home / dashboard | Student |
 | S-07 | Subjects list | Student |
 | S-08 | Subject overview | Student |
-| S-09 | Paper history (per subject) | Student |
+| S-09 | All papers (per subject) | Student |
 | S-10 | Upload — entry / choose method | Student |
 | S-11 | Upload — camera scanner | Student |
 | S-12 | Upload — page review & reorder | Student |
@@ -634,8 +634,8 @@ route back into the subject picker.
   placement test, view all attempts.
 **Exits.** S-09, S-15, S-19, S-20, S-10, S-04.
 
-### S-09 · Paper history
-**Contains.** A filterable, sortable list of every attempt in this subject:
+### S-09 · All papers
+**Contains.** The subject's paper history: a filterable, sortable list of every attempt in this subject:
 paper identity line, date attempted, mark, grade, confidence summary, and any
 teacher-override marker. Filters by paper number, variant, session, and date.
 A comparison affordance — select two attempts to compare.

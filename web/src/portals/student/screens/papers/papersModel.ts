@@ -66,12 +66,22 @@ export function emptyTip(code: string, subjectName: string): TipView {
 
 /* ---- Filters ------------------------------------------------------------ */
 
+const SESSION_ORDER: Record<string, number> = { "Feb/Mar": 1, "May/Jun": 2, "Oct/Nov": 3 }
+/** Exam-session order, newest session first ("Oct/Nov 2024" before "May/Jun 2024"), not the order they were attempted in. A label that does not parse goes last. */
+export function sortSessions(sessions: string[]): string[] {
+  const key = (s: string) => {
+    const [month, year] = [s.replace(/\s+\d{4}$/, ""), Number(s.match(/(\d{4})$/)?.[1])]
+    return Number.isFinite(year) ? year * 10 + (SESSION_ORDER[month] ?? 0) : -1
+  }
+  return [...sessions].sort((a, b) => key(b) - key(a))
+}
+
 export interface FilterOptions { papers: number[]; variants: number[]; sessions: string[] }
 /** A filter only has options when the data has more than one value for it: a one-choice filter filters nothing. */
 export function filterOptions(history: PaperHistoryRow[]): FilterOptions {
   const papers = [...new Set(history.map((h) => h.paperNumber))].sort((a, b) => a - b)
   const variants = [...new Set(history.map((h) => h.variant))].sort((a, b) => a - b)
-  const sessions = [...new Set(history.map((h) => h.session))] // first seen, and the endpoint sends newest first
+  const sessions = sortSessions([...new Set(history.map((h) => h.session))])
   const many = <T,>(xs: T[]) => (xs.length > 1 ? xs : [])
   return { papers: many(papers), variants: many(variants), sessions: many(sessions) }
 }
@@ -135,10 +145,18 @@ export function dayLabel(iso: string): string {
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? "" : DAY.format(d)
 }
-/** Silent when the store kept no per-question evidence: no evidence is not the same claim as "all sure". */
+/**
+ * How sure the marker was, in the result screen's tiers (a self-mark or a teacher's accept settles a question, a flagged one
+ * is its own "needs review"). Silent when the store kept no per-question evidence: no evidence is not the same claim as "all sure".
+ */
 export function confidenceLine(c: PaperHistoryRow["confidence"]): string | null {
   if (!c || c.scored <= 0) return null
-  return c.uncertain === 0 ? `All ${c.scored} sure` : `${c.uncertain} of ${c.scored} unsure`
+  const { scored, uncertain, needsReview } = c
+  const review = `${needsReview} ${needsReview === 1 ? "needs" : "need"} review`
+  if (uncertain === 0 && needsReview === 0) return `All ${scored} sure`
+  if (needsReview === 0) return `${uncertain} of ${scored} unsure`
+  if (uncertain === 0) return `${needsReview} of ${scored} ${needsReview === 1 ? "needs" : "need"} review`
+  return `${uncertain} of ${scored} unsure, ${review}`
 }
 export interface PaperRowView {
   id: string
@@ -173,6 +191,10 @@ export function rowViews(history: PaperHistoryRow[], _now: Date): PaperRowView[]
 export function toggleSelected(selected: string[], id: string): string[] {
   if (selected.includes(id)) return selected.filter((s) => s !== id)
   return selected.length < 2 ? [...selected, id] : [selected[1], id]
+}
+/** A pick the filters now hide is dropped: it would sit in the compare panel with no row to show it. */
+export function prunePicks(picks: string[], visible: PaperHistoryRow[]): string[] {
+  return picks.filter((id) => visible.some((h) => h.id === id))
 }
 export interface CompareSide {
   id: string

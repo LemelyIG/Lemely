@@ -7,12 +7,15 @@ export function RowAction({
   to,
   onClick,
   selected,
+  pressed,
   className,
   children,
 }: {
   to?: string
   onClick?: () => void
   selected?: boolean
+  /** A row that toggles, not navigates: aria-pressed on the button (and no aria-current). */
+  pressed?: boolean
   className: string
   children: ReactNode
 }) {
@@ -26,7 +29,13 @@ export function RowAction({
   }
   if (onClick) {
     return (
-      <button type="button" className={className} aria-current={current} onClick={onClick}>
+      <button
+        type="button"
+        className={className}
+        aria-current={pressed === undefined ? current : undefined}
+        aria-pressed={pressed}
+        onClick={onClick}
+      >
         {children}
       </button>
     )

@@ -8,7 +8,7 @@ import "./papers.css"
 /**
  * One hairline row per attempt, the Subject screen's own row: grade, paper identity, then mark, percent and date in
  * Mono, then how sure the marker was and any teacher correction. In compare mode a row picks instead of opening, and
- * the pick shows its order (1 earlier pick, 2 later) so the student can see which two are held.
+ * the row is a pressed toggle and shows its pick order (1 earlier pick, 2 later) so the student can see which two are held.
  */
 export function AllPapersList({
   rows,
@@ -31,7 +31,7 @@ export function AllPapersList({
             key={row.id}
             to={picks ? undefined : row.to}
             onClick={picks ? () => onPick(row.id) : undefined}
-            selected={order >= 0}
+            pressed={picks ? order >= 0 : undefined}
             leading={
               <b className="sj-grade" style={{ "--c": row.colorVar } as CSSProperties}>
                 {row.grade}
@@ -51,7 +51,14 @@ export function AllPapersList({
                 ) : null}
               </>
             }
-            trailing={order >= 0 ? <span className="ap-pick" aria-label={`Pick ${order + 1}`}>{order + 1}</span> : undefined}
+            trailing={
+              order >= 0 ? (
+                <span className="ap-pick">
+                  <span className="sr-only">Pick </span>
+                  {order + 1}
+                </span>
+              ) : undefined
+            }
           />
         )
       })}

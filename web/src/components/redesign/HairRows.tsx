@@ -21,20 +21,23 @@ export interface HairRowProps {
   to?: string
   onClick?: () => void
   selected?: boolean
+  /** A toggling row (a pick, not a link): aria-pressed, the selected look, and no chevron, which would say it goes somewhere. */
+  pressed?: boolean
 }
 
 /** One hairline row (mock .wrow / .rp / .arow): leading, title and sub, trailing, chevron when it goes somewhere. */
-export function HairRow({ leading, title, sub, trailing, to, onClick, selected }: HairRowProps) {
+export function HairRow({ leading, title, sub, trailing, to, onClick, selected, pressed }: HairRowProps) {
+  const on = selected || pressed
   return (
     <li className="rd-hairrow-item">
-      <RowAction to={to} onClick={onClick} selected={selected} className={cn("rd-hairrow", selected && "rd-selected")}>
+      <RowAction to={to} onClick={onClick} selected={selected} pressed={pressed} className={cn("rd-hairrow", on && "rd-selected")}>
         {leading !== undefined && leading !== null && leading !== "" ? <span className="rd-hr-lead">{leading}</span> : null}
         <span className="rd-at">
           <b>{title}</b>
           {sub !== undefined && sub !== null && sub !== "" ? <span>{sub}</span> : null}
         </span>
         {trailing !== undefined && trailing !== null && trailing !== "" ? <span className="rd-hr-trail">{trailing}</span> : null}
-        {to || onClick ? <Chevron /> : null}
+        {(to || onClick) && pressed === undefined ? <Chevron /> : null}
       </RowAction>
     </li>
   )

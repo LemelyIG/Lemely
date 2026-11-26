@@ -487,30 +487,35 @@ def student_subject(
         found = evidence.get(record.attempt_id or "")
         if found is None:
             return None, 0
-        return ConfidenceSummaryDTO(scored=found.scored, uncertain=found.uncertain), found.corrected
-
-    paper_history = [
-        PaperHistoryRowDTO(
-            id=str(index),
-            paper=_paper_label(record),
-            note="",
-            marks=f"{record.awarded_marks}/{record.maximum_marks}",
-            pct=f"{round(record.percentage)}%",
-            grade=record.grade,
-            gradeColor=_bar_color(record.percentage),
-            tab=f"p{record.metadata.paper_number}",
-            awarded=record.awarded_marks,
-            maximum=record.maximum_marks,
-            recordedAt=record.recorded_at,
-            paperNumber=record.metadata.paper_number,
-            label=paper_code_label(record.metadata),
-            variant=record.metadata.paper_variant,
-            session=session_label(record.metadata),
-            confidence=_evidence(record)[0],
-            teacherCorrected=_evidence(record)[1],
+        summary = ConfidenceSummaryDTO(
+            scored=found.scored, uncertain=found.uncertain, needsReview=found.needs_review
         )
-        for index, record in reversed(indexed_records)
-    ]
+        return summary, found.corrected
+
+    paper_history: list[PaperHistoryRowDTO] = []
+    for index, record in reversed(indexed_records):
+        confidence, corrected = _evidence(record)
+        paper_history.append(
+            PaperHistoryRowDTO(
+                id=str(index),
+                paper=_paper_label(record),
+                note="",
+                marks=f"{record.awarded_marks}/{record.maximum_marks}",
+                pct=f"{round(record.percentage)}%",
+                grade=record.grade,
+                gradeColor=_bar_color(record.percentage),
+                tab=f"p{record.metadata.paper_number}",
+                awarded=record.awarded_marks,
+                maximum=record.maximum_marks,
+                recordedAt=record.recorded_at,
+                paperNumber=record.metadata.paper_number,
+                label=paper_code_label(record.metadata),
+                variant=record.metadata.paper_variant,
+                session=session_label(record.metadata),
+                confidence=confidence,
+                teacherCorrected=corrected,
+            )
+        )
 
     try:
         enrolments = profile_service.list_enrolments(auth.user_id)

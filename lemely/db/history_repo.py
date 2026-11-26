@@ -26,14 +26,15 @@ import structlog
 from sqlalchemy import select
 
 from lemely.core.history import PaperRecord, StudentHistory
-from lemely.core.schemas import (
-    REVIEW_CONFIDENCE_THRESHOLD,
-    ExamMetadata,
-    WeakArea,
-    marker_scored,
-)
+from lemely.core.schemas import ExamMetadata, WeakArea, confidence_tier_for
 from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
-from lemely.db.models.enums import SESSION_MONTH_LABELS, AttemptOrigin, SessionMonth
+from lemely.db.models.enums import (
+    SESSION_MONTH_LABELS,
+    AttemptOrigin,
+    ReviewStatus,
+    SessionMonth,
+)
+from lemely.db.models.ops import ReviewQueueItem
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -53,13 +54,14 @@ _MONTH_TO_ENUM: dict[str, SessionMonth] = {
 class AttemptReviewSummary:
     """Per-attempt marking evidence for the paper-history list (S-09).
 
-    ``scored`` questions had a marker form an opinion; ``uncertain`` of those
-    came in under the review threshold and no teacher has re-marked them;
+    ``scored`` questions have a confidence tier on the result screen (all but "not
+    marked"); ``uncertain`` and ``needs_review`` of those carry that tier there;
     ``corrected`` questions carry a teacher's mark.
     """
 
     scored: int
     uncertain: int
+    needs_review: int
     corrected: int
 
 
@@ -119,12 +121,15 @@ class DbHistoryStore:
         question rows (a quiz-shaped or imported record) is also absent: "no
         evidence" is a different claim from "every question was confident".
 
-        A question counts as *scored* when a marker formed an opinion about it
-        (:func:`lemely.core.schemas.marker_scored`), *corrected* when a teacher
-        re-marked it, and *uncertain* when it was scored, not corrected, and
-        came in under :data:`~lemely.core.schemas.REVIEW_CONFIDENCE_THRESHOLD`.
-        A teacher's mark replaces the marker's doubt, so a corrected question is
-        never also uncertain.
+        Each question gets the tier the result screen would give it
+        (:func:`lemely.core.schemas.confidence_tier_for`), so this list never
+        disagrees with the page a row opens. A question is *pending a teacher*
+        when it has an open review-queue row, read the way
+        ``SelfReviewRepository.list_attempt_questions`` reads it: a self-mark, a
+        teacher's accept or a dismissal closes the row and so settles the
+        question without writing a mark. ``scored`` counts every question that
+        has a tier but "not marked"; ``uncertain`` and ``needs_review`` are the
+        tiers of that name; ``corrected`` counts questions a teacher re-marked.
         """
         user_id = parse_user_id(student_id)
         wanted: list[uuid.UUID] = []
@@ -137,9 +142,12 @@ class DbHistoryStore:
             return {}
         stmt = (
             select(
+                QuestionResult.id,
                 QuestionResult.attempt_id,
                 QuestionResult.marker_source,
                 QuestionResult.confidence_score,
+                QuestionResult.review_reason,
+                QuestionResult.needs_teacher_review,
                 QuestionResult.teacher_awarded_marks,
             )
             .join(Attempt, Attempt.id == QuestionResult.attempt_id)
@@ -147,18 +155,38 @@ class DbHistoryStore:
         )
         counts: dict[str, list[int]] = {}
         with self._sm() as session:
-            for attempt_id, source, score, teacher_marks in session.execute(stmt):
-                scored, uncertain, corrected = counts.setdefault(str(attempt_id), [0, 0, 0])
+            rows = session.execute(stmt).all()
+            open_review_ids = set(
+                session.scalars(
+                    select(ReviewQueueItem.question_result_id).where(
+                        ReviewQueueItem.question_result_id.in_([r[0] for r in rows]),
+                        ReviewQueueItem.status == ReviewStatus.open,
+                    )
+                ).all()
+            )
+            for qr_id, attempt_id, source, score, reason, needs_review, teacher_marks in rows:
+                tally = counts.setdefault(str(attempt_id), [0, 0, 0, 0])
                 if teacher_marks is not None:
-                    counts[str(attempt_id)][2] = corrected + 1
-                if not marker_scored(source.value):
+                    tally[3] += 1
+                tier = confidence_tier_for(
+                    marker_source=source.value,
+                    confidence_score=score,
+                    review_reason=reason,
+                    needs_teacher_review=needs_review,
+                    pending_teacher=qr_id in open_review_ids,
+                )
+                if tier == "not-marked":
                     continue
-                counts[str(attempt_id)][0] = scored + 1
-                if teacher_marks is None and score < REVIEW_CONFIDENCE_THRESHOLD:
-                    counts[str(attempt_id)][1] = uncertain + 1
+                tally[0] += 1
+                if tier == "uncertain":
+                    tally[1] += 1
+                elif tier == "needs-review":
+                    tally[2] += 1
         return {
-            attempt_id: AttemptReviewSummary(scored=s, uncertain=u, corrected=c)
-            for attempt_id, (s, u, c) in counts.items()
+            attempt_id: AttemptReviewSummary(
+                scored=scored, uncertain=uncertain, needs_review=needs_review, corrected=corrected
+            )
+            for attempt_id, (scored, uncertain, needs_review, corrected) in counts.items()
         }
 
     def list_students(self) -> list[str]:

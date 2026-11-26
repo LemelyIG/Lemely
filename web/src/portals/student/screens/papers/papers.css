@@ -36,6 +36,9 @@
 .ap-seg button[aria-pressed="true"] { background: var(--md-surface-container-lowest); color: var(--md-primary); box-shadow: 0 1px 3px color-mix(in oklch, var(--md-shadow) 18%, transparent); }
 :root[data-theme="dark"] .ap-seg button[aria-pressed="true"] { box-shadow: inset 0 0 0 1.5px var(--md-primary); }
 .ap-seg button:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 0; }
+/* A tray with more past its end fades there: the cut-off chip and the fade say it scrolls. Mask colour is alpha only. */
+.ap-seg[data-more="true"] { mask-image: linear-gradient(to right, var(--md-on-surface) calc(100% - 28px), transparent); }
+.ap-seg[data-more="true"]:dir(rtl) { mask-image: linear-gradient(to left, var(--md-on-surface) calc(100% - 28px), transparent); }
 .ap-num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .ap-clear { justify-self: start; min-height: 44px; border: 0; background: none; padding: 0; cursor: pointer; font: 700 14px var(--font-sans); color: var(--md-primary); }
 .ap-clear:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; border-radius: 8px; }

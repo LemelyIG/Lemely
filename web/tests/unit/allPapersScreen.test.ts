@@ -4,6 +4,7 @@ import { createElement, type ComponentType } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { ApiError } from "@/lib/api"
 import type { PaperHistoryRow, Subject } from "@/lib/studentTypes"
 import { currentSubjectCode, resolveCrumb, resolveCrumbTrail, shellParentTo, studentShellTrail } from "@/portals/student/data"
@@ -43,7 +44,7 @@ const refetch = vi.fn()
 const settled = (over: Record<string, unknown>) => ({ refetch, isFetching: false, fetchStatus: "idle", error: null, ...over })
 const history: PaperHistoryRow[] = MATHS.paperHistory.map((h, i) => ({
   ...h,
-  confidence: i === 0 ? { scored: 14, uncertain: 2 } : null,
+  confidence: i === 0 ? { scored: 14, uncertain: 2, needsReview: 0 } : null,
   teacherCorrected: i === 1 ? 3 : 0,
 }))
 const subject = (rows: PaperHistoryRow[]): Subject => ({ ...MATHS, paperHistory: rows })
@@ -110,12 +111,21 @@ describe("rows", () => {
     expect(out).toContain("Teacher re-marked 3 questions")
     expect(out).toContain("2 of 14 unsure")
   })
-  it("pick instead of open when comparing, and show the pick order", () => {
+  it("pick instead of open when comparing: a pressed toggle with no chevron, and the pick order read aloud", () => {
     const out = html(AllPapersList, { rows: rowViews(history, NOW), picks: [history[1].id], onPick: () => {}, label: "Papers" })
     expect(out).not.toContain("href=")
     expect(out.match(/<button/g)).toHaveLength(history.length)
-    expect(out.match(/aria-current="true"/g)).toHaveLength(1)
-    expect(out).toContain('aria-label="Pick 1"')
+    expect(out.match(/aria-pressed="true"/g)).toHaveLength(1)
+    expect(out.match(/aria-pressed="false"/g)).toHaveLength(history.length - 1)
+    expect(out).not.toContain("aria-current")
+    expect(out).not.toContain("rd-chev")
+    expect(out).toContain('<span class="ap-pick"><span class="sr-only">Pick </span>1</span>')
+    expect(out).not.toContain('aria-label="Pick')
+  })
+  it("keep their chevron when a row opens its result", () => {
+    const out = html(AllPapersList, { rows: rowViews(history, NOW), picks: null, onPick: () => {}, label: "Papers" })
+    expect(out.match(/rd-chev/g)).toHaveLength(history.length)
+    expect(out).not.toContain("aria-pressed")
   })
   it("set the numbers in Mono", () => {
     const out = html(AllPapersList, { rows: rowViews(history, NOW), picks: null, onPick: () => {}, label: "Papers" })
@@ -150,6 +160,28 @@ describe("controls", () => {
     const out = html(PapersControls, { filters: DEFAULT_FILTERS, options: filterOptions(history), onChange: () => {} })
     expect(out).toContain('aria-expanded="false"')
     expect(out).toContain('data-open="false"')
+  })
+})
+
+describe("tidy-ups from the review", () => {
+  it("a session tray scrolls the picked choice into view and fades its end while more lies past it", () => {
+    const controls = read("src/portals/student/screens/papers/PapersControls.tsx")
+    expect(controls).toContain("scrollDeltaToReveal(")
+    expect(controls).toContain("data-more={more}")
+    const css = read("src/portals/student/screens/papers/papers.css")
+    expect(css).toMatch(/\.ap-seg\[data-more="true"\] \{ mask-image:/)
+    expect(css).toMatch(/\.ap-seg\[data-more="true"\]:dir\(rtl\) \{ mask-image: linear-gradient\(to left/)
+  })
+  it("changing a filter drops the compare picks it hides", () => {
+    const body = read("src/portals/student/screens/papers/PapersBody.tsx")
+    expect(body).toContain("setPicks((p) => prunePicks(p, applyFilters(history, next, now)))")
+    expect(body).toContain("onChange={changeFilters}")
+    expect(body).toContain("picked={held.length}")
+  })
+  it("the phone back link names where it goes", () => {
+    const out = html(Breadcrumbs, { items: [{ label: "0580", to: "/student/subject/0580" }, { label: "All papers" }] })
+    expect(out.match(/aria-label="Back to 0580"/g)).toHaveLength(1)
+    expect(out).toContain(">0580</span>")
   })
 })
 

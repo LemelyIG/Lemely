@@ -142,8 +142,8 @@ export interface PaperHistoryRow {
   variant: number
   /** Session label, e.g. "May/Jun 2024". */
   session: string
-  /** How sure the marker was; `null` when no per-question evidence is stored. */
-  confidence: { scored: number; uncertain: number } | null
+  /** The result screen's confidence tiers across the paper's questions; `null` when no per-question evidence is stored. */
+  confidence: { scored: number; uncertain: number; needsReview: number } | null
   /** Questions a teacher re-marked (0 when none, or no evidence). */
   teacherCorrected: number
 }

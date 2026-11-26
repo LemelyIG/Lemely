@@ -11,6 +11,7 @@ import {
   compareView,
   filterOptions,
   papersMode,
+  prunePicks,
   rowViews,
   toggleSelected,
   type PapersFilters,
@@ -36,7 +37,9 @@ export function PapersBody({
   const [comparing, setComparing] = useState(false)
   const [picks, setPicks] = useState<string[]>([])
   const panelRef = useRef<HTMLDivElement>(null)
-  const compared = comparing ? compareView(history, picks, now) : null
+  const shown = applyFilters(history, filters, now)
+  const held = prunePicks(picks, shown)
+  const compared = comparing ? compareView(history, held, now) : null
   // On a phone the panel sits above the list, so the second pick would complete off screen. Bring it into view.
   const comparedKey = compared ? `${compared.earlier.id}:${compared.later.id}` : null
   useEffect(() => {
@@ -52,7 +55,11 @@ export function PapersBody({
     )
   }
 
-  const shown = applyFilters(history, filters, now)
+  // Picks follow the rows on screen: changing a filter drops the ones it hides.
+  const changeFilters = (next: PapersFilters) => {
+    onFilters(next)
+    setPicks((p) => prunePicks(p, applyFilters(history, next, now)))
+  }
   const stopComparing = () => {
     setComparing(false)
     setPicks([])
@@ -60,7 +67,7 @@ export function PapersBody({
   return (
     <div className="ap-layout">
       <div className="ap-aside">
-        <PapersControls filters={filters} options={filterOptions(history)} onChange={onFilters} />
+        <PapersControls filters={filters} options={filterOptions(history)} onChange={changeFilters} />
         <button
           type="button"
           className="ap-toggle ap-toggle--compare lm-press"
@@ -74,7 +81,7 @@ export function PapersBody({
         </button>
         {comparing ? (
           <div ref={panelRef}>
-            <ComparePanel view={compared} picked={picks.length} />
+            <ComparePanel view={compared} picked={held.length} />
           </div>
         ) : null}
       </div>
@@ -85,14 +92,14 @@ export function PapersBody({
         {shown.length > 0 ? (
           <AllPapersList
             rows={rowViews(shown, now)}
-            picks={comparing ? picks : null}
-            onPick={(id) => setPicks((p) => toggleSelected(p, id))}
+            picks={comparing ? held : null}
+            onPick={(id) => setPicks((p) => toggleSelected(prunePicks(p, shown), id))}
             label={comparing ? "Papers, pick two to compare" : "Papers"}
           />
         ) : (
           <>
             <p className="sj-hint">No papers match these filters.</p>
-            <button type="button" className="ap-clear" onClick={() => onFilters(DEFAULT_FILTERS)}>
+            <button type="button" className="ap-clear" onClick={() => changeFilters(DEFAULT_FILTERS)}>
               Clear filters
             </button>
           </>
