@@ -2,7 +2,7 @@
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { Gear } from "@phosphor-icons/react"
-import { Breadcrumbs, type Crumb } from "@/components/ui/breadcrumbs"
+import { Breadcrumbs, type BreadcrumbsProps, type Crumb } from "@/components/ui/breadcrumbs"
 import { useNativeFrame } from "@/lib/useNativeFrame"
 import { useNotificationCounts } from "@/lib/hooks/useNotificationApi"
 import { useOverlayState } from "@/lib/nav/useOverlayState"
@@ -27,6 +27,8 @@ export interface ShellTopBarProps {
   title: string
   /** Breadcrumb trail; rendered only when it has more than one crumb. */
   trail: readonly Crumb[]
+  /** Opt-in: the phone's collapsed trail link becomes a button running this (see `Breadcrumbs` `back`). */
+  trailBack?: BreadcrumbsProps["back"]
   onOpenNav: () => void
   /** Keep the menu button on phones (default false: the tab bar's More cell opens the drawer there). The student bar has no More cell. */
   phoneMenu?: boolean
@@ -76,6 +78,7 @@ const BAR = cn(
 export function ShellTopBar({
   title,
   trail,
+  trailBack,
   onOpenNav,
   phoneMenu = false,
   navLabel,
@@ -175,7 +178,7 @@ export function ShellTopBar({
       ) : null}
       {trail.length > 1 ? (
         <div className="-mt-3 mb-4 px-[72px] max-shell-lg:px-3.5 native:hidden">
-          <Breadcrumbs items={[...trail]} />
+          <Breadcrumbs items={[...trail]} back={trailBack} />
         </div>
       ) : null}
     </>
