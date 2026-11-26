@@ -6215,4 +6215,3 @@ Never target `main`.
   - from Task 5: `useGenerationStatus`, `useRetryGeneration`, `useRenameDeck`, `useWeakTopics`, `useDueSession(scope)`
   - service, Tasks 2–4: `start_generation`, `run_generation`, `generation_status`, `retry_generation`, `rename_deck`, `weak_topics`, `due_session(deck_id=)`
 - Placeholders: the Task 10 component stubs are deliberate, short-lived, overwritten in Tasks 11–13, and caught by Task 18 Step 3.
-
