@@ -138,7 +138,7 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
   })
   const trail = studentShellTrail(pagePath)
   // One back control on a phone: a trail with a linked parent keeps it under the bar (going back, labelled by where it leads).
-  const backPlan = useStudentBackPlan(pagePath, trail)
+  const backPlan = useStudentBackPlan(location.pathname, trail)
   const goBack = useBackAction(backPlan.control === "trail" ? backPlan.parentTo : "/student")
   const titleLevel = titleLevelFor(trail, isTabRoot(pagePath, STUDENT_BOTTOM_TABS.map((tab) => tab.to), isStudentSubjectRoot))
   // Practice also owns flashcards, and Plan its subject weeks: sections the tab's own URL match would miss.

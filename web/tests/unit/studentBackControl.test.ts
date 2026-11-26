@@ -3,8 +3,9 @@ import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import type { Crumb } from "@/components/ui/breadcrumbs"
 import { backTarget } from "@/lib/nav/backTarget"
-import { decideBackPlan, linkedParent, previousPathAt } from "@/portals/student/backControl"
-import { studentShellTrail } from "@/portals/student/data"
+import { decideBackPlan, linkedParent, previousPathAt, recordHistoryLocation, type HistoryMemory } from "@/portals/student/backControl"
+import { navGroups, studentShellTrail } from "@/portals/student/data"
+import { STUDENT_BOTTOM_TABS } from "@/portals/student"
 
 // develop has no student route with a linked parent yet (lanes add them), so the rule is exercised on fixture trails.
 const DRILL: Crumb[] = [{ label: "Practice", to: "/student/practice" }, { label: "Past papers" }]
@@ -87,10 +88,77 @@ describe("decideBackPlan", () => {
     expect(decideBackPlan({ trail: DEEP, previousPath: "/student/practice/0580", hasHistory: true })).toMatchObject({ label: "Practice", action: "history" })
   })
 
-  it("every student route on develop still resolves, with no linked parent today", () => {
-    // Guards the premise: if a lane adds a linked parent, this fails and the captures need a second look.
-    const paths = ["/student/practice/papers", "/student/practice/result/1", "/student/plan/0580", "/student/sessions/1"]
-    for (const p of paths) expect(decideBackPlan({ trail: studentShellTrail(p), previousPath: null, hasHistory: false })).toEqual({ control: "bar" })
+  it("student navigation destinations have no linked parent today", () => {
+    const paths = [...navGroups.flatMap((group) => group.items.map((item) => item.to)), ...STUDENT_BOTTOM_TABS.map((tab) => tab.to)]
+    for (const p of paths) expect(decideBackPlan({ trail: studentShellTrail(p), previousPath: null, hasHistory: false }), p).toEqual({ control: "bar" })
+  })
+})
+
+describe("committed history events", () => {
+  // Each event is a committed router location: its key, the tab's history index, and the real location.pathname.
+  type Event = [key: string, idx: number, pathname: string]
+  const replay = (events: Event[], from: HistoryMemory = { key: null, idx: null, seen: new Map() }) =>
+    events.reduce((state, [key, idx, pathname]) => recordHistoryLocation(state, { key, idx, pathname }), from)
+  const planAt = (state: HistoryMemory) =>
+    decideBackPlan({ trail: DRILL, previousPath: previousPathAt(state.seen, state.idx), hasHistory: true })
+
+  it("push: the page pushed from is remembered, so the parent is named", () => {
+    const state = replay([["a", 0, "/student/practice"], ["b", 1, "/student/detail"]])
+    expect(planAt(state)).toMatchObject({ label: "Practice", action: "history" })
+  })
+
+  it("push from somewhere other than the parent: history, honestly labelled Back", () => {
+    const state = replay([["a", 0, "/student/board"], ["b", 1, "/student/detail"]])
+    expect(planAt(state)).toMatchObject({ label: "Back", action: "history" })
+  })
+
+  it("pop: returning to an earlier entry reads what that entry remembered", () => {
+    const pushed = replay([["a", 0, "/student/practice"], ["b", 1, "/student/detail"], ["c", 2, "/student/board"]])
+    expect(planAt(replay([["b", 1, "/student/detail"]], pushed))).toMatchObject({ label: "Practice" }) // pop back from c to b
+    expect(planAt(replay([["c", 2, "/student/board"]], pushed))).toMatchObject({ label: "Back" }) // pop forward again
+  })
+
+  it("replace: the replaced entry's address is overwritten, so the next push names the new page", () => {
+    const first = replay([["a", 0, "/student/board"]])
+    const replaced = replay([["a2", 0, "/student/practice"]], first) // same idx, new key: a replace of the current entry
+    expect(replaced.seen.get(0)).toBe("/student/practice")
+    expect(planAt(replay([["b", 1, "/student/detail"]], replaced))).toMatchObject({ label: "Practice" })
+    expect(planAt(replay([["b", 1, "/student/detail"]], first))).toMatchObject({ label: "Back" }) // without the replace
+  })
+
+  it("push after pop: the old forward entry at that index is overwritten", () => {
+    const state = replay([
+      ["a", 0, "/student/practice"], ["b", 1, "/student/board"], // forward entry
+      ["a", 0, "/student/practice"], // pop to the start
+      ["c", 1, "/student/detail"], // push a new page over the forward entry
+    ])
+    expect(state.seen.get(1)).toBe("/student/detail")
+    expect(planAt(state)).toMatchObject({ label: "Practice" })
+  })
+
+  it("never mutates the memory it was given", () => {
+    const first = replay([["a", 0, "/student/practice"]])
+    const second = recordHistoryLocation(first, { key: "b", idx: 1, pathname: "/student/detail" })
+    expect(second.seen).not.toBe(first.seen)
+    expect(first.seen.has(1)).toBe(false)
+  })
+
+  it("reload: the entry index survives but the memory does not, so the label falls back to Back", () => {
+    const afterReload = replay([["r", 1, "/student/detail"]]) // fresh memory, router still reports idx 1
+    expect(afterReload.seen.get(0)).toBeUndefined()
+    expect(planAt(afterReload)).toMatchObject({ label: "Back", action: "history" })
+  })
+
+  it("a dialog entry records its own URL, so going back from a page opened over it never names the page behind it", () => {
+    // practice -> Settings dialog (location.pathname /student/settings, the page under it is still /student/practice) -> detail
+    const state = replay([["a", 0, "/student/practice"], ["d", 1, "/student/settings"], ["b", 2, "/student/detail"]])
+    expect(state.seen.get(1)).toBe("/student/settings")
+    expect(planAt(state)).toMatchObject({ label: "Back", ariaLabel: "Back", action: "history" })
+  })
+
+  it("a dialog deep link has no earlier entry, so it never claims a parent", () => {
+    const state = replay([["d", 0, "/student/settings"]])
+    expect(planAt(state)).toMatchObject({ label: "Back" })
   })
 })
 
@@ -124,7 +192,7 @@ describe("student shell wiring (shell.tsx)", () => {
   const src = readFileSync(join(import.meta.dirname, "..", "..", "src", "portals", "student", "shell.tsx"), "utf8")
 
   it("derives the plan from the trail and hands the top bar a history-or-parent action", () => {
-    expect(src).toMatch(/useStudentBackPlan\(pagePath, trail\)/)
+    expect(src).toMatch(/useStudentBackPlan\(location\.pathname, trail\)/)
     expect(src).toMatch(/useBackAction\(backPlan\.control === "trail" \? backPlan\.parentTo : "\/student"\)/)
     expect(src).toMatch(/trailBack:\s*titleLevel === "detail" && backPlan\.control === "trail"/)
     expect(src).toMatch(/onActivate: goBack/)

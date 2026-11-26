@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react"
+import { useLayoutEffect, useReducer } from "react"
+import { useLocation } from "react-router-dom"
 import type { Crumb } from "@/components/ui/breadcrumbs"
 import { backTarget } from "@/lib/nav/backTarget"
 
@@ -79,16 +80,30 @@ export function previousPathAt(seen: ReadonlyMap<number, string>, idx: number | 
   return idx === null ? null : (seen.get(idx - 1) ?? null)
 }
 
-/** The student shell's back plan for the page it is showing (`pagePath` is the page under any dialog). */
-export function useStudentBackPlan(pagePath: string, trail: readonly Crumb[]): BackPlan {
-  const [seen] = useState(() => new Map<number, string>())
-  const idx = currentHistoryIdx()
-  useEffect(() => {
-    if (idx !== null) seen.set(idx, pagePath)
-  }, [seen, idx, pagePath])
+export interface HistoryMemory {
+  key: string | null
+  idx: number | null
+  seen: ReadonlyMap<number, string>
+}
+
+/** Record only committed router locations; a push or replace overwrites its index. */
+export function recordHistoryLocation(state: HistoryMemory, event: { key: string; idx: number | null; pathname: string }): HistoryMemory {
+  const seen = new Map(state.seen)
+  if (event.idx !== null) seen.set(event.idx, event.pathname)
+  return { key: event.key, idx: event.idx, seen }
+}
+
+/** The trail follows the page beneath a dialog; history records the actual URL. */
+export function useStudentBackPlan(pathname: string, trail: readonly Crumb[]): BackPlan {
+  const { key } = useLocation()
+  const [history, record] = useReducer(recordHistoryLocation, { key: null, idx: null, seen: new Map<number, string>() })
+  useLayoutEffect(() => {
+    record({ key, idx: currentHistoryIdx(), pathname })
+  }, [key, pathname])
+  const committed = history.key === key
   return decideBackPlan({
     trail,
-    previousPath: previousPathAt(seen, idx),
-    hasHistory: backTarget(idx, "/").kind === "history",
+    previousPath: committed ? previousPathAt(history.seen, history.idx) : null,
+    hasHistory: !committed || backTarget(history.idx, "/").kind === "history",
   })
 }
