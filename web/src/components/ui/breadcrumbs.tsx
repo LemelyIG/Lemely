@@ -45,10 +45,20 @@ export interface BreadcrumbsProps {
    * false on surfaces with room to spare at every width.
    */
   collapse?: boolean
+  /**
+   * Opt-in: replaces the collapsed (phone) back link with a button that runs
+   * `onActivate`, for a portal whose back action is "go back through history"
+   * rather than "go up to the parent". `label` is the visible text;
+   * `ariaLabel` names the destination for assistive tech ("Back to Practice")
+   * and must contain the visible label. Only the collapsed form changes: the
+   * full trail from `sm` up is untouched, and without `back` (or when the
+   * trail does not collapse) the output is exactly what it always was.
+   */
+  back?: { label: string; ariaLabel?: string; onActivate: () => void }
   className?: string
 }
 
-export function Breadcrumbs({ items, collapse = true, className }: BreadcrumbsProps) {
+export function Breadcrumbs({ items, collapse = true, back, className }: BreadcrumbsProps) {
   if (items.length === 0) return null
 
   // The nearest ancestor with a link is what the collapsed mobile form shows.
@@ -166,22 +176,41 @@ export function Breadcrumbs({ items, collapse = true, className }: BreadcrumbsPr
             gets one trail, not two, at every width. */}
         {collapsed ? (
           <li className="flex min-w-0 items-center sm:hidden">
-            <Link
-              to={parent.to!}
-              viewTransition
-              className={cn(
-                "-ms-2 flex min-h-11 min-w-0 items-center gap-1 px-2 py-1 text-on-surface-variant transition-colors",
-                "hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
-              )}
-            >
-              {/* Points back against the reading direction, so it mirrors too. */}
-              <CaretRight
-                size={12}
-                aria-hidden="true"
-                className="shrink-0 -scale-x-100 rtl:scale-x-100"
-              />
-              <span className="truncate">{parent.label}</span>
-            </Link>
+            {back ? (
+              <button
+                type="button"
+                onClick={back.onActivate}
+                aria-label={back.ariaLabel}
+                className={cn(
+                  "-ms-2 flex min-h-11 min-w-0 cursor-pointer items-center gap-1 px-2 py-1 text-on-surface-variant transition-colors",
+                  "hover:text-on-surface active:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+                )}
+              >
+                <CaretRight
+                  size={12}
+                  aria-hidden="true"
+                  className="shrink-0 -scale-x-100 rtl:scale-x-100"
+                />
+                <span className="truncate">{back.label}</span>
+              </button>
+            ) : (
+              <Link
+                to={parent.to!}
+                viewTransition
+                className={cn(
+                  "-ms-2 flex min-h-11 min-w-0 items-center gap-1 px-2 py-1 text-on-surface-variant transition-colors",
+                  "hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+                )}
+              >
+                {/* Points back against the reading direction, so it mirrors too. */}
+                <CaretRight
+                  size={12}
+                  aria-hidden="true"
+                  className="shrink-0 -scale-x-100 rtl:scale-x-100"
+                />
+                <span className="truncate">{parent.label}</span>
+              </Link>
+            )}
           </li>
         ) : null}
       </ol>

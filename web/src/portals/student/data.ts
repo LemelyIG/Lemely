@@ -255,6 +255,8 @@ const ROOT_CRUMBS = new Set(["Home", "Marking"])
  * so a section is one crumb (title only) and only a drilled-in page has
  * breadcrumbs, as design A shows. */
 export function studentShellTrail(pathname: string): Crumb[] {
+  // TEMP-CAPTURE: dev-only fixture trail, removed before commit.
+  if (pathname === "/student/friends") return [{ label: "Your classes", to: "/student/classes" }, { label: "Past papers" }]
   const trail = resolveCrumbTrail(pathname)
   return ROOT_CRUMBS.has(trail[0]?.label ?? "") ? trail.slice(1) : trail
 }
