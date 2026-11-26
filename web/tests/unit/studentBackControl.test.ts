@@ -88,9 +88,14 @@ describe("decideBackPlan", () => {
     expect(decideBackPlan({ trail: DEEP, previousPath: "/student/practice/0580", hasHistory: true })).toMatchObject({ label: "Practice", action: "history" })
   })
 
-  it("student navigation destinations have no linked parent today", () => {
-    const paths = [...navGroups.flatMap((group) => group.items.map((item) => item.to)), ...STUDENT_BOTTOM_TABS.map((tab) => tab.to)]
-    for (const p of paths) expect(decideBackPlan({ trail: studentShellTrail(p), previousPath: null, hasHistory: false }), p).toEqual({ control: "bar" })
+  it("no student route has a linked parent today", () => {
+    // Guards the premise: if a lane adds a linked parent, this fails and the captures need a second look.
+    const destinations = [...navGroups.flatMap((group) => group.items.map((item) => item.to)), ...STUDENT_BOTTOM_TABS.map((tab) => tab.to)]
+    // Drilled-in pages are the likeliest to gain a linked parent, and no nav entry points at them.
+    const drilledIn = ["/student/practice/papers", "/student/practice/result/1", "/student/plan/0580", "/student/sessions/1"]
+    for (const p of [...destinations, ...drilledIn]) {
+      expect(decideBackPlan({ trail: studentShellTrail(p), previousPath: null, hasHistory: false }), p).toEqual({ control: "bar" })
+    }
   })
 })
 
@@ -208,5 +213,39 @@ describe("student shell wiring (shell.tsx)", () => {
   it("keeps no route list: the rule reads the trail only", () => {
     const helper = readFileSync(join(import.meta.dirname, "..", "..", "src", "portals", "student", "backControl.ts"), "utf8")
     expect(helper).not.toMatch(/\/student\//)
+  })
+})
+
+describe("useStudentBackPlan wiring (backControl.ts)", () => {
+  // No test renders the hook (vitest runs in node), so its body is guarded by source, like edgeSwipeBack.test.ts.
+  const src = readFileSync(join(import.meta.dirname, "..", "..", "src", "portals", "student", "backControl.ts"), "utf8")
+  const start = src.indexOf("export function useStudentBackPlan(")
+  const hook = src.slice(start, src.indexOf("\n}\n", start) + 2)
+  const effect = hook.match(/useLayoutEffect\(\(\) => \{[\s\S]*?\n {2}\}, \[key, pathname\]\)/)?.[0] ?? ""
+  const render = effect === "" ? hook : hook.replace(effect, "")
+
+  it("finds the hook body", () => {
+    expect(start).toBeGreaterThan(-1)
+    expect(hook).toMatch(/^export function useStudentBackPlan\(pathname: string, trail: readonly Crumb\[\]\): BackPlan \{/)
+    expect(hook).toMatch(/\n\}$/)
+  })
+
+  it("records the committed location in a layout effect keyed on the router's location key, so no frame shows the stale label", () => {
+    expect(hook).toMatch(/const \{ key \} = useLocation\(\)/)
+    expect(effect).toMatch(/^useLayoutEffect\(/)
+    expect(effect).toContain("record({ key, idx: currentHistoryIdx(), pathname })")
+    expect(hook).not.toMatch(/\buseEffect\(/)
+  })
+
+  it("until the current key is recorded the plan is the plain Back, never a guessed parent", () => {
+    expect(hook).toMatch(/const committed = history\.key === key\b/)
+    expect(hook).toMatch(/previousPath: committed \? previousPathAt\(history\.seen, history\.idx\) : null/)
+    expect(hook).toMatch(/hasHistory: !committed \|\|/)
+  })
+
+  it("never reads window.history.state while rendering: the index is read only inside the effect", () => {
+    expect(render).not.toMatch(/window\.history|\bhistory\.state\b/)
+    expect(render).not.toContain("currentHistoryIdx")
+    expect(effect).toContain("currentHistoryIdx()")
   })
 })
