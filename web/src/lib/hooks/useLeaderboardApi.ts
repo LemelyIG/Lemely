@@ -24,6 +24,12 @@ import type {
  */
 export const CLASSES_KEY = ["student", "classes"] as const
 
+/**
+ * Prefix of every cached board. Exported for the same reason as `CLASSES_KEY`: a mutation that changes who
+ * a board shows (the student's own ranking opt-out) invalidates this exact prefix.
+ */
+export const LEADERBOARD_KEY = ["student", "leaderboard"] as const
+
 export interface LeaderboardParams {
   scope: LeaderboardScope
   basis: LeaderboardBasis
@@ -46,7 +52,7 @@ export function useLeaderboard(
   return useQuery({
     // `classId` is in the key even for non-class scopes so switching class
     // and switching back cannot serve the first class's cached board.
-    queryKey: ["student", "leaderboard", scope, basis, classId ?? null] as const,
+    queryKey: [...LEADERBOARD_KEY, scope, basis, classId ?? null] as const,
     queryFn: () => {
       const search = new URLSearchParams({ scope, basis })
       if (needsClass && classId) search.set("class_id", classId)

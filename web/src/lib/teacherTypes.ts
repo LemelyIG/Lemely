@@ -700,6 +700,8 @@ export interface ReviewQueueItem {
   aiAwardedMarks: number | null
   maximumMarks: number | null
   confidenceScore: number | null
+  /** The marker's own reason text. Technical: the client maps it to a short line, never shows it raw in a row. */
+  reviewReason: string | null
 }
 
 /** Response for `GET /teacher/review` (mirrors `ReviewQueueListDTO`). Already
@@ -720,7 +722,14 @@ export interface ReviewQueueList {
   items: ReviewQueueItem[]
   nextCursor: string | null
   total: number
+  /** Subject codes the "Paper" filter can offer. */
+  subjectCodes: string[]
+  /** False only for a caller who has never had a review item: first run. */
+  hasHistory: boolean
 }
+
+/** The queue's sort orders (`GET /teacher/review?sort=`). */
+export type ReviewSort = "oldest" | "lost" | "confidence"
 
 /**
  * A teacher-supplied method/accuracy breakdown (mirrors `ReviewBreakdownDTO`).
@@ -793,6 +802,11 @@ export interface ReviewItemPoint {
    * so unlike `verdict` this is populated today with `equivalence_gate` off.
    */
   rationale: string | null
+  ordinal: number
+  markType: string | null
+  tariff: number
+  groupKey: string | null
+  groupMaxMarks: number | null
 }
 
 /**
@@ -861,6 +875,8 @@ export interface ReviewItemDetail extends ReviewQueueItem {
    * crop route serves only attempt-backed items.
    */
   hasSourceBox: boolean
+  /** 1-based page of the scan the answer sits on, or null when unknown. */
+  sourcePage: number | null
 }
 
 /**

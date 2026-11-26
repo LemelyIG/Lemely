@@ -3,10 +3,12 @@ import {
   useMutation,
   useQuery,
   useQueryClient,
+  type QueryClient,
   type UseMutationResult,
   type UseQueryResult,
 } from "@tanstack/react-query"
 import { request } from "@/lib/api"
+import { LEADERBOARD_KEY } from "@/lib/hooks/useLeaderboardApi"
 import type {
   ConfidenceRating,
   ConfidenceRatingsUpdate,
@@ -111,6 +113,16 @@ export function useStudentProfile(): UseQueryResult<StudentProfileWithEnrolments
   })
 }
 
+/**
+ * After a student-profile change: refetch the profile, and every cached board. The ranking opt-out is part of
+ * this profile, and a class board holds no rank for an opted-out student (`viewer.rank: null`), so a cached board
+ * is stale the moment the setting flips. Without this, Me's Standings door reads a wrong line until the board refetches.
+ */
+export function invalidateAfterStudentProfileChange(queryClient: QueryClient): void {
+  queryClient.invalidateQueries({ queryKey: STUDENT_PROFILE_KEY })
+  queryClient.invalidateQueries({ queryKey: LEADERBOARD_KEY })
+}
+
 export function usePatchStudentProfile(): UseMutationResult<
   StudentProfile,
   Error,
@@ -124,7 +136,7 @@ export function usePatchStudentProfile(): UseMutationResult<
         body: JSON.stringify(body satisfies StudentProfileUpdate),
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: STUDENT_PROFILE_KEY })
+      invalidateAfterStudentProfileChange(queryClient)
     },
   })
 }

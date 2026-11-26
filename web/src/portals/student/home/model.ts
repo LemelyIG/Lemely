@@ -1,186 +1,543 @@
 /*
- * Student home decision logic (spec 2026-11-05-student-home-design.md §3–4).
- * Pure functions only: no React, no fetching, no clock reads (`now` is passed
- * in), so every branch is a unit test. The dev preview and the React home
- * both call these, so the preview cannot drift from the product.
+ * Student Home view model (lane L1). Pure: no React, no fetching, no clock
+ * reads. The server's `localDate`/`localHour` are the student's own civil
+ * time, so the same payload always renders the same screen. Every decision
+ * the Home screen makes lives here: the stage moment, Binny's mood, motion
+ * and line, the button and its door, which rows show, and every label.
+ *
+ * Copy rules (web/scripts/check_copy.mjs): no "!" ending a sentence, no em
+ * dash as punctuation. Binny's line is the stage headline from the approved
+ * mock (see plan "Needs user decision" item 2). Owner rule, 2026-11-24: the
+ * line is 2 to 4 words. Most of what a line leaves out is on the screen
+ * already (score and paper in the last-paper row, topic and marks in the
+ * win-back list, the countdown in the top row), so nothing is added to carry
+ * it. Not all of it: days away and a session's minutes are on no Home surface,
+ * and a topic name too long for four words is not guaranteed to be on one.
  */
+import type { BinnyMood, BinnyMotion } from "@/components/redesign"
+import type {
+  HomeMoment,
+  HomeMomentKind,
+  PaperMoment,
+  StudentHome,
+} from "@/lib/studentHomeTypes"
+import { paperMood } from "./gradeMood"
+import { flashcardsTarget, homeRoutes, planTarget, practiceTarget } from "./routes"
 
-export const GRADE_ORDER = ["U", "E", "D", "C", "B", "A", "A*"] as const
-
-export interface UpcomingSession {
-  sessionId: string
-  subjectCode: string
-  title: string
-  minutes: number
-  /** ISO date, YYYY-MM-DD. */
-  scheduledFor: string
-}
-
-export interface HomeSubject {
-  code: string
-  papers: number
-  grade: string
-  previousGrade: string | null
-  /** ISO date, YYYY-MM-DD. */
-  nextExamOn: string | null
-}
-
-export interface WeakTopic {
-  topic: string
-  subjectCode: string
-  /** Accuracy as a whole percentage, 0–100. */
-  acc: number
-}
-
-export interface LatestResult {
-  subjectCode: string
-  grade: string
-  paperId: string
-  /** Display label, e.g. "0580/42 · m/j 2024". */
-  paperLabel: string
-  /** True once the student has opened the result. An unseen result takes over the hero. */
-  seen: boolean
-  /** UTC ISO-8601 timestamp. */
-  recordedAt: string
-}
-
-export interface XpDay {
-  /** ISO date, YYYY-MM-DD. */
-  day: string
-  xp: number
-}
-
-export interface HomeFacts {
-  now: Date
-  activeUpload: { paperLabel: string } | null
-  subjects: readonly HomeSubject[]
-  upcomingSessions: readonly UpcomingSession[]
-  weakTopics: readonly WeakTopic[]
-  latestResult: LatestResult | null
-  calendar: readonly XpDay[]
-}
-
-export type NextAction =
-  | { kind: "marking"; paperLabel: string; to: string }
-  | { kind: "result"; result: LatestResult; to: string }
-  | { kind: "session"; session: UpcomingSession; to: string }
-  | { kind: "first-paper"; to: string }
-  | { kind: "practice"; topic: WeakTopic; to: string }
-  | { kind: "correct"; to: string }
-
-export type NextActionKind = NextAction["kind"]
-
-export type BinnyMood = "marking" | "grade-improved" | "paper-marked" | "streak-kept" | "idle"
-
-export interface StreakDay {
-  day: string
-  xp: number
-  earned: boolean
-  isToday: boolean
-}
-
-export interface NextActionOptions {
-  /** Variant B: among due sessions and weak topics, prefer the subject with the closest exam. */
-  preferClosestExam?: boolean
-}
-
-const CORRECT_ROUTE = "/student/correct"
+export const EXAM_NEAR_DAYS = 30
+export const SCAN_NUDGE_DAYS = 7
 const DAY_MS = 86_400_000
-const NO_EXAM = "9999-12-31"
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 
-export function localISODate(d: Date): string {
+export const STAGE_PRIORITY: readonly HomeMomentKind[] = [
+  "marking",
+  "result",
+  "tough",
+  "teacherReply",
+  "streakAtRisk",
+  "goalDone",
+  "backAfterBreak",
+]
+
+export type StageKind = HomeMomentKind | "session" | "morning" | "scanNext" | "firstRun"
+
+export interface StageVm {
+  /** Stable id for "Not now", e.g. `result:5`. */
+  key: string
+  kind: StageKind
+  mood: BinnyMood
+  motion: BinnyMotion
+  /** All of Binny's bubble: nothing else is rendered in it (the greeting lives in the desktop page heading). */
+  line: string
+  action: { label: string; to: string }
+  dismissible: boolean
+}
+
+export type RowLeading =
+  | { type: "grade"; grade: string }
+  | { type: "initials"; text: string }
+  | { type: "icon"; icon: "sheet" | "camera" | "class" | "trend" }
+
+export interface RowVm {
+  key: string
+  kind: "result" | "teacher" | "homework" | "joinClass" | "sparse" | "scan"
+  leading: RowLeading
+  title: string
+  sub: string
+  to: string
+}
+
+/* ── helpers ──────────────────────────────────────────────────────────── */
+
+export function parseDay(day: string): Date {
+  return new Date(`${day}T00:00:00`)
+}
+
+function isoDay(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, "0")
   const day = String(d.getDate()).padStart(2, "0")
   return `${d.getFullYear()}-${m}-${day}`
 }
 
-function hasPapers(f: HomeFacts): boolean {
-  return f.subjects.some((s) => s.papers > 0)
+export function daysBetween(from: string, to: string): number {
+  return Math.round((parseDay(to).getTime() - parseDay(from).getTime()) / DAY_MS)
 }
 
-function dueSessions(f: HomeFacts): UpcomingSession[] {
-  const today = localISODate(f.now)
-  return f.upcomingSessions.filter((s) => s.scheduledFor <= today)
+export function firstName(name: string): string {
+  const trimmed = name.trim()
+  if (!trimmed) return "there"
+  const base = trimmed.includes("@") ? trimmed.split("@")[0] : trimmed.split(/\s+/)[0]
+  return base || "there"
 }
 
-function weakestFirst(f: HomeFacts): WeakTopic[] {
-  return [...f.weakTopics].sort((a, b) => a.acc - b.acc)
+export function shortGreeting(hour: number): string {
+  if (hour >= 5 && hour < 12) return "Morning"
+  if (hour >= 12 && hour < 18) return "Afternoon"
+  return "Evening"
 }
 
-function examDate(f: HomeFacts, code: string): string {
-  return f.subjects.find((s) => s.code === code)?.nextExamOn ?? NO_EXAM
+export function questionLabel(id: string): string {
+  return /^q/i.test(id) ? id : `Q${id}`
 }
 
-/** Stable sort, so items for the same subject keep their order. */
-function byClosestExam<T>(f: HomeFacts, items: T[], codeOf: (item: T) => string): T[] {
-  return [...items].sort((a, b) => examDate(f, codeOf(a)).localeCompare(examDate(f, codeOf(b))))
+export function shortSubject(name: string): string {
+  return name.replace(/^Additional Mathematics$/, "Add Maths").replace(/^Additional /, "Add ")
 }
 
-const markingAction = (paperLabel: string): NextAction => ({ kind: "marking", paperLabel, to: CORRECT_ROUTE })
-const resultAction = (r: LatestResult): NextAction => ({ kind: "result", result: r, to: `/student/result/${r.paperId}` })
-const sessionAction = (s: UpcomingSession): NextAction => ({
-  kind: "session",
-  session: s,
-  to: `/student/plan/${s.subjectCode}/session/${s.sessionId}`,
-})
-const practiceAction = (t: WeakTopic): NextAction => ({ kind: "practice", topic: t, to: `/student/practice/${t.subjectCode}` })
-const FIRST_PAPER: NextAction = { kind: "first-paper", to: CORRECT_ROUTE }
-const CORRECT_ANOTHER: NextAction = { kind: "correct", to: CORRECT_ROUTE }
-
-export function deriveNextAction(f: HomeFacts, opts: NextActionOptions = {}): NextAction {
-  if (f.activeUpload) return markingAction(f.activeUpload.paperLabel)
-  if (f.latestResult && f.latestResult.seen === false) return resultAction(f.latestResult)
-  let due = dueSessions(f)
-  if (opts.preferClosestExam) due = byClosestExam(f, due, (s) => s.subjectCode)
-  if (due.length > 0) return sessionAction(due[0])
-  if (!hasPapers(f)) return FIRST_PAPER
-  let weak = weakestFirst(f)
-  if (opts.preferClosestExam) weak = byClosestExam(f, weak, (t) => t.subjectCode)
-  if (weak.length > 0) return practiceAction(weak[0])
-  return CORRECT_ANOTHER
+export function initials(name: string): string {
+  return name
+    .replace(/[^\p{L}\s]/gu, "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]!.toUpperCase())
+    .join("")
 }
 
-/** Variant C's "today" list. Its first item always equals `deriveNextAction(f)`. */
-export function todayList(f: HomeFacts, max = 3): NextAction[] {
-  const out: NextAction[] = []
-  if (f.activeUpload) out.push(markingAction(f.activeUpload.paperLabel))
-  if (f.latestResult && f.latestResult.seen === false) out.push(resultAction(f.latestResult))
-  out.push(...dueSessions(f).map(sessionAction))
-  if (!hasPapers(f)) {
-    if (!f.activeUpload) out.push(FIRST_PAPER)
-    return out.slice(0, max)
+export function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? "" : "s"}`
+}
+
+export function relativeDay(iso: string, localDate: string): string {
+  const days = daysBetween(isoDay(new Date(iso)), localDate)
+  if (days <= 0) return "today"
+  if (days === 1) return "yesterday"
+  if (days < 7) return `${days} days ago`
+  if (days < 14) return "last week"
+  return `${Math.floor(days / 7)} weeks ago`
+}
+
+function dueLabel(dueAt: string | null, localDate: string, overdue: boolean): string {
+  if (overdue) return "Overdue"
+  if (!dueAt) return "No due date"
+  const due = new Date(dueAt)
+  const days = daysBetween(localDate, isoDay(due))
+  if (days <= 0) return "Due today"
+  if (days === 1) return "Due tomorrow"
+  if (days < 7) return `Due ${WEEKDAYS[due.getDay()]}`
+  return `Due ${due.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`
+}
+
+export function isFirstRun(home: StudentHome): boolean {
+  return home.floor.length === 0 && home.recentPapers.length === 0
+}
+
+export function examInfo(home: StudentHome): { date: string; days: number; near: boolean } | null {
+  if (!home.nextExamOn) return null
+  const days = daysBetween(home.localDate, home.nextExamOn)
+  return { date: home.nextExamOn, days, near: days >= 0 && days <= EXAM_NEAR_DAYS }
+}
+
+/* ── stage ────────────────────────────────────────────────────────────── */
+
+function motionFor(mood: BinnyMood): BinnyMotion {
+  return mood === "happy" ? "hop" : "idle"
+}
+
+function stage(
+  key: string,
+  kind: StageKind,
+  mood: BinnyMood,
+  line: string,
+  action: { label: string; to: string },
+  dismissible = true,
+): StageVm {
+  return { key, kind, mood, motion: motionFor(mood), line, action, dismissible }
+}
+
+/** The Binny rule: a line is at most this many words. */
+export const STAGE_LINE_MAX_WORDS = 4
+
+function wordCount(text: string): number {
+  return text.trim().split(/\s+/).length
+}
+
+/** "an A", "an A*", "an E", "an F", "a B", "a U". */
+export function withArticle(grade: string): string {
+  return `${/^[AEF]/.test(grade) ? "an" : "a"} ${grade}`
+}
+
+function paperStage(m: PaperMoment): StageVm {
+  const focus = m.focusQuestion ? questionLabel(m.focusQuestion) : null
+  const to = homeRoutes.result(m.paperId, "lost")
+  if (m.kind === "tough") {
+    return stage(
+      `tough:${m.paperId}`,
+      "tough",
+      paperMood(m),
+      "Win back easy marks",
+      { label: focus ? `Start with ${focus}` : "See my result", to },
+    )
   }
-  const weakest = weakestFirst(f)[0]
-  if (weakest) out.push(practiceAction(weakest))
-  out.push(CORRECT_ANOTHER)
-  return out.slice(0, max)
-}
-
-function gradeRank(grade: string): number {
-  return (GRADE_ORDER as readonly string[]).indexOf(grade)
-}
-
-export function binnyMood(f: HomeFacts): BinnyMood {
-  if (f.activeUpload) return "marking"
-  const r = f.latestResult
-  if (r && f.now.getTime() - Date.parse(r.recordedAt) < DAY_MS) {
-    const previous = f.subjects.find((s) => s.code === r.subjectCode)?.previousGrade ?? null
-    if (previous !== null && gradeRank(previous) >= 0 && gradeRank(r.grade) > gradeRank(previous)) {
-      return "grade-improved"
-    }
-    return "paper-marked"
-  }
-  const today = localISODate(f.now)
-  if (f.calendar.some((d) => d.day === today && d.xp > 0)) return "streak-kept"
-  return "idle"
-}
-
-export function streakStrip(calendar: readonly XpDay[], now: Date): StreakDay[] {
-  const xpByDay = new Map(calendar.map((d) => [d.day, d.xp]))
-  const today = localISODate(now)
-  return Array.from({ length: 7 }, (_, i) => {
-    const day = localISODate(new Date(now.getFullYear(), now.getMonth(), now.getDate() - (6 - i)))
-    const xp = xpByDay.get(day) ?? 0
-    return { day, xp, earned: xp > 0, isToday: day === today }
+  // The score is in the last-paper row and the question is on the button, so the line keeps the grade move.
+  const line =
+    m.previousGrade && m.previousGrade !== m.grade
+      ? `From ${m.previousGrade} to ${m.grade}`
+      : `That's ${withArticle(m.grade)}`
+  return stage(`result:${m.paperId}`, "result", paperMood(m), line, {
+    label: focus ? `Fix ${focus}` : "See my result",
+    to,
   })
+}
+
+function momentStage(m: HomeMoment, home: StudentHome): StageVm {
+  switch (m.kind) {
+    case "marking": {
+      // Progress is on no other Home block, so the count stays; HomeStage sets its numbers in Mono.
+      const progress =
+        m.questionsTotal != null && m.questionsTotal > 0 && m.questionsDone != null
+          ? `${m.questionsDone} of ${m.questionsTotal} marked`
+          : "Marking your paper"
+      const line = m.stale ? "Still marking your paper" : progress
+      return stage(`marking:${m.paperId}`, "marking", "thinking", line, {
+        label: "Watch it mark",
+        to: homeRoutes.scan,
+      }, false)
+    }
+    case "result":
+    case "tough":
+      return paperStage(m)
+    case "teacherReply": {
+      const r = m.reply
+      // Who and how many marks live in the teacher row under the stage (see alsoRows).
+      return stage(
+        `teacherReply:${r.reviewId}`,
+        "teacherReply",
+        "wink",
+        `Your teacher checked ${questionLabel(r.questionId)}`,
+        { label: "See the answer", to: r.paperId ? homeRoutes.result(r.paperId) : homeRoutes.notifications },
+      )
+    }
+    case "streakAtRisk":
+      return stage(
+        `streakAtRisk:${home.localDate}`,
+        "streakAtRisk",
+        "thinking",
+        "Streak ends at midnight",
+        { label: "Keep my streak", to: practiceTarget(home) },
+      )
+    case "goalDone":
+      return stage(
+        `goalDone:${home.localDate}`,
+        "goalDone",
+        "happy",
+        "Three for three today",
+        { label: "See tomorrow's plan", to: planTarget(home) },
+      )
+    case "backAfterBreak":
+      return stage(
+        `backAfterBreak:${home.localDate}`,
+        "backAfterBreak",
+        "wink",
+        "Ease back in",
+        { label: "5-minute warm-up", to: practiceTarget(home) },
+      )
+  }
+}
+
+/** "Today: Waves". A topic too long to fit the four-word rule gives way to a fixed line; the topic is one tap on. */
+function sessionLine(topic: string): string {
+  const named = `Today: ${topic.trim()}`
+  return wordCount(named) <= STAGE_LINE_MAX_WORDS ? named : "Today's plan is ready"
+}
+
+function fallbackStages(home: StudentHome): StageVm[] {
+  // A near exam used to prefix every line here, and mornings a greeting. Either pushed a line past four words,
+  // so the bubble carries neither: the countdown pill in the top row says the first, the desktop heading the second.
+  const out: StageVm[] = []
+
+  if (isFirstRun(home)) {
+    out.push(
+      stage("firstRun", "firstRun", "open", "Mark your first paper", {
+        label: "Scan a paper",
+        to: homeRoutes.scan,
+      }, false),
+    )
+    return out
+  }
+
+  const session = home.todaySessions.find((s) => !s.done)
+  if (session) {
+    out.push(
+      stage(
+        `session:${session.sessionId}`,
+        "session",
+        "open",
+        sessionLine(session.topic),
+        { label: "Start", to: homeRoutes.session(session.subjectCode, session.sessionId) },
+      ),
+    )
+  }
+
+  const top = home.winBack[0]
+  if (top) {
+    out.push(
+      stage(
+        `morning:${top.subjectCode}:${top.topic}`,
+        "morning",
+        "open",
+        "Win marks back",
+        { label: "Start 10 minutes", to: homeRoutes.practiceTopic(top.subjectCode, top.topic) },
+      ),
+    )
+  }
+
+  out.push(
+    stage("scanNext", "scanNext", "open", "Scan your next paper", {
+      label: "Scan a paper",
+      to: homeRoutes.scan,
+    }, false),
+  )
+  return out
+}
+
+export function stageCandidates(home: StudentHome): StageVm[] {
+  const moments = [...home.moments].sort(
+    (a, b) => STAGE_PRIORITY.indexOf(a.kind) - STAGE_PRIORITY.indexOf(b.kind),
+  )
+  return [...moments.map((m) => momentStage(m, home)), ...fallbackStages(home)]
+}
+
+export function pickStage(home: StudentHome, dismissed: ReadonlySet<string>): StageVm {
+  const candidates = stageCandidates(home)
+  return candidates.find((s) => !s.dismissible || !dismissed.has(s.key)) ?? candidates[candidates.length - 1]!
+}
+
+/* ── rows ─────────────────────────────────────────────────────────────── */
+
+function teacherRow(home: StudentHome): RowVm | null {
+  const r = home.teacherReplies[0]
+  if (!r) return null
+  const added = r.marksAdded > 0 ? ` · +${plural(r.marksAdded, "mark")}` : ""
+  return {
+    key: `teacher:${r.reviewId}`,
+    kind: "teacher",
+    leading: { type: "initials", text: initials(r.teacherName) },
+    title: `${r.teacherName} checked your answer`,
+    sub: `${questionLabel(r.questionId)}${added}`,
+    to: r.paperId ? homeRoutes.result(r.paperId) : homeRoutes.notifications,
+  }
+}
+
+function homeworkRow(home: StudentHome): RowVm | null {
+  const h = home.homework[0]
+  if (!h) return null
+  return {
+    key: `homework:${h.assignmentId}`,
+    kind: "homework",
+    leading: { type: "icon", icon: "sheet" },
+    title: `${h.title} from ${h.teacherName}`,
+    sub: `${dueLabel(h.dueAt, home.localDate, h.isOverdue)} · ${plural(h.questionCount, "question")}`,
+    to: homeRoutes.practiceSet(h.assignmentId),
+  }
+}
+
+export function alsoRows(home: StudentHome, current: StageVm, layout: "phone" | "desktop"): RowVm[] {
+  const rows: (RowVm | null)[] = []
+  const paper = home.moments.find(
+    (m): m is PaperMoment => (m.kind === "result" || m.kind === "tough") && current.kind === m.kind,
+  )
+  if (paper) {
+    rows.push({
+      key: `result:${paper.paperId}`,
+      kind: "result",
+      leading: { type: "grade", grade: paper.grade },
+      title: "See your full result",
+      sub: `${paper.subjectName} · Paper ${paper.paperNumber}`,
+      to: homeRoutes.result(paper.paperId),
+    })
+  }
+  if (layout === "phone") {
+    rows.push(teacherRow(home))
+    rows.push(homeworkRow(home))
+  }
+  if (home.classCount === 0) {
+    rows.push({
+      key: "joinClass",
+      kind: "joinClass",
+      leading: { type: "icon", icon: "class" },
+      title: "Join your teacher's class",
+      sub: "Enter the code they gave you",
+      to: homeRoutes.classes,
+    })
+  }
+  if (home.stats.papersMarked === 1) {
+    rows.push({
+      key: "sparse",
+      kind: "sparse",
+      leading: { type: "icon", icon: "trend" },
+      title: "One more paper draws your trend",
+      sub: "Scan your next paper",
+      to: homeRoutes.scan,
+    })
+  }
+  if (home.lastPaperAt && current.kind !== "scanNext" && current.kind !== "firstRun") {
+    const days = daysBetween(isoDay(new Date(home.lastPaperAt)), home.localDate)
+    if (days > SCAN_NUDGE_DAYS) {
+      rows.push({
+        key: "scan",
+        kind: "scan",
+        leading: { type: "icon", icon: "camera" },
+        title: "Scan your next paper",
+        sub: `Your last one was ${plural(days, "day")} ago`,
+        to: homeRoutes.scan,
+      })
+    }
+  }
+  return rows.filter((r): r is RowVm => r !== null).slice(0, 2)
+}
+
+/* ── blocks ───────────────────────────────────────────────────────────── */
+
+export function todayVm(home: StudentHome) {
+  const g = home.goals
+  const parts: [number, number, number] = [g.practice ? 1 : 0, g.flashcards ? 1 : 0, g.paperThisWeek ? 1 : 0]
+  const doneCount = parts.reduce<number>((a, b) => a + b, 0)
+  return {
+    parts,
+    doneCount,
+    label: `${doneCount} of 3 today`,
+    planTo: planTarget(home),
+    chips: [
+      { label: "Practice", done: g.practice, to: practiceTarget(home) },
+      { label: "Flashcards", done: g.flashcards, to: flashcardsTarget(home) },
+      { label: "Paper this week", done: g.paperThisWeek, to: homeRoutes.scan },
+    ],
+  }
+}
+
+export function weekVm(home: StudentHome) {
+  const to = planTarget(home)
+  return home.week.map((d) => {
+    const name = WEEKDAYS[parseDay(d.day).getDay()]!
+    const label = d.label ? `: ${d.label}` : ""
+    return {
+      day: d.day,
+      letter: name[0]!,
+      done: d.done,
+      isToday: d.isToday,
+      ariaLabel: `${name}${label}${d.done ? ", done" : ""}`,
+      to,
+    }
+  })
+}
+
+/** The line under a subject grade: marks to the next grade, never "Top grade" while one exists. */
+export function gradeGapLabel(f: { nextGrade: string | null; pointsToNext: number | null }): string {
+  if (!f.nextGrade) return "Top grade"
+  return f.pointsToNext != null ? `${plural(f.pointsToNext, "mark")} to ${f.nextGrade}` : `On the way to ${f.nextGrade}`
+}
+
+export function floorVm(home: StudentHome) {
+  return home.floor.map((f) => ({
+    code: f.code,
+    name: shortSubject(f.name),
+    grade: f.grade,
+    sub: gradeGapLabel(f),
+    to: homeRoutes.subject(f.code),
+  }))
+}
+
+export function lastPaperVm(home: StudentHome) {
+  const p = home.recentPapers[0]
+  if (!p) return null
+  return {
+    grade: p.grade,
+    title: `Last paper · ${shortSubject(p.subjectName)} P${p.paperNumber}`,
+    sub: `${p.awarded}/${p.maximum} · ${relativeDay(p.recordedAt, home.localDate)}`,
+    to: homeRoutes.result(p.paperId),
+  }
+}
+
+export function winVm(home: StudentHome, kind: StageKind) {
+  const limit = kind === "backAfterBreak" ? 1 : 3
+  return home.winBack.slice(0, limit).map((t) => ({
+    topic: t.topic,
+    sub: shortSubject(t.subjectName),
+    marks: t.marks,
+    to: homeRoutes.practiceTopic(t.subjectCode, t.topic),
+  }))
+}
+
+export function streakPillVm(home: StudentHome) {
+  const s = home.streak
+  const g = home.goals
+  const label = s.current > 0 ? plural(s.current, "day") : s.longest > 0 ? "New streak" : "Start a streak"
+  return { label, lit: g.practice && g.flashcards && g.paperThisWeek, to: homeRoutes.me }
+}
+
+export function bandVm(home: StudentHome) {
+  const todayIdx = home.week.findIndex((d) => d.isToday)
+  const weekNext: { when: string; what: string }[] = []
+  const today = home.week[todayIdx]
+  if (today?.label) weekNext.push({ when: "Today", what: today.label })
+  const next = home.week.slice(todayIdx + 1).find((d) => d.label)
+  if (next?.label) weekNext.push({ when: WEEKDAYS[parseDay(next.day).getDay()]!, what: next.label })
+  return {
+    weekNext,
+    recent: home.recentPapers.map((p) => ({
+      grade: p.grade,
+      title: `${shortSubject(p.subjectName)} · Paper ${p.paperNumber}`,
+      sub: `${p.awarded}/${p.maximum} · ${relativeDay(p.recordedAt, home.localDate)}`,
+      to: homeRoutes.result(p.paperId),
+    })),
+    classRows: [teacherRow(home), homeworkRow(home)].filter((r): r is RowVm => r !== null),
+  }
+}
+
+export interface HomeVm {
+  firstRun: boolean
+  heading: string
+  stage: StageVm
+  also: { phone: RowVm[]; desktop: RowVm[] }
+  today: ReturnType<typeof todayVm>
+  week: ReturnType<typeof weekVm>
+  floor: ReturnType<typeof floorVm>
+  last: ReturnType<typeof lastPaperVm>
+  win: ReturnType<typeof winVm>
+  streakPill: ReturnType<typeof streakPillVm>
+  exam: ReturnType<typeof examInfo>
+  band: ReturnType<typeof bandVm>
+  allPapersTo: string | null
+}
+
+export function homeView(home: StudentHome, dismissed: ReadonlySet<string>): HomeVm {
+  const current = pickStage(home, dismissed)
+  const last = home.recentPapers[0]
+  return {
+    firstRun: isFirstRun(home),
+    heading: `${shortGreeting(home.localHour)}, ${firstName(home.studentName)}`,
+    stage: current,
+    also: { phone: alsoRows(home, current, "phone"), desktop: alsoRows(home, current, "desktop") },
+    today: todayVm(home),
+    week: weekVm(home),
+    floor: floorVm(home),
+    last: lastPaperVm(home),
+    win: winVm(home, current.kind),
+    streakPill: streakPillVm(home),
+    exam: examInfo(home),
+    band: bandVm(home),
+    // "All papers" has no screen yet; it opens the last paper's subject (item 6).
+    allPapersTo: last ? homeRoutes.subject(last.subjectCode) : null,
+  }
 }

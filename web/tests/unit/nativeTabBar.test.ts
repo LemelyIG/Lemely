@@ -47,7 +47,7 @@ describe("immersive routes (user decision 2026-11-09)", () => {
     expect(studentRoutes.match(/immersive: true/g)).toHaveLength(1)
     expect(studentRoutes).toMatch(/title: "Mark a paper", skeleton: "page-header", immersive: true/)
     expect(teacherRoutes.match(/immersive: true/g)).toHaveLength(1)
-    expect(teacherRoutes).toMatch(/title: "Review a mark", skeleton: "page-header", immersive: true/)
+    expect(teacherRoutes).toMatch(/title: "Review a mark", skeleton: "list", immersive: true/)
   })
 })
 

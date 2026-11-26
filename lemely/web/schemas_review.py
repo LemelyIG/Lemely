@@ -7,6 +7,8 @@ Converters live in :mod:`lemely.web.routers.review`.
 
 from __future__ import annotations
 
+from pydantic import Field
+
 #: Re-exported from :data:`lemely.core.schemas.PointVerdictWire`, the same
 #: ``Literal`` :attr:`~lemely.core.schemas.PointVerdict.verdict` is annotated
 #: with; mirrors ``lemely.db.review_repo.PointVerdictWire``, the other
@@ -70,6 +72,9 @@ class ReviewQueueItemDTO(ApiModel):
     aiAwardedMarks: int | None
     maximumMarks: int | None
     confidenceScore: float | None
+    reviewReason: str | None = None
+    """The marker's own reason text (``QuestionResult.review_reason``). Technical;
+    the client maps it to a short plain line and never shows it raw in a row."""
 
 
 class ReviewQueueListDTO(ApiModel):
@@ -80,14 +85,18 @@ class ReviewQueueListDTO(ApiModel):
     fetch the next page; ``null`` once the caller's whole queue fits on this
     page.
 
-    ``total`` is the count of items matching the request's filters
-    (``class_id``/``reason``/``min_age_hours``), ignoring ``limit``/``cursor``
+    ``total`` is the count of items matching every request filter
+    (``class_id``/``reason``/``subject``/``q``/``min_age_hours``), ignoring ``limit``/``cursor``
     — the same tenant scope as ``items`` (C3d).
     """
 
     items: list[ReviewQueueItemDTO]
     nextCursor: str | None = None
     total: int
+    subjectCodes: list[str] = Field(default_factory=list)
+    """Subject codes the "Paper" filter can offer (see ``ReviewQueuePage.subject_codes``)."""
+    hasHistory: bool = True
+    """False only for a caller who has never had a review item: first run."""
 
 
 class ReviewItemPointDTO(ApiModel):
@@ -124,6 +133,11 @@ class ReviewItemPointDTO(ApiModel):
     evidenceSpan: str
     ecfApplied: bool
     rationale: str | None
+    ordinal: int = 0
+    markType: str | None = None
+    tariff: int = 1
+    groupKey: str | None = None
+    groupMaxMarks: int | None = None
 
 
 class ReviewItemDetailDTO(ApiModel):
@@ -211,6 +225,8 @@ class ReviewItemDetailDTO(ApiModel):
     question has a box: the crop route serves only attempt-backed items. See
     ``ReviewItemDetail.has_source_box``.
     The client never receives the coordinates themselves."""
+    sourcePage: int | None = None
+    """1-based page the answer is on, when ``hasSourceBox``. Labels the whole-page view."""
 
 
 class ResolveReviewRequestDTO(ApiModel):

@@ -46,7 +46,7 @@ test.describe("student sign-up: landing to dashboard", () => {
   }) => {
     const errors = watchConsole(page)
     const runTag = `e2e${Date.now().toString(36)}`
-    const email = `student-${runTag}@example.com`
+    const email = `student-${runTag}@e2e.lemely.local`
 
     // /landing -> /signup (the hero CTA, Landing.tsx's own `landingHero.primaryCta`).
     await page.goto("/landing")
@@ -133,7 +133,7 @@ test.describe("student sign-up: landing to dashboard", () => {
   }) => {
     const errors = watchConsole(page)
     const runTag = `e2e${Date.now().toString(36)}`
-    const email = `student-code-${runTag}@example.com`
+    const email = `student-code-${runTag}@e2e.lemely.local`
 
     // Straight to the details form: the landing-to-/signup hop and the role
     // card are already exercised by the journey above, and this test's own
@@ -186,7 +186,7 @@ test.describe("teacher sign-up: role select to a class join code", () => {
   }) => {
     const errors = watchConsole(page)
     const runTag = `e2e${Date.now().toString(36)}`
-    const email = `teacher-${runTag}@example.com`
+    const email = `teacher-${runTag}@e2e.lemely.local`
 
     await page.goto("/signup")
     await page.getByRole("link", { name: /I'm a teacher or tutor/ }).click()
@@ -302,7 +302,7 @@ test.describe("invite redemption: a minted seat code, redeemed signed out", () =
     await expect(page).toHaveURL(/\/signup\/student\?code=/, { timeout: 15_000 })
 
     const runTag = `e2e${Date.now().toString(36)}`
-    const studentEmail = `invited-student-${runTag}@example.com`
+    const studentEmail = `invited-student-${runTag}@e2e.lemely.local`
     await page.getByLabel("Name").fill("E2E Invited Student")
     await page.getByLabel("Email").fill(studentEmail)
     await page.getByLabel("Password").fill("a-genuinely-strong-passphrase-3")

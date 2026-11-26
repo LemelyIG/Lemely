@@ -1,0 +1,69 @@
+/* L5 review queue: motion and the ruled answer card, from review-r1/final2.css.
+   No colours are defined here; every colour is a design token. */
+:root {
+  --rq-menu-shadow: 0 12px 32px -8px oklch(0.3 0.06 242 / 0.45), inset 0 0 0 1px var(--color-outline-variant);
+}
+@keyframes rq-bump {
+  0% { transform: translateY(8px) scale(0.9); opacity: 0.4; }
+  60% { transform: scale(1.08); }
+  100% { transform: none; opacity: 1; }
+}
+@keyframes rq-skel {
+  50% { opacity: 0.55; }
+}
+.rq-bump { animation: rq-bump 0.35s var(--ease-expo); }
+.rq-bump-lg { animation: rq-bump 0.6s var(--ease-expo); }
+.rq-skel { animation: rq-skel 1.6s ease-in-out infinite; }
+.rq-li {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.35s var(--ease-out);
+}
+.rq-li:has(> [data-gone]) { grid-template-rows: 0fr; }
+.rq-row {
+  transition: opacity 0.3s var(--ease-out), transform 0.3s var(--ease-out),
+    background-color 0.15s;
+}
+/* The gold arc needs contrast against both the row and its track. */
+.rq-row .rd-ring-tone-gold { stroke: var(--color-on-tertiary-container); }
+.rq-row[data-gone] {
+  opacity: 0;
+  transform: translateX(24px);
+  overflow: hidden;
+  min-block-size: 0;
+  padding-block: 0 !important;
+  border: 0 !important;
+  pointer-events: none;
+}
+/* The global coarse-pointer floor (index.css) would stretch every chip to 44px and stack them
+   one per row. Chips keep their visual height; the 44px hit area is the ::after on each button. */
+@media (pointer: coarse) {
+  .rq-chips button { min-block-size: 0; min-inline-size: 0; }
+}
+/* The rule sits on the last pixel of each line box (1lh tracks the figure's own line-height), so it
+   runs under the text and never through it. Padding-top is the same as the text's first line box. */
+.rq-ruled {
+  background-image: repeating-linear-gradient(
+    transparent 0 calc(1lh - 1px),
+    var(--color-primary-container) calc(1lh - 1px) 1lh
+  );
+  background-origin: content-box;
+  background-clip: content-box;
+}
+.rq-toast {
+  transition: opacity 0.25s var(--ease-out), transform 0.25s var(--ease-out);
+}
+/* The answer note box keeps the approved mock's `400 / 1.45` (final2.css .note) on the kit Textarea,
+   at the kit's 16px no-zoom size. The kit's `.text-field` is unlayered (weight 600, line-height 1.3),
+   so no layered utility can beat it. A plain rule, not a `!` utility: the copy gate reads a `!` in the
+   rendered class list as an exclamation mark (reviewQueueSample). `textarea.rq-note` outranks the
+   single-class `.text-field` by specificity, whatever the import order. */
+textarea.rq-note {
+  font-weight: 400;
+  line-height: 1.45;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rq-bump, .rq-bump-lg, .rq-skel { animation: none; }
+  .rq-li, .rq-row, .rq-toast { transition: none; }
+  .rq-toast { transform: none !important; }
+}

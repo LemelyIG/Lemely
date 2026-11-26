@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { mergeReviewPages } from "@/portals/teacher/screens/Review"
+import { mergeReviewPages } from "@/portals/teacher/screens/review/reviewLabels"
 import type { ReviewQueueItem } from "@/lib/teacherTypes"
 
 /*
@@ -35,6 +35,7 @@ function item(itemId: string): ReviewQueueItem {
     aiAwardedMarks: 2,
     maximumMarks: 4,
     confidenceScore: 0.5,
+    reviewReason: null,
   }
 }
 

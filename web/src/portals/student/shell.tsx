@@ -11,7 +11,7 @@ import { ShellUserBlock } from "@/components/shell/ShellSidebar"
 import { ShellNavList } from "@/components/shell/ShellNavList"
 import { ShellTree, type ShellTreeRow } from "@/components/shell/ShellTree"
 import { SHELL_BUTTON_OUTLINE } from "@/components/shell/shellStyles"
-import { BackControl } from "@/components/ui/back-control"
+import { BackControl, useBackAction } from "@/components/ui/back-control"
 import type { NavShellItem } from "@/components/ui/nav-shells"
 import type { ScreenOverlay } from "@/components/ui/screen-outlet"
 import { useProfile, useStudentProfile } from "@/lib/hooks/useMeApi"
@@ -36,6 +36,7 @@ import {
   studentShellTrail,
   type NavItem,
 } from "./data"
+import { useStudentBackPlan } from "./backControl"
 import { STUDENT_PLAN_TO, STUDENT_PRACTICE_TO, isPlanSection, isPracticeSection, isStudentSubjectRoot, studentOverflowItems, underDialogActive } from "./shellNav"
 
 export const STUDENT_SETTINGS_BASE = "/student/settings"
@@ -136,8 +137,9 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
       : shellItem
   })
   const trail = studentShellTrail(pagePath)
-  // The phone breadcrumb already links back to Practice on this page.
-  const isPastPapers = pagePath.replace(/\/+$/, "") === "/student/practice/papers"
+  // One back control on a phone: a trail with a linked parent keeps it under the bar (going back, labelled by where it leads).
+  const backPlan = useStudentBackPlan(location.pathname, trail)
+  const goBack = useBackAction(backPlan.control === "trail" ? backPlan.parentTo : "/student")
   const titleLevel = titleLevelFor(trail, isTabRoot(pagePath, STUDENT_BOTTOM_TABS.map((tab) => tab.to), isStudentSubjectRoot))
   // Practice also owns flashcards, and Plan its subject weeks: sections the tab's own URL match would miss.
   const practiceActive = isPracticeSection(pagePath)
@@ -200,13 +202,26 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
       topBar={{
         title: studentPageTitle(pagePath, subjects),
         trail,
+        trailBack:
+          titleLevel === "detail" && backPlan.control === "trail"
+            ? { label: backPlan.label, ariaLabel: backPlan.ariaLabel, onActivate: goBack }
+            : undefined,
         titleLevel,
-        backFallback: isPastPapers ? "/student/practice" : "/student",
+        backFallback: "/student",
         navLabel: "Open student navigation",
         actions: (
           <>
-            {/* Past papers already has a linked Practice breadcrumb on phones. */}
-            {titleLevel === "detail" && !isPastPapers ? <BackControl fallback="/student" className="shell-lg:hidden native:hidden" /> : null}
+            {/* Packet B2a: a drilled-in page's trail has no linked crumb
+                ("Practice / 0580"), so below the sidebar column this is the
+                way back. Never on a section page, which design A shows bare. A trail with a linked
+                ancestor draws its own back control under the bar below `sm`, so the bar's steps aside
+                there (max-sm) and the title keeps the room; from `sm` the full trail has no back button. */}
+            {titleLevel === "detail" ? (
+              <BackControl
+                fallback="/student"
+                className={cn("shell-lg:hidden native:hidden", backPlan.control === "trail" && "max-sm:hidden")}
+              />
+            ) : null}
             {/* Not on the scan screen itself, where it would do nothing; the rail (from shell-lg) carries it there. */}
             {location.pathname === "/student/correct" ? null : scan("me-2.5 max-shell-sm:hidden shell-lg:hidden")}
           </>
