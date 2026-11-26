@@ -18,6 +18,7 @@ import {
   rowViews,
   sortSessions,
   toggleSelected,
+  trayHasMore,
 } from "@/portals/student/screens/papers/papersModel"
 
 const NOW = new Date(2024, 10, 20, 10, 0)
@@ -259,5 +260,29 @@ describe("copy and links", () => {
     expect(t.line).not.toContain("!")
     expect(t.action.to).toContain("/student/correct?subject=0580")
     expect(t.action.label).toBe("Scan a Mathematics paper")
+  })
+})
+
+describe("a filter tray fades its edge only when more runs past it", () => {
+  it("a tray in a hidden panel has no box, so it has nothing past its end", () => {
+    expect(trayHasMore({ scrollWidth: 0, clientWidth: 0, scrollLeft: 0 })).toBe(false)
+  })
+  it("a tray that fits does not fade", () => {
+    expect(trayHasMore({ scrollWidth: 300, clientWidth: 300, scrollLeft: 0 })).toBe(false)
+  })
+  it("a tray with choices past its end fades, and the same tray measured before it had a box did not", () => {
+    expect(trayHasMore({ scrollWidth: 0, clientWidth: 0, scrollLeft: 0 })).toBe(false)
+    expect(trayHasMore({ scrollWidth: 1182, clientWidth: 347, scrollLeft: 0 })).toBe(true)
+  })
+  it("reaching the end drops the fade", () => {
+    expect(trayHasMore({ scrollWidth: 1182, clientWidth: 347, scrollLeft: 835 })).toBe(false)
+    expect(trayHasMore({ scrollWidth: 1182, clientWidth: 347, scrollLeft: 400 })).toBe(true)
+  })
+  it("a sub-pixel overhang is not more", () => {
+    expect(trayHasMore({ scrollWidth: 301, clientWidth: 300, scrollLeft: 0 })).toBe(false)
+  })
+  it("reads right-to-left scrolling, which counts negative", () => {
+    expect(trayHasMore({ scrollWidth: 1182, clientWidth: 347, scrollLeft: -835 })).toBe(false)
+    expect(trayHasMore({ scrollWidth: 1182, clientWidth: 347, scrollLeft: -400 })).toBe(true)
   })
 })

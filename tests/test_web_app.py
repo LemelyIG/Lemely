@@ -25,15 +25,13 @@ from lemely.core.schemas import (
     CorrectedQuestion,
     CorrectionResult,
     ExamMetadata,
+    student_safe_review_reason,
 )
 from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 from lemely.runtime.events import EventType, bus
 from lemely.web import create_app
 from lemely.web.routers import meta
-from lemely.web.schemas import (
-    question_to_dto,
-    student_safe_review_reason,
-)
+from lemely.web.schemas import question_to_dto
 from lemely.web.sse import bus_event_stream
 
 

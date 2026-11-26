@@ -26,7 +26,12 @@ import structlog
 from sqlalchemy import select
 
 from lemely.core.history import PaperRecord, StudentHistory
-from lemely.core.schemas import ExamMetadata, WeakArea, confidence_tier_for
+from lemely.core.schemas import (
+    ExamMetadata,
+    WeakArea,
+    confidence_tier_for,
+    student_safe_review_reason,
+)
 from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
 from lemely.db.models.enums import (
     SESSION_MONTH_LABELS,
@@ -123,8 +128,12 @@ class DbHistoryStore:
 
         Each question gets the tier the result screen would give it
         (:func:`lemely.core.schemas.confidence_tier_for`), so this list never
-        disagrees with the page a row opens. A question is *pending a teacher*
-        when it has an open review-queue row, read the way
+        disagrees with the page a row opens. That screen is sent the
+        student-safe reason, so the tier is classified on
+        :func:`lemely.core.schemas.student_safe_review_reason` too: a reason
+        made only of integrity findings is no reason, and the score decides.
+
+        A question is *pending a teacher* when it has an open review-queue row, read the way
         ``SelfReviewRepository.list_attempt_questions`` reads it: a self-mark, a
         teacher's accept or a dismissal closes the row and so settles the
         question without writing a mark. ``scored`` counts every question that
@@ -171,7 +180,7 @@ class DbHistoryStore:
                 tier = confidence_tier_for(
                     marker_source=source.value,
                     confidence_score=score,
-                    review_reason=reason,
+                    review_reason=student_safe_review_reason(reason),
                     needs_teacher_review=needs_review,
                     pending_teacher=qr_id in open_review_ids,
                 )

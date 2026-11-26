@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict
 
 from lemely.core.schemas import (
     CorrectedQuestion,
+    student_safe_review_reason,
 )
 from lemely.core.schemas import (
     WeakArea as CoreWeakArea,
@@ -137,47 +138,6 @@ class HealthDTO(ApiModel):
     #: frontend proxying to the wrong backend (incident 2026-10-06: a stale tag
     #: URL) fails the smoke test instead of serving old code.
     revision: str | None = None
-
-
-#: Prefixes of the ``review_reason`` segments ``lemely/io/integrity.py`` writes
-#: for a plagiarism or AI-content finding, e.g. ``"plagiarism (score 0.94)"``.
-#: The reason is a ``" | "``-joined list, so an integrity finding travels in the
-#: same free-text field as ordinary marking reasons.
-#:
-#: ``"ai_detection"`` STAYS even though F4 deleted the detector that wrote it
-#: and ``0037_remove_ai_detection`` strips the segment from
-#: ``question_results.review_reason``. This is a reader, not a writer, and it
-#: still has rows to read: that migration deliberately does NOT rewrite
-#: ``teacher_papers.report_json`` (its docstring, point 5), which snapshots each
-#: question's ``review_reason`` for console-graded papers. Dropping the prefix
-#: here would un-sanitise exactly those, so do not "tidy" this tuple down to one
-#: entry on the grounds that the detector is gone.
-_INTEGRITY_REASON_PREFIXES = ("plagiarism", "ai_detection")
-
-
-def student_safe_review_reason(reason: str | None) -> str | None:
-    """Drop integrity findings from a ``review_reason`` bound for a student.
-
-    QUALITY-BAR.md: "No screen accuses a student of cheating; integrity flags
-    are teacher-only." The two booleans are easy to remember and were already
-    forced off on student surfaces — but ``review_reason`` is free text that
-    ``lemely/io/integrity.py`` appends ``"plagiarism (score 0.94)"`` to, and
-    ``PaperResult`` renders it verbatim as "Needs review: ...". Suppressing the
-    flags while forwarding the sentence tells the student anyway, with a score
-    attached.
-
-    Other marking reasons survive: a student is told *that* a question needs a
-    look, just never that the reason was an integrity finding. A reason made up
-    only of integrity segments becomes ``None``, not an empty string.
-    """
-    if not reason:
-        return None
-    kept = [
-        segment
-        for segment in (part.strip() for part in reason.split(" | "))
-        if segment and not segment.startswith(_INTEGRITY_REASON_PREFIXES)
-    ]
-    return " | ".join(kept) or None
 
 
 def question_to_dto(

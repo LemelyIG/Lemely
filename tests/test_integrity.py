@@ -328,7 +328,7 @@ class TestTheSanitiserStripsWhatTheseChecksProduce:
     """
 
     def test_a_reason_this_pipeline_writes_is_stripped_for_a_student(self) -> None:
-        from lemely.web.schemas import student_safe_review_reason
+        from lemely.core.schemas import student_safe_review_reason
 
         correction = CorrectionResult(metadata=_metadata(), questions=[_question()])
         marked = apply_integrity_checks(
@@ -343,7 +343,7 @@ class TestTheSanitiserStripsWhatTheseChecksProduce:
         assert student_safe_review_reason(reason) is None
 
     def test_an_integrity_segment_beside_a_marking_reason_loses_only_itself(self) -> None:
-        from lemely.web.schemas import student_safe_review_reason
+        from lemely.core.schemas import student_safe_review_reason
 
         correction = CorrectionResult(
             metadata=_metadata(),

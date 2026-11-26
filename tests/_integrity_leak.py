@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 
-from lemely.web.schemas import _INTEGRITY_REASON_PREFIXES
+from lemely.core.schemas import _INTEGRITY_REASON_PREFIXES
 
 _INTEGRITY_WORDS = (
     *_INTEGRITY_REASON_PREFIXES,

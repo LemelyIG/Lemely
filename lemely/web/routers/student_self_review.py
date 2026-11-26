@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Annotated, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from lemely.core.schemas import student_safe_review_reason
 from lemely.db.models.enums import Role
 from lemely.db.self_review_repo import (
     AttemptQuestion,
@@ -29,7 +30,7 @@ from lemely.db.self_review_repo import (
     SelfReviewValidationError,
 )
 from lemely.web.deps import AuthContext, get_self_review_service, require_role
-from lemely.web.schemas import QuestionResultDTO, student_safe_review_reason
+from lemely.web.schemas import QuestionResultDTO
 from lemely.web.schemas_student_self_review import (
     SelfReviewPendingDTO,
     SelfReviewPendingPointDTO,

@@ -542,7 +542,7 @@ def _integrity_flagged(qr: QuestionResult) -> bool:
       and should replace the prefix then. The plagiarism signal stays on queue
       rows for the reasons below.) It would delete one instance
       and add another, on a field ``correct_paper``'s AI-failure branch rewrites
-      outright and ``web.schemas.student_safe_review_reason`` strips per
+      outright and ``core.schemas.student_safe_review_reason`` strips per
       audience.
     * **Drop the term.** It needs ``plagiarism_flagged=True`` to be
       unreachable, and it is not: measured through real ``correct_paper`` ->

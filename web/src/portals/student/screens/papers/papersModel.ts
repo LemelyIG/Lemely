@@ -138,6 +138,17 @@ export function filtersToParams(f: PapersFilters): URLSearchParams {
   return p
 }
 
+/* ---- Filter trays ------------------------------------------------------- */
+
+/**
+ * Whether a choice tray has more past its end: the cue to fade that edge. Reads `Math.abs(scrollLeft)` because the tray
+ * scrolls negatively in right-to-left. A tray in a `display: none` panel has no box (both widths 0), so it reports false
+ * until the panel shows; whoever measures must measure again then.
+ */
+export function trayHasMore(tray: { scrollWidth: number; clientWidth: number; scrollLeft: number }): boolean {
+  return tray.scrollWidth - tray.clientWidth - Math.abs(tray.scrollLeft) > 1
+}
+
 /* ---- Rows --------------------------------------------------------------- */
 
 const DAY = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" })

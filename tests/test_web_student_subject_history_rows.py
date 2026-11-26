@@ -12,9 +12,10 @@ local server answers, like ``tests/test_history_repo_parity.py``.
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -39,6 +40,7 @@ from lemely.db.models.enums import (
     Role,
 )
 from lemely.db.models.ops import ReviewQueueItem
+from lemely.db.self_review_repo import SelfReviewService
 from lemely.io.history_store import HistoryStore
 from lemely.runtime.config import DatabaseSettings
 from lemely.web import create_app
@@ -46,12 +48,15 @@ from lemely.web.deps import (
     AuthContext,
     get_auth_context,
     get_history_store,
+    get_self_review_service,
     get_student_profile_service,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+
+    from fastapi import FastAPI
 
     from lemely.io.grade_boundaries import BoundarySource
 
@@ -184,11 +189,17 @@ def _question(
 
 
 def _add_queued(
-    sm: sessionmaker[Session], attempt_id: str, question: QuestionResult, queue: ReviewStatus
+    sm: sessionmaker[Session],
+    attempt_id: str,
+    question: QuestionResult,
+    queue: ReviewStatus,
+    *,
+    reason: ReviewReason = ReviewReason.low_confidence,
 ) -> None:
     """Add a question and the review-queue row the marker opened for it, in ``queue``'s state.
 
-    Marking opens a ``low_confidence`` row for every question it doubts; a self-mark, a
+    Marking opens a ``low_confidence`` row for every question it doubts (``reason`` names
+    another, e.g. the ``plagiarism_flag`` row an integrity finding opens); a self-mark, a
     teacher's accept or a dismissal later closes that row. Those close it without writing
     ``teacher_awarded_marks``.
     """
@@ -199,7 +210,7 @@ def _add_queued(
             ReviewQueueItem(
                 attempt_id=uuid.UUID(attempt_id),
                 question_result_id=question.id,
-                reason=ReviewReason.low_confidence,
+                reason=reason,
                 status=queue,
             )
         )
@@ -345,6 +356,150 @@ def test_confidence_tier_for_matches_the_result_screens_cases(
         "pending_teacher": None,
     }
     assert confidence_tier_for(**{**base, **kwargs}) == tier  # type: ignore[arg-type]
+
+
+# ── Integrity-only reasons: the student-safe reason decides the tier ──────────
+#
+# `review_reason` is free text that also carries the plagiarism finding
+# ("plagiarism (score 0.94)"). The result screen (S-15) is sent the student-safe
+# reason, so an integrity-only reason is *no reason* there and the score decides.
+# The All papers summary (S-09) must classify the same reason, or it tells a
+# student a question needs review that the page it opens calls confident.
+
+
+def _seed_single(
+    sm: sessionmaker[Session],
+    question: QuestionResult,
+    *,
+    queue_reason: ReviewReason,
+) -> tuple[DbHistoryStore, str, str]:
+    """One attempt holding ``question`` with an open review-queue row of ``queue_reason``."""
+    uid = _seed_user(sm)
+    store = DbHistoryStore(sm)
+    attempt = _append(sm, store, uid, 1)
+    question.attempt_id = uuid.UUID(attempt)
+    _add_queued(sm, attempt, question, ReviewStatus.open, reason=queue_reason)
+    return store, uid, attempt
+
+
+def test_an_integrity_only_reason_leaves_a_high_score_question_confident(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    store, uid, attempt = _seed_single(
+        pg_sessionmaker,
+        _q("1a", score=0.97, reason="plagiarism (score 0.94)", needs_review=True),
+        queue_reason=ReviewReason.plagiarism_flag,
+    )
+
+    summary = store.review_summaries(uid, [attempt])[attempt]
+
+    assert summary == AttemptReviewSummary(scored=1, uncertain=0, needs_review=0, corrected=0)
+
+
+def test_an_integrity_only_reason_leaves_the_score_to_decide(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    store, uid, attempt = _seed_single(
+        pg_sessionmaker,
+        _q("1a", score=0.55, reason="plagiarism (score 0.94)", needs_review=True),
+        queue_reason=ReviewReason.plagiarism_flag,
+    )
+
+    summary = store.review_summaries(uid, [attempt])[attempt]
+
+    assert summary == AttemptReviewSummary(scored=1, uncertain=1, needs_review=0, corrected=0)
+
+
+def test_an_ordinary_reason_beside_an_integrity_one_still_needs_review(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    store, uid, attempt = _seed_single(
+        pg_sessionmaker,
+        _q(
+            "1a",
+            score=0.97,
+            reason="plagiarism (score 0.94) | Handwriting unclear",
+            needs_review=True,
+        ),
+        queue_reason=ReviewReason.plagiarism_flag,
+    )
+
+    summary = store.review_summaries(uid, [attempt])[attempt]
+
+    assert summary == AttemptReviewSummary(scored=1, uncertain=0, needs_review=1, corrected=0)
+
+
+@pytest.mark.parametrize(
+    ("score", "reason", "queue_reason", "tier"),
+    [
+        (0.97, "plagiarism (score 0.94)", ReviewReason.plagiarism_flag, "confident"),
+        (
+            0.97,
+            "plagiarism (score 0.94) | ai_detection (score 0.88)",
+            ReviewReason.plagiarism_flag,
+            "confident",
+        ),
+        (0.55, "plagiarism (score 0.94)", ReviewReason.plagiarism_flag, "uncertain"),
+        (
+            0.97,
+            "plagiarism (score 0.94) | Handwriting unclear",
+            ReviewReason.plagiarism_flag,
+            "needs-review",
+        ),
+        (0.97, "Handwriting unclear", ReviewReason.low_confidence, "needs-review"),
+        (0.97, None, ReviewReason.low_confidence, "confident"),
+    ],
+)
+def test_all_papers_and_the_result_screen_give_one_question_the_same_tier(
+    pg_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+    score: float,
+    reason: str | None,
+    queue_reason: ReviewReason,
+    tier: str,
+) -> None:
+    """The same stored question through both endpoints, one tier.
+
+    S-15's tier is `confidenceTierFor` over the row ``/attempts/{id}/questions``
+    sends; ``confidence_tier_for`` is its pinned backend mirror
+    (``test_confidence_tier_for_matches_the_result_screens_cases``). S-09's is
+    the summary ``/subject/{code}`` sends. They must agree, and neither may carry
+    the integrity wording.
+    """
+    store, uid, attempt = _seed_single(
+        pg_sessionmaker,
+        _q("1a", score=score, reason=reason, needs_review=True),
+        queue_reason=queue_reason,
+    )
+    client = _client(store, uid, monkeypatch)
+    app = cast("FastAPI", client.app)
+    app.dependency_overrides[get_self_review_service] = lambda: SelfReviewService(
+        pg_sessionmaker, judge=None
+    )
+
+    result_page = client.get(f"/api/student/attempts/{attempt}/questions")
+    all_papers = client.get("/api/student/subject/0580")
+
+    assert result_page.status_code == 200, result_page.text
+    assert all_papers.status_code == 200, all_papers.text
+    [question] = result_page.json()
+    result_tier = confidence_tier_for(
+        marker_source=question["markerSource"],
+        confidence_score=question["confidence"],
+        review_reason=question["reviewReason"],
+        needs_teacher_review=question["needsTeacherReview"],
+        pending_teacher=question["pendingTeacher"],
+    )
+    summary = all_papers.json()["paperHistory"][0]["confidence"]
+
+    assert result_tier == tier
+    assert summary == {
+        "scored": 1,
+        "uncertain": int(tier == "uncertain"),
+        "needsReview": int(tier == "needs-review"),
+    }
+    assert "plagiarism" not in json.dumps(all_papers.json())
+    assert "ai_detection" not in json.dumps(all_papers.json())
 
 
 def test_review_summaries_omit_an_attempt_with_no_question_rows(

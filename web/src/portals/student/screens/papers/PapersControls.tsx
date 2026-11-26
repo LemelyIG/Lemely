@@ -5,6 +5,7 @@ import {
   PERIODS,
   SORTS,
   activeFilterCount,
+  trayHasMore,
   type FilterOptions,
   type PapersFilters,
 } from "./papersModel"
@@ -29,7 +30,7 @@ function Choice<T extends string | number | null>({
   const [more, setMore] = useState(false)
   const measure = () => {
     const el = tray.current
-    if (el) setMore(el.scrollWidth - el.clientWidth - Math.abs(el.scrollLeft) > 1)
+    if (el) setMore(trayHasMore(el))
   }
   // A picked choice (from the address, or after a tap) must not sit past the tray's edge.
   useEffect(() => {
@@ -41,6 +42,15 @@ function Choice<T extends string | number | null>({
     }
     measure()
   }, [value, options.length])
+  // On phone the panel is `display: none` until opened, so the effect above measured a tray with no box. The tray's box
+  // appears (and later changes, on rotate or a resize) when the panel shows: measure again then.
+  useEffect(() => {
+    const el = tray.current
+    if (!el || typeof ResizeObserver === "undefined") return
+    const watch = new ResizeObserver(() => setMore(trayHasMore(el)))
+    watch.observe(el)
+    return () => watch.disconnect()
+  }, [])
   return (
     <div className="ap-group" role="group" aria-labelledby={id}>
       <span id={id} className="ap-label">
