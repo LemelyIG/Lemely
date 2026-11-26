@@ -199,8 +199,23 @@ def column_names(conn: sa.Connection | Session, table: str) -> set[str]:
     )
 
 
-def current_revision(conn: sa.Connection | Session) -> str:
-    return str(conn.execute(sa.text("SELECT version_num FROM alembic_version")).scalar_one())
+def current_revision(conn: sa.Connection | Session, within: str | None = None) -> str:
+    """The database's revision on the branch that holds ``within``.
+
+    Below ``0060_merge_heads`` the history has two branches (billing and waitlist, both from
+    ``0051_tutor_evidence_uploads``), and a database downgraded into one of them holds one
+    ``alembic_version`` row per branch. ``within`` names a revision on the branch under test;
+    the row on that branch is the one in its ancestry or descendancy. Reading a two-row
+    database without ``within`` still fails, so no test silently picks a branch.
+    """
+    rows = list(conn.execute(sa.text("SELECT version_num FROM alembic_version")).scalars())
+    if within is not None and len(rows) > 1:
+        script = ScriptDirectory.from_config(Config("alembic.ini"))
+        line = {r.revision for r in script.iterate_revisions(within, "base")}
+        line |= {r.revision for r in script.iterate_revisions("heads", within)}
+        rows = [row for row in rows if row in line]
+    (row,) = rows
+    return str(row)
 
 
 def upgrade_head() -> None:

@@ -11,10 +11,14 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from lemely.db.base import Base
 from lemely.db.models.enums import InviteRole, TimestampMixin
+from lemely.db.models.team import AssistantRole
 
 
 class Invite(TimestampMixin, Base):
     """A redeemable code that provisions a school seat, a class enrolment, or parent access (D7.3).
+
+    A fourth target, ``team_teacher_id``, carries a teacher's assistant invite (paymob
+    billing Phase 03); ``ck_invites_assistant_shape`` ties it to ``role = 'assistant'``.
 
     An invite to nothing is not an invite. All three target columns are
     nullable because an invite is to a school, a class, **or** a child, never
@@ -51,9 +55,16 @@ class Invite(TimestampMixin, Base):
     __tablename__ = "invites"
     __table_args__ = (
         sa.CheckConstraint(
-            "school_id IS NOT NULL OR class_id IS NOT NULL OR child_id IS NOT NULL",
-            name="ck_invites_target",
+            "school_id IS NOT NULL OR class_id IS NOT NULL OR child_id IS NOT NULL"
+            " OR team_teacher_id IS NOT NULL",
+            name="target",
         ),
+        sa.CheckConstraint(
+            "(role::text = 'assistant') = (team_teacher_id IS NOT NULL)"
+            " AND (role::text = 'assistant') = (assistant_role IS NOT NULL)",
+            name="assistant_shape",
+        ),
+        sa.Index("ix_invites_team_teacher_id", "team_teacher_id"),
         sa.Index("ix_invites_code", "code", unique=True),
         sa.Index("ix_invites_child_id", "child_id"),
         sa.Index(
@@ -94,6 +105,17 @@ class Invite(TimestampMixin, Base):
         sa.ForeignKey("seats.id", ondelete="SET NULL"),
         nullable=True,
     )
+    team_teacher_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        sa.ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    """The lead teacher an ``assistant`` invite attaches its redeemer to (spec §4.4)."""
+    assistant_role: Mapped[AssistantRole | None] = mapped_column(
+        sa.Enum(AssistantRole, name="assistantrole"),
+        nullable=True,
+    )
+    """The role preset an ``assistant`` invite grants; set exactly when ``team_teacher_id`` is."""
     created_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         sa.ForeignKey("users.id"),

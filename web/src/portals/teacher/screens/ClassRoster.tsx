@@ -1,4 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
+import { PermissionGate } from "@/components/acting/permission-gate"
 import { useState, type FormEvent } from "react"
 import { Link } from "react-router-dom"
 import { Minus, TrendDown, TrendUp } from "@phosphor-icons/react"
@@ -238,6 +239,7 @@ function AddStudentsPanel({ classId, hasSchool }: { classId: string; hasSchool: 
         works for every class, with or without a linked school.
       </p>
       {hasSchool ? (
+        <PermissionGate permission="manage_students">
         <form onSubmit={handleEnroll} className="flex flex-wrap items-end gap-3 pt-2 border-t border-outline-variant">
           <Input
             label="Or add a student already seated in this school, by id"
@@ -251,6 +253,7 @@ function AddStudentsPanel({ classId, hasSchool }: { classId: string; hasSchool: 
             {enroll.isPending ? "Adding…" : "Add"}
           </Button>
         </form>
+        </PermissionGate>
       ) : (
         <p className="text-body-sm text-on-surface-variant pt-2 border-t border-outline-variant m-0">
           This class has no linked school, so there's no seat pool to add a student by id
@@ -408,15 +411,17 @@ export function ClassRoster() {
                       {s.lastActiveAt ? relativeTime(s.lastActiveAt) : "Never"}
                     </TD>
                     <TD className="text-end whitespace-nowrap">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className={cn("text-error", removeStudent.isPending && "opacity-50")}
-                        disabled={removeStudent.isPending}
-                        onClick={() => setPendingRemove(s)}
-                      >
-                        Remove
-                      </Button>
+                      <PermissionGate permission="manage_students" mode="hide">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className={cn("text-error", removeStudent.isPending && "opacity-50")}
+                          disabled={removeStudent.isPending}
+                          onClick={() => setPendingRemove(s)}
+                        >
+                          Remove
+                        </Button>
+                      </PermissionGate>
                     </TD>
                   </TR>
                 ))}

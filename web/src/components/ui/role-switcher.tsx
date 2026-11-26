@@ -19,6 +19,13 @@ export interface RoleOption {
   id: string
   label: string
   icon?: ReactNode
+  /**
+   * An option that is listed but cannot be picked (`aria-disabled`, still reachable by keyboard so
+   * its `description` can be read). Choosing it does nothing.
+   */
+  disabled?: boolean
+  /** A second, quieter line under the label: why an option is disabled, or what it is. */
+  description?: string
 }
 
 export interface RoleSwitcherProps {
@@ -26,6 +33,17 @@ export interface RoleSwitcherProps {
   currentRoleId: string
   onSwitch: (roleId: string) => void
   className?: string
+  /** The menu's accessible name. Defaults to "Switch role". */
+  menuLabel?: string
+  /**
+   * The trigger's accessible name, for when the current label alone ("Me") says too little.
+   * Must contain the visible label (WCAG 2.5.3). Defaults to the visible label.
+   */
+  triggerLabel?: string
+  /** Which side of the trigger the menu opens on. "above" for a trigger at the foot of a column. */
+  placement?: "below" | "above"
+  /** Extra classes for the menu, e.g. `start-0 end-auto w-full` to line it up under a full-width trigger. */
+  menuClassName?: string
 }
 
 export function RoleSwitcher({
@@ -33,9 +51,14 @@ export function RoleSwitcher({
   currentRoleId,
   onSwitch,
   className,
+  menuLabel = "Switch role",
+  triggerLabel,
+  placement = "below",
+  menuClassName,
 }: RoleSwitcherProps) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const current = roles.find((r) => r.id === currentRoleId) ?? roles[0]
 
   useEffect(() => {
@@ -47,7 +70,11 @@ export function RoleSwitcher({
       }
     }
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false)
+      if (e.key === "Escape") {
+        setOpen(false)
+        // Focus was on a menu item that is about to leave the page.
+        triggerRef.current?.focus()
+      }
     }
 
     document.addEventListener("mousedown", onPointerDown)
@@ -63,23 +90,29 @@ export function RoleSwitcher({
   return (
     <div ref={rootRef} className={cn("relative inline-block", className)}>
       <button
+        ref={triggerRef}
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-label={triggerLabel}
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 rounded-md border border-outline-variant bg-surface-container-lowest px-3 py-2 text-body-md text-on-surface transition-[background-color,transform] hover:bg-surface-container-low active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+        className="flex w-full items-center gap-2 pointer-coarse:min-h-11 rounded-md border border-outline-variant bg-surface-container-lowest px-3 py-2 text-body-md text-on-surface transition-[background-color,transform] hover:bg-surface-container-low active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
       >
         {current.icon}
-        <span className="font-medium">{current.label}</span>
-        <CaretUpDown size={13} className="text-on-surface-variant" />
+        <span className="min-w-0 truncate font-medium">{current.label}</span>
+        <CaretUpDown size={13} className="ms-auto flex-none text-on-surface-variant" aria-hidden="true" />
       </button>
       {open ? (
         <div
           role="menu"
-          aria-label="Switch role"
+          aria-label={menuLabel}
           // P6.3: `z-dropdown` names the band the raw `z-30` happened to land
           // on. Same value, but a reader can now tell it was chosen.
-          className="absolute end-0 z-dropdown mt-1.5 min-w-48 rounded-md border border-outline-variant bg-surface-container-lowest py-1"
+          className={cn(
+            "absolute end-0 z-dropdown min-w-48 rounded-md border border-outline-variant bg-surface-container-lowest py-1",
+            placement === "above" ? "bottom-full mb-1.5" : "mt-1.5",
+            menuClassName,
+          )}
         >
           {roles.map((role) => {
             const active = role.id === current.id
@@ -89,7 +122,9 @@ export function RoleSwitcher({
                 type="button"
                 role="menuitemradio"
                 aria-checked={active}
+                aria-disabled={role.disabled ? true : undefined}
                 onClick={() => {
+                  if (role.disabled) return
                   setOpen(false)
                   if (!active) onSwitch(role.id)
                 }}
@@ -97,10 +132,16 @@ export function RoleSwitcher({
                   // §6.1 touch floor — see the note in nav-shells.tsx.
                   "flex w-full items-center gap-2.5 px-3 py-2 pointer-coarse:min-h-11 text-start text-body-md transition-[background-color,transform] hover:bg-surface-container-low active:scale-[0.98]",
                   active ? "font-medium text-on-surface" : "text-on-surface-variant",
+                  role.disabled && "cursor-not-allowed opacity-60 hover:bg-transparent active:scale-100",
                 )}
               >
                 {role.icon}
-                <span className="flex-1">{role.label}</span>
+                <span className="min-w-0 flex-1">
+                  {role.label}
+                  {role.description ? (
+                    <span className="block text-body-sm text-on-surface-variant">{role.description}</span>
+                  ) : null}
+                </span>
                 {active ? <Check size={14} className="text-primary" /> : null}
               </button>
             )

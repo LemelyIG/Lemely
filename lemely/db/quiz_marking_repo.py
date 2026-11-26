@@ -170,6 +170,24 @@ class QuizMarkingService:
         self._marking_options = marking_options or MarkingOptions()
         self._now = now
 
+    def record_marking_failure(self, submission_id: uuid.UUID | str, error_text: str) -> bool:
+        """Record why a ``submitted`` submission was never sent to marking.
+
+        For a failure that happens *before* ``mark_submission`` runs (billing: the hold
+        could not be restored when the queued thread started), so no model call was made.
+        Sets ``marking_error`` and leaves ``status`` at ``submitted``, exactly as a failure
+        inside ``mark_submission`` does. Returns ``False`` and writes nothing for an
+        unknown submission or one that is no longer ``submitted`` (a marked submission is
+        never given an error).
+        """
+        submission_uuid = _as_uuid(submission_id)
+        with self._sessionmaker() as session, session.begin():
+            row = session.get(QuizSubmission, submission_uuid, with_for_update=True)
+            if row is None or row.status != QuizSubmissionStatus.submitted:
+                return False
+            row.marking_error = error_text
+            return True
+
     def mark_submission(self, submission_id: uuid.UUID | str) -> MarkSubmissionResult:
         """Mark one submitted quiz submission, persist it, and advance its status.
 

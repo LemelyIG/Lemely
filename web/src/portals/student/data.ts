@@ -7,7 +7,7 @@
  * from these constants, no live fetch.
  */
 
-import { CalendarCheck, Gear, GraduationCap, type Icon } from "@phosphor-icons/react"
+import { CalendarCheck, CreditCard, Gear, GraduationCap, type Icon } from "@phosphor-icons/react"
 
 import type { Crumb } from "@/components/ui/breadcrumbs"
 import type { ShellIconName } from "@/components/shell/icons"
@@ -46,6 +46,8 @@ export const studentNavItems: NavItem[] = [
 /** The account panel's links (design A `.as-links`), before Sign out. */
 export const studentAccountLinks: NavItem[] = [
   { to: "/student/profile", label: "Your profile", icon: "user" },
+  // Billing branch row; design A has no icon for it, so a Phosphor glyph (like Tutors above).
+  { to: "/student/billing", label: "Plan and billing", icon: CreditCard },
   { to: "/student/parents", label: "Your parents", icon: "heart" },
   { to: "/student/recently-deleted", label: "Recently deleted", icon: "trash" },
 ]
@@ -141,6 +143,10 @@ export const crumbs: Record<string, string> = {
   "/student/announcements": "Home / Announcements",
   "/student/parents": "Home / Your parents",
   "/student/recently-deleted": "Home / Recently deleted",
+  "/student/billing": "Home / Plan and billing",
+  "/student/billing/plans": "Home / Plan and billing / Plans",
+  "/student/billing/history": "Home / Plan and billing / Usage history",
+  "/student/billing/receipts": "Home / Plan and billing / Receipts",
   "/student/settings": "Home / Settings",
   "/student/settings/devices": "Home / Settings / Account and devices",
   "/student/settings/notifications": "Home / Settings / Notifications",

@@ -196,6 +196,7 @@ def login_context() -> Iterator[tuple[TestClient, StubRegistry]]:
             "password": "pw-123456",
             "role": "student",
             "acceptedTerms": True,
+            "phone": "+201012345678",
         },
     )
     registry.rows = _three_rows()  # the signup consumed a slot; reset to "at the cap"

@@ -39,8 +39,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated, Final, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
+from lemely.db.class_repo import _JOIN_CODE_ALPHABET, _JOIN_CODE_LENGTH
+from lemely.db.invite_codes import INVITE_CODE_ALPHABET, INVITE_CODE_LENGTH
 from lemely.db.invite_repo import (
     InviteAlreadyRedeemedError,
     InviteNotFoundError,
@@ -52,6 +54,7 @@ from lemely.db.models import Invite
 from lemely.db.models.enums import InviteRole, ParentLinkEvent, Role
 from lemely.db.notification_repo import NotificationService
 from lemely.db.parent_repo import MAX_LINKED_PARENTS
+from lemely.db.teacher_team_repo import TeamError
 from lemely.web.deps import (
     AuthContext,
     get_auth_context,
@@ -59,8 +62,17 @@ from lemely.web.deps import (
     get_notification_service,
     get_push_transport,
 )
+from lemely.web.deps_invites import (
+    INVITE_PREVIEW_GLOBAL_KEY,
+    InvitePreviewLimiters,
+    InviteRedeemLimiters,
+    get_invite_preview_limiters,
+    get_invite_redeem_limiters,
+)
 from lemely.web.push import NotificationTransport
+from lemely.web.routers.client_errors import _client_ip
 from lemely.web.schemas_invites import InviteCodeDTO, InvitePreviewDTO, RedeemInviteResponseDTO
+from lemely.web.team_http import team_error_to_http
 from lemely.web.tutoring_http import tutoring_error
 from lemely.web.tutoring_notify import class_join_notices, parent_link_notices, send_after_commit
 
@@ -145,6 +157,22 @@ def _mintable_invite_role(role: InviteRole) -> Literal["student", "teacher"]:
     raise ValueError(f"Invite role {role!r} has no mintable wire representation")
 
 
+def _redeemed_invite_role(role: InviteRole) -> Literal["student", "teacher", "parent"]:
+    """Narrow :class:`InviteRole` onto :attr:`RedeemInviteResponseDTO.role`'s wire literal.
+
+    ``assistant`` has no representation here: :meth:`InviteService.redeem` refuses an
+    assistant invite before it redeems anything, so a result never carries that role.
+    The explicit raise keeps the narrowing type-checked without a ``cast``.
+    """
+    if role is InviteRole.student:
+        return "student"
+    if role is InviteRole.teacher:
+        return "teacher"
+    if role is InviteRole.parent:
+        return "parent"
+    raise ValueError(f"Invite role {role!r} has no redeemable wire representation")
+
+
 def _invite_to_dto(invite: Invite) -> InviteCodeDTO:
     """Convert a freshly minted ``Invite`` row into its wire DTO.
 
@@ -161,10 +189,40 @@ def _invite_to_dto(invite: Invite) -> InviteCodeDTO:
     )
 
 
+_CODE_ALPHABETS: Final = {
+    INVITE_CODE_LENGTH: frozenset(INVITE_CODE_ALPHABET),
+    _JOIN_CODE_LENGTH: frozenset(_JOIN_CODE_ALPHABET),
+}
+"""Every code family the preview accepts, by length: ``invites.code`` (student, teacher,
+parent and assistant invites, ``invite_codes.generate_invite_code``) and
+``classes.join_code`` (``class_repo._generate_join_code``)."""
+
+
+def is_wellformed_code(code: str) -> bool:
+    """Whether ``code`` could be a code this app ever minted (right length and alphabet).
+
+    A code that fails this cannot exist, so the preview answers 404 without spending any
+    limiter or touching the database: a mistyped or truncated code is not a guess.
+    """
+    alphabet = _CODE_ALPHABETS.get(len(code))
+    return alphabet is not None and alphabet.issuperset(code)
+
+
+def _rate_limited(retry_after: int) -> HTTPException:
+    """The generic 429 every invite limiter answers with, ``Retry-After`` included."""
+    return HTTPException(
+        status.HTTP_429_TOO_MANY_REQUESTS,
+        f"Too many requests; retry in {retry_after}s.",
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
 @router.get("/{code}", response_model=InvitePreviewDTO)
 def preview_invite(
     code: str,
+    request: Request,
     service: Annotated[InviteService, Depends(get_invite_service)],
+    limiters: Annotated[InvitePreviewLimiters, Depends(get_invite_preview_limiters)],
 ) -> InvitePreviewDTO:
     """G-08: resolve a code to what its holder is about to join. Public.
 
@@ -172,12 +230,42 @@ def preview_invite(
     single "enter a code" box has no way to ask which kind its holder was
     given (see :meth:`~lemely.db.invite_repo.InviteService.preview`). Every
     field on the response is something the holder already learned from
-    whoever handed them the code; there is no id, no roster, no count.
+    whoever handed them the code; there is no id, no roster, no count, and the
+    teacher is named by display name only, never by email.
+
+    Rate-limited, **429** with ``Retry-After`` and a generic body: per client IP on
+    every call (consulted first, so one address cannot spend the shared budget), plus
+    two budgets of *misses* only: per client IP and global. Both are checked before the
+    lookup and spent only when the code is unknown (404), so a flood of valid previews
+    can never lock real students out; only guessing spends them, and the per-IP one stops
+    a couple of addresses draining the global one. A code an IP already resolved (kept
+    briefly, bounded) skips that IP's own miss refusal, never the global one. A code that
+    cannot be one this app minted (wrong length or alphabet) is a 404 before any limiter.
+    A class join code is unlimited-use and the route is anonymous, so without this it is a
+    free code-guessing oracle.
     """
+    if not is_wellformed_code(code):
+        # Same body as the service's unknown-code 404, and before any limiter.
+        raise HTTPException(status_code=404, detail=f"Unknown code: {code!r}")
+    client_ip = _client_ip(request)
+    if not limiters.per_client.allow(client_ip):
+        raise _rate_limited(limiters.per_client.retry_after(client_ip))
+    # A code this IP already resolved skips this IP's own miss refusal only.
+    known = limiters.resolved.knows(client_ip, code)
+    budgets = [(limiters.global_misses, INVITE_PREVIEW_GLOBAL_KEY)]
+    if not known:
+        budgets.insert(0, (limiters.per_client_misses, client_ip))
+    for misses, key in budgets:
+        spent = misses.retry_after(key)
+        if spent:
+            raise _rate_limited(spent)
     try:
         preview = service.preview(code)
     except InviteNotFoundError as exc:
+        limiters.per_client_misses.allow(client_ip)  # record the miss
+        limiters.global_misses.allow(INVITE_PREVIEW_GLOBAL_KEY)
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    limiters.resolved.remember(client_ip, code)
     return InvitePreviewDTO(
         role=preview.role.value,
         schoolName=preview.school_name,
@@ -194,6 +282,7 @@ def redeem_invite(
     service: Annotated[InviteService, Depends(get_invite_service)],
     notifications: Annotated[NotificationService, Depends(get_notification_service)],
     transport: Annotated[NotificationTransport, Depends(get_push_transport)],
+    limiters: Annotated[InviteRedeemLimiters, Depends(get_invite_redeem_limiters)],
 ) -> RedeemInviteResponseDTO:
     """Redeem a code for the authenticated caller. Idempotent.
 
@@ -243,10 +332,31 @@ def redeem_invite(
     the caller's linked parents (new enrolment in a tutor's school-less class),
     get their inbox notices; the change has committed by then, and a failed
     notice never fails the redemption.
+
+    A code that cannot be one this app minted (``is_wellformed_code``) is a **404** before
+    any limiter, same body as an unknown code, and spends no budget.
+
+    **429** (``Retry-After``, generic body): per user on every attempt, and a per-user
+    budget of unknown codes (404s only), checked before the lookup. The 404 / 403 / 409
+    split above tells an account which codes exist, so guessing is what the miss budget
+    stops; a real user mistypes a code a few times at most.
+
+    **409 ``no_free_seat``** (paymob billing Phase 03): a class code whose teacher has
+    no free seat; the invite stays unredeemed. A 409 ``conflict`` means the caller's
+    account can't hold a seat with this teacher (``team_error_to_http``).
     """
+    if not is_wellformed_code(code):
+        # Same 404 body as an unknown code, before any limiter: a malformed code is not a guess.
+        raise HTTPException(status_code=404, detail=f"Unknown code: {code!r}")
+    if not limiters.per_user.allow(auth.user_id):
+        raise _rate_limited(limiters.per_user.retry_after(auth.user_id))
+    spent = limiters.misses.retry_after(auth.user_id)
+    if spent:
+        raise _rate_limited(spent)
     try:
         result = service.redeem(auth.user_id, code, caller_role=Role(auth.role))
     except InviteNotFoundError as exc:
+        limiters.misses.allow(auth.user_id)  # record the miss
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except InviteParentLimitError as exc:
         raise tutoring_error(409, "parent_limit", PARENT_LIMIT_MESSAGE) from exc
@@ -256,9 +366,11 @@ def redeem_invite(
         raise HTTPException(
             status_code=403, detail="This invite is not for your account type."
         ) from exc
+    except TeamError as exc:
+        raise team_error_to_http(exc) from exc
     send_after_commit(redeem_notices(result), service=notifications, transport=transport)
     return RedeemInviteResponseDTO(
-        role=result.role.value,
+        role=_redeemed_invite_role(result.role),
         schoolId=str(result.school_id) if result.school_id is not None else None,
         classId=str(result.class_id) if result.class_id is not None else None,
         childId=str(result.child_id) if result.child_id is not None else None,
@@ -267,6 +379,7 @@ def redeem_invite(
 
 __all__ = [
     "PARENT_LIMIT_MESSAGE",
+    "is_wellformed_code",
     "parent_link_change_notices",
     "redeem_notices",
     "router",

@@ -26,7 +26,9 @@ const password = "CorrectHorseBattery9!"
 test.beforeAll(async ({ playwright }) => {
   const request: APIRequestContext = await playwright.request.newContext()
   const res = await request.post(`${BACKEND_URL}/api/auth/signup`, {
-    data: { email, password, role: "student" },
+    // UD-11: a phone is required at sign-up. `acceptedTerms` is required too (D7.11); this call omitted it,
+    // which the server has refused since D7.11, so the suite could not have signed this account up.
+    data: { email, password, role: "student", acceptedTerms: true, phone: "01012345678" },
   })
   expect(res.ok(), `signup failed: ${res.status()} ${await res.text()}`).toBeTruthy()
   await request.dispose()

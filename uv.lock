@@ -1227,6 +1227,7 @@ dependencies = [
     { name = "jinja2" },
     { name = "numpy" },
     { name = "pdfplumber" },
+    { name = "phonenumbers" },
     { name = "pillow" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -1241,6 +1242,7 @@ dependencies = [
 [package.optional-dependencies]
 db = [
     { name = "alembic" },
+    { name = "cryptography" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "sqlalchemy" },
@@ -1271,6 +1273,7 @@ requires-dist = [
     { name = "alembic", marker = "extra == 'db'", specifier = ">=1.14,<2" },
     { name = "anthropic", specifier = ">=1.15.0,<2" },
     { name = "click", specifier = ">=8.3,<9" },
+    { name = "cryptography", marker = "extra == 'db'", specifier = ">=49,<50" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.115,<1" },
     { name = "fonttools", specifier = ">=4.63,<5" },
     { name = "google-cloud-storage", marker = "extra == 'web'", specifier = ">=3.1,<4" },
@@ -1282,6 +1285,7 @@ requires-dist = [
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=2.1,<2.2" },
     { name = "numpy", specifier = ">=2,<3" },
     { name = "pdfplumber", specifier = ">=0.11,<1" },
+    { name = "phonenumbers", specifier = ">=9,<10" },
     { name = "pillow", specifier = ">=12,<13" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4,<5" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'db'", specifier = ">=3.2,<4" },
@@ -1743,6 +1747,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/05/56/6f450312ba05a27d7713b73857c1a25100dbda04fbc1331b13fb227a607d/pdfplumber-0.11.10.tar.gz", hash = "sha256:b95b2d28c66efb0a794a83b88c6c6aea5987532a445d20a1cbcfa657022e6e57", size = 102892, upload-time = "2026-06-15T03:31:31.035Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a2/9a/07d658e1e7fad860f1c541ab941348125dbdab773be3a0afaf32361866c7/pdfplumber-0.11.10-py3-none-any.whl", hash = "sha256:7741ea81bf165b474b153e6789d10d18e06b6ddcf3ec84289c3ef2fed6802580", size = 60047, upload-time = "2026-06-15T03:31:29.702Z" },
+]
+
+[[package]]
+name = "phonenumbers"
+version = "9.0.43"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0b/d5/b3ad857b2cdd09c806436b48d2c9afcdde2673475b1a894f74da0db32e75/phonenumbers-9.0.43.tar.gz", hash = "sha256:d4e508ab800c3e5ce219b14be339deb3d55a0ab81af82fea44749fcabd01e908", size = 2314544, upload-time = "2026-11-06T11:43:26.829Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1b/4c/b33a2189464f0f67215e9c8401cb2931ad3ab3f7c8060929f84fe4970544/phonenumbers-9.0.43-py2.py3-none-any.whl", hash = "sha256:349bc799f15e010e35bd2c7d28149950ae74479cb1e11fb054ed9a95ecb4b437", size = 2596726, upload-time = "2026-11-06T11:43:23.63Z" },
 ]
 
 [[package]]

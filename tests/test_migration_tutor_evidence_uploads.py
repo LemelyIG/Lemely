@@ -55,12 +55,14 @@ def test_orm_declares_the_three_named_objects() -> None:
     }
 
 
-def test_revision_chains_from_0050() -> None:
+def test_revision_chains_from_0050_and_is_in_the_head_lineage() -> None:
     script_dir = ScriptDirectory.from_config(Config("alembic.ini"))
     revision = script_dir.get_revision(REVISION)
     assert revision is not None
     assert revision.down_revision == DOWN_REVISION
     assert len(REVISION) <= 32  # alembic_version.version_num is varchar(32)
+    lineage = {r.revision for r in script_dir.iterate_revisions(head_revision(), "base")}
+    assert REVISION in lineage
 
 
 def test_constraints_present_by_name(migrated_sessionmaker: sessionmaker[Session]) -> None:

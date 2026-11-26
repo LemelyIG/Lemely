@@ -437,14 +437,25 @@ timeout_seconds = 10.0
 # two daily engagement notifications (streak_warning at streak_warning_hour,
 # study_plan_reminder at study_plan_reminder_hour) in each recipient's OWN
 # time zone. It runs inside the API process, started by create_app's lifespan;
-# there is no separate worker to deploy. On Cloud Run, timely delivery needs
-# --min-instances=1: at zero instances nothing is running to sweep, and a
-# 19:00 warning may be missed for that day entirely. See docs/deployment.md.
+# there is no separate worker to deploy. On Cloud Run at zero instances that
+# loop is asleep, so Cloud Scheduler also calls POST /api/internal/jobs/sweep
+# every minute (see jobs_secret below and docs/deployment.md).
 # The test suite sets LEMELY_NOTIFICATIONS__SWEEPER_ENABLED=0.
 sweeper_enabled = true
 sweep_poll_seconds = 60
 streak_warning_hour = 19
 study_plan_reminder_hour = 8
+# Shared secret Cloud Scheduler sends in X-Cron-Secret to POST
+# /api/internal/jobs/sweep (one full sweeper pass). Unset, that route answers 503.
+# Deployed it is LEMELY_NOTIFICATIONS__JOBS_SECRET: never in lemely.toml.
+# jobs_secret = "..."
+# Only during a staged rotation of jobs_secret: the old value, still accepted
+# beside the new one (LEMELY_NOTIFICATIONS__JOBS_SECRET_PREVIOUS).
+# See docs/deployment.md.
+# jobs_secret_previous = "..."
+# Wall-clock seconds one sweep pass may run before the jobs not yet started are
+# skipped until the next tick. Keep it 30 s or more under Cloud Scheduler's 90 s deadline.
+sweep_pass_budget_seconds = 60
 
 [tutoring]
 # Tutoring-marketplace mail is sent by one sweeper job. Once this many

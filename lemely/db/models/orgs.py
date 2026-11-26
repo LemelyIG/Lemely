@@ -54,6 +54,9 @@ class SchoolMembership(TimestampMixin, Base):
             "user_id",
             name="uq_school_memberships_school_id_user_id",
         ),
+        # Lookups by user alone (the unique constraint above leads with school_id):
+        # the team guard's live school-data refusal and ``member_school_ids``.
+        sa.Index("ix_school_memberships_user_id", "user_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -120,7 +123,12 @@ class SchoolClass(TimestampMixin, Base):
     """
 
     __tablename__ = "classes"
-    __table_args__ = (sa.Index("ix_classes_join_code", "join_code"),)
+    __table_args__ = (
+        sa.Index("ix_classes_join_code", "join_code"),
+        # A teacher's classes: the team guard's live school-data refusal runs this
+        # on every assistant request.
+        sa.Index("ix_classes_teacher_id", "teacher_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),

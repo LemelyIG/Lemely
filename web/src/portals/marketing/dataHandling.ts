@@ -73,7 +73,7 @@ export const dataHandlingSections: DataHandlingSection[] = [
      * `lemely/auth/gotrue.py` hands sign-in to Supabase Auth, whose id the
      * `users.id` column mirrors (the model docstring says so in as many words).
      */
-    body: "An account is one row: an email address, whether you are a student, a parent, a teacher or an administrator, a display name, a phone number if you gave one, and a language code. There is no password on it. Signing in is handled by Supabase Auth, which is where the credential lives.",
+    body: "An account is one row: an email address, whether you are a student, a parent, a teacher or an administrator, a display name, your mobile number, which we need for payments, and a language code. There is no password on it. Signing in is handled by Supabase Auth, which is where the credential lives.",
   },
   {
     heading: "The devices you are signed in on",

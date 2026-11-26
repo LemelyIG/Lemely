@@ -62,13 +62,14 @@ def _columns(session: Session) -> dict[str, str]:
     return dict(session.execute(_COLUMNS_SQL, {"t": TABLE}).tuples().all())
 
 
-def test_revision_chains_from_0053_and_is_the_head() -> None:
+def test_revision_chains_from_0053_and_is_in_the_head_lineage() -> None:
     script_dir = ScriptDirectory.from_config(Config("alembic.ini"))
     revision = script_dir.get_revision(REVISION)
     assert revision is not None
     assert revision.down_revision == DOWN_REVISION
     assert len(REVISION) <= 32  # alembic_version.version_num is varchar(32)
-    assert head_revision() == REVISION
+    lineage = {r.revision for r in script_dir.iterate_revisions(head_revision(), "base")}
+    assert REVISION in lineage
 
 
 def test_columns_are_nullable_and_the_schema_matches_the_orm(
@@ -111,7 +112,7 @@ def test_upgrade_downgrade_upgrade_round_trip(
     downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == DOWN_REVISION
+        assert current_revision(session, within=REVISION) == DOWN_REVISION
         assert not COLUMNS & set(_columns(session))
         indexes = set(
             session.execute(
@@ -124,5 +125,6 @@ def test_upgrade_downgrade_upgrade_round_trip(
     upgrade_head()
 
     with sm() as session:
-        assert current_revision(session) == REVISION
+        # ``0060_merge_heads`` sits above this revision, joining the billing chain.
+        assert current_revision(session) == head_revision()
         assert set(_columns(session)) >= COLUMNS

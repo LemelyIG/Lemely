@@ -271,9 +271,6 @@ class _PgUserMirror:
                 session.expunge(user)
             return user
 
-    def get_by_phone(self, phone: str) -> User | None:  # pragma: no cover - unused here
-        raise NotImplementedError
-
     def upsert(self, *args: object, **kwargs: object) -> None:  # pragma: no cover - unused here
         raise NotImplementedError
 

@@ -44,15 +44,29 @@ ENVIRONMENTS: Final = ("staging", "production")
 #: Retries Cloud Scheduler makes after a failed attempt (any non-2xx, including the digest's 503
 #: ``digest_pending``). 6 minutes is the minimum backoff on purpose: the backend lets a retry take
 #: over an unconfirmed claim only after 5 minutes, so the first retry lands after that lease.
+DEFAULT_MAX_RETRY_ATTEMPTS: Final = 3
+DEFAULT_MIN_BACKOFF: Final = "6m"
+DEFAULT_MAX_BACKOFF: Final = "30m"
 RETRY_FLAGS: Final = (
-    "--max-retry-attempts=3",
-    "--min-backoff=6m",
-    "--max-backoff=30m",
+    f"--max-retry-attempts={DEFAULT_MAX_RETRY_ATTEMPTS}",
+    f"--min-backoff={DEFAULT_MIN_BACKOFF}",
+    f"--max-backoff={DEFAULT_MAX_BACKOFF}",
 )
+#: A ``required`` job's secret must be at least this long, on top of the header-safe character
+#: set every secret is held to. Checked by the preflight (on the raw value) and again by the plan.
+REQUIRED_SECRET_MIN_LENGTH: Final = 32
+#: Scheduler's attempt deadline for HTTP targets when none is set. gcloud cannot clear a deadline
+#: on update, so a job whose ``attemptDeadline`` was removed from the file is sent this instead.
+SCHEDULER_DEFAULT_ATTEMPT_DEADLINE: Final = "180s"
+#: Cloud Scheduler's limit on a job id; ``job_name`` stays far below it for any valid ``id``.
+MAX_JOB_NAME_LENGTH: Final = 500
+# Every pattern is used with ``fullmatch``: a ``$``-anchored ``match`` lets a trailing newline in.
+_DURATION_RE: Final = re.compile(r"[1-9][0-9]*[smh]")
 SECRET_HEADER: Final = "X-Cron-Secret"  # noqa: S105 - a header name
-_ID_RE: Final = re.compile(r"^[a-z][a-z0-9-]{0,40}$")
-_ENV_NAME_RE: Final = re.compile(r"^[A-Z][A-Z0-9_]*$")
-_SECRET_VALUE_RE: Final = re.compile(r"^[A-Za-z0-9_.~+/:=@-]+$")
+_ID_RE: Final = re.compile(r"[a-z][a-z0-9-]{0,40}")
+_JOB_NAME_RE: Final = re.compile(r"[A-Za-z0-9_-]+")
+_ENV_NAME_RE: Final = re.compile(r"[A-Z][A-Z0-9_]*")
+_SECRET_VALUE_RE: Final = re.compile(r"[A-Za-z0-9_.~+/:=@-]+")
 _METHODS: Final = ("GET", "POST", "PUT", "DELETE", "PATCH")
 
 Runner = Callable[[Sequence[str]], "subprocess.CompletedProcess[str]"]
@@ -73,6 +87,16 @@ class DesiredJob:
     path: str
     secret: str
     description: str
+    #: Delivery policy, per job. The defaults are the digest's (see ``RETRY_FLAGS``): the sweep
+    #: overrides them in ``scheduler-jobs.json`` (no retries, an explicit attempt deadline).
+    max_retry_attempts: int = DEFAULT_MAX_RETRY_ATTEMPTS
+    min_backoff: str = DEFAULT_MIN_BACKOFF
+    max_backoff: str = DEFAULT_MAX_BACKOFF
+    #: ``None`` means Scheduler's own default (3 minutes): no flag on create, and on update the
+    #: default is sent explicitly, so removing ``attemptDeadline`` from the file takes effect.
+    attempt_deadline: str | None = None
+    #: A job the deployed service cannot do without: an empty secret is an error, not a warning.
+    required: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +131,7 @@ def load_desired(path: Path) -> list[DesiredJob]:
     seen: set[str] = set()
     for raw in data["jobs"]:
         job_id = str(raw["id"])
-        if not _ID_RE.match(job_id):
+        if not _ID_RE.fullmatch(job_id):
             raise ReconcileError(f"job id {job_id!r} must match {_ID_RE.pattern}")
         if job_id in seen:
             raise ReconcileError(f"duplicate job id {job_id!r}")
@@ -119,7 +143,7 @@ def load_desired(path: Path) -> list[DesiredJob]:
         if not path_.startswith("/"):
             raise ReconcileError(f"job {job_id!r}: path must start with '/'")
         secret = str(raw["secret"])
-        if not _ENV_NAME_RE.match(secret):
+        if not _ENV_NAME_RE.fullmatch(secret):
             raise ReconcileError(f"job {job_id!r}: secret name {secret!r} is not an env-var name")
         jobs.append(
             DesiredJob(
@@ -130,14 +154,53 @@ def load_desired(path: Path) -> list[DesiredJob]:
                 path=path_,
                 secret=secret,
                 description=str(raw.get("description", "")),
+                max_retry_attempts=_retry_attempts(job_id, raw),
+                min_backoff=_duration(job_id, raw, "minBackoff", DEFAULT_MIN_BACKOFF),
+                max_backoff=_duration(job_id, raw, "maxBackoff", DEFAULT_MAX_BACKOFF),
+                attempt_deadline=_attempt_deadline(job_id, raw),
+                required=bool(raw.get("required", False)),
             )
         )
     return jobs
 
 
+def _retry_attempts(job_id: str, raw: Mapping[str, object]) -> int:
+    value = raw.get("maxRetryAttempts", DEFAULT_MAX_RETRY_ATTEMPTS)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ReconcileError(f"job {job_id!r}: maxRetryAttempts must be an integer >= 0")
+    return value
+
+
+def _duration(job_id: str, raw: Mapping[str, object], key: str, default: str) -> str:
+    value = str(raw.get(key, default))
+    if not _DURATION_RE.fullmatch(value):
+        raise ReconcileError(f"job {job_id!r}: {key} {value!r} must look like 30s, 6m or 1h")
+    return value
+
+
+def _attempt_deadline(job_id: str, raw: Mapping[str, object]) -> str | None:
+    if "attemptDeadline" not in raw:
+        return None
+    return _duration(job_id, raw, "attemptDeadline", "")
+
+
 def job_name(environment: str, job_id: str) -> str:
     """The Cloud Scheduler job id for ``job_id`` in ``environment``."""
     return f"lemely-{environment}-{job_id}"
+
+
+def _checked_name(environment: str, job_id: str) -> str:
+    """``job_name``, after checking the id and the name it makes.
+
+    ``load_desired`` already checks the id, but a job can be built without it, and the name goes
+    straight onto a gcloud command line, so the plan checks both again before using them.
+    """
+    if not _ID_RE.fullmatch(job_id):
+        raise ReconcileError(f"job id {job_id!r} must match {_ID_RE.pattern}")
+    name = job_name(environment, job_id)
+    if len(name) > MAX_JOB_NAME_LENGTH or not _JOB_NAME_RE.fullmatch(name):
+        raise ReconcileError(f"job name {name!r} is not a valid Cloud Scheduler job id")
+    return name
 
 
 def _short(name: str) -> str:
@@ -169,16 +232,29 @@ def plan(
     skipped: list[str] = []
     conflicts: list[str] = []
     for job in desired:
-        name = job_name(environment, job.id)
+        name = _checked_name(environment, job.id)
         value = secrets.get(job.secret, "").strip()
         existing = by_name.get(name)
         if existing is not None and not is_managed(existing, environment):
             conflicts.append(name)
             continue
+        if not value and job.required:
+            raise ReconcileError(
+                f"the secret {job.secret} is required by {name} but is not set for "
+                f"{environment}: create it as an environment secret and deploy again"
+            )
         if not value:
             skipped.append(name)
             continue
-        if not _SECRET_VALUE_RE.match(value):
+        if job.required:
+            # The same checks as the preflight, on the raw value: the plan is the last stop
+            # before the value is written into the job, even when the preflight did not run.
+            problem = _secret_problem(
+                secrets.get(job.secret, ""), minimum=REQUIRED_SECRET_MIN_LENGTH
+            )
+            if problem:
+                raise ReconcileError(f"the secret {job.secret} {problem}")
+        if not _SECRET_VALUE_RE.fullmatch(value):
             raise ReconcileError(
                 f"the secret {job.secret} has characters that break gcloud's header syntax; "
                 "use letters, digits and _ . ~ + / : = @ -"
@@ -215,9 +291,33 @@ def _command(verb: str, planned: PlannedJob, project: str, location: str) -> lis
         f"--http-method={job.method}",
         f"--description={planned.description}",
         f"{header_flag}={SECRET_HEADER}={planned.secret_value}",
-        *RETRY_FLAGS,
+        *_retry_flags(job, update=verb == "update"),
         "--quiet",
     ]
+
+
+def _retry_flags(job: DesiredJob, *, update: bool) -> list[str]:
+    """The delivery policy as gcloud flags.
+
+    An update leaves any field it does not mention as it was, so on update every field the file
+    no longer sets is reset as well: the backoff is cleared when the job has no retries, a retry
+    duration is always cleared (the file has no such field, and a leftover one would cap the
+    retries it asks for), and a missing deadline is sent as Scheduler's default because gcloud
+    has no flag to clear one. The job then always matches the file, whatever it was configured
+    with before.
+    """
+    flags = [f"--max-retry-attempts={job.max_retry_attempts}"]
+    if job.max_retry_attempts > 0:
+        flags += [f"--min-backoff={job.min_backoff}", f"--max-backoff={job.max_backoff}"]
+    elif update:
+        flags += ["--clear-min-backoff", "--clear-max-backoff"]
+    if update:
+        flags.append("--clear-max-retry-duration")
+    if job.attempt_deadline is not None:
+        flags.append(f"--attempt-deadline={job.attempt_deadline}")
+    elif update:
+        flags.append(f"--attempt-deadline={SCHEDULER_DEFAULT_ATTEMPT_DEADLINE}")
+    return flags
 
 
 def apply(
@@ -252,6 +352,130 @@ def apply(
         )  # fmt: skip
 
 
+def preflight(desired: Sequence[DesiredJob], env: Mapping[str, str]) -> list[str]:
+    """What is wrong with the secrets of the ``required`` jobs; never contains a value.
+
+    Run before the new revision takes traffic: the revision carries the secret, so a missing or
+    malformed one must stop the deploy while the old revision still serves. The raw value is
+    checked, not a stripped copy, because a stray newline in a pasted secret reaches the service
+    env var unchanged.
+    """
+    errors: list[str] = []
+    for job in desired:
+        if not job.required:
+            continue
+        current = env.get(job.secret, "")
+        if not current.strip():
+            errors.append(f"{job.secret} is not set (required by the {job.id} job)")
+            continue
+        problem = _secret_problem(current, minimum=REQUIRED_SECRET_MIN_LENGTH)
+        if problem:
+            errors.append(f"{job.secret} {problem}")
+        previous = env.get(f"{job.secret}_PREVIOUS", "")
+        if previous == "":
+            # Optional: set only during a staged rotation. Only an empty value counts as unset;
+            # whitespace is forwarded to the service as it is, so it is checked (and fails).
+            continue
+        problem = _secret_problem(previous, minimum=1)
+        if problem:
+            errors.append(f"{job.secret}_PREVIOUS {problem}")
+        elif previous == current:
+            errors.append(
+                f"{job.secret}_PREVIOUS equals {job.secret}: stage the rotation with the old "
+                "value in PREVIOUS, or clear PREVIOUS"
+            )
+    return errors
+
+
+def _secret_problem(value: str, *, minimum: int) -> str | None:
+    if len(value) < minimum:
+        return f"is shorter than {minimum} characters"
+    if not _SECRET_VALUE_RE.fullmatch(value):  # fullmatch: ``$`` would let a trailing newline pass
+        return (
+            "has whitespace, a non-ASCII character or a character that breaks gcloud's header "
+            "syntax; use letters, digits and _ . ~ + / : = @ -"
+        )
+    return None
+
+
+def sweep_driver_problem(
+    desired: Sequence[DesiredJob],
+    actual: Sequence[Mapping[str, object]],
+    *,
+    environment: str,
+    host: str,
+) -> str | None:
+    """Why Cloud Scheduler cannot yet drive the service's sweep, or ``None`` when it can.
+
+    It can once every ``required`` job exists under its name, is managed by this deploy, is
+    enabled, and calls this environment's host on the job's path. Only then may the deploy turn
+    the service's own sweep loop off. The secret header is not looked at, so a rotation never
+    changes the answer. With no ``required`` job there is no Scheduler driver at all.
+    """
+    required = [job for job in desired if job.required]
+    if not required:
+        return "scheduler-jobs.json has no required job to drive the sweep"
+    by_name = {_short(str(a.get("name", ""))): a for a in actual}
+    for job in required:
+        name = job_name(environment, job.id)
+        existing = by_name.get(name)
+        if existing is None:
+            return f"{name} does not exist yet"
+        if not is_managed(existing, environment):
+            return f"{name} does not carry the {MARKER} marker"
+        if existing.get("state") != "ENABLED":
+            return f"{name} is not enabled (state {existing.get('state')!r})"
+        target = existing.get("httpTarget")
+        uri = target.get("uri") if isinstance(target, Mapping) else None
+        if uri != host.rstrip("/") + job.path:
+            return f"{name} does not call {host.rstrip('/')}{job.path}"
+    return None
+
+
+def sweep_driver_ready(
+    desired: Sequence[DesiredJob],
+    actual: Sequence[Mapping[str, object]],
+    *,
+    environment: str,
+    host: str,
+) -> bool:
+    """Whether Cloud Scheduler already drives the sweep (see :func:`sweep_driver_problem`)."""
+    problem = sweep_driver_problem(desired, actual, environment=environment, host=host)
+    return problem is None
+
+
+def _sweep_driver(args: argparse.Namespace, run: Runner) -> int:
+    """Print ``sweeper_enabled=false`` only when Scheduler drives the sweep, else ``=true``.
+
+    The value goes to stdout for the deploy step to pass on; the reason goes to stderr. Any
+    failure to tell keeps the loop on: two drivers are safe (the pass lock lets one run), no
+    driver is not.
+    """
+    try:
+        problem = sweep_driver_problem(
+            load_desired(args.jobs_file),
+            list_actual(args.project, args.location, run),
+            environment=args.environment,
+            host=args.host,
+        )
+    except (ReconcileError, KeyError, ValueError) as error:
+        print(
+            f"::warning::Could not check the Cloud Scheduler sweep job ({error}); keeping the "
+            "in-process sweep loop on.",
+            file=sys.stderr,
+        )
+        problem = "the check failed"
+    if problem is None:
+        print(
+            "Cloud Scheduler drives the sweep: the in-process loop is turned off.", file=sys.stderr
+        )
+        print("sweeper_enabled=false")
+    else:
+        print(f"Keeping the in-process sweep loop on: {problem}.", file=sys.stderr)
+        print("sweeper_enabled=true")
+    return 0
+
+
 def _gcloud(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, capture_output=True, text=True, check=False)  # noqa: S603
 
@@ -272,13 +496,36 @@ def list_actual(project: str, location: str, run: Runner) -> list[dict[str, obje
 
 def main(argv: Sequence[str] | None = None, run: Runner = _gcloud) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--environment", required=True, choices=ENVIRONMENTS)
-    parser.add_argument("--host", required=True, help="public origin, e.g. https://lemelyig.com")
-    parser.add_argument("--project", required=True)
+    parser.add_argument("--environment", choices=ENVIRONMENTS)
+    parser.add_argument("--host", help="public origin, e.g. https://lemelyig.com")
+    parser.add_argument("--project")
     parser.add_argument("--location", default="us-central1")
     parser.add_argument("--jobs-file", type=Path, default=Path(".github/scheduler-jobs.json"))
     parser.add_argument("--dry-run", action="store_true", help="print the plan, change nothing")
+    parser.add_argument(
+        "--preflight",
+        action="store_true",
+        help="only check the required jobs' secrets (no gcloud); exit 1 if any is unusable",
+    )
+    parser.add_argument(
+        "--sweep-driver",
+        action="store_true",
+        help="print sweeper_enabled=false if Cloud Scheduler already drives the sweep, else true",
+    )
     args = parser.parse_args(argv)
+    if args.preflight:
+        try:
+            errors = preflight(load_desired(args.jobs_file), os.environ)
+        except (ReconcileError, KeyError, ValueError) as error:
+            errors = [str(error)]
+        for error in errors:
+            print(f"::error::{error}")
+        return 1 if errors else 0
+    for name in ("environment", "host", "project"):
+        if not getattr(args, name):
+            parser.error(f"--{name} is required")
+    if args.sweep_driver:
+        return _sweep_driver(args, run)
     try:
         desired = load_desired(args.jobs_file)
         the_plan = plan(

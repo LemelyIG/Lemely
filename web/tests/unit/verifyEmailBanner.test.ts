@@ -68,3 +68,16 @@ describe("verifyEmailBannerState", () => {
     expect(state({ pathname: `${CORRECTION_PATH}/history` })).toBe("dismissible")
   })
 })
+
+describe("placement invite path", () => {
+  it("pins on the placement invite, ignoring dismissal", () => {
+    expect(state({ pathname: "/student/placement/0580", dismissed: true })).toBe("pinned")
+  })
+  it("does not pin on the running test or result screens", () => {
+    expect(state({ pathname: "/student/placement/test/abc" })).toBe("dismissible")
+    expect(state({ pathname: "/student/placement/result/abc" })).toBe("dismissible")
+  })
+  it("stays hidden for a verified reader on the invite", () => {
+    expect(state({ pathname: "/student/placement/0580", emailVerified: true })).toBe("hidden")
+  })
+})
