@@ -33,7 +33,6 @@ import {
   studentInboxLinks,
   studentNavItems,
   studentPageTitle,
-  shellParentTo,
   studentShellTrail,
   type NavItem,
 } from "./data"
@@ -139,7 +138,6 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
   })
   const trail = studentShellTrail(pagePath)
   // One back control on a phone: a trail with a linked parent keeps it under the bar (going back, labelled by where it leads).
-  const parentTo = shellParentTo(trail)
   const backPlan = useStudentBackPlan(location.pathname, trail)
   const goBack = useBackAction(backPlan.control === "trail" ? backPlan.parentTo : "/student")
   const titleLevel = titleLevelFor(trail, isTabRoot(pagePath, STUDENT_BOTTOM_TABS.map((tab) => tab.to), isStudentSubjectRoot))
@@ -209,7 +207,8 @@ export function StudentShell({ pending, prefetchCorrectPaper, overlay }: Student
             ? { label: backPlan.label, ariaLabel: backPlan.ariaLabel, onActivate: goBack }
             : undefined,
         titleLevel,
-        backFallback: parentTo ?? "/student",
+        // The native chevron with no history leads to the linked parent too, like the trail control.
+        backFallback: backPlan.control === "trail" ? backPlan.parentTo : "/student",
         navLabel: "Open student navigation",
         actions: (
           <>

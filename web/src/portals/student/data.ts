@@ -268,14 +268,6 @@ export function studentShellTrail(pathname: string): Crumb[] {
   return ROOT_CRUMBS.has(trail[0]?.label ?? "") ? trail.slice(1) : trail
 }
 
-/**
- * Where "up one level" goes for a drilled-in page: the nearest linked ancestor in the shell trail, or null when the trail
- * links nothing (the grouping labels have no route). A page with a linked ancestor already has a back link in its
- * trail (`Breadcrumbs` shows it below `sm`), so the bar does not add a second one.
- */
-export function shellParentTo(trail: readonly Crumb[]): string | null {
-  return [...trail].slice(0, -1).reverse().find((c) => c.to !== undefined)?.to ?? null
-}
 /** The top bar's title. A subject page shows the subject's name when known. */
 export function studentPageTitle(pathname: string, subjects: readonly { code: string; name: string }[] = []): string {
   const subject = pathname.match(/^\/student\/subject\/([^/]+)$/)

@@ -7,7 +7,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { ApiError } from "@/lib/api"
 import type { PaperHistoryRow, Subject } from "@/lib/studentTypes"
-import { currentSubjectCode, resolveCrumb, resolveCrumbTrail, shellParentTo, studentShellTrail } from "@/portals/student/data"
+import { decideBackPlan } from "@/portals/student/backControl"
+import { currentSubjectCode, resolveCrumb, resolveCrumbTrail, studentShellTrail } from "@/portals/student/data"
 import { AllPapers } from "@/portals/student/screens/AllPapers"
 import { AllPapersList } from "@/portals/student/screens/papers/AllPapersList"
 import { ComparePanel } from "@/portals/student/screens/papers/ComparePanel"
@@ -89,18 +90,21 @@ describe("the trail and the way back", () => {
 
 describe("one back control on the phone header", () => {
   const shell = read("src/portals/student/shell.tsx")
-  it("the parent is the nearest linked ancestor in the shell trail, and null when none is linked", () => {
-    expect(shellParentTo(studentShellTrail("/student/subject/0580/papers"))).toBe("/student/subject/0580")
-    expect(shellParentTo(studentShellTrail("/student/subject/0580"))).toBeNull()
-    expect(shellParentTo(studentShellTrail("/student/result/3"))).toBeNull()
-    expect(shellParentTo([])).toBeNull()
+  const plan = (pathname: string) => decideBackPlan({ trail: studentShellTrail(pathname), previousPath: null, hasHistory: false })
+  it("All papers' trail links its subject, so the trail carries the one back control and leads there", () => {
+    expect(plan("/student/subject/0580/papers")).toMatchObject({ control: "trail", parentTo: "/student/subject/0580", ariaLabel: "Back to 0580" })
   })
-  it("the bar's own Back button is skipped when the trail already carries a back link, so the title keeps its room", () => {
-    expect(shell).toMatch(/titleLevel === "detail" && parentTo === null \? <BackControl/)
+  it("a page whose trail links nothing keeps the bar's Back", () => {
+    expect(plan("/student/subject/0580")).toEqual({ control: "bar" })
+    expect(plan("/student/result/3")).toEqual({ control: "bar" })
   })
-  it("the native back and the fallback follow the same parent", () => {
-    expect(shell).toContain("const parentTo = shellParentTo(trail)")
-    expect(shell).toContain('backFallback: parentTo ?? "/student"')
+  it("the shell owns the hide, so the screens carry no back logic of their own", () => {
+    expect(shell).toContain("useStudentBackPlan(location.pathname, trail)")
+    expect(shell).toContain('backPlan.control === "trail" && "max-sm:hidden"')
+    expect(shell).not.toContain("shellParentTo")
+  })
+  it("the native back falls back to the same parent", () => {
+    expect(shell).toContain('backFallback: backPlan.control === "trail" ? backPlan.parentTo : "/student"')
   })
 })
 
@@ -179,7 +183,10 @@ describe("tidy-ups from the review", () => {
     expect(body).toContain("picked={held.length}")
   })
   it("the phone back link names where it goes", () => {
-    const out = html(Breadcrumbs, { items: [{ label: "0580", to: "/student/subject/0580" }, { label: "All papers" }] })
+    const items = [{ label: "0580", to: "/student/subject/0580" }, { label: "All papers" }]
+    const plan = decideBackPlan({ trail: items, previousPath: null, hasHistory: false })
+    if (plan.control !== "trail") throw new Error("All papers' trail must carry the back control")
+    const out = html(Breadcrumbs, { items, back: { label: plan.label, ariaLabel: plan.ariaLabel, onActivate: () => {} } })
     expect(out.match(/aria-label="Back to 0580"/g)).toHaveLength(1)
     expect(out).toContain(">0580</span>")
   })
