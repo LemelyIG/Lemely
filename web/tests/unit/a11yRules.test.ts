@@ -288,19 +288,42 @@ describe("icon-only controls carry an accessible name", () => {
  * host must contain a descendant that is itself focusable and key-operable.
  * The same `onClick` on a bare div, in this file or any other, still fails.
  */
-const KEYBOARD_ON_DESCENDANT = ["src/portals/student/screens/flashcards/ReviewCard.tsx"]
+const REVIEW_CARD = "src/portals/student/screens/flashcards/ReviewCard.tsx"
 
-/** True when something inside `inner` takes focus and answers Space or Enter on its own. */
-function hasKeyOperableDescendant(inner: string): boolean {
-  if (elements(inner, "button").length > 0) return true
-  return NON_INTERACTIVE_HOSTS.some((host) =>
-    elements(inner, host).some(
-      ({ openTag }) =>
-        /\brole\s*=\s*"button"/.test(openTag) &&
-        /\btabIndex\s*=/.test(openTag) &&
-        /\bonKey(?:Down|Up|Press)\s*=/.test(openTag),
-    ),
-  )
+// Deliberately pin the actual handlers: an arbitrary descendant button does not
+// establish that it performs the frame's action. A behavior change requires a
+// fresh accessibility review and an update to this narrow exception.
+const compact = (s: string) => s.replace(/\s+/g, " ").trim()
+const FRAME_CLICK = compact(`onClick={(e) => {
+  const start = press.current
+  press.current = null
+  if (!revealed && (!start || (!start.moved && Math.hypot(e.clientX - start.x, e.clientY - start.y) <= 10))) onReveal()
+}}`)
+const FACE_KEY = compact(`onKeyDown={(e) => {
+  const scroller = face.current
+  const step = scroller && scroller.scrollHeight > scroller.clientHeight ? cardScrollStep(e.key, scroller.clientHeight) : 0
+  if (scroller && step !== 0) {
+    e.preventDefault()
+    e.stopPropagation()
+    scroller.scrollBy({ top: step, behavior: reduced ? "auto" : "smooth" })
+    return
+  }
+  if (revealed || e.repeat || (e.key !== " " && e.key !== "Enter")) return
+  e.preventDefault()
+  e.stopPropagation()
+  onReveal()
+}}`)
+
+function isReviewFrame(file: string, tag: string, el: Element): boolean {
+  if (file !== REVIEW_CARD || tag !== "div") return false
+  const frame = compact(el.openTag)
+  if (!frame.includes('ref={frame}') || !frame.includes(FRAME_CLICK)) return false
+  return elements(el.inner, "div").some(({ openTag }) => {
+    const face = compact(openTag)
+    return face.includes('ref={face}') && face.includes('data-review-primary=""') &&
+      face.includes('role="button"') && face.includes('tabIndex={0}') &&
+      !/\b(?:disabled|aria-disabled|aria-hidden|inert)\b/.test(openTag) && face.includes(FACE_KEY)
+  })
 }
 
 /** Every click handler on a non-interactive host that a keyboard cannot reach. */
@@ -315,7 +338,7 @@ function clickHostOffenders(file: string, source: string): string[] {
       // stop would add a focusable element that announces nothing and sits
       // between the reader and the dialog.
       if (/\baria-hidden\s*=\s*(?:"true"|\{true\})/.test(el.openTag)) continue
-      if (KEYBOARD_ON_DESCENDANT.includes(file) && hasKeyOperableDescendant(el.inner)) continue
+      if (isReviewFrame(file, tag, el)) continue
       const missing = [
         !/\brole\s*=/.test(el.openTag) && "role",
         !/\btabIndex\s*=/.test(el.openTag) && "tabIndex",
@@ -338,13 +361,13 @@ describe("every flow is completable from the keyboard", () => {
   })
 
   describe("the descendant-keyboard exemption stays narrow", () => {
-    const CARD = KEYBOARD_ON_DESCENDANT[0]
+    const CARD = REVIEW_CARD
     const FACE = '<div role="button" tabIndex={0} onKeyDown={k}>q</div>'
     const frame = (inner: string) => stripComments(`<div onPointerDown={p} onClick={reveal}>${inner}</div>`)
 
-    it("exempts the named file's frame when a key-operable descendant exists", () => {
-      expect(clickHostOffenders(CARD, frame(FACE))).toEqual([])
-      expect(clickHostOffenders(CARD, frame('<button onClick={x}>q</button>'))).toEqual([])
+    it("does not exempt unrelated actions even with a descendant button", () => {
+      expect(clickHostOffenders(CARD, frame(FACE))).toHaveLength(1)
+      expect(clickHostOffenders(CARD, frame('<button onClick={x}>q</button>'))).toHaveLength(1)
     })
 
     it("still fails the same onClick on a div with no descendant button", () => {
@@ -362,12 +385,28 @@ describe("every flow is completable from the keyboard", () => {
       expect(clickHostOffenders("src/portals/student/screens/Other.tsx", frame(FACE))).toHaveLength(1)
     })
 
+    it("rejects unrelated and inaccessible descendants on the actual frame", () => {
+      const { source } = PARSED.find(({ file }) => relativeTo(file) === CARD) ?? { source: "" }
+      for (const changed of [
+        source.replace('ref={frame}', 'ref={other}'),
+        source.replace('))) onReveal()', '))) otherAction()'),
+        source.replace('data-review-primary=""', 'data-other=""'),
+        source.replace('tabIndex={0}', 'tabIndex={-1}'),
+        source.replace('data-review-primary=""', 'data-review-primary="" aria-disabled="true"'),
+        source.replace('onKeyDown={(e) => {', 'onKeyDown={(e) => { otherAction();'),
+      ]) {
+        expect(changed).not.toBe(source)
+        expect(clickHostOffenders(CARD, changed)).not.toEqual([])
+      }
+      expect(clickHostOffenders(CARD, frame('<button disabled onClick={other}>other</button>'))).toHaveLength(1)
+    })
+
     it("is not dead: the named file still holds the exempted frame", () => {
       // An exemption nobody uses is a hole nobody notices. If the frame moves
       // or loses its onClick, this fails and the entry should be deleted.
       const { source } = PARSED.find(({ file }) => relativeTo(file) === CARD) ?? { source: "" }
       const hosts = NON_INTERACTIVE_HOSTS.flatMap((tag) => elements(source, tag)).filter(
-        ({ openTag, inner }) => /\bonClick\s*=/.test(openTag) && hasKeyOperableDescendant(inner),
+        (el) => isReviewFrame(CARD, "div", el),
       )
       expect(hosts).toHaveLength(1)
     })
