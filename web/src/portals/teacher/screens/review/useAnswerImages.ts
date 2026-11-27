@@ -9,6 +9,17 @@ export interface AnswerImages {
   onPageError: () => void
   pageRequested: boolean
   requestPage: () => void
+  /** The crop's fetch or decode failed (absent: treat as not failed). */
+  cropFailed?: boolean
+  /** The whole page's fetch or decode failed (absent: treat as not failed). */
+  pageFailed?: boolean
+}
+
+/** What the "Whole page" frame shows. A failed page is "failed", never a
+ * loading skeleton that cannot end. */
+export function pageFrame(images: Pick<AnswerImages, "pageUrl" | "pageRequested" | "pageFailed">): "image" | "loading" | "failed" {
+  if (images.pageUrl) return "image"
+  return images.pageRequested && !images.pageFailed ? "loading" : "failed"
 }
 
 /**
@@ -24,8 +35,10 @@ export function useAnswerImages(itemId: string | undefined, hasScan: boolean): A
   return {
     cropUrl: crop.url,
     onCropError: crop.onDecodeError,
+    cropFailed: crop.failed,
     pageUrl: page.url,
     onPageError: page.onDecodeError,
+    pageFailed: page.failed,
     pageRequested: pageFor === itemId,
     requestPage: () => {
       if (itemId) setPageFor(itemId)

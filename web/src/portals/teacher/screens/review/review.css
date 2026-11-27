@@ -26,6 +26,15 @@
 }
 /* The gold arc needs contrast against both the row and its track. */
 .rq-row .rd-ring-tone-gold { stroke: var(--color-on-tertiary-container); }
+/* Ring centre: only the numeral is centred. The % hangs off its inline end (absolute), so it never
+   pushes the digits off centre, and the numeral's box is trimmed to cap height, so grid centring is
+   optical centring. The grid also drops the centre span's own 28px strut, which sat the digits low. */
+.rd-ring-center:has(> .rq-ring-num) { display: grid; place-items: center; line-height: 1; }
+.rq-ring-num { line-height: 1; text-box: trim-both cap alphabetic; }
+@supports not (text-box: trim-both cap alphabetic) {
+  .rq-ring-num { translate: 0 0.06em; }
+  .rq-ring-num.font-mono { translate: 0 0.09em; }
+}
 .rq-row[data-gone] {
   opacity: 0;
   transform: translateX(24px);
