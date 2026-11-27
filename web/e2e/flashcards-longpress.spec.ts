@@ -106,7 +106,7 @@ for (const viewport of [{ width: 380, height: 800 }, { width: 1440, height: 900 
       await shot(page, `longpress-menu-${viewport.width}`)
     })
 
-    test("a short press, or one that drifts, does not open the menu", async ({ context }) => {
+    test("a hold that drifts does not open the menu", async ({ context }) => {
       const { page } = await open(context)
       const box = (await page.getByRole("button", { name: /Vectors/ }).first().boundingBox())!
       await page.mouse.move(box.x + 40, box.y + box.height / 2)

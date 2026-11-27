@@ -130,7 +130,7 @@ describe("Pull-to-refresh — the shell wires usePullToRefresh once (native fram
   })
 })
 
-describe("Long-press menus — question-row, Notifications and the deck row/menu all wire useLongPress + Popover", () => {
+describe("Long-press menus — question-row, Notifications and flashcards", () => {
   const files = [
     "src/components/ui/question-row.tsx",
     "src/portals/student/screens/Notifications.tsx",
@@ -142,9 +142,11 @@ describe("Long-press menus — question-row, Notifications and the deck row/menu
     expect(src).toContain("Popover")
   })
 
-  it("the deck row listens for the hold and the deck menu is a Popover", () => {
+  it("the deck row listens for the hold, which has a sheet menu; Deck options uses a Popover", () => {
     expect(sourceOf("src/portals/student/screens/flashcards/parts/DeckRow.tsx")).toContain("useLongPress")
-    expect(sourceOf("src/portals/student/screens/flashcards/DeckMenu.tsx")).toContain("Popover")
+    const menu = sourceOf("src/portals/student/screens/flashcards/DeckMenu.tsx")
+    expect(menu).toContain("<FcSheet")
+    expect(menu).toContain('<Popover label="Deck options"')
   })
 
   it("question-row.tsx gains optional practiceHref/onShare props, not a required rewrite", () => {

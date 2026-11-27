@@ -112,8 +112,8 @@ export function ReviewCard({
         ].join(" ")}
       >
         {visual.stamp ? (
-          // The stamp sits on the side the card is travelling toward, and a swipe is physical (right is Good in
-          // either text direction), so the inset is a physical offset on purpose, not a missed logical one.
+          // The stamp sits opposite the swipe direction (left for Good, right for Again).
+          // Swipes are physical in either text direction, so these offsets do not mirror.
           <span aria-hidden style={{ opacity: visual.opacity, ...(stampGood ? { left: 22 } : { right: 22 }) }}
             className={stampGood
               ? "absolute top-[22px] -rotate-[10deg] rounded-[10px] px-3 py-1 text-[18px] font-extrabold text-success-text shadow-[inset_0_0_0_2.5px_var(--color-success-text)]"

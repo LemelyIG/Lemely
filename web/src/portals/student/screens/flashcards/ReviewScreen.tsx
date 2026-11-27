@@ -209,7 +209,7 @@ export function ReviewScreen() {
       <div className="flex items-center gap-2.5 px-1 pb-1 pt-1.5 lg:px-[18px] text-[13px] font-medium leading-tight text-on-surface-variant">
         <ComboChip count={session.combo} />
         {deckLabel ? (
-          <span className="ml-auto inline-flex items-center gap-1.5 text-[13px] font-semibold">
+          <span className="ms-auto inline-flex items-center gap-1.5 text-[13px] font-semibold">
             {labelSubject ? <SubjectDot subject={labelSubject} /> : null}
             {deckLabel}
           </span>
@@ -222,7 +222,7 @@ export function ReviewScreen() {
           {buttons.map((b) => (
             <button key={b.grade} type="button" aria-keyshortcuts={b.key} onClick={() => grade(b.grade)}
               className={`grid !min-h-[62px] content-center justify-items-center gap-0.5 rounded-2xl leading-tight transition-transform duration-150 ease-out active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100 focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary ${GRADE_TONE[b.tone]}`}>
-              <b className="text-[15px] font-bold">{b.label} <Kbd size="md" aria-hidden className="ml-1 hidden bg-black/10 text-current lg:inline">{b.key}</Kbd></b>
+              <b className="text-[15px] font-bold">{b.label} <Kbd size="md" aria-hidden className="ms-1 hidden bg-black/10 text-current lg:inline">{b.key}</Kbd></b>
               <span className="text-[12px] font-medium">{b.interval}</span>
             </button>
           ))}

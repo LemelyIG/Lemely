@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs"
+import { globSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import { relativeTo, sourceFiles, stripComments } from "./support/jsxSource"
@@ -91,8 +91,6 @@ const SCANNED_FILES_CURATED = [
   // P6.2: in neither gate list until now, which is the recurring mechanism —
   // a file no gate reads. It is the camera half of the product's flagship flow.
   "src/components/CameraCapture.tsx",
-  "src/portals/student/screens/flashcards/parts/DeckRow.tsx",
-  "src/portals/student/screens/flashcards/ReviewCard.tsx",
   "src/portals/student/screens/practice/PracticeGenerator.tsx",
   "src/portals/student/screens/practice/PracticePrint.tsx",
   "src/portals/student/screens/practice/PracticeResult.tsx",
@@ -159,7 +157,9 @@ const MARKETING_FILES = sourceFiles(join(process.cwd(), "src/portals/marketing")
   relativeTo(process.cwd(), f),
 )
 
-const SCANNED_FILES = [...new Set([...SCANNED_FILES_CURATED, ...MARKETING_FILES])]
+const FLASHCARD_FILES = globSync("src/portals/student/screens/flashcards/**/*.{ts,tsx,css}").sort()
+
+const SCANNED_FILES = [...new Set([...SCANNED_FILES_CURATED, ...MARKETING_FILES, ...FLASHCARD_FILES])]
 
 const CSS_PATH = "src/index.css"
 

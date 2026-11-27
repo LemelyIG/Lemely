@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync } from "node:fs"
+import { globSync, readFileSync, readdirSync, statSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import { relativeTo, sourceFiles, stripComments } from "./support/jsxSource"
@@ -133,8 +133,6 @@ const RTL_CLEAN_FILES_CURATED = [
   "src/components/ui/modal.tsx",
   "src/components/ui/progress-bar.tsx",
   "src/components/ui/slider.tsx",
-  "src/portals/student/screens/flashcards/parts/DeckRow.tsx",
-  "src/portals/student/screens/flashcards/ReviewCard.tsx",
   "src/portals/student/screens/practice/PracticeGenerator.tsx",
   "src/portals/student/screens/practice/PracticePrint.tsx",
   "src/portals/student/screens/practice/PracticeResult.tsx",
@@ -169,7 +167,18 @@ const MARKETING_FILES = sourceFiles(join(process.cwd(), "src/portals/marketing")
   relativeTo(process.cwd(), f),
 )
 
-const RTL_CLEAN_FILES = [...new Set([...RTL_CLEAN_FILES_CURATED, ...MARKETING_FILES])]
+const FLASHCARD_DIR = "src/portals/student/screens/flashcards"
+const FLASHCARD_FILES = globSync(`${FLASHCARD_DIR}/**/*.{ts,tsx,css}`).sort()
+
+const RTL_CLEAN_FILES = [...new Set([...RTL_CLEAN_FILES_CURATED, ...MARKETING_FILES, ...FLASHCARD_FILES])]
+
+// ReviewDone's bleed follows the device's physical safe-area insets, not reading direction.
+const REVIEW_DONE_BLEED = new Set([
+  "-ml-[var(--fc-bleed-l)]",
+  "-mr-[var(--fc-bleed-r)]",
+  "pl-[calc(var(--fc-bleed-l)+6px)]",
+  "pr-[calc(var(--fc-bleed-r)+6px)]",
+])
 
 /**
  * Physical-direction Tailwind utilities that have a logical counterpart.
@@ -222,6 +231,8 @@ describe("RTL safety on Phase 3 surfaces", () => {
   it.each(RTL_CLEAN_FILES)("%s uses logical properties only", (relative) => {
     const source = readFileSync(join(process.cwd(), relative), "utf8")
     const offences: string[] = []
+    // Include negative utilities in the flashcard audit without expanding the legacy surfaces' gate.
+    const negative = relative.startsWith(`${FLASHCARD_DIR}/`) ? "-?" : ""
 
     for (const { line, value } of classNameText(source)) {
       for (const [physical, logical] of PHYSICAL) {
@@ -236,11 +247,12 @@ describe("RTL safety on Phase 3 surfaces", () => {
         //     `border-lime`.
         const trailing = physical.endsWith("-") ? "" : "(?![a-zA-Z])"
         const re = new RegExp(
-          `(?:^|[\\s"'\`:])(${physical}${trailing}[a-z0-9.\\[\\]/-]*)`,
+          `(?:^|[\\s"'\`:])(${negative}${physical}${trailing}(?:\\[[^\\s]+?\\]|[a-z0-9./-]*))`,
           "g",
         )
         let hit: RegExpExecArray | null
         while ((hit = re.exec(value)) !== null) {
+          if (relative === `${FLASHCARD_DIR}/ReviewDone.tsx` && REVIEW_DONE_BLEED.has(hit[1])) continue
           offences.push(`${relative}:${line}  ${hit[1]}  ->  use ${logical}…`)
         }
       }
