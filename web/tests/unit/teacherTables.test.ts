@@ -10,7 +10,7 @@ import { stripComments } from "./support/jsxSource"
  * those screens already reached for as the `px-[16px] py-[10px]` arbitrary
  * value DESIGN.md §14 rule 3 forbids, now on the scale via `CELL_PADDING`.
  *
- * Task 3 (C2a) covers `Review.tsx` and `ClassRoster.tsx`. Task 4 (C2b)
+ * Task 3 (C2a) covered `ClassRoster.tsx` (and the old `Review.tsx`, replaced by `review/` in L5). Task 4 (C2b)
  * extends `FILES` below with `StudentDetail.tsx`, `AtRiskList.tsx`,
  * `ClassAnalytics.tsx`, `Classes.tsx`, `MarkSchemes.tsx`, and the real-count
  * correction's `QuizResults.tsx`/`Quizzes.tsx` — the array shape is what
@@ -30,11 +30,6 @@ interface FileCheck {
 }
 
 const FILES: FileCheck[] = [
-  {
-    file: "Review.tsx",
-    mustContain: ['<Table density="operate"'],
-    mustNotContain: ["<table", "px-[16px]", "py-[10px]"],
-  },
   {
     file: "ClassRoster.tsx",
     mustContain: ['<Table density="operate"'],

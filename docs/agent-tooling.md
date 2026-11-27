@@ -4,6 +4,38 @@ Project-scoped MCP servers, plugins, and skills for Claude Code. Everything here
 is committed, so a fresh clone picks it up — but the MCP servers need local
 credentials that are deliberately not in the repo (see Prerequisites).
 
+## Local Playwright database
+
+`cd web && npm run test:e2e` runs on its own database, not the shared local
+`postgres` one. Before each run, `web/e2e/global-setup.ts` drops and recreates
+`lemely_e2e` on the local Supabase server (`scripts/reset_e2e_db.py`, which
+refuses any name but exactly `lemely_e2e` and any host but loopback), runs
+`alembic upgrade head` from the current checkout, adds synthetic grade
+boundaries (`scripts/seed_e2e_boundaries.py`; test fixtures, not exam board
+data), and runs `scripts/seed_e2e.py`. `web/playwright.config.ts` points the
+backend it starts at that database through `LEMELY_DATABASE__URL` (host, port
+and credentials come from `supabase status`; only the database name is
+swapped), overriding any value exported in your shell. The backend also refuses
+to start on any other database, and runs with the notification sweeper off.
+
+- The shared `postgres` database's app schema is never migrated, stamped, or
+  seeded, so another branch's alembic revision there cannot break a run.
+- Auth is the one contact with `postgres`: GoTrue only reads its own `auth`
+  schema there, so the specs and the seed create their users through GoTrue's
+  HTTP API. Every one of those accounts is on `@e2e.lemely.local`. The reset
+  deletes the GoTrue users on that domain through the admin API (never SQL, and
+  only when the Supabase URL is loopback), so `auth.users` does not grow from
+  run to run. A new spec that signs an account up must use that domain; an
+  address on any other domain is never cleaned up. The first run after this
+  change deletes the existing backlog of `@e2e.lemely.local` accounts.
+- Ports 8000 and 5173 must be free. Neither server is reused, because one
+  already running would be using some other database or another checkout.
+- One run at a time per local stack.
+- Run pytest with `LEMELY_DATABASE__URL` set to a throwaway `lemely_test_*`
+  database. The suite's autouse fixture in `tests/conftest.py` writes grade
+  boundary rows to whatever database is configured, which is the shared
+  `postgres` by default, even for a test file that is fully mocked.
+
 ## MCP servers
 
 Declared in `.mcp.json`. Claude Code fetches them with `npx` on first use.

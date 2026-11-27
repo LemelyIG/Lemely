@@ -8,6 +8,7 @@ it('preserves supplied proof and qualification', () => {
   expect(faqItems).toHaveLength(5)
 })
 it('connects conversion and contact actions to real destinations', () => {
+  expect(marketingLinks.phone).toBe('tel:+201067661974')
   expect(marketingLinks.signup).toBe('/signup')
   expect(marketingLinks.login).toBe('/login')
   expect(marketingLinks.demo).toMatch(/^mailto:contact@lemelyig.com/)

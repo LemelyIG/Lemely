@@ -286,7 +286,26 @@ def test_0043_merge_heads_joins_the_develop_and_branch_chains() -> None:
         "0042_question_result_source_box",
         "0039_paper_soft_delete",
     }
-    assert script_dir.get_heads() == ["0055_flashcard_generation"]
+    lineage = {r.revision for r in script_dir.iterate_revisions("heads", "base")}
+    assert "0043_merge_heads" in lineage
+
+
+def test_migration_chain_has_one_head_joining_billing_and_waitlist() -> None:
+    """The billing and waitlist chains are joined below a single head."""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    script_dir = ScriptDirectory.from_config(Config("alembic.ini"))
+    heads = script_dir.get_heads()
+    assert len(heads) == 1, f"expected exactly one Alembic head, found {len(heads)}: {heads}"
+    ancestry = {r.revision for r in script_dir.iterate_revisions(heads[0], "base")}
+    assert "0060_merge_heads" in ancestry
+    revision = script_dir.get_revision("0060_merge_heads")
+    assert revision is not None
+    assert set(revision.down_revision) == {
+        "0059_payment_applied_marker",
+        "0054_waitlist_email_confirmation",
+    }
 
 
 def test_every_enum_column_binds_its_value_not_its_member_name() -> None:

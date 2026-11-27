@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
-import { REASON_LABEL, reasonLabel } from "@/portals/teacher/screens/Review"
+import { REASON_LABEL, reasonLabel } from "@/portals/teacher/screens/review/reviewLabels"
 
 /** The backend's ReviewReason members, read from the enum itself so a new reason cannot ship unlabelled. */
 const ENUMS = readFileSync(join(import.meta.dirname, "..", "..", "..", "lemely", "db", "models", "enums.py"), "utf8")

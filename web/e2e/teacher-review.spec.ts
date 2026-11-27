@@ -63,7 +63,7 @@ import { readSeed } from "./seed"
  * navigation test below walks forward from `itemId` to `rationaleOnlyItemId`
  * (`itemId` sorts first in the teacher's queue every run -- verified
  * directly against Postgres, see `walkForwardTo`'s own doc) and back via the
- * on-screen "Next item" control and the browser's own back button -- real
+ * on-screen "Next answer" and "Previous answer" controls -- real
  * client-side transitions, never `page.goto` between two detail routes,
  * which would remount the screen and never exercise the bug at all.
  *
@@ -94,7 +94,7 @@ test("a teacher sees every point's marker verdict, with awarded, withheld and un
   await page.goto(`/teacher/review/${reviewItem.itemId}`)
   await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0, { timeout: 15_000 })
 
-  const section = page.getByRole("region", { name: "Marker's per-point verdicts" })
+  const section = page.getByRole("article").getByRole("group", { name: "Marking points" })
   await expect(section).toBeVisible()
 
   // Every point renders — p1/p2/p3, not only the one the student self-marked
@@ -108,15 +108,15 @@ test("a teacher sees every point's marker verdict, with awarded, withheld and un
   // The three I6 verdicts must be distinguishable from each other on screen,
   // not just in the label map's source text (`review_item_point_verdicts()`
   // in `scripts/seed_e2e.py`: p1 awarded, p2 withheld, p3 unverifiable).
-  await expect(section.getByText("Awarded", { exact: true })).toBeVisible()
-  await expect(section.getByText("Withheld, judged absent")).toBeVisible()
-  await expect(section.getByText("Unverifiable, could not confirm")).toBeVisible()
+  await expect(section.locator('[aria-pressed="true"]')).toHaveCount(1)
+  await expect(section.getByText("Judged absent")).toBeVisible()
+  await expect(section.getByText("Couldn't confirm")).toBeVisible()
 
   // The quoted evidence span on p1 and the ECF chip on p3 — both real,
   // seeded fields (`ReviewItemPoint.evidenceSpan`/`ecfApplied`), not just
   // present in the wire type.
-  await expect(section.getByText('"a = (v - u) / t = (20 - 0) / 4 = 5 m/s^2"')).toBeVisible()
-  await expect(section.getByText("Carried forward from a prior point (ECF)")).toBeVisible()
+  await expect(section.getByText("“a = (v - u) / t = (20 - 0) / 4 = 5 m/s^2”")).toBeVisible()
+  await expect(section.getByText("Carried forward")).toBeVisible()
 
   expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
 })
@@ -141,8 +141,9 @@ test("a legacy question with no per-point verdict or rationale renders no marker
   // from the verdicts section) — this is not a blank/broken page, only one
   // whose one question carries nothing for `MarkerVerdicts` to show.
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible()
-  await expect(page.getByText("Marker's per-point verdicts")).toHaveCount(0)
-  await expect(page.getByRole("region", { name: "Marker's per-point verdicts" })).toHaveCount(0)
+  await expect(page.getByTestId("point-note")).toHaveCount(0)
+  await expect(page.getByText("Judged absent")).toHaveCount(0)
+  await expect(page.getByText("Couldn't confirm")).toHaveCount(0)
 
   expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
 })
@@ -171,13 +172,11 @@ test("a rationale-only question with no verdict still renders the marker's per-p
   // prove the widening actually works at runtime — a source-text check
   // (`reviewItemMarkerVerdicts.test.ts`) cannot tell a section that renders
   // the rationale from one a narrower guard silently suppresses.
-  const section = page.getByRole("region", { name: "Marker's per-point verdicts" })
-  await expect(section).toBeVisible()
-  await expect(
-    section.getByText(
-      "Working shown but the final line is illegible; benefit of the doubt given.",
-    ),
-  ).toBeVisible()
+  const note = page.getByTestId("point-note")
+  await expect(note).toBeVisible()
+  await expect(note).toContainText(
+    "Working shown but the final line is illegible; benefit of the doubt given.",
+  )
 
   expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
 })
@@ -195,6 +194,16 @@ const SCAN_CROP_ALT = "The region of the student's scan this question's answer w
 function watchCropRequests(page: import("@playwright/test").Page, itemId: string): string[] {
   const requests: string[] = []
   const pattern = new RegExp(`/review/${itemId}/crop$`)
+  page.on("request", (request) => {
+    if (pattern.test(request.url())) requests.push(request.url())
+  })
+  return requests
+}
+
+/** Same idea as `watchCropRequests`, for `.../review/{itemId}/page`. */
+function watchPageRequests(page: import("@playwright/test").Page, itemId: string): string[] {
+  const requests: string[] = []
+  const pattern = new RegExp(`/review/${itemId}/page$`)
   page.on("request", (request) => {
     if (pattern.test(request.url())) requests.push(request.url())
   })
@@ -224,11 +233,8 @@ test("a boxless question shows no scan-crop affordance, and makes no crop reques
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible()
 
   await expect(page.getByAltText(SCAN_CROP_ALT)).toHaveCount(0)
-  await expect(
-    page.getByText(
-      "This screen does not display the original scan. What's below is Lemely's own transcription of the student's answer.",
-    ),
-  ).toBeVisible()
+  await expect(page.getByRole("tab", { name: "Whole page" })).toHaveCount(0)
+  await expect(page.getByText("Lemely's reading of the answer")).toBeVisible()
   // The request-level proof, paired with the box-bearing test's
   // `toHaveLength(1)` below: this is what actually discriminates "the fetch
   // never fired" from "it fired and got ignored", which the DOM checks above
@@ -273,14 +279,20 @@ test("a box-bearing question shows the scan crop, the image actually loads, and 
       timeout: 15_000,
     })
     .toBeGreaterThan(0)
-  await expect(
-    page.getByText(
-      "This screen shows the region of the student's scan this answer was read from, alongside Lemely's own transcription of it.",
-    ),
-  ).toBeVisible()
+  await expect(page.getByText("From the student's scan")).toBeVisible()
   // Paired with the boxless test's `toEqual([])` above: exactly one fetch,
   // not zero and not a retry storm.
   expect(cropRequests).toHaveLength(1)
+
+  // The whole page loads only when its tab is opened, and exactly once.
+  const pageRequests = watchPageRequests(page, reviewItem.itemId)
+  await page.getByRole("tab", { name: "Whole page" }).click()
+  const whole = page.getByAltText("The whole page this answer is on")
+  await expect(whole).toBeVisible()
+  await expect
+    .poll(() => whole.evaluate((el) => (el as HTMLImageElement).naturalWidth), { timeout: 15_000 })
+    .toBeGreaterThan(0)
+  expect(pageRequests).toHaveLength(1)
 
   expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
 })
@@ -319,11 +331,7 @@ test("a 404 from the crop route renders as absence, even though hasSourceBox is 
   // and the banner reads the SAME false-branch sentence a boxless item
   // gets -- not a half-true one that still claims to show the region.
   await expect(page.getByAltText(SCAN_CROP_ALT)).toHaveCount(0)
-  await expect(
-    page.getByText(
-      "This screen does not display the original scan. What's below is Lemely's own transcription of the student's answer.",
-    ),
-  ).toBeVisible()
+  await expect(page.getByText("Lemely's reading of the answer")).toBeVisible()
   // Scoped to a blob-sourced `<img>` specifically, not `getByRole("img")` --
   // this page legitimately carries two unrelated `role="img"` avatars (the
   // signed-in teacher's own, in the nav chrome, and the student's initials
@@ -451,7 +459,7 @@ async function sampleCropCensus(
 }
 
 /**
- * Walk forward via the on-screen "Next item" control -- a real client-side
+ * Walk forward via the on-screen "Next answer" control -- a real client-side
  * `navigate()`, never `page.goto` -- from wherever `page` currently is,
  * until `targetId`'s own URL is reached. Returns the hop count.
  *
@@ -491,35 +499,19 @@ async function sampleCropCensus(
 async function walkForwardTo(page: Page, targetId: string, maxHops = 5): Promise<number> {
   let hops = 0
   while (!page.url().endsWith(`/teacher/review/${targetId}`)) {
-    // The "Next item" vs "Back to queue" label depends on `useReviewQueue()`,
-    // a SEPARATE query from the detail panel's own loading state -- while it's
-    // still in flight, `nextItemId` computes as `undefined` (an empty
-    // `queueIds` array), which reads identically to "this item is genuinely
-    // last". `QueueStrip`'s "Item X of Y" only renders once the queue has
-    // resolved AND this item's position was found in it, so waiting for it
-    // here is what tells "still loading" apart from "actually last".
-    await expect(page.getByText(/^Item \d+ of \d+$/)).toBeVisible({ timeout: 15_000 })
-    // F6 (team-lead review): the control's own label reads "Back to queue",
-    // not "Next item", on the queue's LAST item (`{nextItemId ? "Next item"
-    // : "Back to queue"}` in ReviewItem.tsx) -- a `getByRole` locator built
-    // once, before the loop, on `/next item/i` would find nothing on that
-    // render and time out at Playwright's default (30s), which reads as an
-    // unrelated hang rather than this loop's own fast, named failure. Built
-    // fresh each iteration and checked before clicking.
-    const nextItemButton = page.getByRole("button", { name: "Next item" })
-    if ((await nextItemButton.count()) === 0) {
-      throw new Error(
-        `The "Next item" control read "Back to queue" instead, part-way through walking to ` +
-          `${targetId} -- current URL: ${page.url()}`,
-      )
-    }
+    // "Next answer" is disabled on the queue's last answer, and the position
+    // counter ("N of M") only reads a real position once the queue itself
+    // has resolved. Waiting for the button to be enabled tells "still
+    // loading" apart from "actually last", and fails fast with a named error.
+    const next = page.getByRole("button", { name: "Next answer" })
+    await expect(next).toBeEnabled({ timeout: 15_000 })
     hops += 1
     if (hops > maxHops) {
       throw new Error(
-        `Did not reach ${targetId} within ${maxHops} hops via "Next item" -- current URL: ${page.url()}`,
+        `Did not reach ${targetId} within ${maxHops} hops via "Next answer" -- current URL: ${page.url()}`,
       )
     }
-    await nextItemButton.click()
+    await next.click()
     await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0, { timeout: 15_000 })
   }
   return hops
@@ -547,7 +539,7 @@ async function sampleCrop(
 // Run three times against a build where `cropUrlFor` was reverted to bypass
 // that check entirely (`return fetched?.url ?? null`): 2 of 3 runs PASSED
 // (this test cannot see the bypass at all); the third FAILED, but not on the
-// race -- it failed on the same "Next item" control reading "Back to queue"
+// race -- it failed on the same walk-forward control state
 // mid-walk that #253 causes, unrelated to `cropUrlFor`. So ZERO of three
 // runs actually observed the race (a `colorA2` mismatch after navigating
 // back would have been the signature of that): the effect's own
@@ -611,15 +603,17 @@ test("navigating between two boxed items and back shows the currently-viewed ite
   const colorB = await sampleCropCentrePixel(page.getByAltText(SCAN_CROP_ALT))
   expect(colorB).not.toEqual(sampleA1.color)
 
-  // Back to A, `hops` times, via the BROWSER's own back button -- a real
-  // `popstate`-driven client-side transition, same fiber throughout. This is
+  // Back to A, `hops` times. On desktop the panel's navigation uses
+  // `replace`, so the browser's back button no longer steps between answers;
+  // the "Previous answer" control is the client-side transition instead, same
+  // fiber throughout. This is
   // the render C1 names: `ReviewItem`'s route carries no `key`, so React
   // Router does not remount the screen on this transition, and the first
   // render after it is exactly the render that used to commit B's
   // still-live object URL under A's name before the render-time `itemId` tag
   // (`useReviewItemCrop`) closed it.
   for (let i = 0; i < hops; i += 1) {
-    await page.goBack()
+    await page.getByRole("button", { name: "Previous answer" }).click()
     await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0, { timeout: 15_000 })
   }
   expect(page.url()).toContain(`/teacher/review/${reviewItem.itemId}`)

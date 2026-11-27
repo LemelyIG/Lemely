@@ -59,8 +59,7 @@ const Grading = lazy(() => import("./screens/Grading").then((m) => ({ default: m
 const RecentlyDeleted = lazy(() =>
   import("./screens/RecentlyDeleted").then((m) => ({ default: m.RecentlyDeleted })),
 )
-const Review = lazy(() => import("./screens/Review").then((m) => ({ default: m.Review })))
-const ReviewItem = lazy(() => import("./screens/ReviewItem").then((m) => ({ default: m.ReviewItem })))
+const ReviewQueue = lazy(() => import("./screens/review/ReviewQueue").then((m) => ({ default: m.ReviewQueue })))
 const Classes = lazy(() => import("./screens/Classes").then((m) => ({ default: m.Classes })))
 const ClassDetailLayout = lazy(() =>
   import("./screens/ClassDetail").then((m) => ({ default: m.ClassDetailLayout })),
@@ -520,14 +519,15 @@ export const teacherRoute: RouteObject = {
       handle: { title: "Recently deleted", skeleton: "list" },
     },
     {
+      // One element for the list and the open answer. Two sibling routes would remount the screen on the
+      // first decision (list to answer), dropping the undo toast and flushing the pending decision at once.
       path: "review",
-      element: <Review />,
+      element: <ReviewQueue />,
       handle: { title: "Review queue", skeleton: "list" },
-    },
-    {
-      path: "review/:itemId",
-      element: <ReviewItem />,
-      handle: { title: "Review a mark", skeleton: "page-header", immersive: true },
+      children: [
+        { index: true, element: <></>, handle: { title: "Review queue", skeleton: "list" } },
+        { path: ":itemId", element: <></>, handle: { title: "Review a mark", skeleton: "list", immersive: true } },
+      ],
     },
     {
       path: "classes",

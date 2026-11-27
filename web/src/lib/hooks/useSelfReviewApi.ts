@@ -5,6 +5,7 @@ import {
   type UseMutationResult,
   type UseQueryResult,
 } from "@tanstack/react-query"
+import { STUDENT_HOME_KEY } from "@/lib/hooks/useStudentHomeApi"
 import { ApiError, request } from "@/lib/api"
 import { clearDraft } from "@/lib/selfReview"
 import type { SelfReview, SelfReviewRevealed, SelfReviewSubmission } from "@/lib/selfReviewTypes"
@@ -106,6 +107,7 @@ export function useSubmitSelfReview(): UseMutationResult<
       queryClient.setQueryData(selfReviewKey(attemptId, questionResultId), data)
       clearDraft(attemptId, questionResultId)
       queryClient.invalidateQueries({ queryKey: ["student", "overview"] })
+      queryClient.invalidateQueries({ queryKey: STUDENT_HOME_KEY })
       queryClient.invalidateQueries({ queryKey: ["student", "subject"] })
       queryClient.invalidateQueries({ queryKey: ["student", "result"] })
       // Final review I-1: a granted self-mark moves `effective_marks`, which

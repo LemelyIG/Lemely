@@ -18,9 +18,7 @@ function sourceOf(relativePath: string): string {
 const SECTION_HEAD_FILE = "src/components/ui/section-head.tsx"
 
 const MIGRATED_SCREENS = [
-  "src/portals/student/screens/Overview.tsx",
   "src/portals/teacher/screens/ClassAnalytics.tsx",
-  "src/portals/teacher/screens/Review.tsx",
 ] as const
 
 describe("section-head.tsx", () => {
