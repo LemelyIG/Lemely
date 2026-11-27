@@ -38,7 +38,6 @@ from pydantic import (
     AwareDatetime,
     BaseModel,
     ConfigDict,
-    Field,
     ValidationError,
     field_validator,
     model_validator,
@@ -375,314 +374,6 @@ class ClassJoinedTutor(_TutorNamed):
         return f"/parent/children/{self.child_id}/tutoring"
 
 
-class SubscriptionNotice(EmailContext):
-    """A subscription event the payer must hear about (Paymob billing spec §2.6, §5.2).
-
-    No amount, plan name, card detail or other person's name travels in the mail: the screen
-    behind the link shows them to a signed-in payer. The date is the UTC date of
-    ``effective_at`` and carries no time of day.
-    """
-
-    template: ClassVar[str] = "subscription_notice"
-    notification_type: ClassVar[NotificationType] = NotificationType.billing
-    subject: ClassVar[str] = "Your Lemely plan"
-    button: ClassVar[str] = "Open billing"
-
-    subscription_id: uuid.UUID
-    notice: Literal["renewed", "payment_failed", "expired", "cancelled", "credited"]
-    effective_at: AwareDatetime
-
-    _LEADS: ClassVar[dict[str, str]] = {
-        "renewed": "Your Lemely plan renewed. The new period ends on {date}.",
-        "payment_failed": "We could not take your plan payment. Your plan stays on until {date}.",
-        "expired": (
-            "Your Lemely plan ended on {date} because the renewal payment did not go through."
-        ),
-        "cancelled": "Your Lemely plan was cancelled and ended on {date}.",
-        "credited": (
-            "Your payment on {date} was added to your credits because you already have an"
-            " active plan."
-        ),
-    }
-
-    def lead(self) -> str:
-        date = self.effective_at.astimezone(UTC).strftime("%d %b %Y")
-        return self._LEADS[self.notice].format(date=date)
-
-    def detail(self) -> str | None:
-        return None
-
-    def path(self) -> str:
-        return "/billing"
-
-
-class AutoTopupFailed(EmailContext):
-    """An auto top-up charge was declined, so auto top-up is switched off (Phase 06).
-
-    No amount, card detail or processor name travels in the mail: the billing screen shows what
-    the payer needs. The context holds the payment id only.
-    """
-
-    template: ClassVar[str] = "auto_topup_failed"
-    notification_type: ClassVar[NotificationType] = NotificationType.billing
-    subject: ClassVar[str] = "Auto top-up could not charge your card"
-    button: ClassVar[str] = "Open billing"
-
-    payment_id: uuid.UUID
-
-    def lead(self) -> str:
-        return (
-            "We could not charge your saved card for an auto top-up, so auto top-up is turned off."
-        )
-
-    def detail(self) -> str | None:
-        return "You can check your card and turn auto top-up back on in billing settings."
-
-    def path(self) -> str:
-        return "/billing"
-
-
-class AutoTopupCardMissing(EmailContext):
-    """Auto top-up was switched off because the payer's saved card was removed (Phase 06 T8).
-
-    No charge was attempted, so the mail must not say one failed. No amount, card detail or
-    processor name travels in it. The context holds the setting id only.
-    """
-
-    template: ClassVar[str] = "auto_topup_card_missing"
-    notification_type: ClassVar[NotificationType] = NotificationType.billing
-    subject: ClassVar[str] = "Auto top-up is off: your saved card was removed"
-    button: ClassVar[str] = "Open billing"
-
-    setting_id: uuid.UUID
-
-    def lead(self) -> str:
-        return "Auto top-up is turned off because your saved card was removed."
-
-    def detail(self) -> str | None:
-        return "Add a card and turn auto top-up back on in billing settings."
-
-    def path(self) -> str:
-        return "/billing"
-
-
-class AutoTopupPhoneRequired(EmailContext):
-    """Auto top-up was switched off because the payer has no usable mobile number (Phase 06 T8).
-
-    The processor needs one for every background charge, so none was attempted. The mail says what
-    to fix and carries no amount, card detail or processor name. The context holds the setting id.
-    """
-
-    template: ClassVar[str] = "auto_topup_phone_required"
-    notification_type: ClassVar[NotificationType] = NotificationType.billing
-    subject: ClassVar[str] = "Auto top-up is off: add a mobile number"
-    button: ClassVar[str] = "Open billing"
-
-    setting_id: uuid.UUID
-
-    def lead(self) -> str:
-        return "Auto top-up is turned off because there is no mobile number on your account."
-
-    def detail(self) -> str | None:
-        return (
-            "Add a mobile number to your account, then turn auto top-up back on in "
-            "billing settings."
-        )
-
-    def path(self) -> str:
-        return "/billing"
-
-
-class ExtraSeatsChargeFailed(EmailContext):
-    """The fallback charge for extra student seats was declined (Phase 06).
-
-    The mail states the grace window and what follows it, and carries no amount, plan name,
-    card detail or student name. The context holds the subscription id and the grace length.
-    """
-
-    template: ClassVar[str] = "extra_seats_charge_failed"
-    notification_type: ClassVar[NotificationType] = NotificationType.billing
-    subject: ClassVar[str] = "Your extra seats payment failed"
-    button: ClassVar[str] = "Open billing"
-
-    subscription_id: uuid.UUID
-    #: The grace the failure started (``billing_settings.grace_days``); rows queued before the
-    #: field existed were all 3-day graces.
-    grace_days: int = Field(default=3, ge=1, le=7)
-
-    def lead(self) -> str:
-        head = "We could not charge your card for your extra student seats. "
-        if self.grace_days == 1:
-            return head + "If no payment succeeds within 1 day, the extra seats are removed."
-        return (
-            head + "We will try again each day; if no payment succeeds within "
-            f"{self.grace_days} days, the extra seats are removed."
-        )
-
-    def detail(self) -> str | None:
-        return (
-            "Students beyond your plan's included seats then keep their seat until the end "
-            "of the month."
-        )
-
-    def path(self) -> str:
-        return "/billing"
-
-
-def _terms_date(instant: AwareDatetime) -> str:
-    return instant.astimezone(UTC).strftime("%d %b %Y")
-
-
-class PlanTermsChange(EmailContext):
-    """The plan's price or terms change at the renewal on ``applies_at`` (UD13-A).
-
-    UD13-E: no amount, plan name or card detail travels in the mail. It says that the price or
-    what the plan includes changes, and when; the billing screen behind the link shows the figures
-    to a signed-in payer. A teacher holding more student seats than the new plan covers is told
-    how many to remove or add, which is a count of seats, not money.
-    """
-
-    template: ClassVar[str] = "plan_terms_change"
-    notification_type: ClassVar[NotificationType] = NotificationType.billing
-    subject: ClassVar[str] = "The terms of your Lemely plan are changing"
-    button: ClassVar[str] = "Open billing"
-
-    subscription_id: uuid.UUID
-    applies_at: AwareDatetime
-    price_changes: bool
-    entitlements_change: bool
-    seats_over: int = Field(default=0, ge=0, le=100_000)
-
-    def lead(self) -> str:
-        return f"The terms of your Lemely plan change from {_terms_date(self.applies_at)}."
-
-    def detail(self) -> str | None:
-        date = _terms_date(self.applies_at)
-        parts: list[str] = []
-        if self.price_changes:
-            parts.append("The price of your plan changes.")
-        if self.entitlements_change:
-            parts.append("What your plan includes changes too.")
-        if self.seats_over > 0:
-            n = self.seats_over
-            parts.append(
-                f"You hold {n} more student seat{'s' if n != 1 else ''} than the new plan covers: "
-                f"remove {n} student{'s' if n != 1 else ''} or add {n} seat{'s' if n != 1 else ''} "
-                f"before {date}."
-            )
-        parts.append(f"You can cancel your plan in billing before {date}.")
-        return " ".join(parts)
-
-    def path(self) -> str:
-        return "/billing"
-
-
-class PlanTermsEnds(EmailContext):
-    """The plan ends at ``ends_at`` instead of renewing at a new price (UD-P4 fixed-amount path).
-
-    Paymob cannot change the amount of this subscription, so the new price cannot be charged to it.
-    The mail says the plan ends and to subscribe again; it carries no amount.
-    """
-
-    template: ClassVar[str] = "plan_terms_ends"
-    notification_type: ClassVar[NotificationType] = NotificationType.billing
-    subject: ClassVar[str] = "Your Lemely plan ends because its price is changing"
-    button: ClassVar[str] = "Open billing"
-
-    subscription_id: uuid.UUID
-    ends_at: AwareDatetime
-
-    def lead(self) -> str:
-        return (
-            f"Your Lemely plan ends on {_terms_date(self.ends_at)} because its price is changing."
-        )
-
-    def detail(self) -> str | None:
-        return (
-            "To keep learning with Lemely, open billing once your plan has ended and subscribe "
-            "again at the new price. You keep full access until then."
-        )
-
-    def path(self) -> str:
-        return "/billing"
-
-
-class PlanTermsCancelled(EmailContext):
-    """A plan change announced earlier has been cancelled (the admin reverted the edit).
-
-    The copy promises no price. The risk it names is the ANNOUNCED amount: the payment processor
-    may still hold it until it is corrected, so a renewal taken at it before then is refunded
-    afterwards. ``plan_continues`` is the variant for a plan the payer had been told would end
-    (the fixed-amount path): the cancel is withdrawn, so the plan now renews and charges the card.
-    No amount, plan name or card detail travels in the mail (UD13-E).
-    """
-
-    template: ClassVar[str] = "plan_terms_cancelled"
-    notification_type: ClassVar[NotificationType] = NotificationType.billing
-    subject: ClassVar[str] = "The change to your Lemely plan has been cancelled"
-    button: ClassVar[str] = "Open billing"
-
-    subscription_id: uuid.UUID
-    plan_continues: bool = False
-
-    def lead(self) -> str:
-        if self.plan_continues:
-            return (
-                "The change to your Lemely plan has been cancelled, so your plan will not end. "
-                "It will renew at the end of the period and your card will be charged."
-            )
-        return "The change to your Lemely plan that we told you about has been cancelled."
-
-    def detail(self) -> str | None:
-        rest = (
-            "If a payment is taken at the amount we announced before our systems catch up, we "
-            "will refund the difference."
-        )
-        if self.plan_continues:
-            return (
-                "To stop it, cancel your plan in billing before the period ends. "
-                f"Your plan stays on its current terms. {rest}"
-            )
-        return f"Your plan stays on its current terms. {rest}"
-
-    def path(self) -> str:
-        return "/billing"
-
-
-class ChargeAfterPlanEnd(EmailContext):
-    """A renewal payment arrived after the plan was set to end, so it will be refunded.
-
-    The platform cancelled the plan for a price change and the payment processor charged before
-    the cancel reached it. No period was granted. The mail carries no amount, plan name or card
-    detail (UD13-E); the context holds the payment id only.
-    """
-
-    template: ClassVar[str] = "charge_after_plan_end"
-    notification_type: ClassVar[NotificationType] = NotificationType.billing
-    subject: ClassVar[str] = "A payment on your Lemely plan will be refunded"
-    button: ClassVar[str] = "Open billing"
-
-    payment_id: uuid.UUID
-    #: The plan had already ended when the payment arrived (not only been set to end).
-    plan_ended: bool = False
-
-    def lead(self) -> str:
-        if self.plan_ended:
-            return "We received a payment for your Lemely plan after it had ended."
-        return "We received a payment for your Lemely plan after it was set to end."
-
-    def detail(self) -> str | None:
-        if self.plan_ended:
-            return "We will refund it, so you do not need to do anything."
-        return (
-            "We will refund it, so you do not need to do anything. Your plan still ends on the "
-            "date we told you."
-        )
-
-    def path(self) -> str:
-        return "/billing"
-
-
 _TEMPLATE_CLASSES: Final[tuple[type[EmailContext], ...]] = (
     BookingRequested,
     BookingRequestedFamily,
@@ -694,36 +385,12 @@ _TEMPLATE_CLASSES: Final[tuple[type[EmailContext], ...]] = (
     ParentUnlinked,
     ParentLinked,
     ClassJoinedTutor,
-    SubscriptionNotice,
-    AutoTopupFailed,
-    AutoTopupCardMissing,
-    AutoTopupPhoneRequired,
-    ExtraSeatsChargeFailed,
-    PlanTermsChange,
-    PlanTermsEnds,
-    PlanTermsCancelled,
-    ChargeAfterPlanEnd,
 )
 
 #: Every template, keyed by the name stored in ``email_outbox.template``.
 EMAIL_TEMPLATES: Final[Mapping[str, type[EmailContext]]] = {
     cls.template: cls for cls in _TEMPLATE_CLASSES
 }
-
-#: Templates outside the tutoring spec's §b.4 table (Paymob billing).
-BILLING_EMAIL_TEMPLATES: Final[frozenset[str]] = frozenset(
-    {
-        SubscriptionNotice.template,
-        AutoTopupFailed.template,
-        AutoTopupCardMissing.template,
-        AutoTopupPhoneRequired.template,
-        ExtraSeatsChargeFailed.template,
-        PlanTermsChange.template,
-        PlanTermsEnds.template,
-        PlanTermsCancelled.template,
-        ChargeAfterPlanEnd.template,
-    }
-)
 
 
 def _stop(sentence: str) -> str:
@@ -940,21 +607,11 @@ def build_transactional_provider(settings: Settings) -> TransactionalEmailProvid
 
 
 __all__ = [
-    "BILLING_EMAIL_TEMPLATES",
     "EMAIL_TEMPLATES",
-    "AutoTopupCardMissing",
-    "AutoTopupFailed",
-    "AutoTopupPhoneRequired",
-    "ChargeAfterPlanEnd",
     "EmailContext",
-    "ExtraSeatsChargeFailed",
     "InvalidEmailContext",
     "MockTransactionalEmailProvider",
-    "PlanTermsCancelled",
-    "PlanTermsChange",
-    "PlanTermsEnds",
     "ResendTransactionalEmailProvider",
-    "SubscriptionNotice",
     "TransactionalEmailProvider",
     "build_transactional_provider",
     "render_email",

@@ -131,12 +131,7 @@ field are ignored by pydantic-settings, so a typo'd *env var* is silent — chec
 | `ANTHROPIC_API_KEY` | `None` | Required: every task tag except `mark_scheme` defaults to a `claude-` model since sub-project C (`BUILD/accuracy-runs/claude-c-2026-10-26-live3/FLIP.md`): `claude-haiku-5-5` for `gemini.model` and every per-task model but `mark_scheme_model`, the binder's `read_model` and the adjudication model, and `claude-sonnet-5-5` for the binder's `retry_model`; there is no default escalation model. A tag moved back to a `gemini-` model by config is the only way a deployment can leave it out. Every `claude-` call goes through `lemely/io/providers/anthropic_adapter.py` behind the same cache, retry and spend ledger as Gemini. Absent, a call to a `claude-` model fails with `ExternalServiceError` (not retried). `lemely doctor` fails and the web process logs an error at startup when any configured `claude-` model lacks a key: both check one table (`lemely/io/model_table.py`), which covers every `model_for` tag (`correction`, `correction_borderline`, `escalation`, `extraction`, `generation`, `mark_scheme`, `scan_metadata`, `study_plan`), `gemini.cascade_strong_model` when the cascade is on, and the binding step's models. Secret, env-only like `GEMINI_API_KEY` — never put it in `lemely.toml`. Student work goes only through the synchronous Messages API; the Message Batches API is not used (data-protection decision). A file call on a `claude-` model raises `ValueError`; page images are supported. **Claude Files API (page images).** With `gemini.claude_files_api` on (the default), page images for `claude-` calls are uploaded to Anthropic's Files API once per job, with a one-hour expiry, and deleted when the job ends. Files API storage is not covered by zero data retention, and any API key of the workspace can read an uploaded file, so the Anthropic key must belong to a dedicated Lemely workspace. Claude code execution (any task tag, by user decision 2026-10-20) is likewise not covered by zero data retention. Turn the flag off to send pages inline instead (limited to 30 MB of base64 per request). |
 | `LEMELY_WEB_HOST` / `LEMELY_WEB_PORT` | `0.0.0.0` / `8000` **in the image** | Already correct in the Dockerfile. The *application* default is `127.0.0.1`, right for a bare-metal dev run and unreachable from outside a container — the image overrides it (`Dockerfile:51-52`). |
 | `LEMELY_PUSH__VAPID_PUBLIC_KEY` / `__VAPID_PRIVATE_KEY` / `__VAPID_SUBJECT` | `None` | To enable web push. All three absent is a **supported** state (D5.9 §4): the transport reports itself unavailable and the notification inbox keeps working. Generate with `lemely push-keygen`; `deploy.yml` reads the public key from the `VAPID_PUBLIC_KEY` repository variable and the private key from the `VAPID_PRIVATE_KEY` secret. Rotating the pair invalidates every stored subscription — see `docs/push-notifications.md`. |
-| `LEMELY_NOTIFICATIONS__SWEEPER_ENABLED` | `true` | Set `false` to run an API instance that never sweeps (a second replica behind a load balancer, or a one-off maintenance container). `deploy.yml` sets it `false` on Cloud Run once that environment's Cloud Scheduler sweep job is in place, and `true` until then (see §5.2); the test suite sets it too. See §5.2 for the Cloud Run caveat; `__SWEEP_POLL_SECONDS` (60), `__STREAK_WARNING_HOUR` (19) and `__STUDY_PLAN_REMINDER_HOUR` (8) are its companions. |
-| `LEMELY_NOTIFICATIONS__JOBS_SECRET` | `None` | Shared secret for `POST /api/internal/jobs/sweep`, which Cloud Scheduler calls every minute (`X-Cron-Secret` header) to run one sweeper pass. Unset, the endpoint answers 503. `deploy.yml` reads it from the `SWEEP_JOBS_SECRET` environment secret. See §5.2. |
-| `LEMELY_NOTIFICATIONS__JOBS_SECRET_PREVIOUS` | `None` | Only during a staged rotation of the sweep secret: the old value, accepted beside `JOBS_SECRET` (constant-time, every candidate compared). `deploy.yml` reads it from the optional `SWEEP_JOBS_SECRET_PREVIOUS` environment secret. See §5.2 "Rotating the secret". |
-| `LEMELY_NOTIFICATIONS__SWEEP_PASS_BUDGET_SECONDS` | `60` | Wall-clock budget of one sweep pass (loop or trigger); jobs not started when it is spent are skipped until the next tick. Keep it at least 30 s under the Scheduler job's 90 s attempt deadline. Settings refuse a budget that, plus one saved-card charge's worst case, would pass 210 s (the sweep lock's 240 s idle timeout less 30 s). See §5.2. |
-| `LEMELY_NOTIFICATIONS__SWEEP_ROW_SECONDS` / `__SWEEP_PAYMOB_REQUEST_SECONDS` / `__SWEEP_ROW_HARD_SECONDS` | `1.0` / `7.0` / `5.0` | How long the sweep expects one row's database work and one Paymob request to take, and the most a row's database work may take. A unit of work starts only while its expected time fits the pass budget and its worst case ends inside the 210 s limit. See §5.2. |
-| `LEMELY_PAYMOB__TIMEOUT_SECONDS` / `__CONNECT_TIMEOUT_SECONDS` / `__WRITE_TIMEOUT_SECONDS` / `__POOL_TIMEOUT_SECONDS` | `20` / `5` / `5` / `5` | Paymob client timeouts (read, connect, write, pool). Their sum is the worst case of one request, which the sweep's time limits are built on; raising them can make the settings check above fail at startup. |
+| `LEMELY_NOTIFICATIONS__SWEEPER_ENABLED` | `true` | Set `false` to run an API instance that never sweeps (a second replica behind a load balancer, or a one-off maintenance container). The test suite sets it. See §5.2 for the Cloud Run caveat; `__SWEEP_POLL_SECONDS` (60), `__STREAK_WARNING_HOUR` (19) and `__STUDY_PLAN_REMINDER_HOUR` (8) are its companions. |
 | `LEMELY_EMAIL__APP_BASE_URL` | `https://lemelyig.com` | The origin emailed verification/reset links are built on. Links are minted as frontend routes (`/verify-email/<token>`), so without an origin a mail client resolves them to `http:///…` — unreachable. `deploy.yml` sets it per environment (`staging.lemelyig.com` vs `lemelyig.com`). Rejected at startup unless it has both a scheme and a host. |
 | `LEMELY_EMAIL__API_KEY` | `None` | To actually send verification / password-reset mail (Resend). Absent is a **supported** state: `lemely.web.deps` wires the offline mock, which logs the link and code and lets the auth routes return them, so sign-up works with no mail service. Setting it flips both halves — mail sends *and* the routes stop returning the live credentials. Optional companions: `__FROM_ADDRESS` (`noreply@lemelyig.com`), `__FROM_NAME` (`Lemely`), `__REPLY_TO`, `__CONTACT_ADDRESS` (`contact@lemelyig.com`, the inbox that receives landing-page FAQ questions from `POST /api/contact`). On the deployed pipeline this is not set by hand: it is the `RESEND_API_KEY` Actions environment secret, which `deploy.yml` passes through as this variable. See `docs/email-delivery.md` for the Cloudflare DNS records and `docs/ci-cd.md` for the secret. |
 | `LEMELY_STORAGE__BACKEND` | `local` | Set `gcs` for any deploy that isn't local dev/Compose/CI — see [§5.1](#51-the-single-replica-constraint-is-lifted). `local` writes under `paths.output_dir/storage` on the container's own disk. There is no Supabase Storage backend; that code was deleted (DS7). |
@@ -421,9 +416,8 @@ The nginx/web image never had this constraint and scales freely regardless.
 ### 5.2 The notification sweeper runs inside the API process, and Cloud Run can scale it to nothing
 
 `create_app` starts one asyncio task (`lemely/web/app.py`, `_lifespan`) that every
-`[notifications] sweep_poll_seconds` (60) runs the sweeper's jobs: five notification jobs
-from `lemely/web/scheduled_notifications.py` (below) alongside the billing, usage and seat
-sweeps. It publishes announcements whose `publish_at`
+`[notifications] sweep_poll_seconds` (60) runs five jobs from
+`lemely/web/scheduled_notifications.py`: it publishes announcements whose `publish_at`
 has passed, sends `streak_warning` at `streak_warning_hour` (19:00) and
 `study_plan_reminder` at `study_plan_reminder_hour` (08:00) (each in the recipient's
 **own** time zone, `users.timezone`), and purges expired student and console papers
@@ -433,221 +427,24 @@ announcement claim is `FOR UPDATE SKIP LOCKED` and every notification is deduped
 the unique index on `notifications` — but §5.1 still limits you to one for other
 reasons.
 
-**The loop alone cannot work at `--min-instances=0`, which is what `deploy.yml` sets.**
-At zero instances the container is not running, and while an instance is warm but idle
-Cloud Run throttles its CPU, so no sweep happens. That covers more than notifications:
-the sweeper also runs the billing and usage jobs (payment reconcile, subscription
-period-end, overdue and drift sweeps, grant and hold expiry, auto top-up, the fallback
-seat charge, signup-grant repair, manual-subscription expiry and the daily usage
-reconcile at or after 02:00 UTC). A 19:00 streak warning missed that way is **skipped for
-that day** (the per-zone memo and the dedupe key are scoped to the user's civil date), and
-a payment that was paid but never reconciled stays pending.
+**Timely delivery needs `--min-instances=1`, and `deploy.yml` sets `--min-instances=0`.**
+At zero instances the container is not running and no sweep happens; the first request
+after scale-up sweeps immediately and delivers late. For an announcement that is
+correct-but-late. For a 19:00 streak warning it may mean **no warning at all that day**:
+the per-zone memo and the dedupe key are both scoped to the user's civil date, so a
+warning that was never sent on the 5th is not sent on the 6th under the 5th's key.
+Raise `--min-instances` to 1 in `deploy.yml` when the notifications matter more than the
+idle cost; until then this section is the honest statement of what the platform gives.
 
-**Decision: Cloud Scheduler calls an authenticated endpoint, instead of an always-on
-instance (`--min-instances=1` with CPU always allocated).** Scheduler runs one sweep pass
-through `POST /api/internal/jobs/sweep` every minute. The request wakes the service and
-keeps its CPU allocated for the length of the pass, so the platform stays scale-to-zero and
-costs a request a minute rather than a permanently billed instance. The in-process loop is
-**switched off on Cloud Run** once the Scheduler job is in place: once its request ends an
-instance's CPU is throttled, so a loop pass could stall mid-pass while holding the pass lock and
-hold off the Scheduler calls behind it. The loop stays on by default for local runs and hosts
-with always-on CPU.
-
-- **Who drives the sweep is decided at each deploy.** Before the new revision is created, the
-  `Decide who drives the sweeper` step in `deploy-backend`
-  (`scripts/scheduler_reconcile.py --sweep-driver`) lists the environment's Scheduler jobs and
-  sets `LEMELY_NOTIFICATIONS__SWEEPER_ENABLED=false` only when `lemely-<environment>-sweep`
-  exists, is `ENABLED`, carries the `managed-by=lemely-deploy` marker and calls this
-  environment's `/api/internal/jobs/sweep`. Otherwise it sets `true`. On the first deploy that
-  introduces the job, the revision therefore keeps its loop (the job is created only at the end
-  of that deploy), and the next deploy turns the loop off. A failed listing also keeps the loop
-  on: two drivers are safe, because the pass lock lets one pass run at a time, while no driver
-  is not. The check reads no secret and ignores the job's header, so rotating the secret never
-  changes the setting and never recreates the job.
-- **If the reconcile fails while the loop is off**, the job may be missing or broken and nothing
-  runs billing passes. The deploy then fails with `billing sweep driver absent` and prints the
-  command that turns the loop back on until a later deploy reconciles the job:
-  `gcloud run services update lemely-backend-<environment> --region=us-central1 --project=PROJECT_ID --update-env-vars=LEMELY_NOTIFICATIONS__SWEEPER_ENABLED=true`.
-  The next successful deploy sets the value again from the job's state.
-- **Open question: CPU after the caller disconnects.** Whether Cloud Run keeps CPU allocated to a
-  request after Cloud Scheduler stops waiting for it at the 90 s attempt deadline has not been
-  verified for this service. A pass is built to end well inside 90 s; if it ever runs on without
-  CPU, the lock's 240 s idle timeout (below) still frees the lock.
-
-- **What one pass is:** exactly what one loop tick runs (`Sweeper.sweep_exclusive`, the one
-  entry point of both the loop and the endpoint), including the
-  time-of-day-gated daily usage reconcile once it is due, and nothing the loop does not run.
-  Without Paymob configured the Paymob-backed jobs are simply not part of the pass, as in the
-  loop. A job that raises is logged as `sweep_job_failed` (the event alerts key on), reported
-  as `null` in the response, and does not stop the others.
-- **Response** (200, no customer data, job names and counts only):
-  `{"status": "completed", "jobs": {"billing.reconcile_pending": 2, ...}, "failed": [], "skipped": []}`.
-  `failed` lists the jobs that raised; the status stays 200 so Scheduler does not retry a whole
-  pass because one job is unhealthy. `skipped` lists the jobs not started because the pass
-  budget was already spent (below): not failed, the next pass runs them again in the usual order.
-- **Time budget.** One pass is bounded to `[notifications] sweep_pass_budget_seconds` (default
-  **60 s**) of wall clock, counted from the start of the call, before the pass waits for a
-  database connection or the lock. The Scheduler job has a 90 s attempt deadline and Cloud Run's
-  request timeout is 300 s, so 60 s leaves 30 s for a cold start, the proxy and the unit in flight
-  when the budget ends (a test keeps the budget at least 30 s under the deadline). Jobs not
-  started when it is spent are skipped (`sweep_pass_budget_spent` warning, listed in `skipped`).
-- **Units of work.** The batches stop *between* units, never inside one: a subscription row, a
-  payment inquiry, a database-only row, or a saved-card charge, which is never interrupted once
-  claimed. A unit starts only if its expected time fits what is left of the budget
-  (`sweep_row_seconds` plus `sweep_paymob_request_seconds` for each Paymob request it usually
-  makes: 15 s for a charge's two requests) and if its worst case (`sweep_row_hard_seconds` plus
-  the sum of the Paymob timeouts for each request it can make) would end within 210 s of the
-  start, the lock's 240 s idle timeout less 30 s. That worst case is planning arithmetic, not a
-  wall-clock guarantee: it assumes the instance keeps its CPU (a read timeout also bounds each
-  read, not a whole slow response), and Cloud Run's documentation does not promise CPU to a
-  request-billed instance once Scheduler has disconnected. The one limit enforced whatever the
-  instance does is Postgres ending the lock transaction after 240 s idle (below). Batches that
-  call Paymob under the auth token renew a token about to expire before their first row, so the
-  renewal is timed before any row starts. A pass that still runs past its budget (one slow
-  charge) logs `sweep_pass_overran` with the elapsed time; that is not a job failure.
-- **Fairness.** Each batch also has a slice of the budget from its own start (`RECONCILE_SHARE`
-  13 %, `EXPIRE_OVERDUE_SHARE` and `PERIOD_END_SHARE` 10 %, `DRIFT_CHECK_SHARE` 15 %,
-  `EXTRA_SEAT_RENEWAL_SHARE` 10 %), after which it starts no further unit; its first unit always
-  starts while the budget admits it. With every backlog full, the two saved-card batches (the
-  extra-seat renewal, then the auto top-up) do not both fit one 60 s pass, so they alternate
-  priority in five-minute windows (`PAYMENT_TURN_MINUTES`) counted from the pass's own clock:
-  the extra-seat renewal has priority in the even windows, the top-up in the odd ones. The
-  priority needs no stored state, so every replica agrees on it. Every batch before the one with
-  priority leaves a 16 s planning reserve free, the estimated time of one database row (for the
-  top-up, one refusal row) and one charge; on its own windows the seat batch leaves only the
-  charge's 15 s free while it works through its rows. The other saved-card batch still runs in
-  its place and uses whatever is left. Priority is not a minimum charge per pass. The reserve
-  holds only under the modelled timings: a top-up refusal step with more rows than one, or a
-  job after the reserve is set that does not check the budget, can use it up, and the batch
-  with priority then starts no charge on that pass. A test runs passes on a fake clock with
-  every unit at its expected time and shows the batch with priority starting a charge when the
-  jobs before the reconcile take up to about 44 s. Priority also depends on the trigger
-  cadence: the shipped Scheduler job fires every minute, so each window gets several passes,
-  but a trigger aligned to every 10 minutes would land in the same window parity each time and
-  one batch would never get priority. The price is that the subscription batches give up their
-  later units to that reserve first: once the jobs before the reconcile take more than about
-  5 s, the drift check starts no row on a full-backlog pass under those timings. None of this is
-  a throughput guarantee: a queue that grows faster than its batch charges on its own windows
-  still drains too slowly, and the extra-seat grace can end before an attempt reaches it. The
-  rows a batch leaves are still due and are taken by a later
-  pass. The job order itself is load-bearing (an expired plan's seats are handled before the
-  next month's grant), so it is fixed and never rotated. A persistent `skipped` list, or batches
-  that never drain, are the signal to raise the budget and the Scheduler attempt deadline
-  together (the settings check above bounds how far), or to shorten the batches.
-- **Per-process memory.** The daily usage reconcile's memo and the signup repair's cursor live in
-  each process's sweeper, not in the database. A cold start, or a pass that lands on another
-  replica, repeats the daily check and restarts the repair scan from the beginning, inside the
-  pass budget like any job. That repeats idempotent work and changes no result.
-- **No retries.** The Scheduler job is created with `--max-retry-attempts=0` and
-  `--attempt-deadline=90s` (per-job policy in `.github/scheduler-jobs.json`; the digest keeps
-  its 3 retries and 6-minute backoff, which its claim lease needs). A retry of a pass that
-  overran would land while the first pass still holds the lock, and Scheduler skips later runs
-  while an execution is outstanding; the next minute's call is the retry.
-- **Overlap.** A pass holds the Postgres advisory lock `lemely.sweeper.pass`
-  (`pg_try_advisory_xact_lock`, `Sweeper.sweep_exclusive`) for its whole length. The in-process
-  loop, where it is enabled, takes the same lock, so a loop pass and a trigger never run side by
-  side. A second call,
-  on this instance or another, returns at once with
-  `{"status": "skipped", "jobs": {}, "failed": [], "skipped": []}` (200) and logs
-  `sweep_pass_skipped`. The lock is released however the pass ends (an exception included), or
-  when its connection dies. It is an overlap guard, not a correctness guard: every job is
-  idempotent by row state, exactly as with two replicas' loops, so a lock lost to a dropped
-  connection costs a duplicate pass, not a duplicate effect. The lock's transaction sets
-  `idle_in_transaction_session_timeout = '240s'` for itself only (`SET LOCAL`): if a pass stalls
-  (a hung worker, throttled CPU), Postgres ends that transaction and frees the lock within four
-  minutes, under Cloud Run's 300 s request timeout, so one stalled pass cannot block every later
-  call. The stalled pass is then reported as failed; the jobs it already ran stay done.
-- **Connection pool.** The lock holds one pooled connection, idle in its transaction, for the
-  whole pass while every job opens its own session, so `[database] pool_size + max_overflow`
-  must be at least **2**. Settings refuse a smaller value at startup (a pool of 1 with no
-  overflow would make every pass wait out `pool_timeout_seconds` for a connection it holds
-  itself). The defaults are 5 and 10.
-- **Auth.** Header `X-Cron-Secret`, the digest endpoint's scheme, compared in constant time.
-  Missing or wrong: 403. No secret configured: **503**, not the digest's 404 (the Scheduler job
-  exists and is failing, which should be visible). The secret is
-  `LEMELY_NOTIFICATIONS__JOBS_SECRET` on the service, GitHub environment secret
-  `SWEEP_JOBS_SECRET` (a random string, separate from `WAITLIST_DIGEST_SECRET`): at least 32
-  characters from letters, digits and `_ . ~ + / : = @ -`, no whitespace (for example
-  `openssl rand -hex 32`).
-- **A missing secret stops the deploy.** The new revision answers 503 on this route without it,
-  and nothing else would ever run the billing sweeps at zero instances, so the
-  `Preflight the sweep secret` step in the `migrate` job
-  (`scripts/scheduler_reconcile.py --preflight`, before Alembic runs, so before any migration,
-  image build, frontend deploy or traffic switch) fails the deploy while the old revision still
-  serves when `SWEEP_JOBS_SECRET` is missing,
-  blank, shorter than 32 characters, or has characters that are not header-safe. It prints
-  which check failed, never the value. The reconcile step treats a missing secret for this job
-  as an error too (the digest's missing secret is still only a warning).
-- **Rotating the secret (two phases, no failed run).** The service and the Scheduler job learn
-  a new value at different points of one deploy (the revision takes traffic first, the job is
-  updated last), so a plain swap would send the old value to the new revision. Stage it:
-  1. Set GitHub environment secret `SWEEP_JOBS_SECRET_PREVIOUS` to the **old** value and
-     `SWEEP_JOBS_SECRET` to the **new** one. Deploy. The service accepts either
-     (`LEMELY_NOTIFICATIONS__JOBS_SECRET_PREVIOUS`, every candidate compared in constant time,
-     none short-circuited), and the reconcile step rewrites the Scheduler job with the new value.
-  2. Confirm one Scheduler run succeeded with the new value: run
-     `gcloud scheduler jobs run lemely-<environment>-sweep --project=PROJECT_ID --location=us-central1`
-     and read the job log for a 200 **timestamped after the reconcile step updated the job**. A
-     200 from before that update was made with the old value and proves nothing.
-  3. Only then delete `SWEEP_JOBS_SECRET_PREVIOUS` (or blank it) and deploy again. The old value
-     is refused from then on. The preflight rejects a `PREVIOUS` equal to the current secret, so
-     a rotation cannot be half-staged by mistake.
-
-  **Rolling back mid-rotation.** Once step 1's reconcile has written the new value into the
-  job, rolling the service back to a revision that knows only the old value makes every
-  scheduled call fail with 403. Re-run the reconcile with the old value as `SWEEP_JOBS_SECRET`
-  (restore the secret and redeploy, or run `scripts/scheduler_reconcile.py` with it set) so the
-  job and the serving revision agree again, then start the rotation over.
-- **Who can read the secret.** Whoever can read the Scheduler job can read the sweep credential:
-  the job carries `X-Cron-Secret` in its HTTP headers, and `gcloud scheduler jobs describe`
-  returns them. Restrict `cloudscheduler.jobs.get` / `list` (Cloud Scheduler Viewer and up, and
-  anything broader that includes them) to the deploy account and the owners, and treat a leaked
-  job description as a leaked secret: rotate as above. The same holds for the digest job.
-
-**Scheduler job.** `deploy.yml` creates it for you: the `sweep` entry in
-`.github/scheduler-jobs.json` is reconciled on every deploy (see `docs/ci-cd.md`, "Cloud
-Scheduler jobs"), as `lemely-<environment>-sweep`, in `us-central1` like the digest job, once
-`SWEEP_JOBS_SECRET` is set for that environment. The schedule is **`* * * * *` UTC**: one
-minute is Cloud Scheduler's shortest interval and matches the loop's `sweep_poll_seconds`
-(60 s), so scheduled announcements and the 19:00 / 08:00 notifications are as timely on Cloud
-Run as the loop makes them elsewhere. A call that finds a pass already running costs
-almost nothing, and the schedule can be relaxed (`*/5 * * * *`) if the request count matters
-more than minute-level timing. The equivalent manual commands, for a project where the
-reconcile step has not run (replace `PROJECT_ID`, and `SECRET` with the value of
-`SWEEP_JOBS_SECRET`; staging first, then production):
-
-```
-gcloud scheduler jobs create http lemely-staging-sweep \
-  --project=STAGING_PROJECT_ID --location=us-central1 \
-  --schedule="* * * * *" --time-zone=UTC \
-  --uri="https://staging.lemelyig.com/api/internal/jobs/sweep" --http-method=POST \
-  --headers="X-Cron-Secret=SECRET" \
-  --max-retry-attempts=0 --attempt-deadline=90s \
-  --description="managed-by=lemely-deploy; id=sweep; Billing and notification sweeper pass"
-
-gcloud scheduler jobs create http lemely-production-sweep \
-  --project=PRODUCTION_PROJECT_ID --location=us-central1 \
-  --schedule="* * * * *" --time-zone=UTC \
-  --uri="https://lemelyig.com/api/internal/jobs/sweep" --http-method=POST \
-  --headers="X-Cron-Secret=SECRET" \
-  --max-retry-attempts=0 --attempt-deadline=90s \
-  --description="managed-by=lemely-deploy; id=sweep; Billing and notification sweeper pass"
-```
-
-These are the flags the reconcile step issues, and the `managed-by=lemely-deploy` description
-marker lets the next deploy adopt and update the job instead of failing on a name clash. Run one
-by hand with
-`gcloud scheduler jobs run lemely-<environment>-sweep --project=PROJECT_ID --location=us-central1`
-and read the job log: 200 is a completed or skipped pass, 403 a wrong secret, 503 an unset one.
-A pass is bounded to 60 s so it finishes inside the 90 s attempt deadline and Cloud Run's
-300 s request timeout (see "Time budget" above); there are no Scheduler retries.
-
-The same gap affected purge before this endpoint: a paper past its retention cutoff was not
-deleted from storage until the next sweep ran. The purge query is idempotent and its cutoff is
-inclusive, so a missed sweep is never a *skip*, only a late purge. The admin pipeline health
-screen's `purgeBacklog` metric (`lemely/db/admin_repo.py`, `pipeline_health`) is the check
-that the Scheduler job is actually running: a count that runs persistently above zero means
-it is not.
+The same scale-to-zero gap applies to purge: at `--min-instances=0` a paper past its
+retention cutoff is not deleted from storage until the next sweep runs, however long
+the service sits idle. Unlike the streak warning, this is never a *skip* — the purge
+query is idempotent and its cutoff is inclusive, so a paper that missed one sweep is
+still purged by the next one, just later than the 30-day figure the data-handling page
+states. The admin pipeline health screen's `purgeBacklog` metric (`lemely/db/admin_repo.py`,
+`pipeline_health`) surfaces exactly this lag — the count of attempts and console papers
+still present more than a day past their purge cutoff — so raise `--min-instances` if
+that number runs persistently above zero.
 
 At-risk rule 3 (≥14 days inactive) is still **not** delivered by anything: the alert
 fires on correction, and a student who just uploaded is by definition active.
@@ -974,7 +771,7 @@ approval queue (X-04) shows "Email delivery: mock". A deploy can look healthy wh
 no booking email goes out. At most `[tutoring] email_daily_cap` (60) are sent a
 day; a failed email is not retried; delivery is one more job on the in-process
 sweeper (§5.2), so at `--min-instances=0` queued emails wait for the next
-Cloud Scheduler sweep call (every minute) or the next instance. See `docs/email-delivery.md`.
+instance. See `docs/email-delivery.md`.
 
 **Search indexing needs a staging check after the first deploy with the worker
 change (decision-log row 17; checklist not yet run).** Tutor cards are indexable by
@@ -1018,73 +815,6 @@ undecided (ADR-T02). Evidence files stay in the bucket; a schema downgrade does
 not delete storage objects.
 
 Rollback across the release is in §5.7.
-
-### 5.11 Runbook: a payment held for a foreign integration
-
-Alert: log event `paymob_unexpected_integration` (`alert=True`). Check `path` first. For a
-`callback` or `inquiry`, a transaction on a real order used an integration not allowed for that
-payment. A callback is signed; an inquiry comes from Paymob. Checkout accepts configured card and
-Apple Pay IDs, a saved-card charge accepts MOTO, and a renewal accepts configured IDs. The rejected
-transaction does not settle the payment; an open payment stays open. A rejected callback does not
-clear `next_reconcile_at`; a rejected scheduled inquiry clears it and stops polling.
-
-#### Path `callback` or `inquiry`
-
-1. Identify the payment from the alert's `payment_id` (and `txn_id` / order id if present):
-
-   ```sql
-   SELECT id, status, amount_minor, currency, paymob_order_id, paymob_txn_id,
-          next_reconcile_at, created_at
-   FROM payments
-   WHERE id = '<payment_id>' OR paymob_order_id = <order_id>;
-
-   SELECT dedupe_key, created_at FROM paymob_events
-   WHERE dedupe_key LIKE 'rejected_integration:%' ORDER BY created_at DESC LIMIT 20;
-   ```
-
-2. Compare the integration with the Paymob account, environment and how this payment was started.
-   If it is the appropriate integration for that payment and config is wrong, correct the matching
-   `LEMELY_PAYMOB__CARD_INTEGRATION_ID`, `..._MOTO_INTEGRATION_ID` or
-   `..._APPLE_PAY_INTEGRATION_ID` with the approved configuration and redeploy. Use the audited
-   Admin Reconcile action with a reason for a guarded inquiry, then verify the payment and financial
-   outcome. Stop and investigate a 409 or any unverified outcome before further action. Do not
-   configure a MOTO ID as a card ID to bypass the checkout guard.
-
-3. Otherwise escalate to the authorized finance and database operators. Identify the exact
-   transaction, account and mode; compare local and Paymob records, including prior, in-flight,
-   disputed and ambiguous refunds. Do not refund solely because of this alert. If funds were
-   captured, a partial refund can leave money outstanding: establish that the transaction is fully
-   refunded and net exposure is zero before deciding how to resolve the local payment. Separately
-   confirm any noncapture. Resolve unknown outcomes and coordinate any in-flight reconcile first.
-   Prefer the audited inquiry workflow where applicable; it may be unable to resolve a rejected
-   foreign integration. Do not mark the payment failed by direct SQL: that bypasses the audited
-   flow, and a later verified success can still settle it. Escalate unresolved local state for a
-   safe, authorized resolution; do not repeat an ambiguous financial operation.
-
-#### Path `subscription_webhook`
-
-The renewal check also emits this event with `subscription_id`, `txn_id` and `integration_id`,
-without `payment_id`. It reads Paymob's last successful charge and rejects a present integration ID
-that differs from the configured MOTO ID. No renewal payment is recorded and no period is granted
-by that check, even though the charge succeeded. The event can also come from the drift check; it
-uses the same path label.
-
-1. Find the local subscription and Paymob subscription ID with
-   `SELECT id, status, paymob_subscription_id, current_period_end, paymob_cancelled_at FROM subscriptions WHERE id = '<subscription_id>';`
-   Check the alerted transaction in the correct Paymob account and mode. Compare its integration,
-   amount and state with the subscription and intended MOTO configuration. Check for an existing
-   payment by `paymob_txn_id` before deciding how to resolve the charge.
-2. If the configured MOTO ID is wrong, correct it using approved configuration for the intended
-   account and mode and redeploy.
-   The drift check can revisit eligible subscriptions once per UTC day and applies an eligible
-   missed charge through the same guarded renewal rules; it can also make other drift repairs.
-   Confirm the resulting payment and period. Ended rows with `paymob_cancelled_at` set are not
-   drift candidates. Do not reset stamps or invoke payment reconcile for this path.
-3. If the transaction belongs to another integration or cannot safely be applied, escalate to
-   authorized finance and database operators under the same account, mode, prior-refund and
-   financial-outcome checks in step 3 above. A local payment may not exist, so also verify the
-   transaction and its refund history at Paymob. Do not refund solely because of the alert or replay
-   an ambiguous financial operation. Escalate any record or entitlement correction.
 
 ## 6. Deployment checklist
 

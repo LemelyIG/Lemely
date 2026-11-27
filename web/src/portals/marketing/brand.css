@@ -273,9 +273,6 @@ body[data-scroll-locked] .brand-mobile-upload { display:none; }
 @media(prefers-reduced-motion:reduce) {
   .marketing-brand *, .marketing-brand *::before, .marketing-brand *::after { animation:none!important; transition:none!important; scroll-behavior:auto!important; }
 }
-/* /pricing section titles. `.marketing-brand h2` is the landing page's 40-68px section title with a 48px
-   bottom margin; on a page whose h1 is "Pricing" that makes "Plans" louder than the page. Two classes beat it. */
-.marketing-brand .pricing-section-title { font-size:32px; line-height:1.1; letter-spacing:-.03em; margin:0; }
 
 /* Waitlist CTAs: header "Join the waitlist" (hidden on phones; the sticky bar covers them) and the menu's primary. */
 .marketing-brand .brand-join { display:none; }

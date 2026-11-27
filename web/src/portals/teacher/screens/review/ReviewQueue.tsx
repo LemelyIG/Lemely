@@ -2,7 +2,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
-import { useCan } from "@/components/acting/acting-state"
 import { QueryState, type QueryStateQuery } from "@/components/ui/query-state"
 import { invalidateAfterResolve, useBulkApproveReview, useReviewItem, useReviewQueuePage, useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import { useReference } from "@/lib/hooks/useReferenceApi"
@@ -148,11 +147,9 @@ export function ReviewQueue() {
   const requestFocus = (from: string, next: string | null) => { refocus.current = { from, next }; setRefocusTick((n) => n + 1) }
   const bulk = useBulkApproveReview()
   const clearIds = open.filter(isClearItem).map((r) => r.itemId)
-  // An assistant whose role lacks `mark` may read results but not decide: no click, key or bulk path may write.
-  const canMark = useCan("mark")
 
   function decideFocused(noteOverride?: string) {
-    if (!canMark || !view || !markState || !detail.data || view.status !== "open") return
+    if (!view || !markState || !detail.data || view.status !== "open") return
     const text = noteOverride ?? note
     const d: ReviewDecision = view.integrity
       ? { kind: "dismiss", itemId: view.key, label: questionLabel(detail.data), body: { note: text.trim() || undefined } }
@@ -173,7 +170,6 @@ export function ReviewQueue() {
   }
 
   function runBulk() {
-    if (!canMark) return
     decisions.flush()
     const ids = selecting ? [...picked] : clearIds
     const snapshot = rows
@@ -223,7 +219,7 @@ export function ReviewQueue() {
       const at = focusId ? openIds.indexOf(focusId) : -1
       if (e.key === "j" || e.key === "n" || e.key === "N") { const n = openIds[at + 1]; if (n) { e.preventDefault(); go(n) } }
       if (e.key === "k") { const p = openIds[at - 1]; if (p) { e.preventDefault(); go(p) } }
-      if ((e.key === "a" || e.key === "A") && canMark && view && !view.integrity && view.status === "open") { e.preventDefault(); decideFocused() }
+      if ((e.key === "a" || e.key === "A") && view && !view.integrity && view.status === "open") { e.preventDefault(); decideFocused() }
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
@@ -242,7 +238,7 @@ export function ReviewQueue() {
       onAccept: () => decideFocused(),
       onDismiss: (n: string) => decideFocused(n),
     } : null,
-    showShortcuts: canMark,
+    showShortcuts: true,
   } : null
 
   // The phone answer page shows this error alone, so its heading is the page's h1.

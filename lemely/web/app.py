@@ -9,7 +9,6 @@ endpoints are added.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import os
 import re
@@ -20,26 +19,14 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from lemely import __version__
-from lemely.db.session import get_sessionmaker
 from lemely.io.model_table import configured_models
 from lemely.runtime.config import anthropic_key_missing_tags, log_marking_flags
 from lemely.runtime.errors import AccessRestrictedError, EmptyGradeBoundaryStoreError
 from lemely.web.deps import access_restricted_detail, get_settings, get_sweeper
 from lemely.web.edge import BodyLimitMiddleware
-from lemely.web.llm_price_refresh import (
-    install_stale_refresh,
-    refresh_prices,
-    uninstall_stale_refresh,
-)
 from lemely.web.routers import (
     access,
     admin,
-    admin_billing,
-    admin_billing_customers,
-    admin_billing_health,
-    admin_billing_margin,
-    admin_billing_payments,
-    admin_billing_settings,
     admin_tutor_sanctions,
     admin_tutoring_moderation,
     admin_tutoring_reports,
@@ -47,14 +34,12 @@ from lemely.web.routers import (
     admin_waitlist,
     announcements,
     auth,
-    billing,
     classes,
     client_errors,
     contact,
     exam_calendar,
     flashcards,
     friends,
-    internal_jobs,
     invites,
     leaderboard,
     me,
@@ -63,7 +48,6 @@ from lemely.web.routers import (
     parent,
     parent_bookings,
     parent_tutor_access,
-    paymob_webhooks,
     placement,
     practice,
     quiz,
@@ -82,7 +66,6 @@ from lemely.web.routers import (
     student_tutoring_settings,
     study_plan,
     teacher,
-    teacher_team,
     tutor_bookings,
     tutor_evidence,
     tutor_preview,
@@ -96,20 +79,12 @@ from lemely.web.routers import (
     tutoring_public,
     tutoring_reports,
     tutoring_reviews,
-    usage,
     waitlist,
     widget,
     xp,
 )
 from lemely.web.scheduled_notifications import run_sweeper
-from lemely.web.settings_errors import SETTINGS_ERROR_CODES, settings_unavailable_handler
 from lemely.web.tutoring_email import MOCK_WARNING, email_delivery_mode
-from lemely.web.usage import (
-    UsageBlocked,
-    UsageUnavailable,
-    usage_blocked_handler,
-    usage_unavailable_handler,
-)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator, Sequence
@@ -154,10 +129,6 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     ``TestClient(app)``, which is why every pre-existing test is unaffected.
     """
     settings = get_settings()
-    # A test-mode Paymob key under ``expect_live`` stops the app here (a plain error, no
-    # credentials in it); a public/secret mode mismatch only alerts, and checkout answers 503.
-    settings.paymob.require_live_keys()
-    settings.paymob.log_key_mode_mismatch()
     log_marking_flags(settings.grading.marking_options())
     if (
         settings.access.restricted
@@ -180,13 +151,6 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
             "those calls will fail until it is configured",
             ", ".join(missing_claude),
         )
-    # UD13-D: the admin AI price overrides are installed before the first call is priced; a failure
-    # is logged and the code and config prices apply until a later refresh succeeds. From here on
-    # a price read that finds them a minute old refreshes them, so this instance follows admin
-    # writes even when Cloud Scheduler sends its sweeps to another one.
-    install_stale_refresh(get_sessionmaker(settings))
-    with contextlib.suppress(Exception):
-        await asyncio.to_thread(refresh_prices, get_sessionmaker(settings))
     stop = asyncio.Event()
     task: asyncio.Task[None] | None = None
     if settings.notifications.sweeper_enabled:
@@ -204,7 +168,6 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        uninstall_stale_refresh()
         if task is not None:
             stop.set()
             await task
@@ -240,7 +203,6 @@ def create_app() -> FastAPI:
     app.include_router(contact.router)
     app.include_router(waitlist.router)
     app.include_router(admin_waitlist.router)
-    app.include_router(internal_jobs.router)
     app.include_router(auth.router)
     app.include_router(teacher.router)
     app.include_router(classes.router)
@@ -264,14 +226,7 @@ def create_app() -> FastAPI:
     app.include_router(student_home.router)
     app.include_router(school.router)
     app.include_router(admin.router)
-    app.include_router(admin_billing.router)
-    app.include_router(admin_billing_customers.router)
-    app.include_router(admin_billing_health.router)
-    app.include_router(admin_billing_margin.router)
-    app.include_router(admin_billing_payments.router)
-    app.include_router(admin_billing_settings.router)
     app.include_router(invites.router)
-    app.include_router(teacher_team.router)
     app.include_router(parent.router)
     app.include_router(me.router)
     app.include_router(announcements.router)
@@ -299,23 +254,6 @@ def create_app() -> FastAPI:
     app.include_router(admin_tutor_sanctions.router)
     app.include_router(tutoring_reports.router)
     app.include_router(admin_tutoring_reports.router)
-    app.include_router(billing.router)
-    app.include_router(paymob_webhooks.router)
-    app.include_router(usage.router)
-    # Paymob billing Phase 06: a settled metered job may queue an auto top-up, and a settled
-    # upgrade or seat purchase pushes the new renewal amount (both idempotent across apps).
-    from lemely.web.deps_billing import auto_topup_post_settle, register_billing_amount_pusher
-    from lemely.web.usage import register_post_settle_hook
-
-    register_post_settle_hook(auto_topup_post_settle)
-    register_billing_amount_pusher()
-    # Billing spec §5.7: a blocked metered action is a top-level 402 body, not `detail`.
-    app.add_exception_handler(UsageBlocked, usage_blocked_handler)
-    # A ledger outage that stopped metered work before it started: 503 + Retry-After.
-    app.add_exception_handler(UsageUnavailable, usage_unavailable_handler)
-    # UD-13: a missing ``billing_settings`` row is a retryable 503 with a code, never a bare 500.
-    for settings_error in SETTINGS_ERROR_CODES:
-        app.add_exception_handler(settings_error, settings_unavailable_handler)
 
     @app.exception_handler(AccessRestrictedError)
     async def _access_restricted(_request: Request, exc: AccessRestrictedError) -> JSONResponse:

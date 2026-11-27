@@ -191,7 +191,7 @@ describe("SelfReviewPanel.tsx", () => {
     const body = source.slice(fnStart, fnEnd)
     expect(body).toContain("missingEvidence(draft, view.points, view.evidenceRequired)")
     expect(body).toContain("const canSubmit = complete && missing.length === 0")
-    expect(body).toMatch(/if \(canSubmit && !submitting && !blocked\)/)
+    expect(body).toMatch(/if \(canSubmit && !submitting\)/)
     // A whole-file `toContain("missing.includes")` would be satisfied by
     // the Textarea's error prop alone even if onSubmit never checked
     // `canSubmit` — assert the guard AND the visible error live in the same

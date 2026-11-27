@@ -27,15 +27,6 @@ const ChildTutoring = lazy(() =>
 const ParentSessionDetail = lazy(() =>
   import("./screens/tutoring/ParentSessionDetail").then((m) => ({ default: m.ParentSessionDetail })),
 )
-const ParentChildPlans = lazy(() =>
-  import("@/portals/billing/PlansScreen").then((m) => ({ default: m.ParentChildPlans })),
-)
-const ParentChildBilling = lazy(() =>
-  import("@/portals/billing/ParentBilling").then((m) => ({ default: m.ParentChildBilling })),
-)
-const ParentReceipts = lazy(() =>
-  import("@/portals/billing/Receipts").then((m) => ({ default: m.ParentReceipts })),
-)
 const ChildTutorAccess = lazy(() =>
   import("./screens/tutoring/ChildTutorAccess").then((m) => ({ default: m.ChildTutorAccess })),
 )
@@ -98,23 +89,6 @@ export const parentRoute: RouteObject = {
       path: "children/:childId/tutor-access",
       element: <ChildTutorAccess />,
       handle: { title: "Who they share with", skeleton: "list" },
-    },
-    {
-      path: "children/:childId/billing",
-      element: <ParentChildBilling />,
-      handle: { title: "Plan and billing", skeleton: "page-header" },
-    },
-    {
-      path: "children/:childId/billing/plans",
-      element: <ParentChildPlans />,
-      handle: { title: "Plans and credits", skeleton: "page-header" },
-    },
-    // The payer's own list across every child (receipts belong to the payer). There is no
-    // child usage-history route: `/usage/history` serves the caller only (M6).
-    {
-      path: "billing/receipts",
-      element: <ParentReceipts />,
-      handle: { title: "Receipts", skeleton: "list" },
     },
     { path: "tutors", element: <ParentFindTutor />, handle: { title: "Tutors", skeleton: "list" } },
     {

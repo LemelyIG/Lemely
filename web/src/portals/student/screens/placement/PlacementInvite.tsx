@@ -1,26 +1,18 @@
 /* Hallmark · pre-emit critique: P5 H4 E4 S5 R5 V4 */
-import { useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
-import { Button } from "@/components/ui/button";
-import { Card, CardBody } from "@/components/ui/card";
-import { EmptyState } from "@/components/ui/state-views";
-import { PanelSkeleton } from "@/components/ui/loading-shapes";
-import { QueryState } from "@/components/ui/query-state";
-import { ApiError } from "@/lib/api";
-import { studentLoadFailureMessage } from "@/lib/studentOutcome";
-import {
-  useCreatePlacement,
-  usePlacementAvailability,
-} from "@/lib/hooks/usePlacementApi";
-import type { PlacementAvailability } from "@/lib/placementTypes";
-import { useSubjectName } from "@/lib/hooks/useReferenceApi";
-import { useProfile } from "@/lib/hooks/useMeApi";
-import {
-  isPlacementEmailUnverified,
-  PLACEMENT_VERIFY_EMAIL,
-  placementInviteView,
-} from "./placementData";
-import { PageHeading } from "@/components/ui/page-heading";
+import { useState } from "react"
+import { useNavigate, useParams } from "react-router-dom"
+import { Button } from "@/components/ui/button"
+import { Card, CardBody } from "@/components/ui/card"
+import { EmptyState } from "@/components/ui/state-views"
+import { PanelSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
+import { ApiError } from "@/lib/api"
+import { studentLoadFailureMessage } from "@/lib/studentOutcome"
+import { useCreatePlacement, usePlacementAvailability } from "@/lib/hooks/usePlacementApi"
+import type { PlacementAvailability } from "@/lib/placementTypes"
+import { useSubjectName } from "@/lib/hooks/useReferenceApi"
+import { placementInviteView } from "./placementData"
+import { PageHeading } from "@/components/ui/page-heading"
 
 /*
  * S-03 · Placement invite. Reachable both from the S-02 onboarding exit and
@@ -50,48 +42,33 @@ import { PageHeading } from "@/components/ui/page-heading";
  * the honest per-reason panel below. See `lib/studentOutcome.ts`'s header.
  */
 export function PlacementInvite() {
-  const navigate = useNavigate();
-  const { subjectCode = "" } = useParams<{ subjectCode: string }>();
-  const query = usePlacementAvailability(subjectCode);
-  const createPlacement = useCreatePlacement();
-  const [raceUnavailable, setRaceUnavailable] =
-    useState<PlacementAvailability | null>(null);
-  const subjectName = useSubjectName(subjectCode);
-  /*
-   * Same read as `CorrectPaper`: only an explicit `false` counts, so a
-   * pending or failed profile never shows a verified student a locked
-   * screen. If that guesses wrong, the 403 below catches it.
-   */
-  const profile = useProfile();
-  const needsVerification =
-    profile.data?.emailVerified === false ||
-    isPlacementEmailUnverified(createPlacement.error);
+  const navigate = useNavigate()
+  const { subjectCode = "" } = useParams<{ subjectCode: string }>()
+  const query = usePlacementAvailability(subjectCode)
+  const createPlacement = useCreatePlacement()
+  const [raceUnavailable, setRaceUnavailable] = useState<PlacementAvailability | null>(null)
+  const subjectName = useSubjectName(subjectCode)
 
   async function handleStartNow() {
-    setRaceUnavailable(null);
+    setRaceUnavailable(null)
     try {
-      const created = await createPlacement.mutateAsync({ subjectCode });
-      navigate(`/student/placement/test/${created.assignmentId}`);
+      const created = await createPlacement.mutateAsync({ subjectCode })
+      navigate(`/student/placement/test/${created.assignmentId}`)
     } catch (err) {
       // 409: assembly became non-viable between this screen's load and the
       // click (e.g. a concurrent placement exhausted the pool) — the error's
       // `.detail` carries the identical availability shape, so this reuses
       // the same honest per-reason panel rather than a generic failure.
-      if (isPlacementEmailUnverified(err)) {
-        // The mutation's own error state drives the verify panel; no refetch,
-        // since availability is not what failed.
-        return;
-      }
       if (err instanceof ApiError && err.status === 409 && err.detail) {
-        setRaceUnavailable(err.detail as PlacementAvailability);
+        setRaceUnavailable(err.detail as PlacementAvailability)
       } else {
-        void query.refetch();
+        void query.refetch()
       }
     }
   }
 
   function handleLater() {
-    navigate("/student");
+    navigate("/student")
   }
 
   return (
@@ -122,37 +99,26 @@ export function PlacementInvite() {
         }}
       >
         {(data) => {
-          const effective = raceUnavailable ?? data;
-          const view = placementInviteView(effective);
+          const effective = raceUnavailable ?? data
+          const view = placementInviteView(effective)
 
           if (view.kind === "unavailable") {
             return (
               <>
-                <PageHeading
-                  repeatsTitle={false}
-                  className="text-display-md text-on-surface"
-                >
-                  {subjectName}
-                </PageHeading>
+                <PageHeading repeatsTitle={false} className="text-display-md text-on-surface">{subjectName}</PageHeading>
                 <Card>
                   <CardBody className="flex flex-col gap-3">
                     <div className="text-body-lg font-medium text-on-surface">
                       {view.message.heading}
                     </div>
-                    <p className="text-body-md text-on-surface-variant">
-                      {view.message.body}
-                    </p>
+                    <p className="text-body-md text-on-surface-variant">{view.message.body}</p>
                   </CardBody>
                 </Card>
-                <Button
-                  variant="secondary"
-                  onClick={handleLater}
-                  className="self-start"
-                >
+                <Button variant="secondary" onClick={handleLater} className="self-start">
                   Back to dashboard
                 </Button>
               </>
-            );
+            )
           }
 
           return (
@@ -162,87 +128,46 @@ export function PlacementInvite() {
                   Get a real starting picture in {subjectName}
                 </PageHeading>
                 <p className="text-body-md text-on-surface-variant">
-                  A short placement test built from real past-paper questions
-                  across the syllabus gives us a much better starting picture
-                  than a guess. It finds your strongest and weakest topics, not
-                  a grade.
+                  A short placement test built from real past-paper questions across the syllabus
+                  gives us a much better starting picture than a guess. It finds your strongest
+                  and weakest topics, not a grade.
                 </p>
               </div>
 
               <Card>
                 <CardBody className="flex flex-col gap-2">
-                  <div className="text-eyebrow text-on-surface-variant">
-                    This test
-                  </div>
-                  <div className="text-body-lg font-medium text-on-surface">
-                    {view.estimate}
-                  </div>
+                  <div className="text-eyebrow text-on-surface-variant">This test</div>
+                  <div className="text-body-lg font-medium text-on-surface">{view.estimate}</div>
                   <p className="text-body-sm text-on-surface-variant">
-                    You can take it any time from this subject's screen. There's
-                    no rush.
+                    You can take it any time from this subject's screen. There's no rush.
                   </p>
                 </CardBody>
               </Card>
 
-              {/* The refusal, in place of the start button. Known from the profile on
-                  load it is a standing fact (status); only a refused click is an alert. */}
-              {needsVerification ? (
-                <Card>
-                  <CardBody
-                    role={
-                      isPlacementEmailUnverified(createPlacement.error)
-                        ? "alert"
-                        : "status"
-                    }
-                    className="flex flex-col gap-3"
-                  >
-                    <h2 className="m-0 text-display-xs text-on-surface">
-                      {PLACEMENT_VERIFY_EMAIL.heading}
-                    </h2>
-                    <p className="text-body-md text-on-surface-variant">
-                      {PLACEMENT_VERIFY_EMAIL.body}
-                    </p>
-                    <Button
-                      variant="accent"
-                      size="lg"
-                      className="self-start"
-                      onClick={() => navigate("/verify-email")}
-                    >
-                      Verify your email
-                    </Button>
-                  </CardBody>
-                </Card>
-              ) : null}
-
               {/* Directly above the button that produced it (§12). */}
-              {createPlacement.isError &&
-              !raceUnavailable &&
-              !needsVerification ? (
+              {createPlacement.isError && !raceUnavailable ? (
                 <p role="alert" className="text-body-sm text-error">
-                  We couldn't start the test. Nothing has been used up, so
-                  trying again is safe.
+                  We couldn't start the test. Nothing has been used up, so trying again is safe.
                 </p>
               ) : null}
 
               <div className="flex flex-wrap gap-3">
-                {needsVerification ? null : (
-                  <Button
-                    variant="accent"
-                    size="lg"
-                    disabled={createPlacement.isPending}
-                    onClick={() => void handleStartNow()}
-                  >
-                    {createPlacement.isPending ? "Starting…" : "Start now"}
-                  </Button>
-                )}
+                <Button
+                  variant="accent"
+                  size="lg"
+                  disabled={createPlacement.isPending}
+                  onClick={() => void handleStartNow()}
+                >
+                  {createPlacement.isPending ? "Starting…" : "Start now"}
+                </Button>
                 <Button variant="ghost" size="lg" onClick={handleLater}>
                   Later
                 </Button>
               </div>
             </>
-          );
+          )
         }}
       </QueryState>
     </div>
-  );
+  )
 }

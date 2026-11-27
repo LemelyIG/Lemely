@@ -34,7 +34,6 @@ from typing import TYPE_CHECKING
 from sqlalchemy import func, select
 
 from lemely.core.deletion import purge_cutoff
-from lemely.db.admin_billing_repo import AuditAction, AuditTarget, audited
 from lemely.db.models import (
     Attempt,
     MarkScheme,
@@ -48,7 +47,6 @@ from lemely.db.models import (
     Upload,
     User,
 )
-from lemely.db.models.billing import LIVE_SUBSCRIPTION_STATUSES
 from lemely.db.models.enums import (
     AttemptOrigin,
     ReviewStatus,
@@ -60,10 +58,6 @@ from lemely.db.session import INCLUDE_DELETED
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
-
-
-#: The audit reason when the legacy activation screen sends no note (spec §8: a reason is required).
-NO_NOTE_REASON = "Decided from the activations queue without a note."
 
 
 class AdminError(Exception):
@@ -85,17 +79,6 @@ class SubscriptionAlreadyDecidedError(AdminError):
         """Record the status the row already holds."""
         super().__init__(f"Subscription is already {status.value}")
         self.status = status
-
-
-class SubscriptionConflictError(AdminError):
-    """Activating would give the user a second live subscription (→ 409).
-
-    One live subscription per user (spec §4.3). Phase 02's partial unique index covers paid rows
-    only (``payer_user_id IS NOT NULL``), so this check covers manual activation. Two manual
-    decisions for one user are serialised by a per-user lock in ``decide_activation``. The check
-    and a concurrent paid checkout can still race; that is accepted, because the paid row wins
-    every reader's ordering (index R25) and the manual row stays a harmless second live row.
-    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,13 +320,10 @@ class PlatformAdminService:
         activate: bool,
         note: str | None = None,
         now: datetime | None = None,
-        admin_user_id: uuid.UUID,
     ) -> SubscriptionStatus:
-        """Activate or reject a pending subscription, recording the note and an audit row.
+        """Activate or reject a pending subscription, recording the note.
 
-        Returns the status the row now holds. The audit row (``subscription.activation_decision``)
-        is written in the same transaction; with no note its reason is :data:`NO_NOTE_REASON`.
-        A refused decision writes none.
+        Returns the status the row now holds.
 
         A row that has already left ``inactive`` raises rather than being
         rewritten: two admins working one queue is the ordinary case, and the
@@ -356,8 +336,6 @@ class PlatformAdminService:
         Raises:
             SubscriptionNotFoundError: No subscription with that id.
             SubscriptionAlreadyDecidedError: It is no longer ``inactive``.
-            SubscriptionConflictError: Activating, and the user already has a live
-                subscription (``pending_first_payment``, ``active`` or ``past_due``).
         """
         moment = now or datetime.now(UTC)
         subscription_uuid = _as_uuid(subscription_id)
@@ -369,48 +347,13 @@ class PlatformAdminService:
                 raise SubscriptionNotFoundError(f"Unknown subscription: {subscription_uuid}")
             if subscription.status is not SubscriptionStatus.inactive:
                 raise SubscriptionAlreadyDecidedError(subscription.status)
-            before = {"status": subscription.status.value}
             if activate:
-                # Per-user lock: the row lock above covers only the row being decided, so two
-                # admins deciding two different queued rows for one user would each see the
-                # other still ``inactive`` and both activate. ``FOR NO KEY UPDATE`` serialises
-                # them without blocking the foreign-key checks of a concurrent checkout.
-                session.execute(
-                    select(User.id)
-                    .where(User.id == subscription.user_id)
-                    .with_for_update(key_share=True)
-                )
-                other_live = session.scalar(
-                    select(Subscription.id).where(
-                        Subscription.user_id == subscription.user_id,
-                        Subscription.id != subscription.id,
-                        Subscription.status.in_(LIVE_SUBSCRIPTION_STATUSES),
-                    )
-                )
-                if other_live is not None:
-                    raise SubscriptionConflictError(
-                        "This user already has a live subscription; end it before activating"
-                        " another."
-                    )
                 subscription.status = SubscriptionStatus.active
                 subscription.is_manually_activated = True
                 subscription.activated_at = moment
             else:
                 subscription.status = SubscriptionStatus.rejected
             subscription.activation_note = note
-            audited(
-                session,
-                admin_user_id,
-                AuditAction.SUBSCRIPTION_ACTIVATION_DECISION,
-                AuditTarget.SUBSCRIPTION,
-                subscription.id,
-                (note or "").strip() or NO_NOTE_REASON,
-                before,
-                {
-                    "status": subscription.status.value,
-                    "is_manually_activated": subscription.is_manually_activated,
-                },
-            )
             return subscription.status
 
     # -- X-03 ---------------------------------------------------------------
@@ -541,6 +484,5 @@ __all__ = [
     "SignupRow",
     "SubjectCoverage",
     "SubscriptionAlreadyDecidedError",
-    "SubscriptionConflictError",
     "SubscriptionNotFoundError",
 ]

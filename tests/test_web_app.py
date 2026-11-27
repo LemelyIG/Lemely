@@ -525,7 +525,7 @@ def test_grading_queue_excludes_the_us039_unflagged_blank() -> None:
     from lemely.core.schemas import AccuracyReport, GradePrediction
     from lemely.db.models.enums import Role, UploadStatus
     from lemely.db.teacher_paper_repo import TeacherPaperRow
-    from lemely.web.deps import AuthContext, TeamActor
+    from lemely.web.deps import AuthContext
     from lemely.web.routers.teacher import grading_queue
 
     def _report(questions: list[CorrectedQuestion]) -> AccuracyReport:
@@ -605,10 +605,8 @@ def test_grading_queue_excludes_the_us039_unflagged_blank() -> None:
             return [row]
 
     auth = AuthContext(user_id=str(uuid.uuid4()), role=Role.teacher.value)
-    me = uuid.UUID(auth.user_id)
-    actor = TeamActor(actor_user_id=me, lead_teacher_user_id=me, member_id=None, auth=auth)
 
-    dto = grading_queue(actor, _FakeRepo())  # type: ignore[arg-type]
+    dto = grading_queue(auth, _FakeRepo())  # type: ignore[arg-type]
 
     body = dto.model_dump()
     question_ids = {r["questionId"] for r in body["rows"]}
@@ -677,34 +675,6 @@ def test_the_sweeper_is_started_on_startup_and_stopped_on_shutdown(
         assert seen["stopped"] is False
 
     assert seen["stopped"] is True
-
-
-@pytest.mark.usefixtures("_fresh_settings")
-def test_price_reads_refresh_stale_prices_while_the_app_runs_and_not_after(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Every instance follows admin price writes itself, whether or not it serves the sweeps."""
-    from lemely.web import app as app_module
-
-    monkeypatch.setenv("LEMELY_NOTIFICATIONS__SWEEPER_ENABLED", "0")
-    events: list[str] = []
-
-    def installed(factory: object) -> None:
-        events.append("install")
-
-    def first_load(factory: object) -> int:
-        events.append("load")
-        return 0
-
-    monkeypatch.setattr(app_module, "install_stale_refresh", installed)
-    monkeypatch.setattr(app_module, "uninstall_stale_refresh", lambda: events.append("uninstall"))
-    monkeypatch.setattr(app_module, "refresh_prices", first_load)
-
-    with TestClient(create_app()) as client:
-        assert client.get("/api/health").status_code == 200
-        assert events == ["install", "load"]
-
-    assert events == ["install", "load", "uninstall"]
 
 
 @pytest.mark.usefixtures("_fresh_settings")

@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import math
 import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any, Final, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 import structlog
@@ -355,16 +354,6 @@ class GeminiSettings(BaseModel):
     correction_retry_median: bool = True
     correction_retry_median_below: float = Field(default=0.86, ge=0.0, le=1.0)
 
-    @field_validator("pricing")
-    @classmethod
-    def _prices_are_finite_and_non_negative(
-        cls, value: dict[str, list[float]]
-    ) -> dict[str, list[float]]:
-        for model, rates in value.items():
-            if any(not math.isfinite(rate) or rate < 0 for rate in rates):
-                raise ValueError(f"pricing[{model!r}]: rates must be finite and non-negative")
-        return value
-
     @field_validator("claude_cache_for")
     @classmethod
     def _at_most_four_distinct_spots(
@@ -692,22 +681,6 @@ class DatabaseSettings(BaseModel):
     # Seconds to wait for a free slot in the QueuePool (SQLAlchemy's own
     # default is 30). Same reasoning: fail fast rather than pile up.
     pool_timeout_seconds: int = Field(default=5, ge=1)
-
-    @model_validator(mode="after")
-    def _pool_holds_a_sweep_pass(self) -> DatabaseSettings:
-        """At least two connections: one for the sweep lock, one for the jobs it runs.
-
-        ``POST /api/internal/jobs/sweep`` (and the in-process loop) holds one pooled connection,
-        idle in its transaction, for the whole pass for the advisory lock, while every job opens
-        its own session. With ``pool_size + max_overflow`` of 1 the first job would wait out
-        ``pool_timeout_seconds`` for a connection the pass itself holds, on every pass.
-        """
-        if self.pool_size + self.max_overflow < 2:
-            raise ValueError(
-                "pool_size + max_overflow must be at least 2: a sweep pass holds one connection "
-                "for its lock while its jobs use another"
-            )
-        return self
 
 
 class SupabaseSettings(BaseModel):
@@ -1272,74 +1245,6 @@ class NotificationsSettings(BaseModel):
     # ``study_plan_reminder`` fires once the recipient's local time is at or
     # past this hour, for every incomplete session dated today.
     study_plan_reminder_hour: int = Field(default=8, ge=0, le=23)
-    # Guards ``POST /api/internal/jobs/sweep``, which Cloud Scheduler calls every minute with
-    # this value in an ``X-Cron-Secret`` header to run one sweeper pass (Cloud Run scales the
-    # in-process loop to nothing when idle). Unset (the default) the endpoint answers 503.
-    # Never put it in ``lemely.toml``: deployed it is ``LEMELY_NOTIFICATIONS__JOBS_SECRET``.
-    jobs_secret: OptionalSecret = None
-    # The value ``jobs_secret`` had before a rotation, accepted beside it while Cloud Scheduler is
-    # still sending it (docs/deployment.md section 5.2: set this to the old value and
-    # ``jobs_secret`` to the new one, deploy, confirm one Scheduler run, clear this, deploy).
-    # Unset or blank means
-    # no rotation is in progress. Deployed it is ``LEMELY_NOTIFICATIONS__JOBS_SECRET_PREVIOUS``.
-    jobs_secret_previous: OptionalSecret = None
-    # Wall-clock budget of one sweep pass through ``Sweeper.sweep_exclusive`` (the trigger route
-    # and the loop). Once spent, the jobs not yet started are skipped and run next tick. It must
-    # leave at least 30 s under Cloud Scheduler's attempt deadline (90 s in ``scheduler-jobs.json``)
-    # for the cold start, the proxy and the job in flight when the budget runs out.
-    sweep_pass_budget_seconds: int = Field(default=60, ge=1)
-    # What the sweep expects one unit of work to take, so it starts a unit only while the pass
-    # budget still has room for it: a database-only row, plus this much for each outbound Paymob
-    # request the unit makes. A saved-card charge (two requests) comes to about 15 s.
-    sweep_row_seconds: float = Field(default=1.0, gt=0)
-    sweep_paymob_request_seconds: float = Field(default=7.0, gt=0)
-    # The longest one unit's database work may take, part of a unit's worst case. The worst case
-    # of every unit the sweep starts must end under the sweep lock's idle timeout.
-    sweep_row_hard_seconds: float = Field(default=5.0, gt=0)
-
-
-#: Postgres ends the sweep's lock transaction after it has been idle this long
-#: (``Sweeper.sweep_exclusive`` sets it for that transaction alone). The lock connection is idle
-#: for the whole pass, so past this the lock is gone and the pass fails at commit. Postgres
-#: enforces it whatever the process does; the sweep's own timeout arithmetic only plans under it.
-SWEEP_LOCK_IDLE_TIMEOUT_SECONDS: Final = 240
-#: Kept free under that limit for the commit and for scheduling slack.
-SWEEP_HARD_LIMIT_MARGIN_SECONDS: Final = 30
-#: Outbound requests inside one claimed saved-card charge: the intention, then the payment.
-CHARGE_REQUESTS: Final = 2
-
-
-def sweep_unit_typical_seconds(notifications: NotificationsSettings, *, requests: int) -> float:
-    """What a sweep unit with ``requests`` outbound Paymob requests is expected to take."""
-    return notifications.sweep_row_seconds + requests * notifications.sweep_paymob_request_seconds
-
-
-def sweep_unit_hard_seconds(
-    notifications: NotificationsSettings, paymob: PaymobSettings, *, requests: int
-) -> float:
-    """The longest a sweep unit with ``requests`` Paymob requests can take before it gives up.
-
-    Each request is bounded by the sum of its four client timeouts (a read timeout bounds each
-    read, so a server that trickles bytes can exceed it; that case is not covered). This is an
-    estimate for planning, not a wall-clock guarantee: it assumes the process keeps its CPU.
-    """
-    return notifications.sweep_row_hard_seconds + requests * paymob.request_hard_seconds
-
-
-class UsageSettings(BaseModel):
-    """Usage metering (paymob billing spec §2.4, §5.7).
-
-    Overrides via ``lemely.toml`` under ``[usage]`` or ``LEMELY_USAGE__*`` env vars.
-
-    ``enforce`` is true in every deployed environment: every LLM-backed route reserves
-    against the usage ledger and answers 402 when the payer chain cannot cover the top of
-    the estimate. ``tests/conftest.py`` sets it false for the suite, so route tests written
-    before metering need no ledger; the metering tests build an enforcing ``UsageMeter``
-    themselves. Not emitted to ``lemely.toml.example``: nobody setting Lemely up turns it off.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    enforce: bool = True
 
 
 class TutoringSettings(BaseModel):
@@ -1357,22 +1262,6 @@ class TutoringSettings(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     email_daily_cap: int = Field(default=60, ge=0)
-
-
-class TeamSettings(BaseModel):
-    """Teacher seats and assistants (paymob billing spec §2.2, §4.4).
-
-    Overrides via ``lemely.toml`` under ``[team]`` or ``LEMELY_TEAM__*`` env vars.
-
-    ``enforce_teacher_seats`` is true in every deployed environment: a student's join
-    of a school-less class whose teacher has no free seat is refused (409
-    ``no_free_seat``). ``tests/conftest.py`` sets it false for the suite, so class-join
-    tests written before seats need no plan; the seat tests enforce explicitly. Not
-    emitted to ``lemely.toml.example``: nobody setting Lemely up turns it off.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-    enforce_teacher_seats: bool = True
 
 
 class EdgeSettings(BaseModel):
@@ -1531,169 +1420,6 @@ class EmailSettings(BaseModel):
     api_base_url: str = "https://api.resend.com"
 
 
-#: An optional positive integer id where a blank env var means "not set".
-OptionalId = Annotated[int | None, BeforeValidator(_blank_to_none)]
-
-#: Paymob's key prefixes carry the mode: ``egy_sk_test_...``, ``egy_pk_live_...`` (skill
-#: ``intention-api.md``; the same shape without a region prefix also exists). A key with no
-#: such prefix has no readable mode.
-_PAYMOB_KEY_MODE_RE = re.compile(r"^(?:[a-z]{2,4}_)?[sp]k_(test|live)_")
-
-
-def _paymob_key_mode(key: str | None) -> Literal["test", "live"] | None:
-    """``"test"`` or ``"live"`` from a Paymob key's prefix, ``None`` when it shows neither."""
-    match = _PAYMOB_KEY_MODE_RE.match(key or "")
-    if match is None:
-        return None
-    return "live" if match.group(1) == "live" else "test"
-
-
-class PaymobKeyModeError(RuntimeError):
-    """Startup refused: a test-mode Paymob key where live keys are required (``expect_live``)."""
-
-
-class PaymobSettings(BaseModel):
-    """Paymob (Egypt) credentials and endpoints (billing spec §3, §7).
-
-    Overrides via ``LEMELY_PAYMOB__*`` env vars (``lemely.toml`` ``[paymob]`` also
-    works but is not emitted in ``lemely.toml.example``: every field here is a
-    credential or a deploy-time origin, never a knob someone sets up locally).
-
-    **Every credential defaults to ``None`` and that is a supported state**, as for
-    :class:`EmailSettings` and :class:`PushSettings`: an unregistered GitHub secret
-    renders as ``""``, ``_blank_to_none`` maps it to ``None``, ``checkout_configured``
-    is ``False``, checkout answers 503 and the webhook answers 503. Metering never
-    calls Paymob, so allowances and credits keep working (spec §6).
-
-    ``secret_key`` (``Authorization: Token``) authorises intentions, refunds and voids;
-    ``api_key`` mints the one-hour auth token used for inquiry and subscriptions;
-    ``hmac_secret`` verifies callbacks; ``card_token_key`` (urlsafe base64 of 32
-    bytes) encrypts saved-card tokens at rest. All four are server-only and typed
-    :class:`SecretStr`. ``public_key`` is handed to the browser inside the Unified
-    Checkout URL and is deliberately a plain ``str``, like ``vapid_public_key``.
-
-    ``notification_base_url`` / ``redirection_base_url`` are the public origins the
-    webhook route and the SPA return page are joined onto; ``deploy.yml`` sets them
-    per environment so a staging intention never calls back into production.
-    """
-
-    # A validation error echoes its input by default, which here is the credentials.
-    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
-    secret_key: OptionalSecret = None
-    public_key: OptionalCredential = None
-    api_key: OptionalSecret = None
-    hmac_secret: OptionalSecret = None
-    card_integration_id: OptionalId = Field(default=None, ge=1)
-    moto_integration_id: OptionalId = Field(default=None, ge=1)
-    apple_pay_integration_id: OptionalId = Field(default=None, ge=1)
-    card_token_key: OptionalSecret = None
-    api_base: AbsoluteOrigin = "https://accept.paymob.com"
-    checkout_base: AbsoluteOrigin = "https://eg.checkout.paymob.com"
-    notification_base_url: AbsoluteOrigin = "https://lemelyig.com"
-    redirection_base_url: AbsoluteOrigin = "https://lemelyig.com"
-    # ``timeout_seconds`` bounds each read. Connecting, sending the body and waiting for a pooled
-    # connection have their own shorter limits, because the sweep starts a saved-card charge only
-    # when the worst case of its requests, the sum of all four limits each, still ends well under
-    # the sweep lock's idle timeout (``Settings`` checks this).
-    timeout_seconds: float = Field(default=20.0, gt=0)
-    connect_timeout_seconds: float = Field(default=5.0, gt=0)
-    write_timeout_seconds: float = Field(default=5.0, gt=0)
-    pool_timeout_seconds: float = Field(default=5.0, gt=0)
-    # Whether Paymob's ``PUT subscriptions/{id}`` can change ``amount_cents`` on a
-    # ``use_transaction_amount=true`` plan (spec section 10 question 7, sandbox S14). When
-    # false, upgrades are refused, seat reductions that need a lower amount are refused, and
-    # extra seats are charged at each renewal by Phase 06's fallback job (index R19). Default
-    # true until the sandbox answers.
-    subscription_amount_updatable: bool = True
-    # Test and live share one base URL, so the mode comes only from the keys and Integration
-    # IDs. ``deploy.yml`` sets this for production alone: a production start on test keys
-    # would sell real credits for test cards (skill audit I2).
-    expect_live: bool = False
-
-    @property
-    def request_hard_seconds(self) -> float:
-        """The longest one request can take before the client gives up on it."""
-        return (
-            self.connect_timeout_seconds
-            + self.write_timeout_seconds
-            + self.timeout_seconds
-            + self.pool_timeout_seconds
-        )
-
-    @property
-    def key_mode_mismatch(self) -> bool:
-        """True when the public and secret keys are readably in different modes (test vs live).
-
-        Paymob answers 404 at checkout for a mixed pair. Only a key whose prefix shows its mode
-        is judged (the suite's fixtures use bare ``sk``/``pk``), and an unset key is a supported
-        state. Not fatal: the app starts, :attr:`checkout_configured` is ``False`` and the
-        client refuses writes until the keys are fixed (:meth:`log_key_mode_mismatch` alerts).
-        """
-        secret_mode = _paymob_key_mode(
-            self.secret_key.get_secret_value() if self.secret_key is not None else None
-        )
-        public_mode = _paymob_key_mode(self.public_key)
-        return secret_mode is not None and public_mode is not None and secret_mode != public_mode
-
-    def require_live_keys(self) -> None:
-        """Refuse to start on a test-mode key when ``expect_live`` is set (production).
-
-        Raises :class:`PaymobKeyModeError`, a plain ``RuntimeError`` and deliberately not a
-        pydantic ``ValidationError``: those carry the whole offending input, credentials
-        included, in ``errors()`` and ``json()``. The message names the field, never the key.
-        Integration IDs carry no mode marker, so "the IDs are the Live ones" stays on the
-        go-live checklist.
-        """
-        if not self.expect_live:
-            return
-        secret = self.secret_key.get_secret_value() if self.secret_key is not None else None
-        for name, key in (("secret_key", secret), ("public_key", self.public_key)):
-            if _paymob_key_mode(key) == "test":
-                raise PaymobKeyModeError(
-                    f"paymob.{name} is a test-mode key but paymob.expect_live is set "
-                    "(production): refusing to start on test keys"
-                )
-
-    def log_key_mode_mismatch(self) -> bool:
-        """Log ``paymob_key_mode_mismatch`` (error, ``alert=True``) and return ``True`` if any."""
-        if not self.key_mode_mismatch:
-            return False
-        structlog.get_logger("lemely.paymob").error(
-            "paymob_key_mode_mismatch",
-            alert=True,
-            detail="paymob.secret_key and paymob.public_key are in different modes; "
-            "checkout and Paymob writes answer 503 until they match",
-        )
-        return True
-
-    @property
-    def key_mode(self) -> Literal["test", "live"]:
-        """The mode objects made with these keys live in (Paymob plan ids exist in one mode only).
-
-        Read from the secret key's prefix. A key with no readable prefix (the suite's bare
-        fixtures, an unset key) is judged by ``expect_live``: live where production insists on
-        it, test everywhere else.
-        """
-        mode = _paymob_key_mode(
-            self.secret_key.get_secret_value() if self.secret_key is not None else None
-        )
-        return mode or ("live" if self.expect_live else "test")
-
-    @property
-    def checkout_configured(self) -> bool:
-        """True when a one-off card checkout can be created and its callback verified."""
-        return not self.key_mode_mismatch and all(
-            value is not None
-            for value in (
-                self.secret_key,
-                self.public_key,
-                self.api_key,
-                self.hmac_secret,
-                self.card_integration_id,
-            )
-        )
-
-
 class _RemovedKeysDotEnvSource(DotEnvSettingsSource):
     """pydantic-settings' ``.env`` source minus every F4-removed key.
 
@@ -1719,9 +1445,6 @@ class Settings(BaseSettings):
         # any code that reconstructs Settings from a dump) would reject the
         # field-name key as an extra input. Allow both field name and aliases.
         populate_by_name=True,
-        # A validation error echoes its input by default, and this model's input holds every
-        # credential. ``str(exc)`` is what a startup traceback prints to the logs.
-        hide_input_in_errors=True,
     )
     gradio: GradioSettings = GradioSettings()
     paths: PathsSettings = PathsSettings()
@@ -1738,9 +1461,6 @@ class Settings(BaseSettings):
     notifications: NotificationsSettings = NotificationsSettings()
     email: EmailSettings = EmailSettings()
     tutoring: TutoringSettings = TutoringSettings()
-    usage: UsageSettings = UsageSettings()
-    team: TeamSettings = TeamSettings()
-    paymob: PaymobSettings = PaymobSettings()
     waitlist: WaitlistSettings = WaitlistSettings()
     access: AccessSettings = AccessSettings()
     edge: EdgeSettings = EdgeSettings()
@@ -1763,25 +1483,6 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("LEMELY_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY"),
     )
-
-    @model_validator(mode="after")
-    def _a_charge_ends_inside_the_sweep_lock(self) -> Settings:
-        """A charge started at the end of the pass budget must end before the lock is lost.
-
-        The sweep starts a saved-card charge only while the pass budget has room for it, and
-        never stops one once it is claimed, so the latest a charge can end is the budget plus
-        the charge's worst case. That must stay under the lock's idle timeout less its margin.
-        """
-        budget = self.notifications.sweep_pass_budget_seconds
-        worst = sweep_unit_hard_seconds(self.notifications, self.paymob, requests=CHARGE_REQUESTS)
-        limit = SWEEP_LOCK_IDLE_TIMEOUT_SECONDS - SWEEP_HARD_LIMIT_MARGIN_SECONDS
-        if budget + worst > limit:
-            raise ValueError(
-                f"a sweep pass budget of {budget} s plus the worst case of one saved-card charge "
-                f"({worst:g} s from the Paymob timeouts) exceeds {limit} s, the sweep lock's "
-                "idle timeout less its margin: lower the budget or the Paymob timeouts"
-            )
-        return self
 
     @classmethod
     def settings_customise_sources(

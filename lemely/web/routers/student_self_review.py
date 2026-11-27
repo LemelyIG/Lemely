@@ -12,12 +12,10 @@ route is not an existence oracle for another student's attempts.
 
 from __future__ import annotations
 
-import contextlib
 from typing import TYPE_CHECKING, Annotated, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from lemely.core.metered_actions import MeteredAction
 from lemely.db.models.enums import Role
 from lemely.db.self_review_repo import (
     AttemptQuestion,
@@ -30,7 +28,6 @@ from lemely.db.self_review_repo import (
     SelfReviewService,
     SelfReviewValidationError,
 )
-from lemely.db.usage_context_repo import self_review_target
 from lemely.web.deps import AuthContext, get_self_review_service, require_role
 from lemely.web.schemas import QuestionResultDTO, student_safe_review_reason
 from lemely.web.schemas_student_self_review import (
@@ -40,7 +37,6 @@ from lemely.web.schemas_student_self_review import (
     SelfReviewRevealedPointDTO,
     SelfReviewSubmissionDTO,
 )
-from lemely.web.usage import UsageMeter, get_usage_meter, request_from_auth
 
 if TYPE_CHECKING:
     from lemely.web.schemas import MarkerSource
@@ -295,46 +291,6 @@ def get_self_review(
     return _revealed_dto(view)
 
 
-def _self_review_meter(
-    meter: UsageMeter,
-    auth: AuthContext,
-    attempt_id: str,
-    question_result_id: str,
-    payload: SelfReviewSubmissionDTO,
-) -> contextlib.AbstractContextManager[object]:
-    """Meter the pass only when a point carries evidence (billing spec §2.4).
-
-    Only a point with evidence can reach the judge (a model call), so otherwise nothing is
-    held or charged.
-
-    The subject and the mark-point count are read from the caller's own attempt
-    (``self_review_target`` is scoped to ``auth.user_id``), never from the request. A
-    question that is not on the caller's attempt is the same 404 the service gives, so the
-    route is not an existence oracle for another student's attempts.
-    """
-    if not any((point.evidence or "").strip() for point in payload.points):
-        return contextlib.nullcontext()
-    target = meter.resolve_target(
-        lambda session: self_review_target(
-            session,
-            student_id=auth.user_id,
-            attempt_id=attempt_id,
-            question_result_id=question_result_id,
-        )
-    )
-    if target is None:
-        raise HTTPException(status_code=404, detail="No such question")
-    usage = meter.authorize(
-        request_from_auth(
-            auth,
-            MeteredAction.SELF_REVIEW,
-            subject_code=target.subject_code,
-            input_count=target.input_count,
-        )
-    )
-    return meter.job(usage)
-
-
 @router.post(_SELF_REVIEW_PATH, response_model=SelfReviewRevealedDTO)
 def submit_self_review(
     attempt_id: str,
@@ -342,26 +298,21 @@ def submit_self_review(
     payload: SelfReviewSubmissionDTO,
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
     service: Annotated[SelfReviewService, Depends(get_self_review_service)],
-    meter: Annotated[UsageMeter, Depends(get_usage_meter)],
 ) -> SelfReviewRevealedDTO:
     """Record the caller's one self-mark pass and reveal the marker's verdict.
 
-    409 once a pass exists; 422 unless every point carries exactly one verdict. A pass whose
-    points carry evidence is metered as ``self_review`` (402 when the payer chain cannot
-    cover it); a refused pass is released and charges nothing.
+    409 once a pass exists; 422 unless every point carries exactly one verdict.
     """
-    gate = _self_review_meter(meter, auth, attempt_id, question_result_id, payload)
     try:
-        with gate:
-            view = service.submit(
-                auth.user_id,
-                attempt_id,
-                question_result_id,
-                [
-                    PointVerdict(mark_point_id=p.markPointId, earned=p.earned, evidence=p.evidence)
-                    for p in payload.points
-                ],
-            )
+        view = service.submit(
+            auth.user_id,
+            attempt_id,
+            question_result_id,
+            [
+                PointVerdict(mark_point_id=p.markPointId, earned=p.earned, evidence=p.evidence)
+                for p in payload.points
+            ],
+        )
     except SelfReviewError as exc:
         _raise_for(exc)
     return _revealed_dto(view)

@@ -68,7 +68,6 @@ from lemely.db.models import (
     User,
 )
 from lemely.db.models.enums import InviteRole, MembershipRole, Role, SeatStatus
-from lemely.db.models.team import AssistantRole
 from lemely.db.parent_repo import ParentLinkService
 from lemely.runtime.config import DatabaseSettings
 
@@ -806,50 +805,6 @@ def test_redeem_parent_invite_by_student_is_role_mismatch(
             sa.select(ParentChildLink).where(ParentChildLink.child_id == student)
         ).first()
         assert link is None
-
-
-def _seed_assistant_invite(sm: sessionmaker[Session], teacher_id: uuid.UUID) -> Invite:
-    """Insert an assistant invite directly: nothing mints one until the team router lands."""
-    invite = Invite(
-        code=f"ASST{uuid.uuid4().hex[:6].upper()}",
-        role=InviteRole.assistant,
-        created_by=teacher_id,
-        team_teacher_id=teacher_id,
-        assistant_role=AssistantRole.marker,
-        expires_at=datetime.now(UTC) + timedelta(days=1),
-    )
-    with sm.begin() as session:
-        session.add(invite)
-    return invite
-
-
-@pytest.mark.parametrize("caller_role", [Role.teacher, Role.student, Role.parent, None])
-def test_generic_redeem_refuses_an_assistant_invite_and_leaves_it_unredeemed(
-    pg_sessionmaker: sessionmaker[Session], caller_role: Role | None
-) -> None:
-    """An assistant invite is redeemed only through the team route, never here."""
-    lead = _seed_user(pg_sessionmaker, Role.teacher)
-    helper = _seed_user(pg_sessionmaker, Role.teacher)
-    invite = _seed_assistant_invite(pg_sessionmaker, lead)
-    service = _service(pg_sessionmaker)
-
-    with pytest.raises(InviteRoleMismatchError):
-        service.redeem(helper, invite.code, caller_role=caller_role)
-
-    with pg_sessionmaker() as session:
-        stored = session.get(Invite, invite.id)
-        assert stored is not None
-        assert stored.redeemed_by is None
-        assert stored.redeemed_at is None
-
-
-def test_preview_of_an_assistant_invite_reports_the_assistant_role(
-    pg_sessionmaker: sessionmaker[Session],
-) -> None:
-    lead = _seed_user(pg_sessionmaker, Role.teacher)
-    invite = _seed_assistant_invite(pg_sessionmaker, lead)
-
-    assert _service(pg_sessionmaker).preview(invite.code).role is InviteRole.assistant
 
 
 def test_redeem_class_invite_by_parent_is_role_mismatch(

@@ -27,7 +27,7 @@ from lemely.db.models.tutoring import EmailOutbox
 from lemely.db.models.users import User
 from lemely.db.notification_prefs_repo import DEFAULTS
 from lemely.db.notification_repo import PREFERENCE_FIELD_FOR_TYPE
-from lemely.io.notify_email import BILLING_EMAIL_TEMPLATES, EMAIL_TEMPLATES, validate_context
+from lemely.io.notify_email import EMAIL_TEMPLATES, validate_context
 
 if TYPE_CHECKING:
     import uuid
@@ -169,18 +169,11 @@ def recipient_in_session(session: Session, user_id: uuid.UUID) -> Recipient | No
 
 
 def count_sent_since_in_session(session: Session, since: datetime) -> int:
-    """How many rows were marked ``sent`` at or after ``since`` (the daily-cap count).
-
-    Billing notices are exempt from the cap (UD-9), so they are never counted here.
-    """
+    """How many rows were marked ``sent`` at or after ``since`` (the daily-cap count)."""
     count = session.scalar(
         sa.select(sa.func.count())
         .select_from(EmailOutbox)
-        .where(
-            EmailOutbox.status == EmailOutboxStatus.sent,
-            EmailOutbox.sent_at >= since,
-            EmailOutbox.template.not_in(BILLING_EMAIL_TEMPLATES),
-        )
+        .where(EmailOutbox.status == EmailOutboxStatus.sent, EmailOutbox.sent_at >= since)
     )
     return int(count or 0)
 

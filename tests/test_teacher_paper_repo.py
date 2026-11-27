@@ -57,7 +57,7 @@ from lemely.core.schemas import (
 from lemely.db.base import Base
 from lemely.db.models import School, SchoolMembership, TeacherPaper, User
 from lemely.db.models.enums import MembershipRole, Role, UploadStatus
-from lemely.db.teacher_paper_repo import TeacherPaperRepository, TeacherRunSupersededError
+from lemely.db.teacher_paper_repo import TeacherPaperRepository
 from lemely.runtime.config import DatabaseSettings
 
 if TYPE_CHECKING:
@@ -275,123 +275,10 @@ def test_finished_and_failed_rows_can_be_reclaimed(pg_sessionmaker: sessionmaker
     repo = _repo(pg_sessionmaker)
     pid = _paper(repo, _user(pg_sessionmaker, Role.teacher))
     assert repo.claim_run(pid)
-    repo.fail(pid, "boom", run_token=repo.run_token(pid))
+    repo.fail(pid, "boom")
     assert repo.claim_run(pid)
-    repo.finish(pid, _report(), run_token=repo.run_token(pid))
+    repo.finish(pid, _report())
     assert repo.claim_run(pid)
-
-
-# ---------------------------------------------------------------------------
-# Run ownership: the claim's `run_started_at` token (billing phase 04 Task 10).
-# ---------------------------------------------------------------------------
-
-
-def _reclaim(sm: sessionmaker[Session], repo: TeacherPaperRepository, pid: uuid.UUID) -> None:
-    """A second claim after the stale window: a re-run takes the row with a new token."""
-    with sm.begin() as s:
-        s.execute(
-            sa.update(TeacherPaper)
-            .where(TeacherPaper.id == pid)
-            .values(updated_at=datetime.now(UTC) - timedelta(minutes=20))
-        )
-    assert repo.claim_run(pid) is True
-
-
-def test_run_token_is_the_claims_run_started_at(pg_sessionmaker: sessionmaker[Session]) -> None:
-    repo = _repo(pg_sessionmaker)
-    pid = _paper(repo, _user(pg_sessionmaker, Role.teacher))
-    assert repo.run_token(pid) is None
-    assert repo.claim_run(pid)
-    row = repo.get(pid)
-    assert row is not None and row.run_started_at is not None
-    assert repo.run_token(pid) == row.run_started_at
-    assert repo.run_token(uuid.uuid4()) is None
-
-
-def test_finish_with_a_superseded_token_writes_nothing(
-    pg_sessionmaker: sessionmaker[Session],
-) -> None:
-    repo = _repo(pg_sessionmaker)
-    pid = _paper(repo, _user(pg_sessionmaker, Role.teacher))
-    assert repo.claim_run(pid)
-    old = repo.run_token(pid)
-    _reclaim(pg_sessionmaker, repo, pid)
-    with pytest.raises(TeacherRunSupersededError):
-        repo.finish(pid, _report(), run_token=old)
-    row = repo.get(pid)
-    assert row is not None
-    assert (row.status, row.report) == (UploadStatus.processing, None)
-    repo.finish(pid, _report(), run_token=repo.run_token(pid))
-    row = repo.get(pid)
-    assert row is not None and row.status is UploadStatus.complete
-
-
-def test_fail_with_a_superseded_token_leaves_the_newer_run_alone(
-    pg_sessionmaker: sessionmaker[Session],
-) -> None:
-    repo = _repo(pg_sessionmaker)
-    pid = _paper(repo, _user(pg_sessionmaker, Role.teacher))
-    assert repo.claim_run(pid)
-    old = repo.run_token(pid)
-    _reclaim(pg_sessionmaker, repo, pid)
-    assert repo.fail(pid, "Grading failed: model timeout", run_token=old) is False
-    row = repo.get(pid)
-    assert row is not None and (row.status, row.error) == (UploadStatus.processing, None)
-    assert repo.fail(pid, "Grading failed: boom", run_token=repo.run_token(pid)) is True
-    row = repo.get(pid)
-    assert row is not None and (row.status, row.error) == (
-        UploadStatus.failed,
-        "Grading failed: boom",
-    )
-
-
-def test_confirm_run_checks_ownership_and_keeps_a_queued_run_alive(
-    pg_sessionmaker: sessionmaker[Session],
-) -> None:
-    repo = _repo(pg_sessionmaker)
-    pid = _paper(repo, _user(pg_sessionmaker, Role.teacher))
-    assert repo.claim_run(pid)
-    token = repo.run_token(pid)
-    assert token is not None
-    # A job that waited in the queue past the stale window: the row reads as lost...
-    with pg_sessionmaker.begin() as s:
-        s.execute(
-            sa.update(TeacherPaper)
-            .where(TeacherPaper.id == pid)
-            .values(updated_at=datetime.now(UTC) - timedelta(minutes=20))
-        )
-    # ...until the job confirms it on start, which refreshes liveness in the same statement.
-    assert repo.confirm_run(pid, token) is True
-    assert repo.claim_run(pid) is False
-    assert repo.confirm_run(pid, token - timedelta(seconds=1)) is False
-
-
-def test_confirm_run_refuses_a_superseded_finished_or_deleted_run(
-    pg_sessionmaker: sessionmaker[Session],
-) -> None:
-    repo = _repo(pg_sessionmaker)
-    owner = _user(pg_sessionmaker, Role.teacher)
-    pid = _paper(repo, owner)
-    assert repo.claim_run(pid)
-    old = repo.run_token(pid)
-    assert old is not None
-    _reclaim(pg_sessionmaker, repo, pid)
-    assert repo.confirm_run(pid, old) is False
-    new = repo.run_token(pid)
-    assert new is not None
-    repo.finish(pid, _report(), run_token=new)
-    assert repo.confirm_run(pid, new) is False  # not processing any more
-    other = _paper(repo, owner)
-    assert repo.claim_run(other)
-    token = repo.run_token(other)
-    assert token is not None
-    with pg_sessionmaker.begin() as s:
-        s.execute(
-            sa.update(TeacherPaper)
-            .where(TeacherPaper.id == other)
-            .values(deleted_at=datetime.now(UTC))
-        )
-    assert repo.confirm_run(other, token) is False
 
 
 # ---------------------------------------------------------------------------
@@ -439,7 +326,7 @@ def test_progress_and_report_round_trip(pg_sessionmaker: sessionmaker[Session]) 
     row = repo.get_visible(pid, viewer_id=owner, viewer_role=Role.teacher)
     assert row is not None and row.stage == "mark" and row.progress == (3, 12)
     assert row.status is UploadStatus.processing and row.stale is False
-    repo.finish(pid, _report(), run_token=repo.run_token(pid))
+    repo.finish(pid, _report())
     row = repo.get_visible(pid, viewer_id=owner, viewer_role=Role.teacher)
     assert row is not None and row.status is UploadStatus.complete
     assert row.report is not None and row.report.correction.awarded_marks == 7
@@ -595,7 +482,7 @@ def test_a_report_stored_before_the_ai_detection_removal_still_lists(
     owner = _user(pg_sessionmaker, Role.teacher)
     pid = _paper(repo, owner)
     repo.claim_run(pid)
-    repo.finish(pid, _report(), run_token=repo.run_token(pid))
+    repo.finish(pid, _report())
 
     with pg_sessionmaker.begin() as s:
         s.execute(
@@ -689,7 +576,7 @@ def test_a_report_marked_with_a_binding_report_is_stored_in_the_pre_branch_shape
     )
     assert marked.correction.binding is not None  # the report really carries both new keys
 
-    repo.finish(pid, marked, run_token=repo.run_token(pid))
+    repo.finish(pid, marked)
 
     with pg_sessionmaker() as s:
         stored = s.scalars(sa.select(TeacherPaper.report_json).where(TeacherPaper.id == pid)).one()
@@ -714,7 +601,7 @@ def test_a_report_stored_before_the_branch_still_loads(
     owner = _user(pg_sessionmaker, Role.teacher)
     pid = _paper(repo, owner)
     repo.claim_run(pid)
-    repo.finish(pid, _report(), run_token=repo.run_token(pid))
+    repo.finish(pid, _report())
 
     row = repo.get_visible(pid, viewer_id=owner, viewer_role=Role.teacher)
 

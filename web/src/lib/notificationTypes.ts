@@ -14,10 +14,8 @@
  *
  * A union rather than a `string` so a screen that routes on the type gets a
  * compile error when the backend grows another, instead of silently falling
- * through to a default. The first six predate the tutoring marketplace; the next
- * eight are its notices (SPEC docs/tutoring/SPEC.md section a.1); the last, `billing`,
- * is the payment notices' type (migration 0055). `billing` has no user toggle:
- * payment notices are transactional, so `notificationPrefs.ts` does not list it.
+ * through to a default. The first six predate the tutoring marketplace; the last
+ * eight are its notices (SPEC docs/tutoring/SPEC.md section a.1).
  *
  * UI spec section G-12 also lists a "weekly summary" toggle. There is
  * deliberately no `weekly_summary` member here: the enum has no matching column,
@@ -39,25 +37,12 @@ export const NOTIFICATION_TYPES = [
   "tutor_listing",
   "parent_link",
   "tutoring_report",
-  "billing",
 ] as const
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number]
 
-/**
- * The eight types the tutoring marketplace added. Named explicitly rather than sliced off
- * the tail of `NOTIFICATION_TYPES`, which later types (`billing`) extend.
- */
-export const TUTORING_NOTIFICATION_TYPES = [
-  "booking_request",
-  "booking_update",
-  "booking_note",
-  "tutor_access",
-  "tutor_review",
-  "tutor_listing",
-  "parent_link",
-  "tutoring_report",
-] as const satisfies readonly NotificationType[]
+/** The eight types the tutoring marketplace added: the tail of `NOTIFICATION_TYPES`. */
+export const TUTORING_NOTIFICATION_TYPES = NOTIFICATION_TYPES.slice(-8)
 
 export interface Notification {
   notificationId: string

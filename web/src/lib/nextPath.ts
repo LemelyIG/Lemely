@@ -50,16 +50,10 @@ export function safeNextPath(raw: string | null): string | null {
   if (raw.length === 0 || raw.length > MAX_LENGTH) return null
   if (!raw.startsWith("/")) return null
   if (raw.startsWith("//")) return null
-  if (raw.includes("\\")) return null
+  if (raw.startsWith("/\\")) return null
 
   for (let i = 0; i < raw.length; i++) {
     if (isWhitespaceOrControl(raw.charCodeAt(i))) return null
-  }
-
-  try {
-    if (new URL(raw, "https://app.invalid").origin !== "https://app.invalid") return null
-  } catch {
-    return null
   }
 
   return raw

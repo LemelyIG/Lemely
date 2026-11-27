@@ -28,8 +28,6 @@ from typing import TYPE_CHECKING, Annotated, NoReturn
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
 
-from lemely.core.metered_actions import MeteredAction
-from lemely.core.team_permissions import TeamPermission
 from lemely.db.class_repo import ClassNotFoundError, ClassOwnershipError
 from lemely.db.models.enums import QuestionSource, QuizStatus, Role, XpSource
 from lemely.db.quiz_marking_repo import QuizMarkingError, QuizMarkingService
@@ -58,19 +56,16 @@ from lemely.db.quiz_taking_repo import (
     QuizTakingValidationError,
     SubmitResultRow,
 )
-from lemely.db.usage_context_repo import quiz_assignment_target
 from lemely.db.xp_repo import XpService
 from lemely.runtime.events import current_run_id
 from lemely.web.deps import (
     AuthContext,
-    TeamActor,
     get_quiz_marking_service,
     get_quiz_results_service,
     get_quiz_service,
     get_quiz_taking_service,
     get_xp_service,
     require_role,
-    require_team_permission,
 )
 from lemely.web.schemas_analytics import TopicWeaknessDTO
 from lemely.web.schemas_quiz import (
@@ -100,16 +95,6 @@ from lemely.web.schemas_quiz import (
     SubmitQuizResponseDTO,
     UpdateQuizDraftRequestDTO,
 )
-from lemely.web.usage import (
-    USAGE_UNAVAILABLE_MESSAGE,
-    MeteredJob,
-    UsageBlocked,
-    UsageGrantContext,
-    UsageMeter,
-    UsageUnavailable,
-    get_usage_meter,
-    request_from_auth,
-)
 from lemely.web.xp_awards import award_xp_safely
 
 if TYPE_CHECKING:
@@ -125,11 +110,6 @@ _STAFF_ROLES = (Role.teacher, Role.school_admin, Role.platform_admin)
 router = APIRouter(
     prefix="/api/teacher/quizzes", dependencies=[Depends(require_role(*_STAFF_ROLES))]
 )
-
-# Paymob billing Phase 03 (spec §2.3): an assistant may use these for their lead teacher.
-# Each passes the router's STAFF triple, so the wired role guard is unchanged.
-_TEAM_VIEW = require_team_permission(TeamPermission.VIEW_RESULTS, *_STAFF_ROLES)
-_TEAM_QUIZ = require_team_permission(TeamPermission.GENERATE_QUIZ, *_STAFF_ROLES)
 
 #: Student-side quiz-taking routes (S-26). A second router, not a second
 #: prefix under ``router``: the role gate differs (student vs the staff
@@ -478,16 +458,8 @@ def _submit_to_dto(row: SubmitResultRow) -> SubmitQuizResponseDTO:
     )
 
 
-#: ``quiz_submissions.marking_error`` text when credits ran out between submit and the
-#: queued thread starting. The teacher's results screen shows it after "Marking failed: ".
-_MARKING_BLOCKED_MESSAGE = (
-    "The student's usage ran out before marking could start, so the quiz was not marked "
-    "and nothing was charged."
-)
-
-
 def _trigger_marking_in_background(
-    marking_service: QuizMarkingService, submission_id: uuid.UUID, job: MeteredJob
+    marking_service: QuizMarkingService, submission_id: uuid.UUID
 ) -> None:
     """Kick off ``QuizMarkingService.mark_submission`` on a background thread.
 
@@ -505,17 +477,6 @@ def _trigger_marking_in_background(
     module docstring); the ``except`` clauses here are a last-resort net for
     state races (``QuizMarkingError``) or a genuine bug, so a daemon thread
     never fails silently with only a bare stderr traceback.
-
-    ``job`` was reserved by the submit request. Its cost scope opens on this
-    thread, which inherits no context from the request. A marking failure that
-    ``mark_submission`` records instead of raising (``marking_error``) is
-    released, never charged (billing spec §2.4); so is one that raises, and so
-    is a thread that dies mid-run (``MeteredJob.run`` releases on any exit by
-    exception). If the queued hold expired and the balance has since run out,
-    ``job.run()`` raises :class:`UsageBlocked` before any model call: the submission is
-    left ``submitted`` with a ``marking_error`` saying so, and nothing is charged. A ledger
-    that cannot restart the hold (:class:`UsageUnavailable`) is the same, with its own plain
-    ``marking_error``.
     """
 
     def run() -> None:
@@ -530,34 +491,7 @@ def _trigger_marking_in_background(
         # exists so these events reach nobody else's queue.
         token = current_run_id.set(f"quiz:{submission_id}")
         try:
-            with job.run():
-                outcome = marking_service.mark_submission(submission_id)
-                if outcome.marking_error is not None:
-                    job.abandon()
-        except UsageBlocked as exc:
-            # `job.run()` restores the hold when the queued thread starts; the balance has
-            # since run out. Nothing was charged and no model call was made.
-            log.warning(
-                "quiz_marking_blocked_before_start",
-                submission_id=str(submission_id),
-                reason=exc.reason.value,
-            )
-            try:
-                marking_service.record_marking_failure(submission_id, _MARKING_BLOCKED_MESSAGE)
-            except Exception:
-                log.exception(
-                    "quiz_marking_blocked_record_failed", submission_id=str(submission_id)
-                )
-        except UsageUnavailable:
-            # The ledger could not restart the queued hold: fail closed before any model
-            # call, nothing charged, and record a plain reason instead of a silent stall.
-            log.warning("quiz_marking_unavailable_before_start", submission_id=str(submission_id))
-            try:
-                marking_service.record_marking_failure(submission_id, USAGE_UNAVAILABLE_MESSAGE)
-            except Exception:
-                log.exception(
-                    "quiz_marking_unavailable_record_failed", submission_id=str(submission_id)
-                )
+            marking_service.mark_submission(submission_id)
         except QuizMarkingError as exc:
             log.warning(
                 "quiz_marking_trigger_rejected",
@@ -580,11 +514,10 @@ def _trigger_marking_in_background(
 @router.post("", response_model=QuizSummaryDTO, status_code=201)
 def create_quiz(
     body: CreateQuizRequestDTO,
-    actor: Annotated[TeamActor, Depends(_TEAM_QUIZ)],
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[QuizService, Depends(get_quiz_service)],
 ) -> QuizSummaryDTO:
     """Create a draft quiz: entering step 1 of the builder (§1.4)."""
-    auth = actor.auth
     try:
         row = service.create_quiz(auth.user_id, body.subjectCode, body.title)
     except ValueError as exc:
@@ -594,11 +527,10 @@ def create_quiz(
 
 @router.get("", response_model=QuizListDTO)
 def list_quizzes(
-    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[QuizService, Depends(get_quiz_service)],
 ) -> QuizListDTO:
     """Every quiz the caller owns, most recently created first."""
-    auth = actor.auth
     try:
         rows = service.list_quizzes(auth.user_id)
     except ValueError as exc:
@@ -608,7 +540,7 @@ def list_quizzes(
 
 @router.get("/pool-count", response_model=QuizPoolCountDTO)
 def quiz_pool_count(
-    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[QuizService, Depends(get_quiz_service)],
     subject_code: str,
     requested_count: int = 0,
@@ -621,7 +553,6 @@ def quiz_pool_count(
     Registered ahead of ``GET /{quiz_id}`` so ``"pool-count"`` is never
     mistaken for a quiz id.
     """
-    auth = actor.auth
     source_enum = _parse_source(source)
     try:
         result = service.pool_count(
@@ -640,7 +571,7 @@ def quiz_pool_count(
 @router.get("/{quiz_id}", response_model=QuizDetailDTO)
 def get_quiz(
     quiz_id: str,
-    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[QuizService, Depends(get_quiz_service)],
 ) -> QuizDetailDTO:
     """One owned quiz plus every materialized question row (§1.5).
@@ -650,7 +581,6 @@ def get_quiz(
     uses (see ``ClassService``'s docstring for the accepted 403-vs-404
     existence-oracle trade-off).
     """
-    auth = actor.auth
     try:
         detail = service.get_quiz(auth.user_id, quiz_id)
     except (QuizNotFoundError, QuizOwnershipError) as exc:
@@ -664,7 +594,7 @@ def get_quiz(
 def patch_quiz_draft(
     quiz_id: str,
     body: UpdateQuizDraftRequestDTO,
-    actor: Annotated[TeamActor, Depends(_TEAM_QUIZ)],
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[QuizService, Depends(get_quiz_service)],
 ) -> QuizSummaryDTO:
     """Partial-update a draft quiz's step-2/3/4 fields.
@@ -673,7 +603,6 @@ def patch_quiz_draft(
     resource's state, not a conflicting concurrent write) rejects the whole
     patch: §1.4 forbids editing a live quiz under students mid-attempt.
     """
-    auth = actor.auth
     pool_source = _parse_source(body.poolSource)
     try:
         row = service.patch_draft(
@@ -698,11 +627,10 @@ def patch_quiz_draft(
 def set_quiz_status(
     quiz_id: str,
     body: SetQuizStatusRequestDTO,
-    actor: Annotated[TeamActor, Depends(_TEAM_QUIZ)],
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[QuizService, Depends(get_quiz_service)],
 ) -> QuizSummaryDTO:
     """Transition a quiz's status. Never backwards (§1.4)."""
-    auth = actor.auth
     new_status = _parse_status(body.status)
     try:
         row = service.set_status(auth.user_id, quiz_id, new_status)
@@ -719,7 +647,7 @@ def set_quiz_status(
 )
 def generate_quiz_questions(
     quiz_id: str,
-    actor: Annotated[TeamActor, Depends(_TEAM_QUIZ)],
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[QuizService, Depends(get_quiz_service)],
 ) -> GenerateQuizQuestionsResponseDTO:
     """Materialize the quiz's question set from the bank (§1.5/§3).
@@ -727,7 +655,6 @@ def generate_quiz_questions(
     Additive: calling again after raising ``requestedCount`` tops the set
     up rather than replacing it (see ``QuizService.generate_questions``).
     """
-    auth = actor.auth
     try:
         result = service.generate_questions(auth.user_id, quiz_id)
     except (QuizNotFoundError, QuizOwnershipError, QuizValidationError) as exc:
@@ -741,7 +668,7 @@ def generate_quiz_questions(
 def remove_quiz_question(
     quiz_id: str,
     question_ref: str,
-    actor: Annotated[TeamActor, Depends(_TEAM_QUIZ)],
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[QuizService, Depends(get_quiz_service)],
 ) -> QuizSummaryDTO:
     """Curate a question out of a draft. Kept (``status=removed``), not deleted.
@@ -750,7 +677,6 @@ def remove_quiz_question(
     removal) rather than the removed row itself — the caller already has
     the row it just asked to remove.
     """
-    auth = actor.auth
     try:
         service.remove_question(auth.user_id, quiz_id, question_ref)
         row = service.get_quiz(auth.user_id, quiz_id).quiz
@@ -770,7 +696,7 @@ def remove_quiz_question(
 def create_quiz_assignment(
     quiz_id: str,
     body: CreateQuizAssignmentRequestDTO,
-    actor: Annotated[TeamActor, Depends(_TEAM_QUIZ)],
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[QuizService, Depends(get_quiz_service)],
 ) -> QuizAssignmentDTO:
     """Assign an owned quiz to a class. A ``draft`` quiz becomes ``assigned``.
@@ -780,7 +706,6 @@ def create_quiz_assignment(
     ``included`` question, is ``closed``/``archived``, is already assigned to
     this class, or ``closesAt`` is earlier than ``dueAt``.
     """
-    auth = actor.auth
     due_at = _parse_datetime(body.dueAt, field="dueAt")
     closes_at = _parse_datetime(body.closesAt, field="closesAt")
     try:
@@ -804,7 +729,7 @@ def create_quiz_assignment(
 @router.get("/{quiz_id}/assignments", response_model=QuizAssignmentListDTO)
 def list_quiz_assignments(
     quiz_id: str,
-    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[QuizService, Depends(get_quiz_service)],
 ) -> QuizAssignmentListDTO:
     """Every assignment of an owned quiz, with live roster size and submission counts.
@@ -812,7 +737,6 @@ def list_quiz_assignments(
     Counts only (§1.6/chunk-E brief) — no marks, no averages, no per-student
     results. T-10's results aggregation is chunk F.
     """
-    auth = actor.auth
     try:
         rows = service.list_assignments(auth.user_id, auth.role, quiz_id)
     except (QuizNotFoundError, QuizOwnershipError) as exc:
@@ -828,7 +752,7 @@ def list_quiz_assignments(
 def delete_quiz_assignment(
     quiz_id: str,
     assignment_id: str,
-    actor: Annotated[TeamActor, Depends(_TEAM_QUIZ)],
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[QuizService, Depends(get_quiz_service)],
 ) -> None:
     """Unassign a quiz from a class. Refused (422) once any student has started.
@@ -837,7 +761,6 @@ def delete_quiz_assignment(
     once a submission exists beyond ``not_started`` would silently destroy
     that student's work.
     """
-    auth = actor.auth
     try:
         service.delete_assignment(auth.user_id, quiz_id, assignment_id)
     except (QuizNotFoundError, QuizOwnershipError, QuizValidationError) as exc:
@@ -858,7 +781,7 @@ def delete_quiz_assignment(
 def quiz_assignment_results(
     quiz_id: str,
     assignment_id: str,
-    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[QuizResultsService, Depends(get_quiz_results_service)],
 ) -> QuizAssignmentResultsDTO:
     """Return T-10 class results for one **assignment** (§1.6 — never per quiz).
@@ -873,7 +796,6 @@ def quiz_assignment_results(
     the quiz is not the caller's — quiz ownership stays strictly
     ``teacher_id``-scoped, with no ``school_admin`` view.
     """
-    auth = actor.auth
     try:
         results = service.assignment_results(auth.user_id, auth.role, quiz_id, assignment_id)
     except (QuizNotFoundError, QuizOwnershipError, QuizValidationError) as exc:
@@ -957,7 +879,6 @@ def submit_student_quiz(
     service: Annotated[QuizTakingService, Depends(get_quiz_taking_service)],
     marking_service: Annotated[QuizMarkingService, Depends(get_quiz_marking_service)],
     xp_service: Annotated[XpService, Depends(get_xp_service)],
-    meter: Annotated[UsageMeter, Depends(get_usage_meter)],
 ) -> SubmitQuizResponseDTO:
     """Submit: ``status=submitted``, then trigger marking in the background.
 
@@ -974,87 +895,22 @@ def submit_student_quiz(
     Deduped on the assignment id, so a second submit attempt (already
     rejected above as 422) can never double-award even if this route were
     ever retried.
-
-    Billing spec §5.7: the ``mark_quiz`` hold is placed here, *before* the
-    submission is recorded, so a blocked student gets the 402 with the
-    submission still open and can keep answering. The subject and question
-    count are read server-side from the caller's own assignment
-    (:func:`~lemely.db.usage_context_repo.quiz_assignment_target`), which also
-    covers placement, practice and teacher-assigned quizzes. An assignment the
-    caller cannot see has no target, so no hold is placed and ``submit`` below
-    gives today's 404/403/422. A refused submit (a re-submit, an unopened or
-    closed quiz) releases its hold, so a quiz is charged at most once, on the
-    thread that marks it.
     """
-    target = meter.resolve_target(
-        lambda session: quiz_assignment_target(
-            session, student_id=auth.user_id, assignment_id=assignment_id
-        )
-    )
-    job = (
-        None
-        if target is None
-        else meter.reserve(
-            meter.authorize(
-                request_from_auth(
-                    auth,
-                    MeteredAction.MARK_QUIZ,
-                    subject_code=target.subject_code,
-                    input_count=target.input_count,
-                )
-            )
-        )
-    )
     try:
         result = service.submit(auth.user_id, assignment_id)
     except (QuizTakingNotFoundError, QuizTakingOwnershipError, QuizTakingValidationError) as exc:
-        if job is not None:
-            job.release()
         _raise_for_taking(exc)
     except ValueError as exc:
-        if job is not None:
-            job.release()
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except BaseException:
-        if job is not None:
-            job.release()
-        raise
-    if job is None:
-        # `submit` accepted an assignment the target read could not see: the student was
-        # enrolled in between. The window is one request wide, and the submission is
-        # already recorded, so a late 402 would strand it unmarked; the cost is logged.
-        log.warning(
-            "quiz_submit_unmetered",
-            assignment_id=assignment_id,
-            user_id=auth.user_id,
-            submission_id=str(result.submission_id),
-        )
-        # Built from the student's own request (not `MeteredJob.unmetered`'s anonymous
-        # one), so the `usage_unmetered_cost` line names the student. That line does not
-        # log a job id: it joins to `quiz_submit_unmetered` by actor and action, and the
-        # submission id is carried on the warning above.
-        job = MeteredJob(
-            None,
-            UsageGrantContext.exempt_for(
-                request_from_auth(auth, MeteredAction.MARK_QUIZ, subject_code=result.subject_code)
-            ),
-            result.submission_id,
-        )
-    try:
-        award_xp_safely(
-            xp_service,
-            user_id=auth.user_id,
-            source=XpSource.quiz_completed,
-            dedupe_key=str(assignment_id),
-            subject_code=result.subject_code,
-            seam="quiz_completed",
-        )
-        _trigger_marking_in_background(marking_service, result.submission_id, job)
-    except BaseException:
-        # The marking thread never started (or never will), so nothing else settles or
-        # releases this hold.
-        job.release()
-        raise
+    award_xp_safely(
+        xp_service,
+        user_id=auth.user_id,
+        source=XpSource.quiz_completed,
+        dedupe_key=str(assignment_id),
+        subject_code=result.subject_code,
+        seam="quiz_completed",
+    )
+    _trigger_marking_in_background(marking_service, result.submission_id)
     return _submit_to_dto(result)
 
 

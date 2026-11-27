@@ -110,7 +110,6 @@ def _seed_user(
     role: Role,
     display_name: str | None = None,
     email_verified_at: datetime | None = None,
-    phone: str | None = None,
 ) -> uuid.UUID:
     """Insert a real ``users`` row — ``notification_preferences.user_id`` FKs to it,
     so any test that actually writes a preferences row (not just reads the
@@ -131,7 +130,6 @@ def _seed_user(
                 role=role,
                 display_name=display_name,
                 email_verified_at=email_verified_at,
-                phone=phone,
             )
         )
     return uid
@@ -167,12 +165,6 @@ class _SessionUserMirror:
             user = session.get(User, user_id)
             if user is not None:
                 user.avatar_path = path
-
-    def set_phone(self, user_id: uuid.UUID, phone: str) -> None:
-        with self._sm.begin() as session:
-            user = session.get(User, user_id)
-            if user is not None:
-                user.phone = phone
 
     def set_timezone(self, user_id: uuid.UUID, zone: str | None, *, explicit: bool) -> None:
         with self._sm.begin() as session:
@@ -672,129 +664,6 @@ def test_profile_for_a_token_with_no_mirrored_row_is_404_not_500(
 def test_unauthenticated_profile_get_is_401(client: TestClient) -> None:
     resp = client.get("/api/me/profile")
     assert resp.status_code == 401
-
-
-# ---------------------------------------------------------------------------
-# Phone (UD-11): phoneMissing on the profile, PUT /api/me/phone for every role.
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("role", list(Role))
-def test_profile_reports_a_missing_phone_for_every_role(
-    client: TestClient, pg_sessionmaker: sessionmaker[Session], role: Role
-) -> None:
-    user = _seed_user(pg_sessionmaker, role, phone=None)
-    _use_user_mirror(client, pg_sessionmaker)
-    _auth_as(client, user, role)
-
-    body = client.get("/api/me/profile").json()
-
-    assert body["phone"] is None
-    assert body["phoneMissing"] is True
-
-
-def test_profile_reports_the_stored_phone_and_no_prompt(
-    client: TestClient, pg_sessionmaker: sessionmaker[Session]
-) -> None:
-    user = _seed_user(pg_sessionmaker, Role.student, phone="+201012345678")
-    _use_user_mirror(client, pg_sessionmaker)
-    _auth_as(client, user, Role.student)
-
-    body = client.get("/api/me/profile").json()
-
-    assert body["phone"] == "+201012345678"
-    assert body["phoneMissing"] is False
-
-
-@pytest.mark.parametrize("stored", ["NA", "12345", "+200000000000", "   "])
-def test_profile_treats_an_unusable_stored_phone_as_missing(
-    client: TestClient, pg_sessionmaker: sessionmaker[Session], stored: str
-) -> None:
-    """An older free-text value never reaches Paymob, so the user is asked again."""
-    user = _seed_user(pg_sessionmaker, Role.parent, phone=stored)
-    _use_user_mirror(client, pg_sessionmaker)
-    _auth_as(client, user, Role.parent)
-
-    body = client.get("/api/me/profile").json()
-
-    assert body["phone"] is None
-    assert body["phoneMissing"] is True
-
-
-@pytest.mark.parametrize("role", list(Role))
-def test_put_phone_stores_e164_for_every_role(
-    client: TestClient, pg_sessionmaker: sessionmaker[Session], role: Role
-) -> None:
-    user = _seed_user(pg_sessionmaker, role)
-    _use_user_mirror(client, pg_sessionmaker)
-    _auth_as(client, user, role)
-
-    resp = client.put("/api/me/phone", json={"phone": "010 1234 5678"})
-
-    assert resp.status_code == 200, resp.text
-    assert resp.json() == {"phone": "+201012345678", "phoneMissing": False}
-    with pg_sessionmaker() as session:
-        stored = session.get(User, user)
-        assert stored is not None
-        assert stored.phone == "+201012345678"
-    profile = client.get("/api/me/profile").json()
-    assert (profile["phone"], profile["phoneMissing"]) == ("+201012345678", False)
-
-
-def test_put_phone_changes_an_existing_number_and_accepts_international(
-    client: TestClient, pg_sessionmaker: sessionmaker[Session]
-) -> None:
-    user = _seed_user(pg_sessionmaker, Role.teacher, phone="+201012345678")
-    _use_user_mirror(client, pg_sessionmaker)
-    _auth_as(client, user, Role.teacher)
-
-    resp = client.put("/api/me/phone", json={"phone": "+44 7911 123456"})
-
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["phone"] == "+447911123456"
-
-
-@pytest.mark.parametrize(
-    ("body", "code"),
-    [
-        ({}, "phone_required"),
-        ({"phone": None}, "phone_required"),
-        ({"phone": ""}, "phone_required"),
-        ({"phone": "   "}, "phone_required"),
-        ({"phone": "NA"}, "phone_invalid"),
-        ({"phone": "12345"}, "phone_invalid"),
-        ({"phone": "+200000000000"}, "phone_invalid"),
-    ],
-)
-def test_put_phone_refuses_a_missing_or_invalid_number_and_keeps_the_old_one(
-    client: TestClient, pg_sessionmaker: sessionmaker[Session], body: dict[str, object], code: str
-) -> None:
-    user = _seed_user(pg_sessionmaker, Role.student, phone="+201012345678")
-    _use_user_mirror(client, pg_sessionmaker)
-    _auth_as(client, user, Role.student)
-
-    resp = client.put("/api/me/phone", json=body)
-
-    assert resp.status_code == 422, resp.text
-    assert resp.json()["detail"]["code"] == code
-    assert resp.json()["detail"]["message"]
-    with pg_sessionmaker() as session:
-        stored = session.get(User, user)
-        assert stored is not None
-        assert stored.phone == "+201012345678"
-
-
-def test_put_phone_for_a_token_with_no_mirrored_row_is_404(
-    client: TestClient, pg_sessionmaker: sessionmaker[Session]
-) -> None:
-    _use_user_mirror(client, pg_sessionmaker)
-    _auth_as(client, uuid.uuid4(), Role.student)
-
-    assert client.put("/api/me/phone", json={"phone": "01012345678"}).status_code == 404
-
-
-def test_unauthenticated_put_phone_is_401(client: TestClient) -> None:
-    assert client.put("/api/me/phone", json={"phone": "01012345678"}).status_code == 401
 
 
 # ---------------------------------------------------------------------------

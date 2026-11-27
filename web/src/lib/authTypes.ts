@@ -21,12 +21,7 @@ export interface SignupRequest {
    */
   acceptedTerms: boolean
   displayName?: string | null
-  /**
-   * UD-11: required for every self-service account. Typed as a plain string, in whatever format
-   * the person typed it; the server parses it (region EG) and stores E.164. A missing or blank
-   * value answers 422 `phone_required`, a bad one 422 `phone_invalid` (`lib/phone.ts`).
-   */
-  phone: string
+  phone?: string | null
   deviceId?: string | null
 }
 
@@ -96,9 +91,6 @@ export interface ParentSignupBody {
   /** D7.11, unchanged from `SignupRequest.acceptedTerms` — see that field's
    * own comment for why this has no default. */
   acceptedTerms: boolean
-  /** UD-11: required, same rules as `SignupRequest.phone`. A phone refusal does not consume the
-   * proof token, so the same token can be sent again with a corrected number. */
-  phone: string
   deviceId?: string | null
 }
 
@@ -224,14 +216,9 @@ export interface PasswordResetConfirmResponse {
  * fallback to "your child" when the child has no display name means this is
  * rarely actually `null` in practice, but the type stays nullable rather than
  * asserting a guarantee the DTO does not document.
- *
- * `role: "assistant"` is a lead teacher's assistant invite: only `teacherName`
- * (the lead) is set. It is redeemed by a signed-in teacher account through
- * `POST /api/teacher/team/assistants/redeem`, not the invites route that
- * `RedeemInviteResult` describes.
  */
 export interface InvitePreview {
-  role: "student" | "teacher" | "parent" | "assistant"
+  role: "student" | "teacher" | "parent"
   schoolName: string | null
   className: string | null
   teacherName: string | null

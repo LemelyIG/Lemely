@@ -197,16 +197,3 @@ describe("placementResultView — marked:false and spansMultipleBands, both dire
     expect(JSON.stringify(view)).not.toContain("0")
   })
 })
-
-describe("placement email gate", () => {
-  it("recognises the structured 403 email_unverified", async () => {
-    const { ApiError } = await import("@/lib/api")
-    const { isPlacementEmailUnverified } = await import(
-      "@/portals/student/screens/placement/placementData"
-    )
-    expect(isPlacementEmailUnverified(new ApiError(403, "403 Forbidden", { code: "email_unverified" }))).toBe(true)
-    expect(isPlacementEmailUnverified(new ApiError(403, "Forbidden", "nope"))).toBe(false)
-    expect(isPlacementEmailUnverified(new ApiError(409, "x", { code: "email_unverified" }))).toBe(false)
-    expect(isPlacementEmailUnverified(new Error("x"))).toBe(false)
-  })
-})

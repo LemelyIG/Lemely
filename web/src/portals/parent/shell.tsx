@@ -15,7 +15,6 @@ import { useNotificationCounts } from "@/lib/hooks/useNotificationApi"
 import { useCachedChildSubject, useChildren } from "@/lib/hooks/useParentApi"
 import { PARENT_INBOX_EMPTY, STAFF_INBOX_ERROR, staffDestinationFor, unreadBadgeLabel } from "@/lib/staffInbox"
 import { ChildSwitcher } from "./ChildSwitcher"
-import { receiptsTrail } from "./trail"
 import { type ParentTabId, parentPageTitle, parentShellTrail, parentTabs, resolveChildId, topicsActive, validChildParam } from "./shellModel"
 
 const SETTINGS_TO = "/settings/devices"
@@ -69,10 +68,7 @@ export function ParentShell() {
   const subjectLabel = subject?.subjectName ?? code ?? null
   const path = location.pathname
   const tabs = parentTabs(childId)
-  // The payer's receipts sit above any one child (see `trail.ts`), so they have their own trail.
-  const trail =
-    receiptsTrail(path, data?.children) ??
-    parentShellTrail(path, { childId: knownChild, hasChildList: children.length > 1, subjectLabel })
+  const trail = parentShellTrail(path, { childId: knownChild, hasChildList: children.length > 1, subjectLabel })
   const titleLevel = titleLevelFor(trail, isTabRoot(path, tabs.map((t) => t.to)))
 
   const tabItems: NavShellItem[] = tabs.map((tab) => {

@@ -2,7 +2,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react"
 import { Link } from "react-router-dom"
 import { Flag, TextAlignLeft } from "@phosphor-icons/react"
-import { useCan, useDeniedReason } from "@/components/acting/acting-state"
 import { KeyRing } from "@/components/redesign"
 import { Textarea } from "@/components/ui/textarea"
 import { relativeTime } from "@/lib/utils"
@@ -59,9 +58,6 @@ export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts,
   const [mode, setMode] = useState<"crop" | "page">("crop")
   const [dismissNote, setDismissNote] = useState("")
   const uid = useId()
-  // Read-only for a role without `mark`: every control below is inert, and the one reason sits by the actions.
-  const canMark = useCan("mark")
-  const markDenied = useDeniedReason("mark")
   const tabRefs = useRef<Record<"crop" | "page", HTMLButtonElement | null>>({ crop: null, page: null })
   const pick = (m: "crop" | "page") => { setMode(m); if (m === "page") images.requestPage() }
   const onTabKey = (e: KeyboardEvent<HTMLButtonElement>) => {
@@ -193,9 +189,7 @@ export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts,
       </section>
 
       {view.status === "open" && marking && !view.integrity ? (
-        <fieldset disabled={!canMark} className="m-0 min-w-0 border-0 p-0">
-          <MarkControls points={view.points} state={marking.state} max={view.maximumMarks} lemely={view.lemelyMarks} disabled={!view.canAdjust} disabledReason={view.cannotAdjustReason} clampNote={view.clampNote} matchedPointIds={view.matchedPointIds} onChange={marking.onChange} />
-        </fieldset>
+        <MarkControls points={view.points} state={marking.state} max={view.maximumMarks} lemely={view.lemelyMarks} disabled={!view.canAdjust} disabledReason={view.cannotAdjustReason} clampNote={view.clampNote} matchedPointIds={view.matchedPointIds} onChange={marking.onChange} />
       ) : view.clampNote ? (
         <p className="text-dense text-on-surface-variant">{view.clampNote}</p>
       ) : null}
@@ -229,19 +223,18 @@ export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts,
           {view.integrity ? (
             <p className="flex items-start gap-2 text-dense text-on-surface-variant"><Flag weight="fill" className="mt-0.5 size-4 flex-none text-on-tertiary-container" aria-hidden />A signal to look at, not a verdict. Dismissing never changes the student's mark.</p>
           ) : null}
-          <Textarea rows={2} disabled={!canMark} value={view.integrity ? dismissNote : marking.note} onChange={(e) => (view.integrity ? setDismissNote(e.target.value) : marking.onNote(e.target.value))} placeholder={view.integrity ? "Note for your records (optional)" : notePlaceholder(changed)} label={view.integrity ? "Note for your records" : notePlaceholder(changed)} labelClassName="sr-only" className="rq-note resize-none py-2.5 caret-primary" />
+          <Textarea rows={2} value={view.integrity ? dismissNote : marking.note} onChange={(e) => (view.integrity ? setDismissNote(e.target.value) : marking.onNote(e.target.value))} placeholder={view.integrity ? "Note for your records (optional)" : notePlaceholder(changed)} label={view.integrity ? "Note for your records" : notePlaceholder(changed)} labelClassName="sr-only" className="rq-note resize-none py-2.5 caret-primary" />
         </>
       ) : null}
       </div>
 
       {view.status === "open" && marking ? (
         <footer data-answer-actions className="grid shrink-0 gap-1.5 border-t border-outline-variant bg-surface pt-3 pb-3 max-shell-sm:pb-[max(12px,env(safe-area-inset-bottom))]">
-          {!canMark && markDenied ? <p role="note" className="text-dense text-on-surface-variant">{markDenied}</p> : null}
           <div className="flex gap-2">
             {view.integrity ? (
-              <button type="button" data-testid="primary-action" disabled={!canMark} onClick={() => marking.onDismiss(dismissNote)} className={`min-h-11 flex-1 rounded-button bg-primary px-[18px] py-[11px] text-sm font-bold text-on-primary transition-transform duration-150 active:scale-[.97] disabled:opacity-40 motion-reduce:transition-none ${FOCUS}`}>Dismiss flag</button>
+              <button type="button" data-testid="primary-action" onClick={() => marking.onDismiss(dismissNote)} className={`min-h-11 flex-1 rounded-button bg-primary px-[18px] py-[11px] text-sm font-bold text-on-primary transition-transform duration-150 active:scale-[.97] motion-reduce:transition-none ${FOCUS}`}>Dismiss flag</button>
             ) : (
-              <button type="button" data-testid="primary-action" disabled={!saveable || !canMark} onClick={marking.onAccept} className={`min-h-11 flex-1 rounded-button bg-primary px-[18px] py-[11px] text-sm font-bold text-on-primary transition-transform duration-150 active:scale-[.97] disabled:opacity-40 motion-reduce:transition-none ${FOCUS}`}>{primaryActionLabel(total, view.maximumMarks, view.lemelyMarks)}</button>
+              <button type="button" data-testid="primary-action" disabled={!saveable} onClick={marking.onAccept} className={`min-h-11 flex-1 rounded-button bg-primary px-[18px] py-[11px] text-sm font-bold text-on-primary transition-transform duration-150 active:scale-[.97] disabled:opacity-40 motion-reduce:transition-none ${FOCUS}`}>{primaryActionLabel(total, view.maximumMarks, view.lemelyMarks)}</button>
             )}
           </div>
           {showShortcuts ? (

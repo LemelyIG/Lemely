@@ -99,7 +99,6 @@ PREFERENCE_FIELD_FOR_TYPE: Final[dict[NotificationType, str]] = {
     NotificationType.tutor_listing: "tutor_listing",
     NotificationType.parent_link: "parent_link",
     NotificationType.tutoring_report: "tutoring_report",
-    NotificationType.billing: "billing",
 }
 
 

@@ -22,13 +22,6 @@ def _redact(_logger: Any, _name: str, event_dict: dict[str, Any]) -> dict[str, A
     return walk(event_dict)  # type: ignore[no-any-return]
 
 
-def _drop_dry_run(_logger: Any, _name: str, event_dict: dict[str, Any]) -> dict[str, Any]:
-    """Drop a line logged inside a dry run (``bound_contextvars(dry_run=True)``)."""
-    if event_dict.get("dry_run") is True:
-        raise structlog.DropEvent
-    return event_dict
-
-
 def configure_logging(
     *,
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO",
@@ -54,7 +47,6 @@ def configure_logging(
 
     shared_processors: list[structlog.types.Processor] = [
         structlog.contextvars.merge_contextvars,
-        _drop_dry_run,  # type: ignore[list-item]
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
         _redact,  # type: ignore[list-item]

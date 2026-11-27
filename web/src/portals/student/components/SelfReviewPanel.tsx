@@ -1,7 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
-import { useState, type ReactNode } from "react"
-import { useQueryClient } from "@tanstack/react-query"
-import { EstimateRange } from "@/components/billing/estimate-range"
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { ListSkeleton } from "@/components/ui/loading-shapes"
@@ -10,11 +8,7 @@ import { EmptyState, ErrorState } from "@/components/ui/state-views"
 import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/components/ui/toast"
 import { ApiError } from "@/lib/api"
-import { billingPaths } from "@/lib/billingPaths"
-import { useBillingSummary } from "@/lib/hooks/useBillingApi"
 import { useSelfReview, useSubmitSelfReview } from "@/lib/hooks/useSelfReviewApi"
-import { invalidateUsage } from "@/lib/hooks/useUsageApi"
-import { useMeteredGate } from "@/lib/meteredGate"
 import { cn } from "@/lib/utils"
 import {
   EMPTY_DRAFT,
@@ -200,11 +194,6 @@ export function SelfReviewPanel({
 }) {
   const query = useSelfReview(attemptId, questionResultId)
   const submit = useSubmitSelfReview()
-  const queryClient = useQueryClient()
-  const billing = useBillingSummary()
-  const reviewGate = useMeteredGate(
-    query.data?.state === "not_started" ? { action: "self_review", attemptId, questionResultId } : null,
-  )
   const { toast } = useToast()
   const [draft, setDraft] = useState<SelfReviewDraft>(() =>
     readSavedDraft(attemptId, questionResultId),
@@ -254,30 +243,17 @@ export function SelfReviewPanel({
         draft={draft}
         onDraft={updateDraft}
         submitting={submit.isPending}
-        blocked={reviewGate.block !== null}
-        estimate={
-          <EstimateRange
-            gate={reviewGate}
-            audience="student"
-            paths={billingPaths({ role: "student" })}
-            managedByName={billing.data?.managedByName ?? null}
-            headingLevel={4}
-          />
-        }
         onSubmit={() =>
           submit.mutate(
             { attemptId, questionResultId, submission: toSubmission(draft, view.points) },
             {
-              onSuccess: () => invalidateUsage(queryClient),
-              onError: (error) => {
-                if (reviewGate.captureError(error)) return
+              onError: (error) =>
                 toast({
                   title:
                     error instanceof ApiError && error.status === 409
                       ? "You have already self-marked this question. Showing the result."
                       : "We couldn't submit your self-mark. Please try again.",
-                })
-              },
+                }),
             },
           )
         }
@@ -292,16 +268,12 @@ function PendingForm({
   draft,
   onDraft,
   submitting,
-  blocked,
-  estimate,
   onSubmit,
 }: {
   view: SelfReviewPending
   draft: SelfReviewDraft
   onDraft: (next: SelfReviewDraft) => void
   submitting: boolean
-  blocked: boolean
-  estimate: ReactNode
   onSubmit: () => void
 }) {
   const [attemptedSubmit, setAttemptedSubmit] = useState(false)
@@ -315,7 +287,7 @@ function PendingForm({
       data-testid="self-review-form"
       onSubmit={(event) => {
         event.preventDefault()
-        if (canSubmit && !submitting && !blocked) {
+        if (canSubmit && !submitting) {
           onSubmit()
           return
         }
@@ -375,11 +347,10 @@ function PendingForm({
           ))}
         </div>
       ))}
-      {estimate}
       <Button
         type="submit"
         variant="primary"
-        disabled={!complete || submitting || blocked}
+        disabled={!complete || submitting}
         loading={submitting}
         className="self-start"
       >

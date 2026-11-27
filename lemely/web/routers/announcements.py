@@ -32,7 +32,6 @@ from typing import Annotated, NoReturn
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
 
-from lemely.core.team_permissions import TeamPermission
 from lemely.db.announcement_repo import (
     AnnouncementError,
     AnnouncementNotFoundError,
@@ -46,12 +45,11 @@ from lemely.db.notification_repo import (
     NotificationService,  # noqa: TC001 - FastAPI resolves this at runtime
 )
 from lemely.web.deps import (
-    TeamActor,
+    AuthContext,
     get_announcement_service,
     get_notification_service,
     get_push_transport,
     require_role,
-    require_team_permission,
 )
 
 # ``NotificationService`` above and ``NotificationTransport`` here are
@@ -78,10 +76,6 @@ router = APIRouter(
     prefix="/api/teacher/announcements",
     dependencies=[Depends(require_role(*_STAFF_ROLES))],
 )
-
-# Paymob billing Phase 03 (spec §2.3): an assistant may use these for their lead teacher.
-_TEAM_VIEW = require_team_permission(TeamPermission.VIEW_RESULTS, *_STAFF_ROLES)
-_TEAM_MANAGE_CLASSES = require_team_permission(TeamPermission.MANAGE_CLASSES, *_STAFF_ROLES)
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +130,7 @@ def _row_to_dto(row: AnnouncementRow) -> AnnouncementDTO:
 @router.post("", response_model=AnnouncementCreateResponseDTO)
 def create_announcement(
     body: AnnouncementCreateRequestDTO,
-    actor: Annotated[TeamActor, Depends(_TEAM_MANAGE_CLASSES)],
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[AnnouncementService, Depends(get_announcement_service)],
     notifications: Annotated[NotificationService, Depends(get_notification_service)],
     push_transport: Annotated[NotificationTransport, Depends(get_push_transport)],
@@ -151,7 +145,6 @@ def create_announcement(
     is written** — a partial fan-out across the classes the caller does own
     cannot silently succeed.
     """
-    auth = actor.auth
     publish_at = _parse_publish_at(body.publishAt)
     try:
         rows = service.create(
@@ -174,11 +167,10 @@ def create_announcement(
 
 @router.get("", response_model=AnnouncementListDTO)
 def list_announcements(
-    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[AnnouncementService, Depends(get_announcement_service)],
 ) -> AnnouncementListDTO:
     """List every announcement the caller has authored, newest first."""
-    auth = actor.auth
     rows = service.list_for_author(auth.user_id)
     return AnnouncementListDTO(announcements=[_row_to_dto(row) for row in rows])
 
@@ -186,7 +178,7 @@ def list_announcements(
 @router.delete("/{announcement_id}", status_code=204)
 def delete_announcement(
     announcement_id: str,
-    actor: Annotated[TeamActor, Depends(_TEAM_MANAGE_CLASSES)],
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[AnnouncementService, Depends(get_announcement_service)],
 ) -> None:
     """Delete one announcement. Author-scoped.
@@ -194,7 +186,6 @@ def delete_announcement(
     Deleting an announcement authored by someone else is a 403, never a
     silent no-op; a non-UUID id is a 422; an unknown id is a 404.
     """
-    auth = actor.auth
     try:
         service.delete(auth.user_id, announcement_id)
     except AnnouncementError as exc:
