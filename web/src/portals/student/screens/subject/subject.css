@@ -26,6 +26,10 @@
 @media (min-width: 1280px) { .sj-title { font-size: 32px; } }
 .sj-sub { font: 500 13px var(--font-sans); color: var(--md-on-surface-variant); }
 
+/* Forward navigation points in the current reading direction. */
+:dir(rtl) :is(.sj-h2 a, .sj-h2 button, .sj-more) svg,
+:dir(rtl) .sj-sec--papers .rd-chev { transform: scaleX(-1); }
+
 /* ---- Section headings --------------------------------------------------- */
 .sj-sec { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
 /* 31px is the mock's heading row (a 23px line plus the link's 4px above and below), so a plain heading and a linked one sit on the same rhythm. */

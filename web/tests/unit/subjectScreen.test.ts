@@ -580,6 +580,11 @@ describe("PapersList", () => {
     expect(out).toContain("0580/42 · May/Jun 2024")
     expect(out).toContain("61/80 · Apr")
   })
+  it("flips subject heading, all-papers link and paper-row chevrons in RTL", () => {
+    const out = html(PapersList, { rows: full.papers, visible: 4, allTo })
+    expect(out.match(/class="rd-chev"/g)).toHaveLength(4)
+    expect(subjectCss).toMatch(/:dir\(rtl\)\s+:is\(\.sj-h2 a, \.sj-h2 button, \.sj-more\) svg,\s*:dir\(rtl\)\s+\.sj-sec--papers\s+\.rd-chev\s*\{\s*transform:\s*scaleX\(-1\)/)
+  })
   it("drops the All N papers link once everything is visible", () => {
     const out = html(PapersList, { rows: full.papers, visible: 7, allTo })
     expect(out).not.toContain("All 7 papers")
