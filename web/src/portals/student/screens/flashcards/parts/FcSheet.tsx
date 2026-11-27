@@ -1,6 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E3 S3 R5 V3 */
 import type { ReactNode } from "react"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
+import { useDialogHistory } from "@/lib/nav/useDialogHistory"
 
 /** The id of the consequence paragraph on an alert sheet. Only one sheet is open at a time, so one
  * id serves both (Delete deck, Delete card). An alertdialog is described by what will be lost. */
@@ -21,6 +22,9 @@ export function FcSheet({
   restoreFocusTo?: () => HTMLElement | null
   children: ReactNode
 }) {
+  // Back and Escape both close the sheet (brief 2026-11-08:37). A menu-to-confirm hand-off closes the menu
+  // (unwinding its entry) and opens the confirm (pushing its own), via the shared dialog-history stack.
+  useDialogHistory({ open, dismissible: true, onClose: () => onOpenChange(false) })
   const heading = <SheetTitle className="block w-full text-start native:px-5 font-sans text-[22px] font-extrabold leading-tight text-on-surface">{title}</SheetTitle>
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>

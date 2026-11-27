@@ -1,8 +1,12 @@
 // FcSheet is a Radix dialog and node has no DOM, so it is called as a function and the element it
 // returns is read, the way deckSheets.test.ts reads the sheets' own trees.
 import { createElement } from "react"
-import { describe, expect, it } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ALERT_BODY_ID, FcSheet } from "@/portals/student/screens/flashcards/parts/FcSheet"
+
+// Browser back must close every flashcards sheet, so FcSheet registers the shared dialog-history hook.
+const { useDialogHistory } = vi.hoisted(() => ({ useDialogHistory: vi.fn() }))
+vi.mock("@/lib/nav/useDialogHistory", () => ({ useDialogHistory }))
 
 type El = { type: unknown; props: Record<string, unknown> }
 function findAll(node: unknown, match: (el: El) => boolean, found: El[] = []): El[] {
@@ -33,5 +37,22 @@ describe("FcSheet", () => {
     const sheet = content(false)
     expect(sheet.props.role).toBe("dialog")
     expect(sheet.props["aria-describedby"]).toBeUndefined()
+  })
+
+  describe("browser history", () => {
+    beforeEach(() => useDialogHistory.mockClear())
+
+    it("registers every sheet as dismissible, so browser back closes it", () => {
+      FcSheet({ open: true, onOpenChange: () => {}, title: "Rename deck", children: createElement("p") })
+      expect(useDialogHistory).toHaveBeenCalledTimes(1)
+      expect(useDialogHistory.mock.calls[0][0]).toMatchObject({ open: true, dismissible: true })
+    })
+
+    it("a back press closes the sheet through onOpenChange, not by leaving the page", () => {
+      const onOpenChange = vi.fn()
+      FcSheet({ open: true, onOpenChange, title: "Delete deck?", alert: true, children: createElement("p") })
+      useDialogHistory.mock.calls[0][0].onClose()
+      expect(onOpenChange).toHaveBeenCalledWith(false)
+    })
   })
 })

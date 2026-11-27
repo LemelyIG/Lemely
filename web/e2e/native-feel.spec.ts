@@ -157,7 +157,7 @@ test("Assertion 4: safe-area CSS present, viewport meta exact", async ({ page })
   )
 })
 
-test.describe("Assertion 5: browser back handles overlays without committing actions", () => {
+test.describe("Assertion 5: browser back dismisses overlays without navigating away", () => {
   test("the student nav drawer (dismissible) closes on back; URL unchanged", async ({ page }) => {
     await loginAsStudent(page)
     await page.goto("/student")
@@ -172,7 +172,7 @@ test.describe("Assertion 5: browser back handles overlays without committing act
     expect(page.url()).toBe(urlBefore)
   })
 
-  test("leaving a long-press deck delete confirmation via browser back does not delete the deck", async ({ page }) => {
+  test("a long-press deck delete confirmation closes on browser back; URL unchanged; deck not deleted", async ({ page }) => {
     const seed = readSeed()
     const account = seed.practice.students.active
     await page.goto("/login")
@@ -180,7 +180,6 @@ test.describe("Assertion 5: browser back handles overlays without committing act
     await page.getByLabel("Password").fill(account.password)
     await page.getByRole("button", { name: /sign in/i }).click()
     await expect(page).toHaveURL(/\/student$/, { timeout: 15_000 })
-    const dashboardUrl = page.url()
 
     const shelfPath = `/student/flashcards/${seed.practice.subjectCode}`
     await page.goto(shelfPath)
@@ -200,12 +199,13 @@ test.describe("Assertion 5: browser back handles overlays without committing act
     const confirm = page.getByRole("alertdialog", { name: `Delete ${deckTitle}?`, exact: true })
     await expect(confirm.getByRole("button", { name: "Keep it" })).toBeVisible()
 
-    // The redesigned alert sheet does not install the old ConfirmModal's history guard.
+    // Back closes the sheet (brief 2026-11-08:37); the URL stays on the shelf and nothing is deleted.
+    const shelfUrl = page.url()
     await page.goBack()
-    await expect(page).toHaveURL(dashboardUrl)
     await expect(confirm).toBeHidden()
+    expect(page.url()).toBe(shelfUrl)
 
-    await page.goto(shelfPath)
+    await page.reload()
     await expect(deckRow).toBeVisible()
   })
 })

@@ -227,14 +227,32 @@ function classNameText(source: string): { line: number; value: string }[] {
   return out
 }
 
+/*
+ * Flashcards `.ts`/`.tsx` modules keep their class lists in string literals (`parts/buttonStyles.ts`,
+ * `fieldStyles.ts`, `errorAlert.ts`, ReviewScreen's `GRADE_TONE`), not only in `className=`. Comments are
+ * blanked first, and the lexer is string-aware, so an apostrophe in JSX prose does not open a literal.
+ */
+function stringLiteralText(source: string): { line: number; value: string }[] {
+  const code = stripComments(source)
+  const out: { line: number; value: string }[] = []
+  const re = /(["'`])((?:\\.|(?!\1)[^\\\n])*)\1/g
+  let match: RegExpExecArray | null
+  while ((match = re.exec(code)) !== null) {
+    out.push({ line: code.slice(0, match.index).split("\n").length, value: match[2] })
+  }
+  return out
+}
+
 describe("RTL safety on Phase 3 surfaces", () => {
   it.each(RTL_CLEAN_FILES)("%s uses logical properties only", (relative) => {
     const source = readFileSync(join(process.cwd(), relative), "utf8")
     const offences: string[] = []
     // Include negative utilities in the flashcard audit without expanding the legacy surfaces' gate.
     const negative = relative.startsWith(`${FLASHCARD_DIR}/`) ? "-?" : ""
+    const flashcardsModule = relative.startsWith(`${FLASHCARD_DIR}/`) && /\.tsx?$/.test(relative)
+    const texts = flashcardsModule ? [...classNameText(source), ...stringLiteralText(source)] : classNameText(source)
 
-    for (const { line, value } of classNameText(source)) {
+    for (const { line, value } of texts) {
       for (const [physical, logical] of PHYSICAL) {
         // Two boundaries are needed, and missing the second one is how this
         // check first reported `rounded-lg` as a physical `rounded-l`:
@@ -246,8 +264,10 @@ describe("RTL safety on Phase 3 surfaces", () => {
         //     direction. Same for `border-l` against a hypothetical
         //     `border-lime`.
         const trailing = physical.endsWith("-") ? "" : "(?![a-zA-Z])"
+        // An important modifier sits between the boundary and the utility (`!ml-1`, `hover:!pl-3`), so it is
+        // part of the captured class and the physical name is still matched right after it.
         const re = new RegExp(
-          `(?:^|[\\s"'\`:])(${negative}${physical}${trailing}(?:\\[[^\\s]+?\\]|[a-z0-9./-]*))`,
+          `(?:^|[\\s"'\`:])(!?${negative}${physical}${trailing}(?:\\[[^\\s]+?\\]|[a-z0-9./-]*))`,
           "g",
         )
         let hit: RegExpExecArray | null
