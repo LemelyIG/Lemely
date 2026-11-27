@@ -23,8 +23,8 @@ export type ActivityType = "practice" | "flashcards" | "past_paper" | "review"
  * `focus` is `f"{activity label}: {topic}"` server-side — a restatement of
  * `activityType` and `topic`, **not** a rationale. Nothing on this type records
  * which of the planner's three signals (weakness / placement / confidence)
- * produced the session; see `sessionRationale` in `studyPlanData.ts` for the
- * one provable statement available, and do not render `focus` as a "why".
+ * produced the session; use the separately supplied reason when available,
+ * and do not render `focus` as a "why".
  *
  * `completedAt` is the P5 XP seam and nothing more — there is no points or
  * streak field here, and inventing one on the completion affordance is exactly
@@ -39,6 +39,12 @@ export interface StudyPlanSessionDTO {
   durationMinutes: number
   focus: string
   completedAt: string | null
+  /** True for a past paper: offered on any day of the week (L9). */
+  anyDay: boolean
+  /** Why this session is here, from rows that prove it. Only the week route
+   * (`GET /api/student/study-plan`) fills it; complete and move return `null`,
+   * and the cache patcher keeps the computed one. */
+  reason: SessionReasonDTO | null
 }
 
 /**
@@ -85,4 +91,42 @@ export interface CurrentStudyPlanDTO {
  * the authenticated student server-side — no student id is sent. */
 export interface CreateStudyPlanRequest {
   subjectCode: string
+  week?: "current" | "next"
+}
+
+/** L9 · see `lemely/web/schemas_study_plan.py` `SessionReasonDTO`. */
+export type SessionReasonKind = "marks_lost" | "cards_due" | "last_paper"
+
+export interface SessionReasonDTO {
+  kind: SessionReasonKind
+  /** Marks lost, cards due by the end of today, or days since the last paper. */
+  count: number
+}
+
+export interface WeakTopicDTO {
+  topic: string
+  accuracyPct: number
+}
+
+/** One enrolled subject in the week. `generated`/`plan` keep the three
+ * per-subject states of `CurrentStudyPlanDTO`. */
+export interface SubjectWeekDTO {
+  subjectCode: string
+  generated: boolean
+  plan: StudyPlanWeekDTO | null
+  paperCount: number
+  weakTopics: WeakTopicDTO[]
+}
+
+/** `GET /api/student/study-plan`. `today` is the server's UTC day and the
+ * only "today" the screen uses. */
+export interface StudyPlanOverviewDTO {
+  today: string
+  weekStart: string
+  weekEnd: string
+  subjects: SubjectWeekDTO[]
+}
+
+export interface MoveSessionRequest {
+  date: string
 }

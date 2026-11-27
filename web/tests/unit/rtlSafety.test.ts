@@ -141,8 +141,17 @@ const RTL_CLEAN_FILES_CURATED = [
   "src/portals/student/screens/practice/PracticePrint.tsx",
   "src/portals/student/screens/practice/PracticeResult.tsx",
   "src/portals/student/screens/practice/PracticeSet.tsx",
-  "src/portals/student/screens/studyplan/StudyPlanSession.tsx",
-  "src/portals/student/screens/studyplan/StudyPlanWeek.tsx",
+  "src/portals/student/screens/studyplan/PlanHeader.tsx",
+  "src/portals/student/screens/studyplan/PlanList.tsx",
+  "src/portals/student/screens/studyplan/PlanStates.tsx",
+  "src/portals/student/screens/studyplan/SessionDetail.tsx",
+  "src/portals/student/screens/studyplan/SessionRow.tsx",
+  "src/portals/student/screens/studyplan/StudyPlanScreen.tsx",
+  "src/portals/student/screens/studyplan/WeekStrip.tsx",
+  "src/portals/student/screens/studyplan/MissedGroup.tsx",
+  "src/portals/student/screens/studyplan/BasedOn.tsx",
+  "src/portals/student/screens/studyplan/icons.tsx",
+  "src/portals/student/screens/studyplan/planStyles.ts",
   // Phase 4, surface 4 — gamification (XP, streaks, leaderboards). The
   // confetti in `celebration.tsx` is the interesting case: `transform` has no
   // logical axis, so its inline travel is multiplied by `--lm-dir` in the

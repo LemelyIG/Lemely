@@ -65,8 +65,8 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
-from typing import TYPE_CHECKING
+from datetime import UTC, date, datetime, time, timedelta
+from typing import TYPE_CHECKING, Literal
 
 from sqlalchemy import func, select
 
@@ -78,8 +78,8 @@ from lemely.core.study_plan import (
     build_study_plan,
 )
 from lemely.db.models.attempts import Attempt, WeaknessRecord
-from lemely.db.models.enums import QuestionSource, QuizKind, QuizSubmissionStatus
-from lemely.db.models.flashcards import FlashcardDeck
+from lemely.db.models.enums import AttemptOrigin, QuestionSource, QuizKind, QuizSubmissionStatus
+from lemely.db.models.flashcards import Flashcard, FlashcardDeck
 from lemely.db.models.profiles import (
     StudentConfidenceRating,
     StudentProfile,
@@ -113,8 +113,22 @@ def _week_start(now: datetime) -> date:
     return now.date() - timedelta(days=now.weekday())
 
 
+def _next_week_moment(now: datetime) -> datetime:
+    """Midnight UTC on the Monday after ``now``'s ISO week ("Plan next week"'s clock)."""
+    return datetime.combine(_week_start(now) + timedelta(days=7), time.min, tzinfo=UTC)
+
+
 class StudyPlanError(Exception):
     """Base class for study-plan service failures."""
+
+
+class StudyPlanIdError(ValueError):
+    """An identifier that is not a UUID: the caller's mistake (→ 422).
+
+    A ``ValueError`` subclass so existing callers that catch ``ValueError``
+    keep working, but distinct so the HTTP layer can map only this one and let
+    any other ``ValueError`` surface as the bug it is.
+    """
 
 
 class StudyPlanNotFoundError(StudyPlanError):
@@ -128,6 +142,29 @@ class StudyPlanOwnershipError(StudyPlanError):
     tested — even though chunk C renders both as a 404 (module docstring,
     D4.11 precedent).
     """
+
+
+MoveErrorCode = Literal["completed", "superseded", "past_day", "outside_week"]
+
+
+class StudyPlanMoveError(StudyPlanError):
+    """A move the plan does not allow.
+
+    ``code`` is machine-readable for the HTTP layer:
+
+    * ``"completed"``: the session is done, and a completion record is history.
+    * ``"superseded"``: a rebuild replaced the plan, so the id is stale.
+    * ``"past_day"``: the target is before today.
+    * ``"outside_week"``: the target is before the plan's own week (a next-week
+      plan) or after its last day.
+
+    The plan's last day is its ISO Sunday, or its latest session if the scheduler
+    placed one past Sunday (sessions start at ``now.date()``).
+    """
+
+    def __init__(self, code: MoveErrorCode, message: str) -> None:
+        super().__init__(message)
+        self.code: MoveErrorCode = code
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +200,54 @@ class PlanView:
     sessions: list[SessionView]
 
 
+@dataclass(frozen=True, slots=True)
+class SessionReason:
+    """Why a session is in the plan, stated only from rows that prove it.
+
+    ``kind`` is one of:
+
+    * ``"marks_lost"``: ``count`` is the topic's summed net lost marks.
+    * ``"cards_due"``: ``count`` is the topic's cards due by the end of today.
+    * ``"last_paper"``: ``count`` is the days since the subject's last marked paper.
+
+    A session with no provable reason has no entry at all. The planner's
+    placement and confidence signals are not recorded per session, so nothing
+    here guesses at them.
+    """
+
+    kind: str
+    count: int
+
+
+@dataclass(frozen=True, slots=True)
+class WeakTopicView:
+    """One recorded weak topic for a subject, as a whole-number accuracy percent."""
+
+    topic: str
+    accuracy_pct: int
+
+
+@dataclass(frozen=True, slots=True)
+class SubjectWeekView:
+    """One enrolled subject's current plan plus what the study-plan screen shows beside it."""
+
+    subject_code: str
+    plan: PlanView | None
+    reasons: dict[uuid.UUID, SessionReason]
+    paper_count: int
+    weak_topics: list[WeakTopicView]
+
+
+@dataclass(frozen=True, slots=True)
+class WeekOverview:
+    """Every requested subject's week, on one clock: ``today`` is ``now.date()`` (UTC)."""
+
+    today: date
+    week_start: date
+    week_end: date
+    subjects: list[SubjectWeekView]
+
+
 class StudyPlanService:
     """Generate-and-persist, look up, and complete sessions of a weekly study plan.
 
@@ -191,8 +276,9 @@ class StudyPlanService:
         *,
         weekly_hours: float | None = None,
         now: datetime | None = None,
+        next_week: bool = False,
     ) -> PlanView:
-        """Build this week's plan from the three live signals and persist it.
+        """Build a week's plan from the three live signals and persist it.
 
         Supersedes (never mutates) any existing active plan for the same
         ``(student, subject, week)`` — see the module docstring. Persists
@@ -200,13 +286,20 @@ class StudyPlanService:
         yet this week" and "the student was refused a plan this week" are
         both real, queryable states via :meth:`get_current`.
 
+        ``next_week=True`` plans the ISO week after the clock's ("Plan next
+        week" on the week-done screen): sessions are laid out from next
+        Monday, and :meth:`get_current` finds the plan once that week
+        arrives. ``generated_at``/``superseded_at`` still record the real
+        clock, never the future Monday.
+
         ``weekly_hours`` defaults to the caller's ``StudentProfile
         .weekly_study_hours`` when omitted, falling back to
         :data:`_DEFAULT_WEEKLY_HOURS` when the caller has no profile row or
         left it unset.
         """
         student_uuid = _as_uuid(student_id)
-        moment = now if now is not None else self._now()
+        clock = now if now is not None else self._now()
+        moment = _next_week_moment(clock) if next_week else clock
         week_start = _week_start(moment)
 
         with self._sessionmaker() as session, session.begin():
@@ -245,7 +338,7 @@ class StudyPlanService:
                 )
             ).first()
             if existing is not None:
-                existing.superseded_at = moment
+                existing.superseded_at = clock
 
             row = DbStudyPlan(
                 user_id=student_uuid,
@@ -254,7 +347,7 @@ class StudyPlanService:
                 weekly_hours=resolved_hours,
                 available=plan.available,
                 reason=plan.reason,
-                generated_at=moment,
+                generated_at=clock,
             )
             session.add(row)
             session.flush()
@@ -303,6 +396,52 @@ class StudyPlanService:
             ).all()
             return self._to_view(row, sessions)
 
+    def get_week(
+        self,
+        student_id: uuid.UUID | str,
+        subject_codes: Iterable[str],
+        *,
+        now: datetime | None = None,
+    ) -> WeekOverview:
+        """This ISO week across ``subject_codes``, in the order given.
+
+        Each subject carries its active plan (or ``None``), the honest
+        per-session reasons (:class:`SessionReason`), its marked-paper count
+        and its three weakest recorded topics. Everything is read on the one
+        injected clock, so ``today`` here and the plans' week agree.
+        """
+        student_uuid = _as_uuid(student_id)
+        moment = now if now is not None else self._now()
+        today = moment.date()
+        week_start = _week_start(moment)
+        subjects: list[SubjectWeekView] = []
+        for code in subject_codes:
+            plan = self.get_current(student_uuid, code, now=moment)
+            with self._sessionmaker() as session:
+                weaknesses = self._weaknesses(session, student_uuid, code)
+                paper_count, last_paper_on = self._paper_stats(session, student_uuid, code)
+                due = self._cards_due(session, student_uuid, code, today) if plan else {}
+            reasons = _session_reasons(plan, weaknesses, due, last_paper_on, today) if plan else {}
+            weakest = sorted(weaknesses, key=lambda w: (w.accuracy, w.topic))[:3]
+            subjects.append(
+                SubjectWeekView(
+                    subject_code=code,
+                    plan=plan,
+                    reasons=reasons,
+                    paper_count=paper_count,
+                    weak_topics=[
+                        WeakTopicView(topic=w.topic, accuracy_pct=round(w.accuracy * 100))
+                        for w in weakest
+                    ],
+                )
+            )
+        return WeekOverview(
+            today=today,
+            week_start=week_start,
+            week_end=week_start + timedelta(days=6),
+            subjects=subjects,
+        )
+
     # -- Completion ---------------------------------------------------------------
 
     def complete_session(
@@ -333,6 +472,53 @@ class StudyPlanService:
             row, plan = self._owned_session(session, student_uuid, session_uuid)
             if row.completed_at is None:
                 row.completed_at = moment
+            session.flush()
+            return self._to_session_view(row, plan.subject_code)
+
+    def move_session(
+        self,
+        student_id: uuid.UUID | str,
+        session_id: uuid.UUID | str,
+        to_date: date,
+        *,
+        now: datetime | None = None,
+    ) -> SessionView:
+        """Move one of the caller's own open sessions to another day of its plan.
+
+        The one edit a plan's sessions take besides ``completed_at``. A
+        rebuild still supersedes the whole plan (moves included), exactly as
+        it supersedes completions — the module's "never mutate history" rule
+        is about superseded plans, and a superseded plan refuses moves.
+
+        Raises:
+            StudyPlanNotFoundError / StudyPlanOwnershipError: as
+                :meth:`complete_session` (both rendered 404).
+            StudyPlanMoveError: ``completed``, ``superseded``, ``past_day``
+                or ``outside_week`` — see the class docstring.
+        """
+        student_uuid = _as_uuid(student_id)
+        session_uuid = _as_uuid(session_id)
+        moment = now if now is not None else self._now()
+        today = moment.date()
+        with self._sessionmaker() as session, session.begin():
+            row, plan = self._owned_session(session, student_uuid, session_uuid)
+            if plan.superseded_at is not None:
+                raise StudyPlanMoveError("superseded", "This session's plan has been rebuilt")
+            if row.completed_at is not None:
+                raise StudyPlanMoveError("completed", "A completed session cannot be moved")
+            if to_date < today:
+                raise StudyPlanMoveError("past_day", "A session cannot be moved to a past day")
+            latest = session.scalar(
+                select(func.max(DbStudyPlanSession.date)).where(
+                    DbStudyPlanSession.plan_id == plan.id
+                )
+            )
+            last_day = max(plan.week_start + timedelta(days=6), latest or plan.week_start)
+            if to_date < plan.week_start or to_date > last_day:
+                raise StudyPlanMoveError(
+                    "outside_week", "A session can only move within its own week"
+                )
+            row.date = to_date
             session.flush()
             return self._to_session_view(row, plan.subject_code)
 
@@ -450,6 +636,36 @@ class StudyPlanService:
         )
         return float(hours) if hours else _DEFAULT_WEEKLY_HOURS
 
+    def _paper_stats(
+        self, session: Session, student_uuid: uuid.UUID, subject_code: str
+    ) -> tuple[int, date | None]:
+        """Marked papers (past or custom, never quizzes) for this subject: count and latest day."""
+        count, latest = session.execute(
+            select(func.count(Attempt.id), func.max(Attempt.recorded_at)).where(
+                Attempt.user_id == student_uuid,
+                Attempt.subject_code == subject_code,
+                Attempt.origin.in_((AttemptOrigin.past_paper, AttemptOrigin.custom_paper)),
+            )
+        ).one()
+        return int(count), (latest.astimezone(UTC).date() if latest is not None else None)
+
+    def _cards_due(
+        self, session: Session, student_uuid: uuid.UUID, subject_code: str, today: date
+    ) -> dict[str, int]:
+        """Cards due by the end of ``today`` (UTC), per deck topic, in the caller's own decks."""
+        cutoff = datetime.combine(today + timedelta(days=1), time.min, tzinfo=UTC)
+        rows = session.execute(
+            select(FlashcardDeck.topic, func.count(Flashcard.id))
+            .join(Flashcard, Flashcard.deck_id == FlashcardDeck.id)
+            .where(
+                FlashcardDeck.user_id == student_uuid,
+                FlashcardDeck.subject_code == subject_code,
+                Flashcard.due_at < cutoff,
+            )
+            .group_by(FlashcardDeck.topic)
+        ).all()
+        return {topic: int(n) for topic, n in rows if topic is not None}
+
     def _availability(
         self,
         session: Session,
@@ -546,21 +762,53 @@ class StudyPlanService:
         )
 
 
+def _session_reasons(
+    plan: PlanView,
+    weaknesses: list[WeakArea],
+    cards_due: dict[str, int],
+    last_paper_on: date | None,
+    today: date,
+) -> dict[uuid.UUID, SessionReason]:
+    """The provable reason per session. See :class:`SessionReason`.
+
+    Flashcards prefer "cards due" and past papers prefer "days since your last
+    paper". Every activity falls back to the topic's lost marks, and a topic
+    with none gets no reason.
+    """
+    lost = {w.topic: w.lost_marks for w in weaknesses}
+    out: dict[uuid.UUID, SessionReason] = {}
+    for s in plan.sessions:
+        if s.activity_type is DbActivityType.flashcards and cards_due.get(s.topic, 0) > 0:
+            out[s.id] = SessionReason("cards_due", cards_due[s.topic])
+        elif s.activity_type is DbActivityType.past_paper and last_paper_on is not None:
+            out[s.id] = SessionReason("last_paper", max(0, (today - last_paper_on).days))
+        elif lost.get(s.topic, 0) > 0:
+            out[s.id] = SessionReason("marks_lost", lost[s.topic])
+    return out
+
+
 def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:
-    """Coerce a str/UUID to :class:`uuid.UUID`, raising ``ValueError`` if invalid."""
+    """Coerce a str/UUID to :class:`uuid.UUID`, raising :class:`StudyPlanIdError` if invalid."""
     if isinstance(value, uuid.UUID):
         return value
     try:
         return uuid.UUID(value)
     except (ValueError, AttributeError) as exc:
-        raise ValueError(f"Identifier must be a UUID, got {value!r}") from exc
+        raise StudyPlanIdError(f"Identifier must be a UUID, got {value!r}") from exc
 
 
 __all__ = [
+    "MoveErrorCode",
     "PlanView",
+    "SessionReason",
     "SessionView",
     "StudyPlanError",
+    "StudyPlanIdError",
+    "StudyPlanMoveError",
     "StudyPlanNotFoundError",
     "StudyPlanOwnershipError",
     "StudyPlanService",
+    "SubjectWeekView",
+    "WeakTopicView",
+    "WeekOverview",
 ]

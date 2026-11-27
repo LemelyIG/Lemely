@@ -46,10 +46,13 @@ describe("student tab bar (mock h6.js TAB6, Plan in the Subjects slot by user ru
     expect(read("portals/student/shell.tsx")).toMatch(/label: "More"/)
   })
 
-  it("mounts /student/practice and /student/plan as the interim entries", () => {
+  it("mounts /student/practice as the interim entry and /student/plan as the study plan screen", () => {
     const index = read("portals/student/index.tsx")
     expect(index).toMatch(/path: "practice",\s*element: <SubjectEntry section="practice" \/>/)
-    expect(index).toMatch(/path: "plan",\s*element: <SubjectEntry section="plan" \/>/)
+    // L9 replaced the interim plan entry: all four plan urls render the one StudyPlanScreen.
+    for (const path of ["plan", "plan/session/:sessionId", "plan/:subjectCode", "plan/:subjectCode/session/:sessionId"])
+      expect(index, path).toMatch(new RegExp(`path: "${path}",\\s*element: <StudyPlanScreen />`))
+    expect(index).not.toMatch(/<SubjectEntry section="plan"/)
   })
 
   it("the student phone top bar keeps the menu button that opens the navigation sheet", () => {

@@ -1348,12 +1348,16 @@ function buildRouteRegistry(seed) {
 
   // ── P4.10 chunk C · the S-24/S-25 sessions ───────────────────────────────
   // S-24 has four states and two of them provably cannot share an account:
-  // `generated: false` (no plan row this ISO week) and `available: false /
-  // no_signal` (a plan row that IS a persisted refusal) are mutually exclusive
-  // per account per week. The three practice accounts above already split that
-  // way, so no new account is created. The fourth state — a week with every
-  // session complete — goes on `placement.students.completed`, because
-  // completing `active`'s sessions would destroy the populated-week capture.
+  // `generated: false` (no plan row this ISO week, "Let’s plan your week") and
+  // `available: false / no_signal` (a plan row that IS a persisted refusal,
+  // "I need a paper first") are mutually exclusive per account per week. The
+  // three practice accounts above already split that way, so no new account is
+  // created. The fourth state — a week with every session complete ("Week
+  // done.") — goes on `placement.students.completed`, because completing
+  // `active`'s sessions would destroy the populated-week capture. The
+  // populated week is identified by its filtered header, `Physics · N sessions
+  // · …`. S-25 reads "has cost you" for the session sheet and "isn’t in this
+  // week’s plan" for an id the week does not hold.
   const planCompleteSession = {
     accessToken: seed.placement.students.completed.accessToken,
     userId: seed.placement.students.completed.userId,
@@ -2281,15 +2285,17 @@ function buildRouteRegistry(seed) {
       // WeaknessRecord (the seed's deliberately-wrong marked set), which is
       // the signal `generate` needs.
       //
-      // The ready predicate reads the seeded session count rather than a
-      // loose `\d+ of \d+`, so a week that came back short or partly complete
+      // The route is filtered to the subject, so the header reads
+      // `Physics · N sessions · 30 min` (`planModel.ts`), not the unfiltered
+      // `0 of N done`. The ready predicate reads the seeded session count
+      // rather than a loose `\d+ sessions?`, so a week that came back short
       // fails the gate instead of screenshotting cleanly under this name.
       screenId: "S-24",
       slug: "student-study-plan-week",
       path: studyPlanWeekUrl,
       session: practiceActiveSession,
       ready: (page) =>
-        waitForText(page, `0 of ${seed.studyPlan.activeSessionCount} sessions? done`),
+        waitForText(page, `· ${seed.studyPlan.activeSessionCount} sessions? ·`),
       authed: true,
     },
     {
@@ -2307,7 +2313,7 @@ function buildRouteRegistry(seed) {
           state: "refused",
           slug: "student-study-plan-week-refused",
           lighthouse: false,
-          ready: (page) => waitForText(page, "Not enough to plan from yet"),
+          ready: (page) => waitForText(page, "I need a paper first"),
         },
       ],
     },
@@ -2324,15 +2330,15 @@ function buildRouteRegistry(seed) {
           state: "not-generated",
           slug: "student-study-plan-week-not-generated",
           lighthouse: false,
-          ready: (page) => waitForText(page, "No plan for this week yet"),
+          ready: (page) => waitForText(page, "Let’s plan your week"),
         },
       ],
     },
     {
-      // S-24 · every session in the week complete. Asserted as N of N off the
-      // seeded count: a partially-completed week is the one failure mode here
-      // that would still render — and screenshot — as a perfectly good
-      // populated week.
+      // S-24 · every session in the week complete. The screen names this state
+      // itself ("Week done."): a partly complete week renders the plan list
+      // instead, so the one failure mode that would otherwise screenshot as a
+      // perfectly good populated week cannot satisfy this predicate.
       screenId: "S-24",
       path: studyPlanWeekUrl,
       session: planCompleteSession,
@@ -2342,11 +2348,7 @@ function buildRouteRegistry(seed) {
           state: "week-complete",
           slug: "student-study-plan-week-complete",
           lighthouse: false,
-          ready: (page) =>
-            waitForText(
-              page,
-              `${seed.studyPlan.completedSessionCount} of ${seed.studyPlan.completedSessionCount} sessions? done`,
-            ),
+          ready: (page) => waitForText(page, "Week done\\."),
         },
       ],
     },
@@ -2355,14 +2357,16 @@ function buildRouteRegistry(seed) {
       // whose topic really is in `active`'s recorded weak topics, so the arm
       // that renders here is the *provable* one. Asserting the weak-topic
       // sentence rather than the shared "Why this is in your plan" heading is
-      // the point: all three rationale arms carry that heading, so matching it
-      // would pass on the honest-absence arm too and name the capture for a
-      // state it is not.
+      // the point: the rationale has three arms (marks lost, cards due, last
+      // paper) and a fourth line for no recorded reason, and only the first
+      // says "has cost you", so matching a shared "Why this?" label would pass
+      // on the honest-absence arm too and name the capture for a state it is
+      // not.
       screenId: "S-25",
       slug: "student-study-plan-session",
       path: studyPlanSessionUrl,
       session: practiceActiveSession,
-      ready: (page) => waitForText(page, "is one of your recorded weak topics for this subject"),
+      ready: (page) => waitForText(page, "has cost you"),
       authed: true,
     },
     {
@@ -2378,7 +2382,7 @@ function buildRouteRegistry(seed) {
           state: "not-in-current-week",
           slug: "student-study-plan-session-not-in-week",
           lighthouse: false,
-          ready: (page) => waitForText(page, "has been rebuilt since this link was made"),
+          ready: (page) => waitForText(page, "isn’t in this week’s plan"),
         },
       ],
     },

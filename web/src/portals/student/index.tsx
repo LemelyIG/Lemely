@@ -41,11 +41,8 @@ const CorrectPaper = lazy(loadCorrectPaper)
 // BottomNav's "Correct" tab) — see `prefetchOnIntent`'s own doc comment for
 // why this must be a single call, not one per site.
 const prefetchCorrectPaper = prefetchOnIntent(loadCorrectPaper)
-const StudyPlanSession = lazy(() =>
-  import("./screens/studyplan/StudyPlanSession").then((m) => ({ default: m.StudyPlanSession })),
-)
-const StudyPlanWeek = lazy(() =>
-  import("./screens/studyplan/StudyPlanWeek").then((m) => ({ default: m.StudyPlanWeek })),
+const StudyPlanScreen = lazy(() =>
+  import("./screens/studyplan/StudyPlanScreen").then((m) => ({ default: m.StudyPlanScreen })),
 )
 const Standings = lazy(() => import("./screens/Standings").then((m) => ({ default: m.Standings })))
 const StudentClasses = lazy(() =>
@@ -261,21 +258,27 @@ export const studentRoute: RouteObject = {
       element: <CorrectPaper />,
       handle: { title: "Mark a paper", skeleton: "page-header", immersive: true },
     },
-    // F1: the Plan tab's root. It redirects to the first subject's study plan; L9 swaps this element.
+    // L9: the Plan tab. One screen for all four urls: the filter is `:subjectCode`, an open session `:sessionId`.
+    // React Router ranks the static `plan/session/:sessionId` above `plan/:subjectCode`, and the segment counts differ, so none collide.
     {
       path: "plan",
-      element: <SubjectEntry section="plan" />,
-      handle: { title: "Study plan", skeleton: "page-header" },
+      element: <StudyPlanScreen />,
+      handle: { title: "This week", skeleton: "page-header" },
+    },
+    {
+      path: "plan/session/:sessionId",
+      element: <StudyPlanScreen />,
+      handle: { title: "This week", skeleton: "page-header" },
     },
     {
       path: "plan/:subjectCode",
-      element: <StudyPlanWeek />,
-      handle: { title: "Study plan", skeleton: "page-header" },
+      element: <StudyPlanScreen />,
+      handle: { title: "This week", skeleton: "page-header" },
     },
     {
       path: "plan/:subjectCode/session/:sessionId",
-      element: <StudyPlanSession />,
-      handle: { title: "Study session", skeleton: "page-header" },
+      element: <StudyPlanScreen />,
+      handle: { title: "This week", skeleton: "page-header" },
     },
     {
       path: "board",

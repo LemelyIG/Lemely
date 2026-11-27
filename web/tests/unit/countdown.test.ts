@@ -3,7 +3,7 @@ import { daysUntil, formatCountdown } from "@/lib/countdown"
 
 /*
  * C3b · Moved out of `announcements.test.ts` when `daysUntil`/`formatCountdown`
- * moved to `lib/countdown.ts` so `StudyPlanWeek.tsx` could share them without
+ * moved to `lib/countdown.ts` so `planCopy.ts` could share them without
  * importing across screens. Every assertion here is unchanged from where it
  * used to live; this is the whole reason the move is safe — the countdown is
  * the most prominent number on both screens, and if it is off by a day the

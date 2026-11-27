@@ -1,0 +1,240 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S3 R4 V3 */
+import type { ReactNode } from "react"
+import { Link } from "react-router-dom"
+import { ArrowsClockwise, Check, Target, Timer } from "@phosphor-icons/react"
+import { Binny, Walkthrough, type BinnyMood, type BinnyMotion } from "@/components/redesign"
+import { Button, buttonVariants } from "@/components/ui/button"
+import { SkeletonBlock } from "@/components/ui/skeleton"
+import { cn } from "@/lib/utils"
+import { COPY, type RefusalCopy } from "./planCopy"
+import type { PendingSubject, WeekDoneStat } from "./planModel"
+import { CTA } from "./planStyles"
+
+const go = cn(CTA, "max-w-[360px]")
+/** Once next week is built the button is an answer, not an action: keep it legible, not greyed. */
+const settled = "disabled:bg-surface-container-high disabled:text-on-surface-variant disabled:opacity-100 disabled:shadow-none"
+const quiet = "inline-flex min-h-11 items-center px-3.5 font-sans text-sm font-semibold text-on-surface-variant"
+
+/** `.err2`: centred Binny, display heading, one line, one action. */
+function StateStack({
+  mood,
+  motion = "idle",
+  size = 96,
+  title,
+  body,
+  children,
+  className,
+  role,
+}: {
+  mood: BinnyMood
+  motion?: BinnyMotion
+  size?: number
+  title: string
+  body?: string
+  children?: ReactNode
+  className?: string
+  /** A failure the student did not ask for is announced as it appears. */
+  role?: "alert"
+}) {
+  return (
+    // `min-h` stands in for the mock's `flex: 1`: the shell's page has no fixed height, so the stack is centred in a viewport-sized band instead of hugging the top. Measured at 568, 667, 740 and 844px tall: below about 720px the content is taller than the band, so it never adds scroll of its own.
+    <section role={role} className={cn("grid min-h-[56dvh] flex-1 content-center justify-items-center gap-3 px-2 py-6 text-center", className)}>
+      <Binny mood={mood} size={size} motion={motion} aria-hidden />
+      <h2 className="mt-1.5 mb-0 font-display text-[28px] leading-[1.15] font-extrabold tracking-[-0.02em] text-balance text-primary">{title}</h2>
+      {body ? <p className="m-0 mb-1.5 max-w-[30ch] font-sans text-[15px] leading-[1.4] font-medium text-on-surface-variant">{body}</p> : null}
+      {children}
+    </section>
+  )
+}
+
+/** PL: geometry copied from the mock's skeleton (`sk2c`). */
+export function PlanLoading() {
+  // One announcement for the whole skeleton, so the blocks stay quiet.
+  const block = "bg-surface-container-high"
+  return (
+    <div role="status" aria-busy="true" aria-label="Loading your week" className="grid gap-3.5">
+      <SkeletonBlock announce={false} className={cn(block, "h-10 rounded-md")} />
+      <SkeletonBlock announce={false} className={cn(block, "h-6 w-[180px]")} />
+      <SkeletonBlock announce={false} className={cn(block, "h-16 rounded-[14px]")} />
+      <SkeletonBlock announce={false} className={cn(block, "h-16 rounded-[14px]")} />
+      <SkeletonBlock announce={false} className={cn(block, "h-14 rounded-[14px]")} />
+      <SkeletonBlock announce={false} className={cn(block, "h-[52px] rounded-[14px]")} />
+      <SkeletonBlock announce={false} className={cn(block, "h-[52px] rounded-[14px]")} />
+      <SkeletonBlock announce={false} className={cn(block, "h-[52px] rounded-[14px]")} />
+    </div>
+  )
+}
+
+/** PE. */
+export function PlanLoadError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <StateStack mood="sad" role="alert" title={COPY.loadErrorTitle} body={COPY.loadErrorBody}>
+      <Button variant="primary" className={go} onClick={onRetry}>{COPY.tryAgain}</Button>
+      <Link to="/student" className={quiet}>{COPY.backHome}</Link>
+    </StateStack>
+  )
+}
+
+/** Z0 · first run: one action, then the three tips. */
+export function FirstRun({ building, error, onBuild }: { building: boolean; error: string | null; onBuild: () => void }) {
+  return (
+    <>
+      <StateStack mood="open" title={COPY.firstRunTitle} body={COPY.firstRunBody} className="min-h-0 pt-5">
+        <Button variant="primary" className={go} loading={building} onClick={onBuild}>
+          {building ? COPY.building : COPY.firstRunCta}
+        </Button>
+        {/* The button only says "Building…", so the one announcement names the week. Present only while it builds. */}
+        {building ? <span role="status" className="sr-only">{COPY.buildingAnnounce}</span> : null}
+        {error ? <ActionError message={error} /> : null}
+      </StateStack>
+      <Walkthrough
+        steps={[
+          { icon: Timer, title: COPY.walk[0].title, body: COPY.walk[0].body },
+          { icon: Target, title: COPY.walk[1].title, body: COPY.walk[1].body },
+          { icon: ArrowsClockwise, title: COPY.walk[2].title, body: COPY.walk[2].body },
+        ]}
+      />
+    </>
+  )
+}
+
+/** Z1 · not enough to plan from (or an unknown refusal, with the general message). */
+export function NeedPaper({ copy, placementCode }: { copy: RefusalCopy; placementCode: string }) {
+  return (
+    <StateStack mood="thinking" title={copy.heading} body={copy.body} className="pt-5">
+      <Link to="/student/correct" className={cn(buttonVariants({ variant: "primary" }), go)}>{COPY.needPaperCta}</Link>
+      <Link to={`/student/placement/${placementCode}`} className={quiet}>{COPY.placementCta}</Link>
+    </StateStack>
+  )
+}
+
+const PENDING_COPY = { notGenerated: "no plan yet", refused: "needs a paper first", build: "Build" } as const
+
+/**
+ * One line per subject that still needs a plan or a paper, each with its one action. Shared by the
+ * plan list and the two states that stand in for it, so no state hides a subject that needs a build (#2).
+ */
+export function PendingNotes({ pending, busy, onBuild }: { pending: PendingSubject[]; busy: boolean; onBuild: (code: string) => void }) {
+  return (
+    <>
+      {pending.map((s) => (
+        <p key={s.subjectCode} className="m-0 flex min-h-11 items-center gap-1.5 font-sans text-[13px] text-on-surface-variant">
+          {s.subjectName}: {PENDING_COPY[s.kind === "refused" ? "refused" : "notGenerated"]} ·
+          <button
+            type="button"
+            disabled={busy}
+            className="min-h-11 rounded-[10px] px-1 font-bold text-primary disabled:opacity-60 focus-visible:outline-[2.5px] focus-visible:outline-offset-2 focus-visible:outline-primary"
+            onClick={() => onBuild(s.subjectCode)}
+          >
+            {s.kind === "refused" ? COPY.rebuild : PENDING_COPY.build}
+          </button>
+        </p>
+      ))}
+    </>
+  )
+}
+
+/** A real plan with nothing in it (K5). No mock frame. */
+export function NothingScheduled({
+  practiceCode,
+  pending,
+  busy,
+  onBuild,
+}: {
+  practiceCode: string
+  pending: PendingSubject[]
+  busy: boolean
+  onBuild: (code: string) => void
+}) {
+  return (
+    <StateStack mood="happy" title={COPY.nothingTitle} body={COPY.nothingBody}>
+      <Link to={`/student/practice/${practiceCode}`} className={cn(buttonVariants({ variant: "primary" }), go)}>{COPY.nothingCta}</Link>
+      <PendingNotes pending={pending} busy={busy} onBuild={onBuild} />
+    </StateStack>
+  )
+}
+
+/** No enrolments. No mock frame. */
+export function NoSubjects() {
+  return (
+    <StateStack mood="thinking" title={COPY.noSubjectsTitle} body={COPY.noSubjectsBody}>
+      <Link to="/student/onboard" className={cn(buttonVariants({ variant: "primary" }), go)}>{COPY.noSubjectsCta}</Link>
+    </StateStack>
+  )
+}
+
+/** PD · week done. */
+export function WeekDone({
+  body,
+  stats,
+  practiceCode,
+  planning,
+  nextWeekReady,
+  onPlanNextWeek,
+  pending,
+  busy,
+  onBuild,
+}: {
+  body: string
+  stats: WeekDoneStat[]
+  practiceCode: string
+  planning: boolean
+  nextWeekReady: boolean
+  onPlanNextWeek: () => void
+  pending: PendingSubject[]
+  busy: boolean
+  onBuild: (code: string) => void
+}) {
+  return (
+    <StateStack mood="happy" motion="hop" size={110} title={COPY.weekDoneTitle} body={body} className="pt-3">
+      {stats.length > 0 ? (
+        <div className="grid w-full max-w-[360px] text-center" style={{ gridTemplateColumns: `repeat(${stats.length}, minmax(0, 1fr))` }}>
+          {stats.map((s) => (
+            <span key={s.label} className="grid justify-items-center gap-0.5">
+              <b className={cn("font-mono text-2xl leading-[1.3] font-extrabold", s.tone === "ok" ? "text-success-text" : "text-primary")}>{s.value}</b>
+              <small className="font-sans text-[12.5px] leading-[1.2] font-medium text-on-surface-variant">{s.label}</small>
+            </span>
+          ))}
+        </div>
+      ) : null}
+      <Button variant="primary" className={cn(go, settled)} loading={planning} disabled={nextWeekReady} onClick={onPlanNextWeek}>
+        {nextWeekReady ? <Check weight="bold" size={18} aria-hidden /> : null}
+        {nextWeekReady ? COPY.nextWeekReady : COPY.planNextWeek}
+      </Button>
+      <Link to={`/student/practice/${practiceCode}`} className={quiet}>{COPY.bonusPractice}</Link>
+      <PendingNotes pending={pending} busy={busy} onBuild={onBuild} />
+    </StateStack>
+  )
+}
+
+/** PR · `.rebuild`. Carries the screen's one Binny while it shows. */
+export function RebuildingBanner() {
+  return (
+    <div role="status" className="flex items-center gap-3 rounded-[16px] bg-surface-container-lowest px-3.5 py-3 shadow-[inset_0_0_0_1.5px_var(--color-outline-variant)]">
+      <Binny mood="thinking" size={52} motion="idle" aria-hidden />
+      <p className="m-0 font-sans text-[14.5px] leading-[1.4] font-medium text-on-surface">
+        <b>{COPY.rebuildingTitle}</b>
+        <br />
+        <span className="text-on-surface-variant">{COPY.rebuildingBody}</span>
+      </p>
+    </div>
+  )
+}
+
+/** K25: a deep link to a session this week's plan no longer has. Not a 404. `rebuilt` is false where there is no plan yet (K24). */
+export function NotInWeekNote({ rebuilt }: { rebuilt: boolean }) {
+  return (
+    <p role="status" className="m-0 rounded-md bg-surface-container-high px-3 py-2.5 font-sans text-[13.5px] leading-[1.35] font-semibold text-on-surface">
+      {rebuilt ? COPY.notInWeekRebuilt : COPY.notInWeek}
+    </p>
+  )
+}
+
+/** `.errl`: an action failure under the header (K7). */
+export function ActionError({ message }: { message: string }) {
+  return (
+    <div role="alert" className="w-full rounded-md bg-error-container px-3 py-2.5 text-start font-sans text-[13.5px] leading-[1.35] font-semibold text-on-error-container">
+      {message}
+    </div>
+  )
+}
