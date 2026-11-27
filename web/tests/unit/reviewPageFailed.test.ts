@@ -23,8 +23,11 @@ describe("whole-page frame", () => {
   it("shows the failure, not an endless skeleton, once the page failed", () => {
     expect(pageFrame({ pageUrl: null, pageRequested: true, pageFailed: true })).toBe("failed")
   })
-  it("treats an adapter without the failure flag as not failed", () => {
-    expect(pageFrame({ pageUrl: null, pageRequested: true })).toBe("loading")
+  it("calls a page nobody has asked for yet idle, never failed", () => {
+    expect(pageFrame({ pageUrl: null, pageRequested: false, pageFailed: false })).toBe("idle")
+  })
+  it("reports a recorded failure even before the request flag catches up", () => {
+    expect(pageFrame({ pageUrl: null, pageRequested: false, pageFailed: true })).toBe("failed")
   })
 })
 
@@ -44,7 +47,9 @@ describe("wiring", () => {
   it("decides the whole-page frame with pageFrame, not pageRequested alone", () => {
     const src = read("AnswerPanel.tsx")
     expect(src).toMatch(/const wholePage = showPage \? pageFrame\(images\) : null/)
-    expect(src).toMatch(/wholePage === "loading"/)
+    expect(src).toMatch(/wholePage === "failed"/)
+    // An idle page tab asks for its page instead of claiming it failed.
+    expect(src).toMatch(/if \(wholePage === "idle"\) requestPage\(\)/)
     expect(src).not.toMatch(/\) : images\.pageRequested \?/)
   })
 })

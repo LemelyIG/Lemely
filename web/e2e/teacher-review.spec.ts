@@ -329,7 +329,9 @@ test("a 404 from the crop route keeps the reading visible and notes the missing 
 
   // The crop failed, but the teacher can still compare the transcription
   // with the mark. This is distinct from an item that never had a scan box.
-  await expect(page.getByText("Couldn't show the scan.")).toBeVisible()
+  await expect(page.getByRole("figure").getByText("Couldn't show the scan.", { exact: true })).toBeVisible()
+  // Announced once, through the panel's one persistent polite region.
+  await expect(page.getByRole("status").filter({ hasText: "Couldn't show the scan. Lemely's reading is below." })).toHaveCount(1)
   await expect(page.getByAltText(SCAN_CROP_ALT)).toHaveCount(0)
   await expect(page.getByText("Lemely read", { exact: true })).toBeVisible()
   // Scoped to a blob-sourced `<img>` specifically, not `getByRole("img")` --
@@ -368,7 +370,8 @@ test("an undecodable whole-page response exits loading and leaves the answer ava
   // HTTP 200 produces an object URL; the browser's image decoder, not the
   // network catch branch, must take the view out of its loading state.
   await page.getByRole("tab", { name: "Whole page" }).click()
-  await expect(page.getByText("Couldn't show the page.")).toBeVisible()
+  await expect(page.getByRole("figure").getByText("Couldn't show the page.", { exact: true })).toBeVisible()
+  await expect(page.getByRole("status").filter({ hasText: "Couldn't show the page." })).toHaveCount(1)
   await expect(page.getByRole("status", { name: "Loading the page" })).toHaveCount(0)
   expect(pageRequests).toHaveLength(1)
 

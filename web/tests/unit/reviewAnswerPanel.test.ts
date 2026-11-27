@@ -24,12 +24,13 @@ function view(over: Partial<AnswerView> = {}): AnswerView {
 }
 const images: AnswerImages = {
   cropUrl: null, onCropError: vi.fn(), pageUrl: null, onPageError: vi.fn(), pageRequested: false, requestPage: vi.fn(),
+  cropFailed: false, pageFailed: false,
 }
 function marking(v: AnswerView): AnswerMarking {
   return { state: initialMarkState(v.points, v.lemelyMarks, v.maximumMarks), onChange: vi.fn(), note: "", onNote: vi.fn(), onAccept: vi.fn(), onDismiss: vi.fn() }
 }
-const render = (v: AnswerView, m: AnswerMarking | null) =>
-  renderToStaticMarkup(createElement(MemoryRouter, null, createElement(AnswerPanel, { view: v, images, marking: m })))
+const render = (v: AnswerView, m: AnswerMarking | null, imgs: AnswerImages = images) =>
+  renderToStaticMarkup(createElement(MemoryRouter, null, createElement(AnswerPanel, { view: v, images: imgs, marking: m })))
 
 describe("AnswerPanel", () => {
   it("renders the ticks, the stepper and the save action", () => {
@@ -80,7 +81,10 @@ describe("AnswerPanel", () => {
     expect(html).toMatch(/class="rd-keyring"[^>]*style="width:(9\d|1\d\d)px/)
   })
   it("wires the answer tabs as a tablist with a tabpanel", () => {
-    const html = render(view({ hasScan: true }), marking(view({ hasScan: true })))
+    // A scan whose crop is still on its way: not failed, so the frame shows loading, not an error.
+    const html = render(view({ hasScan: true }), marking(view({ hasScan: true })), { ...images, cropUrl: null, cropFailed: false })
+    expect(html).toContain('aria-label="Loading the scan"')
+    expect(html).not.toContain("Couldn&#x27;t show the scan.")
     expect(html).toContain('role="tablist"')
     expect(html).toContain('role="tabpanel"')
     expect(html).toContain('tabindex="-1"')

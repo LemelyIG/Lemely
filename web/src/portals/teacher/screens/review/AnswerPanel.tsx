@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
-import { useId, useRef, useState, type KeyboardEvent } from "react"
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react"
 import { Link } from "react-router-dom"
 import { Flag, TextAlignLeft } from "@phosphor-icons/react"
 import { useCan, useDeniedReason } from "@/components/acting/acting-state"
@@ -72,6 +72,12 @@ export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts 
   const changed = view.lemelyMarks != null && total !== view.lemelyMarks
   const showPage = mode === "page" && view.hasScan
   const wholePage = showPage ? pageFrame(images) : null
+  // The page tab is open for an item whose page nobody asked for yet (the queue moved on under it): ask now.
+  const requestPage = images.requestPage
+  useEffect(() => { if (wholePage === "idle") requestPage() }, [wholePage, requestPage])
+  const cropFrame = images.cropUrl ? "image" : images.cropFailed ? "failed" : "loading"
+  // One polite region that stays mounted across tabs and scanned answers, so a failure is announced when it happens.
+  const scanFailure = showPage ? (wholePage === "failed" ? "Couldn't show the page." : "") : cropFrame === "failed" ? "Couldn't show the scan. Lemely's reading is below." : ""
   const tone = ringTone(view.confidenceScore)
   // The phone answer page has no queue column, so the answer's title is the page's h1.
   const Title = onBack ? "h1" : "h2"
@@ -93,8 +99,8 @@ export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts 
             center={view.confidenceScore == null ? (
               <span className="block h-[3px] w-[18px] rounded-full bg-current opacity-80" />
             ) : (
-              <span dir="ltr" className={`rq-ring-num relative font-mono font-semibold tabular-nums slashed-zero tracking-[-0.03em] ${ringText(view.confidenceScore).length > 2 ? "text-2xl" : "text-[28px]"}`}>
-                {ringText(view.confidenceScore)}<small className="absolute start-full bottom-0 ms-px font-sans text-sm font-bold leading-none opacity-70">%</small>
+              <span dir="ltr" className="rq-ring-num font-mono text-[28px] font-semibold tabular-nums slashed-zero tracking-[-0.03em]">
+                {ringText(view.confidenceScore)}<small className="rq-ring-pct font-sans text-sm font-bold opacity-70">%</small>
               </span>
             )}
           />
@@ -125,25 +131,27 @@ export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts 
       ) : null}
 
       <div role={view.hasScan ? "tabpanel" : undefined} id={`${uid}-panel`} aria-labelledby={view.hasScan ? `${uid}-tab-${showPage ? "page" : "crop"}` : undefined} className="grid gap-3.5">
+      {/* Only a scanned answer has an image that can fail; one with no scan (and the sample) adds no live region. */}
+      {view.hasScan ? <p role="status" aria-live="polite" dir="auto" className="sr-only">{scanFailure}</p> : null}
       {showPage ? (
         <figure className={`${FRAME} ${wholePage === "failed" ? "" : "min-h-[300px]"}`}>
           {view.pageLabel ? <figcaption className={LABEL}>{view.pageLabel}</figcaption> : null}
           {wholePage === "image" ? (
             <img src={images.pageUrl ?? undefined} alt="The whole page this answer is on" onError={images.onPageError} decoding="async" className="max-h-[70vh] w-full rounded-row object-contain" />
-          ) : wholePage === "loading" ? (
-            <div className="rq-skel h-[300px] rounded-row bg-surface-container-high" role="status" aria-label="Loading the page" />
+          ) : wholePage === "failed" ? (
+            <p aria-hidden="true" dir="auto" className="text-on-surface-variant">Couldn't show the page.</p>
           ) : (
-            <p className="text-on-surface-variant">Couldn't show the page.</p>
+            <div className="rq-skel h-[300px] rounded-row bg-surface-container-high" role="status" aria-label="Loading the page" />
           )}
         </figure>
       ) : view.hasScan ? (
         <figure className={`${FRAME} min-w-0 gap-2.5`}>
-          {images.cropUrl ? (
-            <img src={images.cropUrl} alt="The region of the student's scan this question's answer was read from" onError={images.onCropError} decoding="async" className="max-h-[360px] w-auto max-w-full justify-self-start rounded-row object-contain" />
-          ) : images.cropFailed === false ? (
-            <div className="rq-skel h-[150px] rounded-row bg-surface-container-high" role="status" aria-label="Loading the scan" />
+          {cropFrame === "image" ? (
+            <img src={images.cropUrl ?? undefined} alt="The region of the student's scan this question's answer was read from" onError={images.onCropError} decoding="async" className="max-h-[360px] w-auto max-w-full justify-self-start rounded-row object-contain" />
+          ) : cropFrame === "failed" ? (
+            <p aria-hidden="true" dir="auto" className="grid min-h-24 place-items-center rounded-row bg-surface-container px-4 text-center text-sm text-on-surface-variant">Couldn't show the scan.</p>
           ) : (
-            <p role="status" className="grid min-h-24 place-items-center rounded-row bg-surface-container px-4 text-center text-sm text-on-surface-variant">Couldn't show the scan.</p>
+            <div className="rq-skel h-[150px] rounded-row bg-surface-container-high" role="status" aria-label="Loading the scan" />
           )}
           <figcaption className="grid min-w-0 gap-1 rounded-row bg-surface-container-low px-3 py-2.5">
             <span className="flex items-center gap-1.5 text-dense-sm text-on-surface-variant"><TextAlignLeft size={14} aria-hidden />Lemely read</span>
