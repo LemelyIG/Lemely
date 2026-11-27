@@ -8,8 +8,13 @@ const state = vi.hoisted(() => {
     mutation,
     del: mutation(),
     rename: mutation(),
+    add: mutation(),
+    edit: mutation(),
+    remove: mutation(),
     toasts: [] as { title: string }[],
     sheet: null as unknown,
+    // What the sheet told FcSheet about browser back: false keeps the sheet on Back.
+    dismissible: null as boolean | null,
   }
 })
 
@@ -17,19 +22,25 @@ vi.mock("@/components/ui/toast", () => ({ useToast: () => ({ toast: (o: { title:
 vi.mock("@/lib/hooks/useFlashcardApi", () => ({
   useDeleteDeck: () => state.del,
   useRenameDeck: () => state.rename,
+  useAddCard: () => state.add,
+  useEditCard: () => state.edit,
+  useDeleteCard: () => state.remove,
 }))
 vi.mock("@/portals/student/screens/flashcards/parts/FcSheet", async () => {
   const { createElement: el } = await import("react")
   return {
     ALERT_BODY_ID: "fc-alert-body",
-    FcSheet: ({ open, children }: { open: boolean; children: never }) => {
+    // `dismissible` defaults to true, as the real FcSheet's does.
+    FcSheet: ({ open, children, dismissible = true }: { open: boolean; children: never; dismissible?: boolean }) => {
       state.sheet = children
+      state.dismissible = dismissible
       return open ? el("div", null, children) : null
     },
   }
 })
 
 import { CardDeleteStep } from "@/portals/student/screens/flashcards/parts/CardDeleteStep"
+import { CardSheet } from "@/portals/student/screens/flashcards/CardSheet"
 import { DeleteDeckSheet } from "@/portals/student/screens/flashcards/DeleteDeckSheet"
 import { RenameDeckSheet } from "@/portals/student/screens/flashcards/RenameDeckSheet"
 
@@ -55,8 +66,12 @@ const disabled = (tree: unknown, label: string) => button(tree, label).props.dis
 beforeEach(() => {
   state.del = state.mutation()
   state.rename = state.mutation()
+  state.add = state.mutation()
+  state.edit = state.mutation()
+  state.remove = state.mutation()
   state.toasts = []
   state.sheet = null
+  state.dismissible = null
 })
 
 describe("DeleteDeckSheet", () => {
@@ -124,6 +139,14 @@ describe("DeleteDeckSheet", () => {
     expect(disabled(state.sheet, "Delete deck")).toBe(true)
     expect(disabled(state.sheet, "Keep it")).toBe(true)
   })
+
+  it("browser back closes it when idle and is held while the delete is in flight", () => {
+    render()
+    expect(state.dismissible).toBe(true)
+    state.del.isPending = true
+    render()
+    expect(state.dismissible).toBe(false)
+  })
 })
 
 describe("RenameDeckSheet", () => {
@@ -140,6 +163,32 @@ describe("RenameDeckSheet", () => {
     state.rename.isPending = true
     render()
     expect(disabled(state.sheet, "Cancel")).toBe(true)
+  })
+
+  it("browser back closes it when idle and is held while the rename is in flight", () => {
+    render()
+    expect(state.dismissible).toBe(true)
+    state.rename.isPending = true
+    render()
+    expect(state.dismissible).toBe(false)
+  })
+})
+
+describe("CardSheet", () => {
+  const card = { id: "c1", front: "Magnitude of (x, y)", back: "sqrt(x^2 + y^2)" }
+  const render = () => renderToStaticMarkup(createElement(CardSheet, {
+    deckId: "d1", card: card as never, mode: "edit", onClose: () => {},
+  }))
+
+  it("browser back closes it when nothing is in flight", () => {
+    render()
+    expect(state.dismissible).toBe(true)
+  })
+
+  it.each(["add", "edit", "remove"] as const)("browser back is held while the %s request is in flight", (which) => {
+    state[which].isPending = true
+    render()
+    expect(state.dismissible).toBe(false)
   })
 })
 

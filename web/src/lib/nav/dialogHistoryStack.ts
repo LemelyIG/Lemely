@@ -63,6 +63,14 @@ export function createDialogHistoryStack() {
     move.onSettle?.()
   }
 
+  // Run the waiting work the settled cursor releases. An unwind issues a move of its own, and whatever
+  // is behind it waits for that popstate in turn. Work that issues none (an overlay's deferred push, an
+  // unwind that found nothing to pop) will fire no popstate, so the next in line runs now.
+  function runWaiting() {
+    do afterSelfPop.shift()?.()
+    while (afterSelfPop.length > 0 && moves.length === 0)
+  }
+
   return {
     /** Call when an overlay has pushed its history entry. Returns the release. */
     register(entry: DialogHistoryEntry): () => void {
@@ -89,6 +97,7 @@ export function createDialogHistoryStack() {
      * before the first has popped, see the wrong entry, and skip, leaving its own entry orphaned.
      * It also runs when a real Back lands with no move outstanding (the overlay above was closed by
      * Back, so the cursor is settled and what was waiting for it can go).
+     * An overlay that opens while a move is in flight waits here too, and pushes its entry once it lands.
      */
     afterNextSelfPop(fn: () => void): void {
       afterSelfPop.push(fn)
@@ -107,7 +116,7 @@ export function createDialogHistoryStack() {
           if (at === -1) return
           moves.splice(at, 1)
           settle(move)
-          afterSelfPop.shift()?.()
+          runWaiting()
         }, SELF_POP_GIVE_UP_MS),
       }
       moves.push(move)
@@ -121,7 +130,7 @@ export function createDialogHistoryStack() {
         settle(move)
         // One deferred unwind per popstate: each runs against the cursor the move before it left,
         // and queues its own `expectSelfPop`, so a third waits for the second's popstate in turn.
-        afterSelfPop.shift()?.()
+        runWaiting()
         return "self"
       }
 
@@ -143,7 +152,7 @@ export function createDialogHistoryStack() {
       }
       // A real Back with no move of ours outstanding: nothing is going to settle the cursor for work that
       // is waiting on it (its trigger, the overlay above, has just gone), so release one waiting unwind now.
-      if (moves.length === 0) afterSelfPop.shift()?.()
+      if (moves.length === 0) runWaiting()
       return outcome
     },
 

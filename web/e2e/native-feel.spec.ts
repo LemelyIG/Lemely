@@ -207,6 +207,10 @@ test.describe("Assertion 5: browser back dismisses overlays without navigating a
 
     await page.reload()
     await expect(deckRow).toBeVisible()
+
+    // The menu and the confirm left no entry behind: one more Back leaves the shelf for the page before it.
+    await page.goBack()
+    await expect(page).toHaveURL(/\/student$/)
   })
 })
 

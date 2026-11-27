@@ -243,42 +243,74 @@ function stringLiteralText(source: string): { line: number; value: string }[] {
   return out
 }
 
-describe("RTL safety on Phase 3 surfaces", () => {
-  it.each(RTL_CLEAN_FILES)("%s uses logical properties only", (relative) => {
-    const source = readFileSync(join(process.cwd(), relative), "utf8")
-    const offences: string[] = []
-    // Include negative utilities in the flashcard audit without expanding the legacy surfaces' gate.
-    const negative = relative.startsWith(`${FLASHCARD_DIR}/`) ? "-?" : ""
-    const flashcardsModule = relative.startsWith(`${FLASHCARD_DIR}/`) && /\.tsx?$/.test(relative)
-    const texts = flashcardsModule ? [...classNameText(source), ...stringLiteralText(source)] : classNameText(source)
+/** Every physical utility in `source`, read as the file at `relative` would be. */
+function physicalOffences(relative: string, source: string): string[] {
+  const offences: string[] = []
+  // Include negative utilities in the flashcard audit without expanding the legacy surfaces' gate.
+  const negative = relative.startsWith(`${FLASHCARD_DIR}/`) ? "-?" : ""
+  const flashcardsModule = relative.startsWith(`${FLASHCARD_DIR}/`) && /\.tsx?$/.test(relative)
+  const texts = flashcardsModule ? [...classNameText(source), ...stringLiteralText(source)] : classNameText(source)
 
-    for (const { line, value } of texts) {
-      for (const [physical, logical] of PHYSICAL) {
-        // Two boundaries are needed, and missing the second one is how this
-        // check first reported `rounded-lg` as a physical `rounded-l`:
-        //   - leading: the utility must start a class token, so `mr-` does not
-        //     match inside `chart-mr-2`;
-        //   - trailing: a prefix that does not already end in `-` must be
-        //     followed by a separator, not another letter. `rounded-l` is
-        //     physical; `rounded-lg` is a radius and has nothing to do with
-        //     direction. Same for `border-l` against a hypothetical
-        //     `border-lime`.
-        const trailing = physical.endsWith("-") ? "" : "(?![a-zA-Z])"
-        // An important modifier sits between the boundary and the utility (`!ml-1`, `hover:!pl-3`), so it is
-        // part of the captured class and the physical name is still matched right after it.
-        const re = new RegExp(
-          `(?:^|[\\s"'\`:])(!?${negative}${physical}${trailing}(?:\\[[^\\s]+?\\]|[a-z0-9./-]*))`,
-          "g",
-        )
-        let hit: RegExpExecArray | null
-        while ((hit = re.exec(value)) !== null) {
-          if (relative === `${FLASHCARD_DIR}/ReviewDone.tsx` && REVIEW_DONE_BLEED.has(hit[1])) continue
-          offences.push(`${relative}:${line}  ${hit[1]}  ->  use ${logical}…`)
-        }
+  for (const { line, value } of texts) {
+    for (const [physical, logical] of PHYSICAL) {
+      // Two boundaries are needed, and missing the second one is how this
+      // check first reported `rounded-lg` as a physical `rounded-l`:
+      //   - leading: the utility must start a class token, so `mr-` does not
+      //     match inside `chart-mr-2`;
+      //   - trailing: a prefix that does not already end in `-` must be
+      //     followed by a separator, not another letter. `rounded-l` is
+      //     physical; `rounded-lg` is a radius and has nothing to do with
+      //     direction. Same for `border-l` against a hypothetical
+      //     `border-lime`.
+      const trailing = physical.endsWith("-") ? "" : "(?![a-zA-Z])"
+      // An important modifier sits between the boundary and the utility (`!ml-1`, `hover:!pl-3`), so it is
+      // part of the captured class and the physical name is still matched right after it.
+      const re = new RegExp(
+        `(?:^|[\\s"'\`:])(!?${negative}${physical}${trailing}(?:\\[[^\\s]+?\\]|[a-z0-9./-]*))`,
+        "g",
+      )
+      let hit: RegExpExecArray | null
+      while ((hit = re.exec(value)) !== null) {
+        if (relative === `${FLASHCARD_DIR}/ReviewDone.tsx` && REVIEW_DONE_BLEED.has(hit[1])) continue
+        offences.push(`${relative}:${line}  ${hit[1]}  ->  use ${logical}…`)
       }
     }
+  }
+  return offences
+}
 
+describe("RTL safety on Phase 3 surfaces", () => {
+  it.each(RTL_CLEAN_FILES)("%s uses logical properties only", (relative) => {
+    const offences = physicalOffences(relative, readFileSync(join(process.cwd(), relative), "utf8"))
     expect(offences, offences.join("\n")).toEqual([])
+  })
+
+  /*
+   * Red controls: planted source, not real files, so the two flashcards-only behaviours cannot be
+   * lost without a failure. Each fixture is read as a flashcards module would be.
+   */
+  describe("the checker flags what it is there to flag", () => {
+    const fixture = `${FLASHCARD_DIR}/Fixture.tsx`
+
+    it("an important-prefixed physical utility in a className", () => {
+      // Read as a legacy surface: the prefix applies to every gated file, and only `className=` is scanned there.
+      const legacy = "src/components/Fixture.tsx"
+      const offences = physicalOffences(legacy, 'export const A = () => <div className="grid !ml-1 hover:!pl-3" />\n')
+      expect(offences).toHaveLength(2)
+      expect(offences[0]).toContain(`${legacy}:1  !ml-1  ->  use ms-`)
+      expect(offences[1]).toContain(`${legacy}:1  !pl-3  ->  use ps-`)
+    })
+
+    it("a physical utility inside a string literal, outside any className", () => {
+      const offences = physicalOffences(fixture, 'const TONE = {\n  good: "pl-2 text-primary",\n}\n')
+      expect(offences).toHaveLength(1)
+      expect(offences[0]).toContain(`${fixture}:2  pl-2  ->  use ps-`)
+    })
+
+    it("the same lines written with logical utilities pass", () => {
+      const source = 'const TONE = { good: "ps-2 text-primary rounded-lg" }\nexport const A = () => <div className="grid !ms-1 hover:!ps-3" />\n'
+      expect(physicalOffences(fixture, source)).toEqual([])
+    })
   })
 
   /*

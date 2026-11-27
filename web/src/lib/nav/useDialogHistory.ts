@@ -72,6 +72,8 @@ export function useDialogHistory({
   const unwindingRef = useRef(false)
   // The overlay reopened while its old entry was still being unwound: push once that has landed.
   const pushAfterUnwindRef = useRef(false)
+  // This overlay opened while another's move was in flight: its push is queued behind that move, once.
+  const pushQueuedRef = useRef(false)
   const openRef = useRef(open)
   const mountedRef = useRef(true)
   const dismissibleRef = useRef(dismissible)
@@ -122,6 +124,25 @@ export function useDialogHistory({
       },
     })
     startListening()
+  }
+
+  // One overlay handing over to another in a single commit (a menu item closes the menu and opens a
+  // sheet): the closing overlay's `navigate(-1)` is still in flight when this one opens. A push now would
+  // go in before that move lands. Chromium fixes the move's target when it is issued, so it would land
+  // below the new entry and leave this overlay open with no current entry (the next Back leaves the
+  // page); resolved on landing instead, it would stop on the old entry and read as a real Back, closing
+  // this overlay at once. Push once the cursor has settled.
+  function pushWhenCursorSettles() {
+    if (!dialogHistoryStack.hasPendingSelfPop()) {
+      pushEntry()
+      return
+    }
+    if (pushQueuedRef.current) return
+    pushQueuedRef.current = true
+    dialogHistoryStack.afterNextSelfPop(() => {
+      pushQueuedRef.current = false
+      if (mountedRef.current && openRef.current && !hasEntryRef.current) pushWhenCursorSettles()
+    })
   }
 
   // The old entry is gone (or never needed to go): a reopen that waited for that can push now.
@@ -182,7 +203,7 @@ export function useDialogHistory({
         pushAfterUnwindRef.current = true
         return
       }
-      pushEntry()
+      pushWhenCursorSettles()
       return
     }
 

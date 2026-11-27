@@ -10,6 +10,10 @@ const state = vi.hoisted(() => ({
   generated: {} as object,
   toasts: [] as object[],
   sheet: null as unknown,
+  // What the sheet told FcSheet about browser back: false keeps the sheet on Back.
+  dismissible: null as boolean | null,
+  creating: false,
+  generating: false,
   setters: [] as { initial: unknown; next: unknown }[],
 }))
 
@@ -38,7 +42,9 @@ vi.mock("@/lib/hooks/useFlashcardApi", () => {
   const mutation = () => ({ isPending: false, error: null, reset: () => {}, mutate: () => {}, mutateAsync: async () => state.generated })
   return {
     useWeakTopics: () => ({ data: state.weak }),
-    useCreateDeck: mutation, useGenerateDeck: mutation, useDeleteDeck: mutation,
+    useCreateDeck: () => ({ ...mutation(), isPending: state.creating }),
+    useGenerateDeck: () => ({ ...mutation(), isPending: state.generating }),
+    useDeleteDeck: mutation,
     useRetryGeneration: () => ({ mutate: () => {} }),
     useRetryingDeckIds: () => new Set<string>(),
   }
@@ -46,8 +52,10 @@ vi.mock("@/lib/hooks/useFlashcardApi", () => {
 vi.mock("@/portals/student/screens/flashcards/parts/FcSheet", async () => {
   const { createElement: el } = await import("react")
   return {
-    FcSheet: ({ open, children }: { open: boolean; children: never }) => {
+    // `dismissible` defaults to true, as the real FcSheet's does.
+    FcSheet: ({ open, children, dismissible = true }: { open: boolean; children: never; dismissible?: boolean }) => {
       state.sheet = children
+      state.dismissible = dismissible
       return open ? el("div", null, children) : null
     },
   }
@@ -86,12 +94,26 @@ beforeEach(() => {
   state.generated = {}
   state.toasts = []
   state.sheet = null
+  state.dismissible = null
+  state.creating = false
+  state.generating = false
   state.setters = []
 })
 
 describe("new deck sheet", () => {
   it("renders nothing while closed", () => {
     expect(render(null)).toBe("")
+  })
+
+  it("browser back closes it when nothing is in flight", () => {
+    render(seed)
+    expect(state.dismissible).toBe(true)
+  })
+
+  it.each(["creating", "generating"] as const)("browser back is held while the deck is %s", (which) => {
+    state[which] = true
+    render(seed)
+    expect(state.dismissible).toBe(false)
   })
 
   it("offers topic mode when there are no weaknesses and hides the subject chooser for one subject", () => {
