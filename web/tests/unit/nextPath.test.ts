@@ -93,3 +93,24 @@ describe("withNext", () => {
     )
   })
 })
+
+describe("safeNextPath hardening", () => {
+  it("still accepts real in-app paths", () => {
+    for (const ok of [
+      "/teacher/billing/plans?plan=teacher_pro_m&interval=month",
+      "/student/billing#plans",
+      "/a?x=%2Fb",
+      "/a?x=%5Cb",
+      "/student",
+    ]) {
+      expect(safeNextPath(ok), ok).toBe(ok)
+    }
+  })
+  it("rejects a backslash anywhere, not only at the start", () => {
+    expect(safeNextPath("/a\\b")).toBeNull()
+  })
+  it("rejects scheme-only vectors", () => {
+    expect(safeNextPath("javascript:alert(1)")).toBeNull()
+    expect(safeNextPath("data:text/html,x")).toBeNull()
+  })
+})

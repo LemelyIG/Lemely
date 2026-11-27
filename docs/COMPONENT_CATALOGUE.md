@@ -106,6 +106,10 @@ needsReview })` (per-paper aggregate).
 - `error` defaults to the `warn` (amber) tone rather than `err` (red), per
   PRODUCT.md's guidance to avoid red-heavy error states for exam-stressed
   students; `tone` can override to `err` where genuinely warranted.
+- `kicker?: string | null` is the mono label above the heading ("Error",
+  "Offline", "Empty"). Omit for the per-kind default; `null` drops it, for a
+  page that takes no eyebrows. `QueryState`'s `error.kicker` forwards it to the
+  error, offline and no-data branches.
 
 ## C-12 — Role switcher
 `role-switcher.tsx` — `RoleSwitcher({ roles, currentRoleId, onSwitch })`
@@ -342,6 +346,72 @@ in all of these files.
   Not dismissible by accident; the class line appears only when
   `alsoTeachesClasses` has a name in it, and the "still counted in their results"
   line is always there (SPEC §d S-38). Copy: `lib/tutoring/accessView.ts`.
+
+## Mobile number components (C-25..C-26, UD-11)
+Every account carries a mobile number. The server accepts mobile numbers only and
+checks format only (libphonenumber, region EG), never by text message, so the copy
+says "mobile number" throughout. Client rules live in `lib/phone.ts` (tested): the
+"+20" default, a lenient shape check, and the mapping of the server's
+`phone_required` / `phone_invalid` 422 codes to our own sentences. Match on the
+code, never on the server's message.
+
+The client never refuses a number the server would store. It strips invisible
+formatting marks (any `\p{Cf}`: U+200E/F, U+202A-E, U+2066-9), reads a full-width
+plus as `+`, ignores trailing punctuation, does not count a leading `00` as digits,
+and refuses only empty input, letters, `;`, fewer than 7 digits and over 40
+characters. `cleanPhoneInput` is what every payload sends. A differential run of
+1006 inputs (every region's example mobile in four shapes plus hand-picked
+edge cases) against `lemely.core.phone.validate_phone` found no number the server
+stores that the client refuses.
+
+## C-25 — Mobile number input
+`web/src/components/ui/phone-input.tsx` —
+`PhoneInput({ value, onValueChange, onBlur?, label?, hint?, error?, ...InputProps })`
+- A labelled `Input` (never a copy of it) with `type="tel"`, `inputMode="tel"` and
+  `autoComplete="tel"` fixed. "+20" shows in front of the number until the person
+  types their own code (a leading `+` or `00`, in Latin, Arabic-Indic or Persian
+  digits, or a bare 12-digit `20...` number); there is no country picker. The
+  prefix sits in `Input`'s decorative `leadingIcon` slot, so the default country is
+  carried to assistive technology by the hint ("Egypt (+20) is assumed. Elsewhere,
+  start with + and the country code."), which `Input` ties to the field.
+- The default label is "Mobile number". On blur the value is cleaned (invisible marks
+  removed, full-width plus fixed), a leading national zero is dropped from view and
+  the tidied value is passed to `onBlur`, so the caller validates what is on screen. Validation stays
+  with the caller (`validatePhoneField`), on blur and on submit, never per keystroke.
+- Used by sign-up (student, teacher, and the parent's last step) and by C-26.
+
+## C-26 — Mobile number entry form and banner
+- `web/src/components/phone-entry-form.tsx` —
+  `PhoneEntryForm({ onSaved?, submitLabel?, autoFocus?, hint?, hideLabel?, onCancel? })`.
+  A small form of its own: `PhoneInput` plus a primary button, saving through
+  `PUT /api/me/phone` (`usePutPhone`, which updates the cached profile). A server
+  `phone_required` / `phone_invalid` lands on the field and returns focus to it; any
+  other failure (offline, 5xx) is an alert line under the button. Mounted in the
+  profile card (`Mobile number` row, form shown directly when none is on file, a
+  value with Change when there is one) and inline in `PlansView` when checkout
+  answers 422 `phone_required` ("Add your mobile number to continue", then the same
+  checkout is retried once the number is saved).
+- `web/src/components/ui/phone-banner.tsx` — `PhoneBanner()` and
+  `PhoneBannerView({ to, onDismiss? })`. The layouts mount `PhoneBannerSlot`
+  (`phone-banner-slot.tsx`, in the shell chunk, a few lines) under `VerifyEmailBanner`;
+  it lazy-loads the banner only when the profile says the number is missing. The
+  dismiss button is a 44px target and focus moves to `#main-content` when it goes.
+  The verify-email strip's construction. Shows only when the profile says
+  `phoneMissing === true`; never pinned (nothing is locked for want of a number);
+  dismissible for the visit (`sessionStorage`); hidden on the profile screen itself.
+  Rules in `lib/phoneBanner.ts` (tested). Links to `/student/settings`,
+  `/teacher/settings` or `/settings/profile` by role.
+
+## C-27 — Price-change banner
+`components/billing/price-change-banner.tsx` — `PriceChangeBanner({ notice, plansHref, teamHref, onCancel })`
+- The payer's notice that the plan's terms are changing, on the billing page above the
+  plan card. Neutral surface and icon, like the debt notice: news, not an error.
+- `notice` comes from `priceChangeNotice()` in `lib/priceChange.ts` (all copy and the
+  seats-to-remove arithmetic live there, tested). Variants: `move` (new price and date, a
+  "Cancel at period end" action), `ends` (the plan ends instead of moving, "See plans") and
+  `ended` (the platform already scheduled the end). A teacher whose team is larger than the
+  new plan is told how many students to remove, with "Manage seats".
+- Allowance sizes are never stated (spec §2.1); the server says only bigger or smaller.
 
 ## Toggle — `choice` variant, `chip` size (landing waitlist form)
 - `web/src/components/ui/toggle.tsx` — `<Toggle variant="choice" size="chip" pressed onPressedChange>`.

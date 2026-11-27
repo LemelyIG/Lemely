@@ -17,6 +17,9 @@ import click
 import pytest
 import sqlalchemy as sa
 from click.testing import CliRunner
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError, ProgrammingError
+from sqlalchemy.sql.elements import ColumnClause
 
 from lemely.app import purge_cli
 from lemely.app.cli import cli
@@ -25,9 +28,11 @@ from lemely.db.models import ClassEnrollment, Invite, Notification, SchoolClass,
 from lemely.db.models.enums import InviteRole, NotificationType, Role
 from lemely.db.session import dispose_engine
 from lemely.db.user_purge import (
+    APPEND_ONLY_TRIGGERS,
     NON_FK_UUID_COLUMNS,
     STORAGE_COLUMNS,
     PurgeError,
+    _Step,
     classify_environment,
     execute_purge,
     plan_purge,
@@ -1213,6 +1218,10 @@ NOT_OBJECT_COLUMNS = {
     ("xp_events", "dedupe_key"),
     ("notifications", "dedupe_key"),
     ("email_outbox", "dedupe_key"),
+    ("usage_grants", "idempotency_key"),  # billing ledger dedupe tokens (unique with the owner)
+    ("usage_entries", "idempotency_key"),
+    ("payments", "dedupe_key"),  # background-charge queue identity ('auto_topup:...')
+    ("paymob_events", "dedupe_key"),  # webhook delivery dedupe
     ("tutor_profiles", "documents_seen_at"),  # a timestamp
     ("tutor_approval_events", "documents_seen"),  # a boolean
 }
@@ -1539,7 +1548,7 @@ def test_a_database_failure_deletes_no_storage_object_and_no_auth_user(
     """The DB step raising (as on staging) must leave every file and Auth user in place."""
 
     def _boom(_conn: sa.Connection, _plan: object) -> dict[str, int]:
-        raise sa.exc.IntegrityError("DELETE FROM users", {}, Exception("fk_invites_created_by"))
+        raise IntegrityError("DELETE FROM users", {}, Exception("fk_invites_created_by"))
 
     monkeypatch.setattr(purge_cli, "execute_purge", _boom)
     everyone = _ids(engine)
@@ -1727,7 +1736,7 @@ def test_a_database_error_with_an_empty_message_is_still_reported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def _boom(_conn: sa.Connection, _plan: object) -> dict[str, int]:
-        raise sa.exc.OperationalError("DELETE", {}, Exception(""))
+        raise OperationalError("DELETE", {}, Exception(""))
 
     monkeypatch.setattr(purge_cli, "execute_purge", _boom)
     with pytest.raises(click.ClickException, match="rolled back"):
@@ -1743,7 +1752,7 @@ def test_a_failure_while_committing_does_not_claim_a_rollback(
     """If the commit itself raises, the server may have committed: say so, point at a dry run."""
 
     def _commit_fails(_self: object) -> None:
-        raise sa.exc.OperationalError("COMMIT", {}, Exception("connection lost"))
+        raise OperationalError("COMMIT", {}, Exception("connection lost"))
 
     monkeypatch.setattr(sa.engine.Connection, "_commit_impl", _commit_fails)
     storage = FakeStorage()
@@ -1844,6 +1853,12 @@ NOT_GENERICALLY_SEEDABLE: dict[tuple[str, str], str] = {
 }
 
 
+#: Single-row tables whose one row a migration inserts, with the key to match it on. There is no
+#: free key to insert a second row (``ck_billing_settings_singleton``: ``id = 1``), so seeding a
+#: foreign key into ``users`` on such a table updates the existing row instead.
+PRESEEDED_SINGLETONS: dict[str, str] = {"billing_settings": "id"}
+
+
 def _overrides(table: str, column: str, user_id: uuid.UUID) -> dict[str, object]:
     """Column values a table's CHECK constraints need, beyond the generic NOT NULL fill."""
     lit = sa.literal_column
@@ -1877,8 +1892,24 @@ def _overrides(table: str, column: str, user_id: uuid.UUID) -> dict[str, object]
             "tutor_profile_id": lit("gen_random_uuid()"),
             "target_type": lit("'tutor_profile'::reporttargettype"),
         },
+        # a student seat has scopes and neither a role preset nor permissions; the two members
+        # of a seat are different users (the generic uuid fill gives the other column one).
+        "teacher_members": {
+            "kind": lit("'student_seat'::teachermemberkind"),
+            "scope_subjects": lit("ARRAY[]::varchar[]"),
+            "scope_actions": lit("ARRAY[]::varchar[]"),
+        },
+        # currency is a three-letter code; the generic fill is a thirteen-letter word.
+        "credit_conversion_rates": {"currency": "ZZZ"},
+        # the one row (id = 1) a migration inserts: see PRESEEDED_SINGLETONS.
+        "billing_settings": {"id": 1},
     }
     values = dict(by_table.get(table, {}))
+    if table == "invites" and column == "team_teacher_id":
+        # ck_invites_assistant_shape: an assistant invite has a team teacher and an assistant
+        # role, and no other invite has either.
+        values["role"] = lit("'assistant'::inviterole")
+        values["assistant_role"] = lit("'co_teacher'::assistantrole")
     if table == "quiz_assignments" and column == "student_id":
         values = {}  # the check wants class_id NULL when student_id is set
     return values
@@ -1957,7 +1988,7 @@ def test_every_foreign_key_into_users_is_deleted_or_cleared_before_users(engine:
                 value = values.get(column)
                 if value is None or parent == table:
                     continue
-                if isinstance(value, sa.sql.elements.ColumnClause):  # gen_random_uuid()
+                if isinstance(value, ColumnClause):  # gen_random_uuid()
                     value = values[column] = uuid.uuid4()
                 parent_values = _overrides(parent, "", uuid.UUID(int=0))
                 parent_values[parent_column] = value
@@ -1967,10 +1998,17 @@ def test_every_foreign_key_into_users_is_deleted_or_cleared_before_users(engine:
                 if error:
                     return f"parent {parent}: {error}"
         tbl = sa.table(table, *[sa.column(c) for c in values])
+        statement = pg_insert(tbl).values(values)
+        if table in PRESEEDED_SINGLETONS:
+            key = PRESEEDED_SINGLETONS[table]
+            statement = statement.on_conflict_do_update(
+                index_elements=[key],
+                set_={c: statement.excluded[c] for c in values if c != key},
+            )
         try:
             with conn.begin_nested():
-                conn.execute(sa.insert(tbl).values(values))
-        except sa.exc.DBAPIError as exc:
+                conn.execute(statement)
+        except DBAPIError as exc:
             return str(exc.orig).splitlines()[0]
         return ""
 
@@ -2029,3 +2067,416 @@ def test_every_foreign_key_into_users_is_deleted_or_cleared_before_users(engine:
     with engine.begin() as conn:
         execute_purge(conn, plan_purge(conn, KEEP))
     assert _ids(engine) == set(), "a doomed user survived the purge (every foreign key at once)"
+
+
+# ── Billing history: append-only ledgers go with their owner ─────────────────
+
+_TRIGGER_STATES_SQL = sa.text(
+    """
+    SELECT c.relname, t.tgname, t.tgenabled::text
+    FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+    WHERE NOT t.tgisinternal AND c.relnamespace = 'public'::regnamespace
+    """
+)
+
+
+_APPEND_ONLY = {table for table, _ in APPEND_ONLY_TRIGGERS}
+
+
+def _trigger_states(engine: Engine) -> dict[tuple[str, str], str]:
+    with engine.connect() as conn:
+        return {(r[0], r[1]): r[2] for r in conn.execute(_TRIGGER_STATES_SQL)}
+
+
+def test_append_only_trigger_registry_matches_the_schema(engine: Engine) -> None:
+    """A BEFORE UPDATE/DELETE row trigger is what makes a table append-only.
+
+    ``tgtype`` bits: 1 row, 2 before, 8 delete, 16 update. A migration that adds another such
+    trigger fails here until the purge knows to switch it off for its deletes.
+    """
+    with engine.connect() as conn:
+        found = {
+            (r[0], r[1])
+            for r in conn.execute(
+                sa.text(
+                    "SELECT c.relname, t.tgname FROM pg_trigger t "
+                    "JOIN pg_class c ON c.oid = t.tgrelid "
+                    "WHERE NOT t.tgisinternal AND c.relnamespace = 'public'::regnamespace "
+                    "AND t.tgtype & 1 = 1 AND t.tgtype & 2 = 2 AND t.tgtype & 24 <> 0"
+                )
+            )
+        }
+    assert found == set(APPEND_ONLY_TRIGGERS), found ^ set(APPEND_ONLY_TRIGGERS)
+
+
+def _seed_billing(
+    conn: sa.Connection, user_id: uuid.UUID, teacher_id: uuid.UUID
+) -> tuple[int, uuid.UUID]:
+    """One of each billing row for ``user_id``, plus a seat on ``teacher_id``'s team.
+
+    Returns the Paymob transaction id and the usage job's public id, which the assertions use.
+    """
+    tag = uuid.uuid4().hex[:10]
+    txn = 10**8 + int(uuid.uuid4().int % (9 * 10**8))
+    job_id = uuid.uuid4()
+    grant_id, debt_id, member_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    run = conn.execute
+    run(
+        sa.text(
+            "INSERT INTO usage_grants (id, owner_user_id, kind, visible, priority, units, "
+            "idempotency_key) VALUES (:g, :u, 'adjustment', true, 1, 10, :k)"
+        ),
+        {"g": grant_id, "u": user_id, "k": f"grant-{tag}"},
+    )
+    run(
+        sa.text(
+            "INSERT INTO usage_jobs (job_id, actor_user_id, action, estimate_low, estimate_high, "
+            "estimator_version, reserved, rate_version, payer_chain, expires_at) "
+            "VALUES (:j, :u, 'mark', 0, 1, 1, 0, 1, '[]'::jsonb, now() + interval '1 hour')"
+        ),
+        {"j": job_id, "u": user_id},
+    )
+    run(
+        sa.text(
+            "INSERT INTO usage_debts (id, owner_user_id, job_id, units, outstanding) "
+            "VALUES (:d, :u, :j, 5, 5)"
+        ),
+        {"d": debt_id, "u": user_id, "j": job_id},
+    )
+    for kind, owner_column, owner_id in (
+        ("grant", "grant_id", grant_id),
+        ("debt", "debt_id", debt_id),
+    ):
+        run(
+            sa.text(
+                f"INSERT INTO usage_entries ({owner_column}, job_id, kind, units, event_at, "  # noqa: S608
+                f"idempotency_key) VALUES (:o, :j, '{kind}', 5, now(), :k)"
+            ),
+            {"o": owner_id, "j": job_id, "k": f"entry-{kind}-{tag}"},
+        )
+    run(
+        sa.text(
+            "INSERT INTO payments (payer_user_id, beneficiary_user_id, purpose, amount_minor, "
+            "special_reference, paymob_txn_id) VALUES (:u, :u, 'extra_seats', 100, :r, :t)"
+        ),
+        {"u": user_id, "r": f"ref-{tag}", "t": txn},
+    )
+    run(
+        sa.text(
+            "INSERT INTO paymob_events (kind, dedupe_key, payload) "
+            "VALUES ('transaction', :k, '{}'::jsonb)"
+        ),
+        {"k": f"txn:{txn}:s1p0"},
+    )
+    # A seat on another user's team. The seat's allowance grant is owned by the member, as
+    # ``seat_allowance_repo`` writes it.
+    run(
+        sa.text(
+            "INSERT INTO teacher_members (id, teacher_user_id, member_user_id, kind, "
+            "scope_subjects, scope_actions) VALUES (:m, :t, :u, 'student_seat', "
+            "ARRAY[]::varchar[], ARRAY[]::varchar[])"
+        ),
+        {"m": member_id, "t": teacher_id, "u": user_id},
+    )
+    run(
+        sa.text(
+            "INSERT INTO usage_grants (owner_user_id, kind, visible, teacher_member_id, "
+            "priority, units, idempotency_key) VALUES (:u, 'seat_allowance', false, :m, 1, 10, :k)"
+        ),
+        {"u": user_id, "m": member_id, "k": f"seat-{tag}"},
+    )
+    return txn, job_id
+
+
+def _audit(conn: sa.Connection, actor: uuid.UUID, kind: str, target: uuid.UUID) -> None:
+    conn.execute(
+        sa.text(
+            "INSERT INTO admin_audit_log (admin_user_id, action, target_kind, target_id, reason) "
+            "VALUES (:a, 'customer.grant', :k, :t, 'test')"
+        ),
+        {"a": actor, "k": kind, "t": target},
+    )
+
+
+def _billing_world(engine: Engine) -> tuple[uuid.UUID, uuid.UUID]:
+    """A doomed user and a kept teacher, each with billing rows, and audit rows on both."""
+    doomed, kept, partner = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "INSERT INTO users (id, email, role) VALUES (:i, 'gone@example.com', 'student')"
+            ),
+            {"i": doomed},
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO users (id, email, role, email_verified_at) "
+                "VALUES (:i, 'keeper@lemelyig.com', 'teacher', now())"
+            ),
+            {"i": kept},
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO users (id, email, role, email_verified_at) "
+                "VALUES (:i, 'partner@lemelyig.com', 'teacher', now())"
+            ),
+            {"i": partner},
+        )
+        txn, doomed_job = _seed_billing(conn, doomed, kept)
+        _seed_billing(conn, kept, partner)
+        # A ledger line on the kept user's grant that settles the doomed user's job.
+        conn.execute(
+            sa.text(
+                "INSERT INTO usage_entries (grant_id, job_id, kind, units, event_at, "
+                "idempotency_key) SELECT id, :j, 'settle', -1, now(), 'cross-job' "
+                "FROM usage_grants WHERE owner_user_id = :k AND kind = 'adjustment'"
+            ),
+            {"j": doomed_job, "k": kept},
+        )
+        payment_id = conn.execute(
+            sa.text("SELECT id FROM payments WHERE paymob_txn_id = :t"), {"t": txn}
+        ).scalar_one()
+        _audit(conn, doomed, "plan_tier", uuid.uuid4())  # the doomed user as the actor
+        _audit(conn, kept, "user", doomed)  # a kept admin acted on the doomed user
+        _audit(conn, kept, "payment", payment_id)  # ... and on the doomed user's payment
+        _audit(conn, kept, "user", kept)  # a kept admin acted on a kept user
+        _audit(conn, kept, "plan_tier", uuid.uuid4())  # catalogue change: nobody's data
+        _audit(conn, doomed, "user", kept)  # the doomed user as the actor on a kept target
+        # Events of other transactions, one whose id is a prefix of the doomed payment's and one
+        # that extends it: ``txn:12:`` must not match ``txn:123:`` or the reverse.
+        for other in (str(txn)[:-1], f"{txn}9"):
+            conn.execute(
+                sa.text(
+                    "INSERT INTO paymob_events (kind, dedupe_key, payload) "
+                    "VALUES ('transaction', :k, '{}'::jsonb)"
+                ),
+                {"k": f"txn:{other}:s1p0"},
+            )
+        # A terms version the doomed user created: the row is catalogue history and must stay.
+        tier = conn.execute(
+            sa.text(
+                "INSERT INTO plan_tiers (code, name, audience) "
+                "VALUES (:c, 'T', 'student') RETURNING id"
+            ),
+            {"c": f"t-{uuid.uuid4().hex[:8]}"},
+        ).scalar_one()
+        conn.execute(
+            sa.text(
+                "INSERT INTO plan_tier_terms (plan_tier_id, terms_version, price_minor, "
+                "extra_seat_price_minor, allowance_units, included_seats, seat_allowance_units, "
+                "created_by) SELECT plan_tier_id, 2, price_minor, extra_seat_price_minor, "
+                "allowance_units, included_seats, seat_allowance_units, :d "
+                "FROM plan_tier_terms WHERE plan_tier_id = :t AND terms_version = 1"
+            ),
+            {"d": doomed, "t": tier},
+        )
+    return doomed, kept
+
+
+def _n(engine: Engine, sql: str, **params: object) -> int:
+    with engine.connect() as conn:
+        return int(conn.execute(sa.text(sql), params).scalar_one())
+
+
+def test_purge_removes_a_doomed_users_billing_history_and_keeps_a_kept_users(
+    engine: Engine,
+) -> None:
+    """Append-only ledgers, audit rows (as actor and as target), payments, events and seats go.
+
+    The doomed user owns a grant, a job, a debt, ledger lines, a payment with its Paymob event, a
+    seat on a kept teacher's team (with that seat's allowance grant), and is both the actor and
+    the target of audit rows. Everything of a kept user must survive, including a ledger line on
+    the kept user's own grant that settled the doomed user's job (it loses only the job link).
+    """
+    doomed, kept = _billing_world(engine)
+    with engine.begin() as conn:
+        plan = plan_purge(conn, KEEP)
+        # The dry run counts the audit rows reached by target and the event reached by payment.
+        assert plan.deleted_rows["admin_audit_log"] == 4
+        assert plan.deleted_rows["paymob_events"] == 1
+        execute_purge(conn, plan)
+
+    assert kept in _ids(engine)
+    assert doomed not in _ids(engine)
+    gone = {
+        "usage_grants": "owner_user_id = :d",
+        "usage_jobs": "actor_user_id = :d",
+        "usage_debts": "owner_user_id = :d",
+        "payments": "payer_user_id = :d OR beneficiary_user_id = :d",
+        "teacher_members": "member_user_id = :d",
+    }
+    for table, where in gone.items():
+        assert _n(engine, f"SELECT count(*) FROM {table} WHERE {where}", d=doomed) == 0, table  # noqa: S608
+    # Only the kept user's own seat grant is left; the doomed user's went with its owner and seat.
+    assert _n(engine, "SELECT count(*) FROM usage_grants WHERE kind = 'seat_allowance'") == 1
+    # Kept user's rows: grant, its own seat grant on the partner's team, job, debt, payment, event.
+    assert _n(engine, "SELECT count(*) FROM usage_grants WHERE owner_user_id = :k", k=kept) == 2
+    assert _n(engine, "SELECT count(*) FROM usage_jobs WHERE actor_user_id = :k", k=kept) == 1
+    assert _n(engine, "SELECT count(*) FROM usage_debts WHERE owner_user_id = :k", k=kept) == 1
+    assert _n(engine, "SELECT count(*) FROM payments WHERE payer_user_id = :k", k=kept) == 1
+    # The doomed payment's event is gone; the kept user's and the two neighbouring ids stay.
+    assert _n(engine, "SELECT count(*) FROM paymob_events") == 3
+    assert _n(engine, "SELECT count(*) FROM teacher_members WHERE member_user_id = :k", k=kept) == 1
+    # Ledger: the kept user's grant entry and debt entry, and the settle line that named the
+    # doomed job (kept, with the job link cleared). The doomed user's two lines are gone.
+    assert _n(engine, "SELECT count(*) FROM usage_entries") == 3
+    assert _n(engine, "SELECT count(*) FROM usage_entries WHERE job_id IS NULL") == 1
+    # Audit: a kept admin on a kept user, and the catalogue change. The three rows that named
+    # the doomed user (as actor, as target, and through its payment) are gone.
+    assert _n(engine, "SELECT count(*) FROM admin_audit_log") == 2
+    assert _n(engine, "SELECT count(*) FROM admin_audit_log WHERE admin_user_id = :k", k=kept) == 2
+    # The terms version the doomed user created stays, with the pointer cleared.
+    assert _n(engine, "SELECT count(*) FROM plan_tier_terms WHERE terms_version = 2") == 1
+    assert _n(engine, "SELECT count(*) FROM plan_tier_terms WHERE created_by IS NOT NULL") == 0
+
+
+def test_append_only_triggers_are_enabled_again_after_a_purge_and_after_a_failed_one(
+    engine: Engine,
+) -> None:
+    registered = set(APPEND_ONLY_TRIGGERS)
+
+    def states() -> set[str]:
+        by_trigger = _trigger_states(engine)
+        return {by_trigger[key] for key in registered}  # 'O' is "fires on origin sessions"
+
+    doomed, _kept = _billing_world(engine)
+    audit_rows = _n(engine, "SELECT count(*) FROM admin_audit_log")
+    assert states() == {"O"}
+
+    # The real deletes run first and need the triggers off; the bad last step then aborts, and
+    # the rollback must take the deletes and the DISABLE with it.
+    with pytest.raises(ProgrammingError), engine.begin() as conn:
+        plan = plan_purge(conn, KEEP)
+        plan.steps.append(_Step("delete", "no_such_table", ("id",), ((1,),)))
+        execute_purge(conn, plan)
+    assert states() == {"O"}
+    assert doomed in _ids(engine)
+    assert _n(engine, "SELECT count(*) FROM admin_audit_log") == audit_rows
+
+    with engine.begin() as conn:
+        execute_purge(conn, plan_purge(conn, KEEP))
+    assert states() == {"O"}
+    assert doomed not in _ids(engine)
+
+
+def _teacher_world(engine: Engine) -> tuple[uuid.UUID, uuid.UUID]:
+    """A doomed teacher whose seat is held by a kept student, who has other billing rows too."""
+    teacher, student = uuid.uuid4(), uuid.uuid4()
+    member = uuid.uuid4()
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "INSERT INTO users (id, email, role) VALUES (:i, 'tea@example.com', 'teacher')"
+            ),
+            {"i": teacher},
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO users (id, email, role, email_verified_at) "
+                "VALUES (:i, 'kid@lemelyig.com', 'student', now())"
+            ),
+            {"i": student},
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO teacher_members (id, teacher_user_id, member_user_id, kind, "
+                "scope_subjects, scope_actions) VALUES (:m, :t, :s, 'student_seat', "
+                "ARRAY[]::varchar[], ARRAY[]::varchar[])"
+            ),
+            {"m": member, "t": teacher, "s": student},
+        )
+        for kind, visible, seat, key in (
+            ("seat_allowance", False, member, "seat"),
+            ("adjustment", True, None, "own"),
+        ):
+            grant = conn.execute(
+                sa.text(
+                    "INSERT INTO usage_grants (owner_user_id, kind, visible, teacher_member_id, "
+                    "priority, units, idempotency_key) "
+                    "VALUES (:s, CAST(:k AS grantkind), :v, :m, 1, 10, :i) RETURNING id"
+                ),
+                {"s": student, "k": kind, "v": visible, "m": seat, "i": key},
+            ).scalar_one()
+            conn.execute(
+                sa.text(
+                    "INSERT INTO usage_entries (grant_id, kind, units, event_at, idempotency_key) "
+                    "VALUES (:g, 'grant', 10, now(), :i)"
+                ),
+                {"g": grant, "i": f"line-{key}"},
+            )
+    return teacher, student
+
+
+def test_a_kept_students_seat_grant_goes_with_a_purged_teachers_seat_and_the_plan_says_so(
+    engine: Engine,
+) -> None:
+    """The seat is the teacher's, so its allowance grant and ledger lines go (by design)."""
+    teacher, student = _teacher_world(engine)
+    with engine.begin() as conn:
+        plan = plan_purge(conn, KEEP)
+        impacts = {(i.table, i.column, i.kept_email): i.rows for i in plan.kept_impacts}
+        assert impacts[("usage_grants", "owner_user_id", "kid@lemelyig.com")] == 1
+        assert impacts[("usage_entries", "grant_id", "kid@lemelyig.com")] == 1
+        execute_purge(conn, plan)
+    assert teacher not in _ids(engine) and student in _ids(engine)
+    assert _n(engine, "SELECT count(*) FROM teacher_members") == 0
+    assert _n(engine, "SELECT count(*) FROM usage_grants WHERE kind = 'seat_allowance'") == 0
+    # The student's own grant and its ledger line are untouched.
+    assert _n(engine, "SELECT count(*) FROM usage_grants WHERE owner_user_id = :s", s=student) == 1
+    assert _n(engine, "SELECT count(*) FROM usage_entries") == 1
+
+
+def test_execute_purge_refuses_an_autocommit_connection_before_changing_anything(
+    engine: Engine,
+) -> None:
+    """On AUTOCOMMIT the DISABLE would commit at once, so the SAVEPOINT must refuse first."""
+    doomed, _kept = _billing_world(engine)
+    users_before = _ids(engine)
+    with engine.execution_options(isolation_level="AUTOCOMMIT").connect() as conn:
+        plan = plan_purge(conn, KEEP)
+        with pytest.raises(DBAPIError):
+            execute_purge(conn, plan)
+    assert {s for (t, _), s in _trigger_states(engine).items() if t in _APPEND_ONLY} == {"O"}
+    assert _ids(engine) == users_before and doomed in users_before
+
+
+def test_a_swallowed_error_inside_execute_purge_does_not_commit_a_half_purge(
+    engine: Engine,
+) -> None:
+    """A caller that catches the error and commits anyway must find the triggers on, rows intact."""
+    doomed, _kept = _billing_world(engine)
+    audit_rows = _n(engine, "SELECT count(*) FROM admin_audit_log")
+    with engine.begin() as conn:
+        plan = plan_purge(conn, KEEP)
+        plan.steps.insert(1, _Step("delete", "users", ("id",), ((object(),),)))
+        with pytest.raises(ProgrammingError):  # a value the driver cannot bind
+            execute_purge(conn, plan)
+    assert {s for (t, _), s in _trigger_states(engine).items() if t in _APPEND_ONLY} == {"O"}
+    assert doomed in _ids(engine)
+    assert _n(engine, "SELECT count(*) FROM admin_audit_log") == audit_rows
+
+
+def test_execute_purge_gives_up_on_a_locked_table_instead_of_waiting(
+    engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A busy app holding a write lock on a ledger makes the purge fail fast and change nothing."""
+    from lemely.db import user_purge
+
+    monkeypatch.setattr(user_purge, "LOCK_TIMEOUT", "200ms")
+    doomed, _kept = _billing_world(engine)
+    with engine.connect() as plan_conn:
+        plan = plan_purge(plan_conn, KEEP)
+    with engine.begin() as holder:
+        holder.execute(sa.text("LOCK TABLE admin_audit_log IN ROW EXCLUSIVE MODE"))
+        with pytest.raises(DBAPIError), engine.begin() as conn:
+            execute_purge(conn, plan)
+    assert doomed in _ids(engine)
+    assert {s for (t, _), s in _trigger_states(engine).items() if t in _APPEND_ONLY} == {"O"}
+
+
+def test_execute_purge_leaves_the_transactions_lock_timeout_as_it_found_it(engine: Engine) -> None:
+    _billing_world(engine)
+    with engine.begin() as conn:
+        before = conn.execute(sa.text("SHOW lock_timeout")).scalar_one()
+        execute_purge(conn, plan_purge(conn, KEEP))
+        assert conn.execute(sa.text("SHOW lock_timeout")).scalar_one() == before

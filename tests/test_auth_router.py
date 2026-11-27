@@ -324,6 +324,7 @@ def test_signup_endpoint(context: tuple[TestClient, AuthService, Settings]) -> N
             "password": "pw-123456",
             "role": "student",
             "acceptedTerms": True,
+            "phone": "+201012345678",
         },
     )
     assert resp.status_code == 200, resp.text
@@ -353,6 +354,7 @@ def test_signup_elevated_role_forbidden(
             "password": "pw-123456",
             "role": role,
             "acceptedTerms": True,
+            "phone": "+201012345678",
         },
     )
     assert resp.status_code == 403, resp.text
@@ -365,6 +367,7 @@ def test_signup_duplicate_returns_400(context: tuple[TestClient, AuthService, Se
         "password": "pw-123456",
         "role": "student",
         "acceptedTerms": True,
+        "phone": "+201012345678",
     }
     assert client.post("/api/auth/signup", json=payload).status_code == 200
     resp = client.post("/api/auth/signup", json=payload)
@@ -380,6 +383,7 @@ def test_login_endpoint(context: tuple[TestClient, AuthService, Settings]) -> No
             "password": "pw-abcdef",
             "role": "student",
             "acceptedTerms": True,
+            "phone": "+201012345678",
         },
     )
     resp = client.post(
@@ -401,6 +405,7 @@ def test_login_wrong_password_returns_401(
             "password": "right-pw-1",
             "role": "student",
             "acceptedTerms": True,
+            "phone": "+201012345678",
         },
     )
     resp = client.post(
@@ -513,6 +518,7 @@ def test_parent_request_code_taken_email_is_400(
             "password": "pw-123456",
             "role": "student",
             "acceptedTerms": True,
+            "phone": "+201012345678",
         },
     )
     assert signup.status_code == 200, signup.text
@@ -591,6 +597,7 @@ def test_parent_verify_code_taken_email_never_reaches_the_otp_store(
             "password": "pw-123456",
             "role": "student",
             "acceptedTerms": True,
+            "phone": "+201012345678",
         },
     )
     assert signup.status_code == 200, signup.text
@@ -644,6 +651,7 @@ def test_parent_signup_creates_verified_parent_and_links(
             "proofToken": proof_token,
             "password": "pw-123456",
             "acceptedTerms": True,
+            "phone": "+201012345678",
             "displayName": "New Parent",
         },
     )
@@ -682,7 +690,12 @@ def test_parent_signup_expired_proof_is_401(
 
     resp = client.post(
         "/api/auth/parent/signup",
-        json={"proofToken": expired_proof, "password": "pw-123456", "acceptedTerms": True},
+        json={
+            "proofToken": expired_proof,
+            "password": "pw-123456",
+            "acceptedTerms": True,
+            "phone": "+201012345678",
+        },
     )
 
     assert resp.status_code == 401, resp.text
@@ -713,7 +726,12 @@ def test_parent_signup_proof_token_only_redeems_its_own_invite(
 
     signup = client.post(
         "/api/auth/parent/signup",
-        json={"proofToken": proof_token, "password": "pw-123456", "acceptedTerms": True},
+        json={
+            "proofToken": proof_token,
+            "password": "pw-123456",
+            "acceptedTerms": True,
+            "phone": "+201012345678",
+        },
     )
 
     assert signup.status_code == 200, signup.text
@@ -760,7 +778,12 @@ def test_parent_signup_link_redeemed_by_another_parent_before_signup_is_404(
 
     signup = client.post(
         "/api/auth/parent/signup",
-        json={"proofToken": proof_token, "password": "pw-123456", "acceptedTerms": True},
+        json={
+            "proofToken": proof_token,
+            "password": "pw-123456",
+            "acceptedTerms": True,
+            "phone": "+201012345678",
+        },
     )
 
     assert signup.status_code == 404, signup.text
@@ -829,7 +852,12 @@ def test_parent_signup_survives_a_redeem_that_fails_after_account_creation(
     try:
         signup = client.post(
             "/api/auth/parent/signup",
-            json={"proofToken": proof_token, "password": "pw-123456", "acceptedTerms": True},
+            json={
+                "proofToken": proof_token,
+                "password": "pw-123456",
+                "acceptedTerms": True,
+                "phone": "+201012345678",
+            },
         )
     finally:
         client.app.dependency_overrides[get_invite_service] = lambda: invite_service  # type: ignore[union-attr]
@@ -900,6 +928,7 @@ def _signup(client: TestClient, email: str = "r@example.com") -> dict[str, str]:
             "role": "student",
             "deviceId": "device-A",
             "acceptedTerms": True,
+            "phone": "+201012345678",
         },
     )
     assert resp.status_code == 200, resp.text
@@ -1033,4 +1062,144 @@ def test_malformed_refresh_token_is_401_not_500(
 ) -> None:
     client, _, _, _ = refreshable
     resp = client.post("/api/auth/refresh", json={"refreshToken": token})
+    assert resp.status_code == 401, resp.text
+
+
+# ── phone required at sign-up (UD-11 / UD-11a) ─────────────────────────────────
+
+
+def _signup_body(**overrides: object) -> dict[str, object]:
+    body: dict[str, object] = {
+        "email": "phone@example.com",
+        "password": "pw-123456",
+        "role": "student",
+        "acceptedTerms": True,
+        "phone": "+201012345678",
+    }
+    body.update(overrides)
+    return {k: v for k, v in body.items() if v is not None}
+
+
+@pytest.mark.parametrize("role", ["student", "teacher"])
+def test_signup_without_a_phone_is_422_phone_required(
+    context: tuple[TestClient, AuthService, Settings], role: str
+) -> None:
+    client, service, _ = context
+    resp = client.post("/api/auth/signup", json=_signup_body(role=role, phone=None))
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"]["code"] == "phone_required"
+    assert resp.json()["detail"]["message"]
+    assert service._mirror.get_by_email("phone@example.com") is None  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_signup_with_a_blank_phone_is_422_phone_required(
+    context: tuple[TestClient, AuthService, Settings], blank: str
+) -> None:
+    client, _, _ = context
+    resp = client.post("/api/auth/signup", json=_signup_body(phone=blank))
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"]["code"] == "phone_required"
+
+
+@pytest.mark.parametrize("bad", ["NA", "12345", "+200000000000", "call me", "0130000000"])
+def test_signup_with_an_invalid_phone_is_422_phone_invalid(
+    context: tuple[TestClient, AuthService, Settings], bad: str
+) -> None:
+    client, service, _ = context
+    resp = client.post("/api/auth/signup", json=_signup_body(phone=bad))
+    assert resp.status_code == 422, resp.text
+    detail = resp.json()["detail"]
+    assert detail["code"] == "phone_invalid"
+    assert detail["message"]
+    assert service._mirror.get_by_email("phone@example.com") is None  # type: ignore[attr-defined]
+
+
+def test_a_rejected_phone_does_not_spend_the_address_cooldown(
+    context: tuple[TestClient, AuthService, Settings],
+) -> None:
+    client, _, _ = context
+    assert client.post("/api/auth/signup", json=_signup_body(phone="NA")).status_code == 422
+    retry = client.post("/api/auth/signup", json=_signup_body())
+    assert retry.status_code == 200, retry.text
+
+
+@pytest.mark.parametrize(
+    ("typed", "stored"),
+    [
+        ("01012345678", "+201012345678"),
+        ("+20 101 234 5678", "+201012345678"),
+        ("+2001012345678", "+201012345678"),
+        ("٠١٠١٢٣٤٥٦٧٨", "+201012345678"),
+        ("+44 7911 123456", "+447911123456"),
+    ],
+)
+def test_signup_stores_the_phone_in_e164(
+    context: tuple[TestClient, AuthService, Settings], typed: str, stored: str
+) -> None:
+    client, service, _ = context
+    resp = client.post("/api/auth/signup", json=_signup_body(phone=typed))
+    assert resp.status_code == 200, resp.text
+    row = service._mirror.get_by_id(uuid.UUID(resp.json()["userId"]))  # type: ignore[attr-defined]
+    assert row is not None
+    assert row.phone == stored
+
+
+def test_two_signups_may_share_one_phone(
+    context: tuple[TestClient, AuthService, Settings],
+) -> None:
+    """GoTrue never sees the phone (``admin_create_user`` has no such parameter), so a family
+    sharing one number can each sign up; ``public.users.phone`` is not unique."""
+    client, service, _ = context
+    first = client.post("/api/auth/signup", json=_signup_body(email="child@example.com"))
+    second = client.post(
+        "/api/auth/signup", json=_signup_body(email="sibling@example.com", role="teacher")
+    )
+    assert (first.status_code, second.status_code) == (200, 200)
+    rows = [service._mirror.get_by_id(uuid.UUID(r.json()["userId"])) for r in (first, second)]  # type: ignore[attr-defined]
+    assert rows[0] is not None and rows[1] is not None
+    assert rows[0].phone == rows[1].phone is not None
+
+
+def test_parent_signup_without_a_phone_is_422_and_creates_no_account(
+    parent_context: tuple[TestClient, AuthService, Settings],
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    client, service, _ = parent_context
+    student = _seed_user(pg_sessionmaker, Role.student, display_name="Maya")
+    invite = _invite_service(pg_sessionmaker).mint_parent_invite(student, reusable=False)
+    email = "nophone-parent@example.com"
+    code = client.post(
+        "/api/auth/parent/request-code", json={"email": email, "inviteCode": invite.code}
+    ).json()["devCode"]
+    proof = client.post(
+        "/api/auth/parent/verify-code",
+        json={"email": email, "inviteCode": invite.code, "code": code},
+    ).json()["proofToken"]
+
+    body = {"proofToken": proof, "password": "pw-123456", "acceptedTerms": True}
+    missing = client.post("/api/auth/parent/signup", json=body)
+    invalid = client.post("/api/auth/parent/signup", json={**body, "phone": "NA"})
+
+    assert missing.status_code == 422, missing.text
+    assert missing.json()["detail"]["code"] == "phone_required"
+    assert invalid.status_code == 422, invalid.text
+    assert invalid.json()["detail"]["code"] == "phone_invalid"
+    assert service._mirror.get_by_email(email) is None  # type: ignore[attr-defined]
+    # the proof is not consumed by a refused attempt: the same proof signs up once a phone is given
+    ok = client.post("/api/auth/parent/signup", json={**body, "phone": "01012345678"})
+    assert ok.status_code == 200, ok.text
+    stored = service._mirror.get_by_email(email)  # type: ignore[attr-defined]
+    assert stored is not None
+    assert stored.phone == "+201012345678"
+
+
+def test_parent_signup_with_a_bad_proof_is_still_401_before_the_phone_check(
+    parent_context: tuple[TestClient, AuthService, Settings],
+) -> None:
+    client, _, _ = parent_context
+    resp = client.post(
+        "/api/auth/parent/signup",
+        json={"proofToken": "not-a-token", "password": "pw-123456", "acceptedTerms": True},
+    )
     assert resp.status_code == 401, resp.text

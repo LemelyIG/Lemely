@@ -312,7 +312,7 @@ def test_a_phone_only_parents_name_is_their_phone_not_the_placeholder_email(
 ) -> None:
     """A synthesised address must never surface as a person's name (P3.9 chunk d).
 
-    ``AuthService.verify_otp`` mints a phone-only parent with a
+    The retired phone-OTP login minted a phone-only parent with a
     ``phone+20…@parents.lemely.local`` email because ``users.email`` is NOT
     NULL + unique. Falling back to that address showed a student
     "phone+201000000555@parents.lemely.local" where their parent's name should

@@ -504,7 +504,7 @@ def _seed_graded_paper(
         byte_size=15,
     )
     repo.claim_run(pid)
-    repo.finish(pid, report)
+    repo.finish(pid, report, run_token=repo.run_token(pid))
     return str(pid)
 
 
@@ -4099,7 +4099,7 @@ def test_overview_scopes_to_each_teachers_own_classes(
     assert body_b["atRisk"] == []
 
 
-def test_overview_malformed_caller_id_is_422(
+def test_overview_malformed_caller_id_is_401(
     client: TestClient, class_service: ClassService
 ) -> None:
     """A token whose ``sub`` is not a UUID must not reach the DB as a 500."""
@@ -4107,7 +4107,8 @@ def test_overview_malformed_caller_id_is_422(
     client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
         user_id="not-a-uuid", role=Role.teacher.value
     )
-    assert client.get("/api/teacher/overview").status_code == 422
+    # The team guard rejects a non-UUID token subject before the handler runs.
+    assert client.get("/api/teacher/overview").status_code == 401
 
 
 # ---------------------------------------------------------------------------

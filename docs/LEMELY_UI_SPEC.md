@@ -349,9 +349,17 @@ independent sign-up; they need a code or link from their child).
 **Exits.** G-03, G-08, G-04.
 
 ### G-03 · Sign up — details
-**Contains.** Name, email, password (with strength feedback and a show/hide
-toggle), terms acceptance. Teacher variant adds: school or centre name
+**Contains.** Name, email, mobile number, password (with strength feedback and a
+show/hide toggle), terms acceptance. Teacher variant adds: school or centre name
 (optional, with "I work independently" option).
+
+> **Shipped addition (UD-11).** The mobile number is required
+> on every self-service sign-up and sits between email and password. A "+20" shows
+> in front of the number until the person types their own `+` or `00` (no country
+> picker); `type="tel"`, `autocomplete="tel"`. The server accepts mobile numbers
+> only and checks format only (libphonenumber, region EG): there is no text-message
+> check, and nothing on screen promises one. A server refusal (`phone_required`,
+> `phone_invalid`) shows on the field and returns focus to it. Component: C-25.
 
 > **Shipped divergence (`BUILD/DECISIONS.md` D7.2).** The teacher variant's
 > optional "school or centre name" field was dropped, not built and left
@@ -383,8 +391,10 @@ in at G-04 like everyone else.
 **Contains.** Reached from a code or link a child shares at G-08 (`/join/:code`).
 Three steps: email address and display name; a six-digit code sent to that
 email, entered with a dedicated code-entry control (paste, auto-advance,
-auto-submit); then a password (with strength feedback) and the
-terms-acceptance checkbox.
+auto-submit); then a final step headed "Finish your account": the parent's own
+mobile number (C-25, required, same rules as G-03), a password (with strength
+feedback) and the terms-acceptance checkbox. A refused number shows on its field
+and does not consume the proof, so the same step simply tries again.
 **Interactions.** Code auto-submits when complete. A 30-second, display-only
 resend cooldown; "Change email" returns to the first step. A visitor who
 already has an account sees "Already have an account? Sign in," which goes to
@@ -474,11 +484,19 @@ oldest, and a confirm action. Also a short line on why the limit exists.
 **Exits.** Role home, or G-11.
 
 ### G-11 · Account & devices settings
-**Contains.** Profile (name, email, phone, avatar), password change, linked
+**Contains.** Profile (name, email, mobile number, avatar), password change, linked
 relationships (for a student: linked parents, school, classes — with the ability
 to request removal), active devices list with individual sign-out, subscription
 summary linking to G-14, sign out, delete account.
 **States.** Devices list empty except current; pending parent-link request.
+
+> **Shipped (UD-11).** The mobile number row on the profile card is the one place
+> to add or change it (C-26). With none usable (including a landline stored before
+> the mobile-only rule) the row says "Add a mobile number" and shows the form
+> directly; with one it shows the number and a Change button. A dismissible banner
+> in every portal layout points people there, is never pinned, and hides on this
+> screen. Checkout asks for the number in place when the server answers 422
+> `phone_required`, then retries the same checkout.
 
 ### G-12 · Notification preferences
 **Contains.** Toggle groups by type: results ready, new announcement, study

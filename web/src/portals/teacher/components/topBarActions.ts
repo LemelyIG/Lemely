@@ -4,6 +4,7 @@
  * route `teacherRoute` actually mounts: a renamed screen breaks a test rather
  * than a link a teacher clicks.
  */
+import type { TeamPermission } from "@/lib/billingTypes"
 import { marketingLinks } from "@/portals/marketing/content"
 
 export type CreateActionIcon = "scheme" | "quiz" | "announcement" | "class"
@@ -15,6 +16,11 @@ export interface CreateAction {
   description: string
   /** A pathname under `/teacher`, optionally with a query the screen reads. */
   to: string
+  /**
+   * What an assistant's role needs for this to be offered while acting for a lead teacher.
+   * Absent for an action on shared data (mark schemes), which acting does not change.
+   */
+  permission?: TeamPermission
 }
 
 export const CREATE_ACTIONS: readonly CreateAction[] = [
@@ -33,6 +39,7 @@ export const CREATE_ACTIONS: readonly CreateAction[] = [
     // `Quizzes` opens its "New quiz" form when it sees `?new=1`; creating the
     // draft there is what hands the teacher on to the builder.
     to: "/teacher/quizzes?new=1",
+    permission: "generate_quiz",
   },
   {
     id: "announcement",
@@ -41,6 +48,7 @@ export const CREATE_ACTIONS: readonly CreateAction[] = [
     description: "Post to your students",
     // The announcements route is the composer itself.
     to: "/teacher/announcements",
+    permission: "manage_classes",
   },
   {
     id: "class",
@@ -48,6 +56,7 @@ export const CREATE_ACTIONS: readonly CreateAction[] = [
     title: "Class",
     description: "Share an invite code",
     to: "/teacher/first-class",
+    permission: "manage_classes",
   },
 ]
 

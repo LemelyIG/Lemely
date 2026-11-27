@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Annotated, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from lemely.core.metered_actions import MeteredAction
 from lemely.db.models.enums import Role, XpSource
 from lemely.db.study_plan_repo import (
     StudyPlanError,
@@ -44,6 +45,7 @@ from lemely.web.schemas_study_plan import (
     StudyPlanSessionDTO,
     StudyPlanWeekDTO,
 )
+from lemely.web.usage import UsageMeter, get_usage_meter, request_from_auth
 from lemely.web.xp_awards import award_xp_safely
 
 if TYPE_CHECKING:
@@ -114,6 +116,7 @@ def create_study_plan(
     body: CreateStudyPlanRequestDTO,
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
     service: Annotated[StudyPlanService, Depends(get_study_plan_service)],
+    meter: Annotated[UsageMeter, Depends(get_usage_meter)],
 ) -> StudyPlanWeekDTO:
     """S-24's "Rebuild this week's plan" control.
 
@@ -122,8 +125,19 @@ def create_study_plan(
     already supersedes rather than mutates any existing plan for the same
     (student, subject, ISO week), so a second call here regenerates cleanly
     with no extra logic needed at this layer.
+
+    Metered as ``study_plan`` on the plan's subject. The scheduler is deterministic, so the
+    seeded estimate is 0-0 and the job settles 0 units; what the meter decides is the
+    payer. The first plan per subject per ISO week goes to a seat whose scope includes
+    ``study_plan`` (spec R17); a regeneration in the same week, or a seat without the
+    action, draws on the student's own chain. ``authorize`` runs before the plan exists,
+    which is what makes the week check read "no plan yet" for the first generation.
     """
-    plan = service.generate(auth.user_id, body.subjectCode)
+    usage = meter.authorize(
+        request_from_auth(auth, MeteredAction.STUDY_PLAN, subject_code=body.subjectCode)
+    )
+    with meter.job(usage):
+        plan = service.generate(auth.user_id, body.subjectCode)
     return _plan_to_dto(plan)
 
 

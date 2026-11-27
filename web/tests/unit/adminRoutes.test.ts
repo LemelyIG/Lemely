@@ -190,6 +190,19 @@ describe("T28 · the tutoring screens sit under the guarded platform subtree", (
     ])
   })
 
+  it("puts Billing in the platform navigation and trails its areas", () => {
+    expect(platformNavItems.map((item) => item.to)).toContain("/platform/billing")
+    expect(resolveAdminTrail("/platform/billing/catalogue", "platform")).toEqual([
+      { label: "Console", to: "/platform" },
+      { label: "Billing", to: "/platform/billing" },
+      { label: "Catalogue" },
+    ])
+    expect(resolveAdminTrail("/platform/billing", "platform")).toEqual([
+      { label: "Console", to: "/platform" },
+      { label: "Billing" },
+    ])
+  })
+
   const SCREENS = [
     "TutorQueue.tsx",
     "TutorApplication.tsx",

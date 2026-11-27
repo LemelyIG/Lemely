@@ -18,6 +18,7 @@ import "./brand.css"
 const Landing = lazy(() => import("./Landing").then(m => ({ default: m.Landing })))
 const ConfirmEmail = lazy(() => import("./waitlist/ConfirmEmail").then(m => ({ default: m.ConfirmEmail })))
 const DataHandling = lazy(() => import("./DataHandling").then(m => ({ default: m.DataHandling })))
+const Pricing = lazy(() => import("./Pricing").then(m => ({ default: m.Pricing })))
 
 /**
  * Scrolls to `location.hash` once the lazy page body exists. The browser's own
@@ -152,6 +153,26 @@ export const dataHandlingRoute: RouteObject = {
     title: "How your data is handled",
     description:
       "What Lemely stores about an account, what happens to a paper you upload, where a scan is sent to be read, and who else can see your work.",
+    skeleton: "page-header",
+  } satisfies PageMeta,
+}
+
+/**
+ * The public pricing page (Phase 08 Task 17). `Pricing` renders its own `MarketingFrame`, so the
+ * fallback here is the bare route skeleton rather than a second frame.
+ */
+export const pricingRoute: RouteObject = {
+  path: "pricing",
+  element: (
+    <Suspense fallback={<RouteSkeleton />}>
+      <Pricing />
+    </Suspense>
+  ),
+  /* Public, like `/data`: a visitor deciding whether to sign up most needs prices. The
+   * description states the page's subject only; prices come from the live catalogue. */
+  handle: {
+    title: "Pricing",
+    description: "Lemely plans and credit packs for students and teachers, monthly or yearly.",
     skeleton: "page-header",
   } satisfies PageMeta,
 }

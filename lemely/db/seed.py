@@ -49,6 +49,7 @@ from lemely.db.models.academic import Subject
 from lemely.db.models.enums import ExamBoard, QualificationLevel, Role
 from lemely.db.parent_repo import ParentLinkService
 from lemely.db.session import get_sessionmaker, session_scope
+from lemely.db.usage_catalogue_repo import ensure_usage_catalogue
 from lemely.io import syllabus_topics
 from lemely.runtime.config import Settings, load_settings
 from lemely.runtime.errors import AuthError, LemelyError
@@ -133,6 +134,10 @@ class DemoAccount:
 #: the random per-run secret ``scripts/seed_e2e.py`` mints) because the whole
 #: point of this table is a credential a human or a fresh-clone test can name.
 DEMO_PASSWORD = "Demo-Lemely-1!"  # noqa: S105 - a documented demo credential, not a real secret
+
+#: A valid phone for every demo account (UD-11: a phone is required of every user, and a payer
+#: without one is refused at checkout). Phones are not unique, so one value serves all five.
+DEMO_PHONE = "+201012345678"
 
 #: One account per :class:`Role`, all created the same email/password way —
 #: covers all five roles exactly once (pinned by
@@ -255,6 +260,7 @@ def _create_or_recover_email_account(
             DEMO_PASSWORD,
             account.role,
             display_name=account.display_name,
+            phone=DEMO_PHONE,
             email_verified=account.email_verified,
         )
         return (
@@ -363,6 +369,8 @@ def seed_reference_data(settings: Settings | None = None) -> int:
                 subject.name = spec.name
                 subject.qualification_level = spec.qualification_level
                 subject.active = True
+        # Billing spec §4.1: version-1 usage rates, estimators and signup packs.
+        ensure_usage_catalogue(session, now=datetime.now(UTC))
     syllabus_topics.invalidate_reference_cache()
     return added
 
@@ -375,8 +383,8 @@ def _build_auth_service(settings: Settings) -> tuple[AuthService, DbUserMirror]:
     seeded here goes through the phone-OTP path any more (the parent-invites
     redesign moved the demo parent to email/password, see :data:`DEMO_ACCOUNTS`),
     but ``AuthService`` still requires an ``sms``/``otp_store`` pair to
-    construct — :meth:`~lemely.auth.service.AuthService.request_otp`/``verify_otp``
-    are kept as a seam for a possible future paid SMS channel — and seeding
+    construct — :meth:`~lemely.auth.service.AuthService.request_otp`
+    is kept as a seam for a possible future paid SMS channel — and seeding
     must never depend on a real gateway even for that unused path.
     """
     mirror = DbUserMirror(settings)

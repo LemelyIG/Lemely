@@ -38,6 +38,19 @@ export interface Profile {
    */
   timezone: string | null
   timezoneIsExplicit: boolean
+  /**
+   * The stored number in E.164, or `null` when none is on file or the stored value is not valid
+   * (UD-11). `phoneMissing` is exactly `phone === null`; read by the phone banner and the
+   * profile card. Required for the reason `emailVerified` is: the backend deploys first.
+   */
+  phone: string | null
+  phoneMissing: boolean
+}
+
+/** Response for `PUT /api/me/phone`: the stored (normalised) number. */
+export interface PhoneState {
+  phone: string
+  phoneMissing: boolean
 }
 
 /** Body for `PUT /api/me/timezone` (mirrors `TimezoneUpdateDTO`). See

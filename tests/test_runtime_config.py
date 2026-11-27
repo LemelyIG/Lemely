@@ -270,6 +270,55 @@ class SettingsTests(unittest.TestCase):
                 s = load_settings(toml_path=None, cwd=cwd)
         self.assertEqual(s.gradio.port, 4242)
 
+    def test_a_connection_pool_of_one_is_refused(self) -> None:
+        """A sweep pass holds one connection for its advisory lock while its jobs use another,
+        so a pool of size 1 with no overflow would starve every triggered pass at startup of
+        the first job; refuse it at load time instead."""
+        from lemely.runtime.config import DatabaseSettings
+
+        with self.assertRaises(ValidationError) as cm:
+            DatabaseSettings(pool_size=1, max_overflow=0)
+        self.assertIn("at least 2", str(cm.exception))
+        self.assertEqual(DatabaseSettings(pool_size=1, max_overflow=1).pool_size, 1)
+        self.assertEqual(DatabaseSettings(pool_size=2, max_overflow=0).max_overflow, 0)
+        with (
+            _IsolatedEnv(LEMELY_DATABASE__POOL_SIZE="1", LEMELY_DATABASE__MAX_OVERFLOW="0"),
+            self.assertRaises(ValidationError),
+            TemporaryDirectory() as tmp,
+        ):
+            load_settings(toml_path=None, cwd=Path(tmp))
+
+    def test_a_charge_started_at_the_end_of_the_budget_must_end_inside_the_sweep_lock(self) -> None:
+        """The sweep never stops a claimed charge, so the budget plus one charge's worst case
+        (two requests, each bounded by its four Paymob timeouts) must stay under the lock's
+        240 s idle timeout less its 30 s margin. The old 20 s on every phase would not."""
+        with TemporaryDirectory() as tmp:
+            with _IsolatedEnv():
+                defaults = load_settings(toml_path=None, cwd=Path(tmp))
+            # 60 + 5 + 2 * (5 + 5 + 20 + 5) = 135
+            self.assertEqual(defaults.notifications.sweep_pass_budget_seconds, 60)
+            self.assertEqual(defaults.paymob.request_hard_seconds, 35)
+
+            old_phases = {
+                "LEMELY_PAYMOB__CONNECT_TIMEOUT_SECONDS": "20",
+                "LEMELY_PAYMOB__WRITE_TIMEOUT_SECONDS": "20",
+                "LEMELY_PAYMOB__POOL_TIMEOUT_SECONDS": "20",
+            }
+            with _IsolatedEnv(**old_phases), self.assertRaises(ValidationError) as cm:
+                load_settings(toml_path=None, cwd=Path(tmp))
+            self.assertIn("exceeds 210 s", str(cm.exception))
+
+            # 140 + 5 + 2 * 32.5 = 210 sits exactly on the limit.
+            edge = {
+                "LEMELY_NOTIFICATIONS__SWEEP_PASS_BUDGET_SECONDS": "140",
+                "LEMELY_PAYMOB__TIMEOUT_SECONDS": "17.5",
+            }
+            with _IsolatedEnv(**edge):
+                load_settings(toml_path=None, cwd=Path(tmp))
+            edge["LEMELY_NOTIFICATIONS__SWEEP_PASS_BUDGET_SECONDS"] = "141"
+            with _IsolatedEnv(**edge), self.assertRaises(ValidationError):
+                load_settings(toml_path=None, cwd=Path(tmp))
+
 
 if __name__ == "__main__":
     unittest.main()

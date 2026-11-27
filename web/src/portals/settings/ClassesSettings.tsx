@@ -1,11 +1,13 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import { ChalkboardTeacher } from "@phosphor-icons/react"
+import { useActingTeacher } from "@/components/acting/acting-state"
+import { OwnAccountNote } from "@/components/acting/own-account-note"
 import { buttonVariants } from "@/components/ui/button"
 import { ListSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
 import { EmptyState } from "@/components/ui/state-views"
-import { useTeacherClasses } from "@/lib/hooks/useTeacherApi"
+import { useOwnClasses } from "@/lib/hooks/useOwnClasses"
 import { settingsLoadFailureMessage } from "@/lib/settingsOutcome"
 import { cn } from "@/lib/utils"
 import { SettingsCard, SettingsRow, SettingsSection } from "./SettingsRows"
@@ -26,15 +28,25 @@ import { SettingsCard, SettingsRow, SettingsSection } from "./SettingsRows"
 const linkButton = cn(buttonVariants({ variant: "secondary" }))
 
 export function ClassesSettingsSection() {
-  const classes = useTeacherClasses()
+  // Settings is about the signed-in teacher's own account. While they work as a lead teacher the
+  // shared class hooks answer for the lead, so this reads their own classes directly (`asSelf`).
+  // The class pages it links to resolve against whoever is being acted for, so while acting they
+  // cannot open one of these; the page says so instead of linking to a 404.
+  const classes = useOwnClasses()
+  const { lead } = useActingTeacher()
   const location = useLocation()
   const navigate = useNavigate()
 
   return (
     <>
+      <OwnAccountNote />
       <SettingsSection
         title="Your classes"
-        description="Open a class for its roster and join code. Rename a class or change its subject from the Classes page."
+        description={
+          lead
+            ? "Your own classes. Switch back to Me to open one."
+            : "Open a class for its roster and join code. Rename a class or change its subject from the Classes page."
+        }
       >
         <QueryState
           query={classes}
@@ -46,7 +58,7 @@ export function ClassesSettingsSection() {
               icon={<ChalkboardTeacher aria-hidden="true" />}
               heading="No classes yet"
               body="Create a class to get a join code for your students."
-              action={{ label: "Create a class", onClick: () => navigate("/teacher/first-class") }}
+              action={lead ? undefined : { label: "Create a class", onClick: () => navigate("/teacher/first-class") }}
             />
           }
         >
@@ -62,27 +74,31 @@ export function ClassesSettingsSection() {
                         `${cls.studentCount} ${cls.studentCount === 1 ? "student" : "students"}`,
                       ].join(" · ")}
                       control={
-                        <Link
-                          to={`/teacher/classes/${cls.id}`}
-                          className={linkButton}
-                          aria-label={`Open ${cls.label}`}
-                        >
-                          Open class
-                        </Link>
+                        lead ? undefined : (
+                          <Link
+                            to={`/teacher/classes/${cls.id}`}
+                            className={linkButton}
+                            aria-label={`Open ${cls.label}`}
+                          >
+                            Open class
+                          </Link>
+                        )
                       }
                     />
                   </li>
                 ))}
               </ul>
-              <SettingsRow
-                label="Names and subjects"
-                description="Rename a class, change its subject or remove it."
-                control={
-                  <Link to="/teacher/classes" className={linkButton}>
-                    Go to Classes
-                  </Link>
-                }
-              />
+              {lead ? null : (
+                <SettingsRow
+                  label="Names and subjects"
+                  description="Rename a class, change its subject or remove it."
+                  control={
+                    <Link to="/teacher/classes" className={linkButton}>
+                      Go to Classes
+                    </Link>
+                  }
+                />
+              )}
             </SettingsCard>
           )}
         </QueryState>

@@ -604,6 +604,8 @@ these directly in GitHub — nothing here needs to be typed anywhere else.
 | `EDGE_ORIGIN_SECRET_PREVIOUS` | Env secret (staging + production) — optional, only while rotating | The value being rotated out: the backend still accepts it, the Worker never sends it. Leave unset otherwise. |
 | `TURNSTILE_SECRET_KEY` / `TURNSTILE_SITE_KEY` | Env secret (staging + production) — optional | Cloudflare dashboard → Turnstile → add a widget for `lemelyig.com` / `staging.lemelyig.com`. The site key is public, the secret key is not. Unset, the waitlist skips the bot check. |
 | `WAITLIST_DIGEST_SECRET` | Env secret (staging + production) — optional | A random string. The backend's digest endpoint and the Cloud Scheduler job's `X-Cron-Secret` header both use it. Unset, the endpoint answers 404 and the scheduler job is skipped with a warning. |
+| `SWEEP_JOBS_SECRET` | Env secret (staging + production) — **required** | At least 32 printable ASCII characters, no whitespace, different from the digest one (`openssl rand -hex 32`). Reaches the backend as `LEMELY_NOTIFICATIONS__JOBS_SECRET` and is the Cloud Scheduler sweep job's `X-Cron-Secret` header. A **preflight step** in the `migrate` job fails the deploy, before any migration runs, anything is built or any traffic moves, when it is missing or malformed, and the reconciler treats a missing value as an error, so **no billing or notification sweep silently stops while the service is idle** (`docs/deployment.md` §5.2). |
+| `SWEEP_JOBS_SECRET_PREVIOUS` | Env secret (staging + production) — optional | Only during a rotation: the old value of `SWEEP_JOBS_SECRET`. Reaches the backend as `LEMELY_NOTIFICATIONS__JOBS_SECRET_PREVIOUS`; the sweep route accepts either value. Same format rules (it must differ from the current one). Clear it and redeploy once a Scheduler run has succeeded with the new value (`docs/deployment.md` §5.2, "Rotating the secret"). |
 
 **No new secret or variable for GCS.** The upload bucket and the runtime service
 account `deploy.yml` deploys as are both just names `deploy.yml` derives itself from
@@ -954,7 +956,11 @@ the gap above where the `*.run.app` URL bypasses the Worker.
 `.github/scheduler-jobs.json` is the desired state, and `scripts/scheduler_reconcile.py` brings
 Cloud Scheduler (`us-central1`) in line with it as the **last step of `deploy-backend`**, after the
 serving-revision and health checks. Today it holds the daily waitlist digest
-(`0 7 * * *` UTC, `POST /api/internal/waitlist/digest` on the public host).
+(`0 7 * * *` UTC, `POST /api/internal/waitlist/digest` on the public host) and the sweeper
+trigger `sweep` (`* * * * *` UTC, `POST /api/internal/jobs/sweep`, secret `SWEEP_JOBS_SECRET`),
+which runs one billing and notification sweep pass because Cloud Run scales the in-process loop
+to nothing (`docs/deployment.md` §5.2 has the decision, the response and the manual
+`gcloud scheduler jobs create http` commands).
 
 - Jobs are named `lemely-<environment>-<id>`. Missing jobs are created, existing ones are
   rewritten (schedule, URI and the `X-Cron-Secret` header, so a rotated secret propagates), and
@@ -964,13 +970,36 @@ serving-revision and health checks. Today it holds the daily waitlist digest
   with `lemely-<environment>-` **and** whose description has that marker. Anything else in the
   project is left alone. If a desired name is already taken by a job without the marker, the step
   fails and changes nothing.
-- A job whose secret is empty is skipped with a `::warning::` and is not deleted. Any gcloud error
-  fails the step. Secrets are never printed.
+- A job whose secret is empty is skipped with a `::warning::` and is not deleted, unless the entry
+  has `"required": true` (the sweep): then an empty secret is an **error** and fails the step, and
+  the `Preflight the sweep secret` step (`scheduler_reconcile.py --preflight`, in the `migrate`
+  job before Alembic runs) has already failed the deploy before any migration, build, frontend
+  deploy or traffic switch when
+  `SWEEP_JOBS_SECRET` is missing, shorter than 32 characters, has whitespace or non-ASCII
+  characters, or is equal to `SWEEP_JOBS_SECRET_PREVIOUS`. Any gcloud error fails the step.
+  Secrets are never printed.
+- **Per-job delivery policy.** An entry may set `maxRetryAttempts`, `minBackoff`, `maxBackoff` and
+  `attemptDeadline`; they are applied on create and on update. The defaults are the digest's
+  policy (3 retries, 6m, 30m, no deadline flag). An update resets whatever the file no longer
+  sets: with no retries it clears the backoff (`--clear-min-backoff`, `--clear-max-backoff`), it
+  always clears a retry duration set by hand (`--clear-max-retry-duration`), and with no
+  `attemptDeadline` it sends Scheduler's default, `--attempt-deadline=180s`, because gcloud
+  has no flag that clears a deadline. Removing a field from the file therefore takes effect on the
+  next deploy. The sweep sets `maxRetryAttempts: 0` (the next minute's call is the retry, and a
+  retried pass would overlap the next one) and `attemptDeadline: "90s"`, at least 30 s above the
+  60 s pass budget (a test holds this) and below Cloud Run's 300 s request timeout. Read access to a Scheduler job is read access to its `X-Cron-Secret`, so restrict who
+  can read these jobs (`docs/deployment.md` §5.2).
+- **Sweep driver.** Before the revision is created, `scheduler_reconcile.py --sweep-driver`
+  decides `LEMELY_NOTIFICATIONS__SWEEPER_ENABLED` for it: `false` only when the environment's
+  sweep job exists, is enabled, carries the marker and targets this environment's sweep route,
+  otherwise `true`, so the first deploy that creates the job keeps the in-process loop. If the
+  reconcile then fails while the loop is off, the deploy fails with `billing sweep driver absent`
+  and the command that turns the loop back on (`docs/deployment.md` §5.2).
 - Each job names a GitHub secret in the file; it must also be mapped into that step's `env`
   (a test checks this). Adding a job is: add the entry, add the secret line if it is new, deploy.
 - A pending claim on the digest (the backend claims each UTC day before sending) answers 503
-  `digest_pending` instead of pretending it was sent; it becomes takeable after five minutes. Every
-  job is created and updated with `--max-retry-attempts=3 --min-backoff=6m --max-backoff=30m`
+  `digest_pending` instead of pretending it was sent; it becomes takeable after five minutes. The
+  digest keeps the default policy, `--max-retry-attempts=3 --min-backoff=6m --max-backoff=30m`
   (`RETRY_FLAGS` in the script), so a failed or pending run is retried, and the first retry lands
   after that five-minute lease.
 
@@ -1049,6 +1078,7 @@ regressions this pipeline introduced, just not solved by it:
   either way, because this branch has not been deployed.
 - Everything else in `docs/deployment.md` §5 (`/api/teacher/overview`'s N+1)
   is unchanged by this pipeline — it deploys the app as-is, it doesn't fix it.
-  The in-process notification sweeper still needs `--min-instances=1` for timely
-  delivery; the waitlist digest does not, because Cloud Scheduler (see "Edge
-  secret and scheduled jobs" above) wakes the service itself.
+  The in-process sweeper loop sleeps at `--min-instances=0`; Cloud Scheduler wakes
+  the service itself for the waitlist digest and, every minute, for the sweep
+  (`POST /api/internal/jobs/sweep`, see "Cloud Scheduler jobs" above and
+  `docs/deployment.md` §5.2).

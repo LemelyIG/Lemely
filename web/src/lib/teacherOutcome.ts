@@ -1,4 +1,4 @@
-import { ApiError } from "@/lib/api"
+import { ApiError, teamDeniedText } from "@/lib/api"
 
 /*
  * P4.5 · What a teacher is told when something does not go through.
@@ -49,6 +49,11 @@ export const TEACHER_SERVICE_FAILURE = "Something went wrong on our side. Trying
  */
 function classify(err: unknown): { kind: "detail" | "network" | "service" | "unknown"; text: string } {
   if (err instanceof ApiError) {
+    // An assistant whose role does not allow the action: `request()` attached the plain sentence
+    // ("Your role on <Lead>'s team doesn't allow this.") as `readerMessage`. The server's own
+    // `detail` is an object here, so it would otherwise fall through to "we couldn't tell why".
+    const refusal = teamDeniedText(err)
+    if (refusal !== null) return { kind: "detail", text: refusal }
     if (typeof err.detail === "string" && err.detail.trim() !== "") {
       return { kind: "detail", text: err.detail.trim() }
     }
@@ -113,6 +118,7 @@ export function teacherMutationFailureMessage(err: unknown): string {
  */
 export function classInviteCodeFailureMessage(err: unknown): string {
   const status = err instanceof ApiError ? err.status : null
+  if (teamDeniedText(err) !== null) return teacherMutationFailureMessage(err)
   if (status === 404 || status === 403) {
     return "This class is no longer available to you. Reload and try again."
   }
@@ -138,6 +144,7 @@ export function classInviteCodeFailureMessage(err: unknown): string {
  */
 export function classPaperActionFailureMessage(err: unknown): string {
   const status = err instanceof ApiError ? err.status : null
+  if (teamDeniedText(err) !== null) return teacherMutationFailureMessage(err)
   if (status === 404 || status === 403) {
     return "This class or paper is no longer available to you. Reload and try again."
   }

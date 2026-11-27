@@ -240,7 +240,7 @@ def _seed_console_paper(
         byte_size=15,
     )
     repo.claim_run(paper_id)
-    repo.finish(paper_id, _report(questions))
+    repo.finish(paper_id, _report(questions), run_token=repo.run_token(paper_id))
     return paper_id
 
 

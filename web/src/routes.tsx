@@ -7,7 +7,7 @@ import { Navigate, Outlet, useSearchParams } from "react-router-dom"
 import { teacherRoute } from "@/portals/teacher"
 import { studentRoute } from "@/portals/student"
 import { parentRoute } from "@/portals/parent"
-import { marketingRoute, dataHandlingRoute, publicPageRoutes, waitlistConfirmRoute, MarketingLanding } from "@/portals/marketing"
+import { marketingRoute, dataHandlingRoute, pricingRoute, publicPageRoutes, waitlistConfirmRoute, MarketingLanding } from "@/portals/marketing"
 import { platformAdminRoute, schoolAdminRoute } from "@/portals/admin"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { RequireAuth, portalPathForRole } from "@/lib/auth/RequireAuth"
@@ -78,6 +78,12 @@ const ProfileSettings = lazy(() =>
 )
 const InstallSettings = lazy(() =>
   import("@/portals/settings/InstallSettings").then((m) => ({ default: m.InstallSettings })),
+)
+const CheckoutReturn = lazy(() =>
+  import("@/portals/billing/CheckoutReturn").then((m) => ({ default: m.CheckoutReturn })),
+)
+const BillingRedirect = lazy(() =>
+  import("@/portals/billing/CheckoutReturn").then((m) => ({ default: m.BillingRedirect })),
 )
 
 /*
@@ -368,6 +374,38 @@ export const appRoutes: RouteObject[] = [
    * not have an account yet.
    */
   { ...dataHandlingRoute, path: "/data", errorElement },
+  { ...pricingRoute, path: "/pricing", errorElement },
+  /*
+   * Plan 05's billing emails link to `/billing`; send each role to its own billing page.
+   */
+  {
+    path: "/billing",
+    errorElement,
+    handle: { title: "Plan and billing", skeleton: "standalone" } satisfies PageMeta,
+    element: (
+      <RequireAuth allowedRoles={ALL_ROLES}>
+        <Suspense fallback={<RouteSkeleton />}>
+          <BillingRedirect />
+        </Suspense>
+      </RequireAuth>
+    ),
+  },
+  /*
+   * Where Paymob's hosted checkout returns the payer (spec §5.1 step 5). Any signed-in role:
+   * students, teachers and parents all pay.
+   */
+  {
+    path: "/billing/return/:paymentId",
+    errorElement,
+    handle: { title: "Payment status", skeleton: "standalone" } satisfies PageMeta,
+    element: (
+      <RequireAuth allowedRoles={ALL_ROLES}>
+        <Suspense fallback={<RouteSkeleton />}>
+          <CheckoutReturn />
+        </Suspense>
+      </RequireAuth>
+    ),
+  },
   ...publicPageRoutes.map((route) => ({ ...route, errorElement })),
   /* The waitlist confirmation link: public like the landing, deliberately outside `AccessGate`. */
   { ...waitlistConfirmRoute, path: "/waitlist/confirm", errorElement },

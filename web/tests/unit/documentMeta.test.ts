@@ -219,6 +219,7 @@ describe("the signup/verify/reset/join routes carry honest metadata — Task 19"
       "/",
       "/landing",
       "/data",
+      "/pricing",
       "/about",
       "/terms",
       "/refund-policy",

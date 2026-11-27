@@ -24,6 +24,7 @@ import structlog.testing
 from sqlalchemy import select
 
 from lemely.core.deletion import RETENTION_DAYS, purge_cutoff, restore_deadline
+from lemely.core.metered_actions import MeteredAction
 from lemely.db.class_repo import ClassService
 from lemely.db.deletion_repo import (
     DeletedTeacherPaper,
@@ -47,6 +48,7 @@ from lemely.db.teacher_paper_repo import TeacherPaperDeletedError, TeacherPaperR
 from lemely.web import purge as purge_module
 from lemely.web.purge import purge_expired_teacher_papers
 from lemely.web.routers.teacher import _paper_summary
+from lemely.web.usage import MeteredJob
 from tests._concurrency import _Paused, _wait_until_a_backend_waits_on_a_lock
 from tests.test_purge_job import FailingStorage, RecordingStorage
 from tests.test_teacher_paper_repo import _mark_scheme, _metadata, _report
@@ -644,7 +646,8 @@ def test_finish_onto_a_deleted_paper_is_refused_and_writes_nothing(
     teacher: uuid.UUID,
 ) -> None:
     pid = _paper(sessionmaker_, teacher, status=UploadStatus.processing)
-    repo.finish(pid, _report(question_ids=("1",)))
+    token = repo.run_token(pid)
+    repo.finish(pid, _report(question_ids=("1",)), run_token=token)
     live = _paper_row(sessionmaker_, pid)
     assert live is not None
     assert live.report_json is not None
@@ -653,7 +656,7 @@ def test_finish_onto_a_deleted_paper_is_refused_and_writes_nothing(
 
     service.delete(str(teacher), str(pid))
     with pytest.raises(TeacherPaperDeletedError):
-        repo.finish(pid, _report(question_ids=("2", "3")))
+        repo.finish(pid, _report(question_ids=("2", "3")), run_token=token)
 
     row = _paper_row(sessionmaker_, pid)
     assert row is not None
@@ -665,7 +668,7 @@ def test_finish_onto_a_purged_paper_is_refused(
     repo: TeacherPaperRepository, sessionmaker_: sessionmaker[Session]
 ) -> None:
     with pytest.raises(TeacherPaperDeletedError):
-        repo.finish(uuid.uuid4(), _report())
+        repo.finish(uuid.uuid4(), _report(), run_token=None)
 
 
 def test_a_deleted_paper_cannot_be_claimed(
@@ -699,7 +702,7 @@ def test_run_progress_writes_skip_a_deleted_paper(
     repo.set_progress(pid, 1, 4)
     repo.set_metadata(pid, _metadata())
     repo.set_mark_scheme(pid, _mark_scheme())
-    repo.fail(pid, "Grading failed: boom")
+    repo.fail(pid, "Grading failed: boom", run_token=repo.run_token(pid))
 
     row = _paper_row(sessionmaker_, pid)
     assert row is not None
@@ -731,7 +734,8 @@ def test_a_delete_arriving_mid_finish_waits_and_withdraws_the_new_items(
         return real(paper_id, report)  # type: ignore[arg-type]
 
     monkeypatch.setattr(teacher_paper_repo, "_review_items_for", paused)
-    finishing = _Paused(lambda: repo.finish(pid, _report(question_ids=("1", "2"))))
+    token = repo.run_token(pid)
+    finishing = _Paused(lambda: repo.finish(pid, _report(question_ids=("1", "2")), run_token=token))
     assert inside.wait(timeout=20)
     deleting = _Paused(lambda: service.delete(str(teacher), str(pid)))
     _wait_until_a_backend_waits_on_a_lock(sessionmaker_)
@@ -769,7 +773,8 @@ def test_a_finish_arriving_mid_delete_waits_and_is_refused(
     monkeypatch.setattr(TeacherPaperDeletionService, "_withdraw_console_items", paused)
     deleting = _Paused(lambda: service.delete(str(teacher), str(pid)))
     assert inside.wait(timeout=20)
-    finishing = _Paused(lambda: repo.finish(pid, _report(question_ids=("1",))))
+    token = repo.run_token(pid)
+    finishing = _Paused(lambda: repo.finish(pid, _report(question_ids=("1",)), run_token=token))
     _wait_until_a_backend_waits_on_a_lock(sessionmaker_)
     release.set()
     deleting.join()
@@ -824,6 +829,8 @@ def test_a_paper_deleted_mid_grading_ends_the_run_quietly(
             None,  # type: ignore[arg-type]
             None,  # type: ignore[arg-type]
             None,  # type: ignore[arg-type]
+            job=MeteredJob.unmetered(MeteredAction.MARK_PAPER),
+            claim_token=row.run_started_at,
         )
 
     after = _paper_row(sessionmaker_, pid)

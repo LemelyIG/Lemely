@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Annotated, Literal, NoReturn
 
 import anyio
 import structlog
-from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 
 from lemely.core.analytics import (
     aggregate_weaknesses_from_history,
@@ -61,6 +61,8 @@ from lemely.core.history import (
     is_paper,
     latest_grade_bearing,
 )
+from lemely.core.metered_actions import MAX_ESTIMATE_INPUTS, MeteredAction, UsageTarget
+from lemely.core.payer_chain import UsageBlockReason
 from lemely.core.schemas import (
     REVIEW_CONFIDENCE_THRESHOLD,
     AccuracyReport,
@@ -68,6 +70,7 @@ from lemely.core.schemas import (
     WeaknessReport,
     marker_scored,
 )
+from lemely.core.team_permissions import TeamPermission
 from lemely.db.at_risk_repo import (
     AtRiskAcknowledgementRow,
     AtRiskAckOwnershipError,
@@ -93,10 +96,11 @@ from lemely.db.teacher_paper_repo import (
     TeacherPaperDeletedError,
     TeacherPaperRepository,
     TeacherPaperRow,
+    TeacherRunSupersededError,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
 from lemely.db.review_queue_rules import review_reasons_for
 from lemely.db.review_repo import ReviewService
 from lemely.db.student_profile_repo import StudentProfileService
@@ -113,8 +117,8 @@ from lemely.runtime.config import Settings, llm_key_configured
 from lemely.runtime.events import Event, EventType, bus, current_run_id
 from lemely.web.deps import (
     AuthContext,
+    TeamActor,
     get_at_risk_ack_service,
-    get_auth_context,
     get_class_service,
     get_gemini_client,
     get_history_store,
@@ -127,6 +131,7 @@ from lemely.web.deps import (
     get_teacher_paper_deletion_service,
     get_teacher_paper_repo,
     require_role,
+    require_team_permission,
 )
 from lemely.web.schemas import (
     question_to_dto,
@@ -179,6 +184,17 @@ from lemely.web.upload_utils import (
     check_upload_cap,
     safe_upload_name,
     sandbox_failure_to_http,
+)
+from lemely.web.usage import (
+    USAGE_UNAVAILABLE_MESSAGE,
+    MeteredJob,
+    UsageBlocked,
+    UsageGrantContext,
+    UsageMeter,
+    UsageUnavailable,
+    get_usage_meter,
+    request_from_team,
+    require_usage,
 )
 
 log = structlog.get_logger(__name__)
@@ -287,6 +303,15 @@ _AT_RISK_GRADES = {"D", "E", "F", "G", "U"}
 # cycle (``classes.py`` already imports from this module).
 _STAFF_ROLES = (Role.teacher, Role.school_admin, Role.platform_admin)
 
+# Paymob billing Phase 03 (spec §2.3): routes an assistant may use for their lead
+# teacher. All pass the router's STAFF triple, so the wired role guard is unchanged.
+_TEAM_VIEW = require_team_permission(TeamPermission.VIEW_RESULTS, *_STAFF_ROLES)
+_TEAM_MARK = require_team_permission(TeamPermission.MARK, *_STAFF_ROLES)
+_TEAM_REGRADE = require_team_permission(TeamPermission.REGRADE, *_STAFF_ROLES)
+_TEAM_QUIZ = require_team_permission(TeamPermission.GENERATE_QUIZ, *_STAFF_ROLES)
+_TEAM_MANAGE_CLASSES = require_team_permission(TeamPermission.MANAGE_CLASSES, *_STAFF_ROLES)
+_TEAM_MANAGE_STUDENTS = require_team_permission(TeamPermission.MANAGE_STUDENTS, *_STAFF_ROLES)
+
 #: Per-band ceiling on how many previously generated bank questions
 #: :func:`_existing_questions` pulls in as reuse material. A bound, not a
 #: page size: the builder only ever needs a few candidates per band, and an
@@ -351,6 +376,62 @@ _TRACKER_POLL_SECONDS = 0.2
 #: has not moved in ``stale_after`` — the worker that owned it died (a crash, a
 #: deploy) without a chance to call :meth:`~TeacherPaperRepository.fail`.
 _LOST_RUN_ERROR = "This run was lost when its server instance stopped. Re-run marking to try again."
+
+#: Shown when a paper's usage hold expired while it waited in the queue and the
+#: balance no longer covers it (``job.run()`` raises :class:`UsageBlocked` on entry).
+CREDITS_RAN_OUT_MESSAGE = (
+    "Credits ran out while this paper was waiting. Top up, then re-run marking."
+)
+
+#: The sentence a queued paper fails with when it is blocked on entry, by reason and by
+#: whether the run is an assistant's. An assistant's work is billed to the lead (R4), so
+#: where only the lead can act (credits, plan, debt) the assistant is pointed at them.
+_USAGE_BLOCKED_MESSAGES: dict[tuple[UsageBlockReason, bool], str] = {
+    (UsageBlockReason.INSUFFICIENT_CREDITS, False): CREDITS_RAN_OUT_MESSAGE,
+    (UsageBlockReason.INSUFFICIENT_CREDITS, True): (
+        "Credits ran out while this paper was waiting. Ask the lead teacher to top up "
+        "or raise your limit, then re-run marking."
+    ),
+    (UsageBlockReason.USAGE_LIMIT_REACHED, False): (
+        "A usage limit was reached while this paper was waiting, so it was not marked. "
+        "Re-run marking once the limit allows."
+    ),
+    (UsageBlockReason.USAGE_LIMIT_REACHED, True): (
+        "Your usage limit was reached while this paper was waiting, so it was not marked. "
+        "Ask the lead teacher to raise it, then re-run marking."
+    ),
+    (UsageBlockReason.NO_ACTIVE_PLAN, False): (
+        "There is no active plan or credit to mark this paper, so it was not marked. "
+        "Add credits, then re-run marking."
+    ),
+    (UsageBlockReason.NO_ACTIVE_PLAN, True): (
+        "The lead teacher has no active plan or credit to mark this paper, so it was not "
+        "marked. Ask them to add credits, then re-run marking."
+    ),
+    (UsageBlockReason.OUTSTANDING_DEBT, False): (
+        "An unpaid balance is blocking marking, so this paper was not marked. "
+        "Settle it, then re-run marking."
+    ),
+    (UsageBlockReason.OUTSTANDING_DEBT, True): (
+        "An unpaid balance on the lead teacher's account is blocking marking, so this "
+        "paper was not marked. Ask them to settle it, then re-run marking."
+    ),
+    (UsageBlockReason.OUT_OF_SEAT_SCOPE, False): (
+        "This paper is not covered by your plan, so it was not marked."
+    ),
+    (UsageBlockReason.OUT_OF_SEAT_SCOPE, True): (
+        "This paper is not covered by the lead teacher's plan, so it was not marked."
+    ),
+}
+
+
+def usage_blocked_message(reason: UsageBlockReason, *, assistant: bool) -> str:
+    """The sentence a paper blocked on entry fails with ("credits ran out" only for credits).
+
+    ``assistant`` is whether the run bills a lead teacher on an assistant's behalf: the
+    sentence then names the lead wherever only the lead can act.
+    """
+    return _USAGE_BLOCKED_MESSAGES[(reason, assistant)]
 
 
 def _viewer(auth: AuthContext) -> tuple[uuid.UUID, Role]:
@@ -515,6 +596,9 @@ def _run_grading_job(
     history_store: HistoryStoreProtocol,
     gemini_client: GeminiClient,
     corpus: SchemeCorpusRepository,
+    *,
+    job: MeteredJob,
+    claim_token: datetime | None,
 ) -> None:
     """Detect, resolve, extract and mark one paper on this instance's pool. Never raises.
 
@@ -539,6 +623,37 @@ def _run_grading_job(
     to the same id, so a second run on this instance (or, once
     :data:`_grading_pool` grows past one worker, a concurrent one on another)
     cannot mix progress counters with this one.
+
+    ``job`` was reserved by the request that claimed the run (billing spec §5.7).
+    Its cost scope opens here, on the pool thread, because a pool task does not
+    inherit the request's context; ``with job.run():`` encloses every paid call
+    (and ``script_cost_scope``), and the work joins nothing it started before the
+    block exits, so the total it reads is complete. A run that fails, finds no
+    paper, finds the paper deleted mid-run, or resolves no scheme is released,
+    never charged (billing spec §2.4). The progress tracker thread makes no paid
+    call, so it stays outside the scope. A failure in the setup before the scope
+    opens releases the hold too.
+
+    ``claim_token`` is the ``run_started_at`` the winning ``claim_run`` stamped.
+    Nothing writes to a row while its job waits in the pool's queue, so after
+    the stale window the console offers a re-run, and that re-run reclaims the
+    row with a new token and queues its own job. Every write that ends the run
+    is conditional on the token, in the repository: ``confirm_run`` before
+    ``job.run()`` opens (a superseded job is released without touching the
+    ledger, and a job that waited past the stale window refreshes its row in the
+    same statement, so it cannot be reclaimed before its first write); ``finish``
+    under its row lock (a superseded run abandons, charged 0); and every
+    ``fail``, so a superseded run never marks the newer run's paper failed. One
+    paper is never marked or charged twice. The token is the row's, not the
+    job's: ``job.run()`` may replace the job id when it re-reserves.
+
+    ``job.run()`` raises :class:`UsageBlocked` on entry when the hold expired
+    while the job was queued and the chain can no longer cover it. Nothing is
+    held then and no model call has been made; the paper fails with the sentence
+    :func:`usage_blocked_message` gives for the reason, unless a newer run owns the
+    row. A ledger that cannot restart the hold raises :class:`UsageUnavailable`
+    instead: the same guard,
+    and the paper fails with :data:`USAGE_UNAVAILABLE_MESSAGE` (charged 0, no model call).
     """
     from lemely.web.routers.student import resolve_mark_scheme
     from lemely.web.services.grading import (
@@ -550,86 +665,132 @@ def _run_grading_job(
     )
 
     run_id_token = current_run_id.set(f"teacher:{paper_id}")
-    progress_queue = bus.subscribe_queue(f"teacher:{paper_id}")
-    stop = threading.Event()
-    tracker = threading.Thread(
-        target=_track_progress,
-        args=(repo, paper_id, progress_queue, stop),
-        daemon=True,
-    )
-    tracker.start()
+    progress_queue: queue.SimpleQueue[Event | None] | None = None
     try:
-        row = repo.get(paper_id)
-        if row is None:
+        progress_queue = bus.subscribe_queue(f"teacher:{paper_id}")
+        stop = threading.Event()
+        tracker = threading.Thread(
+            target=_track_progress,
+            args=(repo, paper_id, progress_queue, stop),
+            daemon=True,
+        )
+        tracker.start()
+    except BaseException:
+        # `job.run()` has not opened yet, so nothing else would release the hold.
+        if progress_queue is not None:
+            bus.unsubscribe_queue(progress_queue)
+        current_run_id.reset(run_id_token)
+        job.release()
+        raise
+    try:
+        # Before `job.run()`: a superseded job is released without a ledger extend
+        # or re-reserve, and a confirmed one has just refreshed its row's liveness.
+        try:
+            confirmed = claim_token is not None and repo.confirm_run(paper_id, claim_token)
+        except BaseException:
+            # `job.run()` has not opened, so nothing else would release the hold.
+            job.release()
+            raise
+        if not confirmed:
+            log.info("teacher_grade_superseded", paper_id=str(paper_id), at="start")
+            job.release()
             return
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_dir = Path(tmp)
-            scan_dest = tmp_dir / Path(row.storage_path).name
-            scan_path = _download_to(storage, settings.storage.bucket, row.storage_path, scan_dest)
-            sibling: Path | None = None
-            if row.scheme_storage_path is not None:
-                # A scheme attached alongside the scan on upload — always
-                # preferred by `resolve_mark_scheme` over a corpus lookup.
-                sibling = _download_to(
-                    storage,
-                    settings.storage.bucket,
-                    row.scheme_storage_path,
-                    tmp_dir / "mark_scheme.pdf",
+        with job.run():
+            row = repo.get(paper_id)
+            if row is None:
+                job.abandon()
+                return
+            with tempfile.TemporaryDirectory() as tmp:
+                tmp_dir = Path(tmp)
+                scan_dest = tmp_dir / Path(row.storage_path).name
+                scan_path = _download_to(
+                    storage, settings.storage.bucket, row.storage_path, scan_dest
                 )
-            metadata = row.metadata
-
-            with script_cost_scope(settings, script_key=f"teacher_paper:{paper_id}"):
-                # Detection is advisory: it names the card and helps the resolver
-                # match the parsed-scheme corpus, but a paper with an attached
-                # scheme marks fine without it. A failure here must not cost the
-                # teacher their marks, so it is warned about and stepped over.
-                if metadata is None and _detection_available(settings):
-                    try:
-                        metadata = ScanMetadataExtractor(gemini_client)(scan_path)
-                        repo.set_metadata(paper_id, metadata)
-                    except Exception as exc:
-                        log.exception("teacher_detection_failed", paper_id=str(paper_id))
-                        bus.publish(
-                            EventType.WARNING,
-                            paper_id=str(paper_id),
-                            message=f"Could not read this scan's exam details: {exc}",
-                        )
-
-                repo.set_stage(paper_id, "scheme")
-                scheme = row.mark_scheme or resolve_mark_scheme(
-                    sibling, corpus, settings, gemini_client, metadata=metadata
-                )
-                if scheme is None:
-                    repo.fail(
-                        paper_id,
-                        "No mark scheme could be resolved for this paper — nothing was marked. "
-                        "Attach one on upload, or add it under Mark schemes and re-run.",
+                sibling: Path | None = None
+                if row.scheme_storage_path is not None:
+                    # A scheme attached alongside the scan on upload — always
+                    # preferred by `resolve_mark_scheme` over a corpus lookup.
+                    sibling = _download_to(
+                        storage,
+                        settings.storage.bucket,
+                        row.scheme_storage_path,
+                        tmp_dir / "mark_scheme.pdf",
                     )
-                    return
-                repo.set_mark_scheme(paper_id, scheme)
+                metadata = row.metadata
 
-                repo.set_stage(paper_id, "extract")
-                extracted = extract_answers(scan_path, scheme, gemini_client=gemini_client)
-                ensure_binding_allows_marking(extracted)
+                with script_cost_scope(settings, script_key=f"teacher_paper:{paper_id}"):
+                    # Detection is advisory: it names the card and helps the resolver
+                    # match the parsed-scheme corpus, but a paper with an attached
+                    # scheme marks fine without it. A failure here must not cost the
+                    # teacher their marks, so it is warned about and stepped over.
+                    if metadata is None and _detection_available(settings):
+                        try:
+                            metadata = ScanMetadataExtractor(gemini_client)(scan_path)
+                            repo.set_metadata(paper_id, metadata)
+                        except Exception as exc:
+                            log.exception("teacher_detection_failed", paper_id=str(paper_id))
+                            bus.publish(
+                                EventType.WARNING,
+                                paper_id=str(paper_id),
+                                message=f"Could not read this scan's exam details: {exc}",
+                            )
 
-                repo.set_stage(paper_id, "mark")
-                # `student_id=None`/`history_store=None`: a console upload is never
-                # attributed to a student account (D1.12 — `TeacherPaper.student_id`
-                # is always null today), so there is nobody to record a history
-                # entry for. The marks live on this row and are served from it.
-                # integrity_settings: the operator's [integrity], as the student
-                # upload already passes (#259).
-                report = grade_paper(
-                    scheme,
-                    extracted,
-                    gemini_client=gemini_client,
-                    student_id=None,
-                    history_store=None,
-                    integrity_settings=settings.integrity,
-                    options=settings.grading.marking_options(),
-                    scan_path=scan_path,
-                )
-            repo.finish(paper_id, report)
+                    repo.set_stage(paper_id, "scheme")
+                    scheme = row.mark_scheme or resolve_mark_scheme(
+                        sibling, corpus, settings, gemini_client, metadata=metadata
+                    )
+                    if scheme is None:
+                        repo.fail(
+                            paper_id,
+                            "No mark scheme could be resolved for this paper — nothing was marked. "
+                            "Attach one on upload, or add it under Mark schemes and re-run.",
+                            run_token=claim_token,
+                        )
+                        job.abandon()
+                        return
+                    repo.set_mark_scheme(paper_id, scheme)
+
+                    repo.set_stage(paper_id, "extract")
+                    extracted = extract_answers(scan_path, scheme, gemini_client=gemini_client)
+                    ensure_binding_allows_marking(extracted)
+
+                    repo.set_stage(paper_id, "mark")
+                    # `student_id=None`/`history_store=None`: a console upload is never
+                    # attributed to a student account (D1.12 — `TeacherPaper.student_id`
+                    # is always null today), so there is nobody to record a history
+                    # entry for. The marks live on this row and are served from it.
+                    # integrity_settings: the operator's [integrity], as the student
+                    # upload already passes (#259).
+                    report = grade_paper(
+                        scheme,
+                        extracted,
+                        gemini_client=gemini_client,
+                        student_id=None,
+                        history_store=None,
+                        integrity_settings=settings.integrity,
+                        options=settings.grading.marking_options(),
+                        scan_path=scan_path,
+                    )
+                # Checks the token under the row lock: a superseded run raises and
+                # writes nothing, and `job.run()` releases it (charged 0).
+                repo.finish(paper_id, report, run_token=claim_token)
+    except UsageBlocked as exc:
+        # From `job.run()` entry, before any work: see the docstring.
+        log.warning("teacher_grade_usage_blocked", paper_id=str(paper_id), reason=exc.reason.value)
+        message = usage_blocked_message(
+            exc.reason, assistant=job.ctx.request.assistant_member_id is not None
+        )
+        repo.fail(paper_id, message, run_token=claim_token)
+    except UsageUnavailable:
+        # From `job.run()` entry too: the ledger could not restart the queued hold, so the
+        # run failed closed before any model call and charged nothing. A plain sentence, not
+        # "Grading failed: ...", and the same superseded-run guard as the block above.
+        log.warning("teacher_grade_usage_unavailable", paper_id=str(paper_id))
+        repo.fail(paper_id, USAGE_UNAVAILABLE_MESSAGE, run_token=claim_token)
+    except TeacherRunSupersededError:
+        # A re-run took the paper while this run graded it: its report was not saved,
+        # and the row belongs to the newer run.
+        log.info("teacher_grade_superseded", paper_id=str(paper_id), at="finish")
     except TeacherPaperDeletedError:
         # The teacher deleted the paper mid-run. Delete already ended the run
         # on the row, and `fail` would be a no-op on it anyway: this is an
@@ -647,14 +808,14 @@ def _run_grading_job(
             failed_checks=exc.failed_check_ids,
             reasons=exc.reasons,
         )
-        repo.fail(paper_id, TEACHER_BINDING_HELD_MESSAGE)
+        repo.fail(paper_id, TEACHER_BINDING_HELD_MESSAGE, run_token=claim_token)
     except Exception as exc:
         # Marking is a long Gemini/parser call chain and can genuinely fail.
         # Recording it as a terminal state with the reason attached is the
         # whole difference between a console that explains itself and one
         # that shows "Queued" until someone reads the server log.
         log.exception("teacher_grade_failed", paper_id=str(paper_id))
-        repo.fail(paper_id, f"Grading failed: {exc}")
+        repo.fail(paper_id, f"Grading failed: {exc}", run_token=claim_token)
     finally:
         # Unsubscribe first, so nothing else can be queued behind the stop flag.
         bus.unsubscribe_queue(progress_queue)
@@ -670,6 +831,8 @@ def _start_run_if_claimed(
     history_store: HistoryStoreProtocol,
     gemini_client: GeminiClient,
     corpus: SchemeCorpusRepository,
+    *,
+    job: MeteredJob,
 ) -> bool:
     """Claim the run on the row; if this instance won, submit it to the local pool.
 
@@ -678,11 +841,31 @@ def _start_run_if_claimed(
     instance or another — ever wins the race for a given paper, so a regrade
     fired from two browser tabs, or two Cloud Run instances answering the same
     request, cannot double-mark the same scan.
+
+    A lost claim releases ``job``'s hold: the request that won holds its own. A
+    won claim hands ``job`` and the claim's ``run_started_at`` token to the pool,
+    whose run settles or releases it (a superseded run releases). A job
+    queued behind the pool's one worker that never runs (the instance stops
+    first) keeps its hold until the usage sweeper expires it at the job's
+    ``expires_at`` (the action's timeout plus slack), which releases it uncharged.
     """
     if not repo.claim_run(paper_id):
+        job.release()
         return False
+    # The token the claim just stamped. Read straight after winning: another claim
+    # can only take the row once its `updated_at` is a stale window old.
+    claim_token = repo.run_token(paper_id)
     _grading_pool.submit(
-        _run_grading_job, paper_id, settings, repo, storage, history_store, gemini_client, corpus
+        _run_grading_job,
+        paper_id,
+        settings,
+        repo,
+        storage,
+        history_store,
+        gemini_client,
+        corpus,
+        job=job,
+        claim_token=claim_token,
     )
     return True
 
@@ -878,13 +1061,14 @@ def _student_delta(history: StudentHistory) -> float | None:
 
 @router.post("/papers/upload", response_model=UploadResponseDTO)
 async def upload_paper(
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    actor: Annotated[TeamActor, Depends(_TEAM_MARK)],
     settings: Annotated[Settings, Depends(get_settings)],
     repo: Annotated[TeacherPaperRepository, Depends(get_teacher_paper_repo)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
     corpus: Annotated[SchemeCorpusRepository, Depends(get_scheme_corpus_repo)],
+    meter: Annotated[UsageMeter, Depends(get_usage_meter)],
     scan: Annotated[UploadFile, File()],
     mark_scheme: Annotated[UploadFile | None, File()] = None,
 ) -> UploadResponseDTO:
@@ -902,7 +1086,14 @@ async def upload_paper(
     blocking network call made inline here would freeze every other request
     in the process — health checks included — for as long as it took, exactly
     the shape decision D6.13 removed from this route once already.
+
+    Metered as ``mark_paper`` (billing spec §5.7): the estimate is held after the
+    scan is validated (a rejected scan costs nothing) and before anything is
+    stored, so a 402 leaves no object, no row and no pool job. Any failure
+    between the hold and the pool submit releases it. Under the acting-teacher
+    header the lead pays, within the assistant's cap (R4).
     """
+    auth = actor.auth
     uploaded_by, _ = _viewer(auth)
     paper_id = uuid.uuid4()
     prefix = f"teacher/{uploaded_by}/{paper_id.hex}"
@@ -910,42 +1101,57 @@ async def upload_paper(
     scan_bytes = await scan.read()
     check_upload_cap(scan_bytes, max_bytes=_MAX_UPLOAD_BYTES, content_type=scan.content_type)
     await anyio.to_thread.run_sync(check_scan_geometry, scan_bytes, scan.content_type)
-    scan_key = f"{prefix}/{_safe_upload_name(scan.filename, 'scan.pdf')}"
-    await anyio.to_thread.run_sync(
-        storage.upload, settings.storage.bucket, scan_key, scan_bytes, scan.content_type
+    # Billing spec §5.7: validated inputs first (rejects cost nothing), then hold the
+    # estimate before storing anything. Off the event loop: both calls hit Postgres.
+    usage = await anyio.to_thread.run_sync(
+        meter.authorize, request_from_team(actor, MeteredAction.MARK_PAPER)
     )
-
-    scheme_key: str | None = None
-    if mark_scheme is not None:
-        # Fixed server-side name, deliberately NOT the sanitised client
-        # basename: today's `resolve_mark_scheme` locates an attached scheme
-        # by looking for a sibling called exactly `mark_scheme.pdf` next to
-        # the scan — the same contract `routers/student.py` writes to.
-        scheme_bytes = await mark_scheme.read()
-        check_upload_cap(
-            scheme_bytes, max_bytes=_MAX_UPLOAD_BYTES, content_type=mark_scheme.content_type
-        )
-        scheme_key = f"{prefix}/mark_scheme.pdf"
+    job = await anyio.to_thread.run_sync(meter.reserve, usage)
+    try:
+        scan_key = f"{prefix}/{_safe_upload_name(scan.filename, 'scan.pdf')}"
         await anyio.to_thread.run_sync(
-            storage.upload,
-            settings.storage.bucket,
-            scheme_key,
-            scheme_bytes,
-            mark_scheme.content_type,
+            storage.upload, settings.storage.bucket, scan_key, scan_bytes, scan.content_type
         )
 
-    repo.create(
-        paper_id=paper_id,
-        uploaded_by=uploaded_by,
-        storage_path=scan_key,
-        scheme_storage_path=scheme_key,
-        original_filename=_safe_upload_name(scan.filename, "scan.pdf"),
-        content_type=scan.content_type,
-        byte_size=len(scan_bytes),
-    )
-    # Marking starts here, not when a browser asks for it. A teacher who
-    # uploads and immediately closes the tab still gets a graded paper.
-    _start_run_if_claimed(paper_id, settings, repo, storage, history_store, gemini_client, corpus)
+        scheme_key: str | None = None
+        if mark_scheme is not None:
+            # Fixed server-side name, deliberately NOT the sanitised client
+            # basename: today's `resolve_mark_scheme` locates an attached scheme
+            # by looking for a sibling called exactly `mark_scheme.pdf` next to
+            # the scan — the same contract `routers/student.py` writes to.
+            scheme_bytes = await mark_scheme.read()
+            check_upload_cap(
+                scheme_bytes, max_bytes=_MAX_UPLOAD_BYTES, content_type=mark_scheme.content_type
+            )
+            scheme_key = f"{prefix}/mark_scheme.pdf"
+            await anyio.to_thread.run_sync(
+                storage.upload,
+                settings.storage.bucket,
+                scheme_key,
+                scheme_bytes,
+                mark_scheme.content_type,
+            )
+
+        repo.create(
+            paper_id=paper_id,
+            uploaded_by=uploaded_by,
+            storage_path=scan_key,
+            scheme_storage_path=scheme_key,
+            original_filename=_safe_upload_name(scan.filename, "scan.pdf"),
+            content_type=scan.content_type,
+            byte_size=len(scan_bytes),
+        )
+        # Marking starts here, not when a browser asks for it. A teacher who
+        # uploads and immediately closes the tab still gets a graded paper.
+        _start_run_if_claimed(
+            paper_id, settings, repo, storage, history_store, gemini_client, corpus, job=job
+        )
+    except BaseException:
+        # A ledger transaction: off the event loop (D6.13), and shielded so a
+        # cancelled request still releases its hold.
+        with anyio.CancelScope(shield=True):
+            await anyio.to_thread.run_sync(job.release)
+        raise
     return UploadResponseDTO(jobId=str(paper_id), paperId=str(paper_id), detected=[])
 
 
@@ -1013,10 +1219,11 @@ def _batch_tabs(rows: list[TeacherPaperRow]) -> list[BatchTabDTO]:
 
 @router.get("/papers", response_model=PaperListDTO)
 def list_papers(
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     repo: Annotated[TeacherPaperRepository, Depends(get_teacher_paper_repo)],
 ) -> PaperListDTO:
     """Return every paper visible to the caller (DS11) as grid cards plus batch tabs."""
+    auth = actor.auth
     viewer_id, viewer_role = _viewer(auth)
     rows = repo.list_visible(viewer_id=viewer_id, viewer_role=viewer_role)
     return PaperListDTO(
@@ -1028,13 +1235,14 @@ def list_papers(
 @router.post("/papers/{paper_id}/regrade", status_code=202)
 def regrade_paper(
     paper_id: str,
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    actor: Annotated[TeamActor, Depends(_TEAM_REGRADE)],
     settings: Annotated[Settings, Depends(get_settings)],
     repo: Annotated[TeacherPaperRepository, Depends(get_teacher_paper_repo)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
     corpus: Annotated[SchemeCorpusRepository, Depends(get_scheme_corpus_repo)],
+    meter: Annotated[UsageMeter, Depends(get_usage_meter)],
 ) -> dict[str, str]:
     """Queue a paper for (re-)grading and return immediately.
 
@@ -1046,9 +1254,21 @@ def regrade_paper(
     double-charge the Gemini budget for it. ``202`` regardless of whether this
     call won the claim: either way the row is (or already was) in flight, and
     the console keeps polling for the outcome.
+
+    Metered as ``regrade`` (billing spec §5.7): the hold is taken before the
+    claim, so a 402 never claims the run, and a lost claim releases it. An
+    assistant regrading for the lead draws on the lead's chain (R4).
     """
+    auth = actor.auth
     row = _require_paper(repo, auth, paper_id)
-    _start_run_if_claimed(row.id, settings, repo, storage, history_store, gemini_client, corpus)
+    job = meter.reserve(meter.authorize(request_from_team(actor, MeteredAction.REGRADE)))
+    try:
+        _start_run_if_claimed(
+            row.id, settings, repo, storage, history_store, gemini_client, corpus, job=job
+        )
+    except BaseException:
+        job.release()
+        raise
     return {"paperId": paper_id, "status": "processing"}
 
 
@@ -1085,7 +1305,7 @@ def _raise_for_deletion(exc: PaperDeletionError) -> NoReturn:
 
 @router.get("/papers/deleted", response_model=DeletedTeacherPapersDTO)
 def list_deleted_papers(
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     service: Annotated[TeacherPaperDeletionService, Depends(get_teacher_paper_deletion_service)],
 ) -> DeletedTeacherPapersDTO:
     """The caller's still-restorable console deletions (R2, review amendment R7-R10).
@@ -1095,6 +1315,7 @@ def list_deleted_papers(
     that route — the same ordering concern Task 8's
     ``GET /student/attempts/deleted`` documents for its own router.
     """
+    auth = actor.auth
     rows = service.list_deleted(auth.user_id)
     return DeletedTeacherPapersDTO(
         papers=[_deleted_teacher_paper_dto(r) for r in rows], retentionDays=RETENTION_DAYS
@@ -1104,7 +1325,7 @@ def list_deleted_papers(
 @router.delete("/papers/{paper_id}", status_code=204)
 def delete_paper(
     paper_id: str,
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    actor: Annotated[TeamActor, Depends(_TEAM_MANAGE_CLASSES)],
     service: Annotated[TeacherPaperDeletionService, Depends(get_teacher_paper_deletion_service)],
 ) -> Response:
     """Soft-delete this teacher's own console paper and withdraw its open review items (R2).
@@ -1114,6 +1335,7 @@ def delete_paper(
     unknown id (:meth:`TeacherPaperDeletionService.delete`'s own docstring).
     A run still in flight is stopped, not merely hidden.
     """
+    auth = actor.auth
     try:
         service.delete(auth.user_id, paper_id)
     except PaperDeletionError as exc:
@@ -1124,7 +1346,7 @@ def delete_paper(
 @router.post("/papers/{paper_id}/restore", status_code=204)
 def restore_paper(
     paper_id: str,
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    actor: Annotated[TeamActor, Depends(_TEAM_MANAGE_CLASSES)],
     service: Annotated[TeacherPaperDeletionService, Depends(get_teacher_paper_deletion_service)],
 ) -> Response:
     """Undo the deletion of this teacher's own console paper within the retention window (R2).
@@ -1132,6 +1354,7 @@ def restore_paper(
     204 on success. 404 if the id is not the caller's own or was never
     deleted; 410 once the restore window has closed.
     """
+    auth = actor.auth
     try:
         service.restore(auth.user_id, paper_id)
     except PaperDeletionError as exc:
@@ -1142,7 +1365,7 @@ def restore_paper(
 @router.get("/papers/{paper_id}", response_model=PaperDetailDTO)
 def get_paper(
     paper_id: str,
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     repo: Annotated[TeacherPaperRepository, Depends(get_teacher_paper_repo)],
 ) -> PaperDetailDTO:
     """Return the grade detail (questions, weak areas, pipeline) for a visible paper.
@@ -1152,6 +1375,7 @@ def get_paper(
     An unknown *or invisible* id is a 404 (DS11): this never reveals whether a
     paper exists to a caller who may not see it.
     """
+    auth = actor.auth
     row = _require_paper(repo, auth, paper_id)
     kind = _row_kind(row)
     report = row.report if kind in ("graded", "review") else None
@@ -1186,7 +1410,7 @@ def get_paper(
 def get_paper_preview(
     paper_id: str,
     request: Request,
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     settings: Annotated[Settings, Depends(get_settings)],
     repo: Annotated[TeacherPaperRepository, Depends(get_teacher_paper_repo)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
@@ -1239,6 +1463,7 @@ def get_paper_preview(
     process (the sandbox disabled) gets the same fixed message: the
     exception's text goes to the ``paper_preview_failed`` log line only.
     """
+    auth = actor.auth
     row = _require_paper(repo, auth, paper_id)
     etag = preview_etag(row)
     caching = {"ETag": etag, "Cache-Control": _PREVIEW_CACHE_CONTROL}
@@ -1288,7 +1513,7 @@ def get_paper_preview(
 
 @router.get("/grading/queue", response_model=GradingQueueDTO)
 def grading_queue(
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     repo: Annotated[TeacherPaperRepository, Depends(get_teacher_paper_repo)],
 ) -> GradingQueueDTO:
     """Return low-confidence questions flagged for teacher review across visible papers.
@@ -1307,6 +1532,7 @@ def grading_queue(
     product-owner-rejected outcome, on the most visible surface, with no
     ``ReviewQueueItem`` row involved.
     """
+    auth = actor.auth
     viewer_id, viewer_role = _viewer(auth)
     rows: list[QueueRowDTO] = []
     for row in repo.list_visible(viewer_id=viewer_id, viewer_role=viewer_role):
@@ -1533,7 +1759,7 @@ def _existing_questions(
 
 @router.get("/quizzes/pools", response_model=QuizPoolsDTO)
 def quiz_pools(
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_QUIZ)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     class_service: Annotated[ClassService, Depends(get_class_service)],
     bank_service: Annotated[QuestionBankService, Depends(get_question_bank_service)],
@@ -1552,10 +1778,9 @@ def quiz_pools(
     too: ``POST /quizzes/generate`` (below) is the only path that ever fills
     it (D3.7's "the bank ships empty" consequence).
     """
-    try:
-        caller_uuid = uuid.UUID(auth.user_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    # The guard has already parsed the token subject (401 otherwise), so this is the
+    # acting teacher's id as a UUID: the caller's own, or the lead's for an assistant.
+    caller_uuid = actor.lead_teacher_user_id
     resolved_subject = subject_code or _infer_subject_code(history_store) or "0000"
     school_ids = class_service.member_school_ids(caller_uuid)
 
@@ -1729,29 +1954,104 @@ def _quiz_to_preview(quiz: GeneratedQuiz) -> QuizPreviewDTO:
     )
 
 
+#: ``count`` on the preview and generate routes: the size of a billed generation request.
+#: Bounded on the wire at the meter's own estimate clamp, so the hold always covers the work
+#: and an out-of-range count is a 422 from schema validation, before any ledger read.
+_QuizCount = Annotated[int, Query(ge=1, le=MAX_ESTIMATE_INPUTS)]
+
+
+def _preview_quiz_target(count: _QuizCount = 4) -> UsageTarget:
+    """``POST /quizzes/preview``'s estimate input: the questions requested (same default).
+
+    Reads no record, so it needs no meter read. ``subject_code`` is deliberately ``None``:
+    the route's ``subject_code`` query is client input, and a teacher chain has no seat to
+    route by subject.
+    """
+    return UsageTarget(subject_code=None, input_count=count)
+
+
+def _generate_quiz_target(count: _QuizCount = 5) -> UsageTarget:
+    """``POST /quizzes/generate``'s estimate input: the questions requested (same default)."""
+    return UsageTarget(subject_code=None, input_count=count)
+
+
+def _build_quiz_metered(
+    meter: UsageMeter,
+    usage: UsageGrantContext,
+    settings: Settings,
+    history_store: HistoryStoreProtocol,
+    gemini_client: GeminiClient,
+    bank_service: QuestionBankService,
+    caller_id: uuid.UUID,
+    school_ids: Sequence[uuid.UUID],
+    *,
+    subject_code: str,
+    count: int,
+    topics: list[str] | None,
+    persist: Callable[[GeneratedQuiz, set[str]], None] | None = None,
+) -> tuple[GeneratedQuiz, set[str]]:
+    """Run :func:`_build_quiz` as the metered job the route reserved the hold for.
+
+    The route is a synchronous ``def``, so FastAPI runs it in one worker thread and
+    ``meter.job`` reserves, runs and settles in that thread (never nested). The 402 for a
+    balance that is gone, or a hold that cannot be renewed (:class:`UsageBlocked`), is
+    raised before any model call. An exception (the clean 503 included) releases the hold.
+    A quiz with no question is work that failed without raising: it is abandoned, so a
+    paid-for nothing charges 0 (billing spec §2.4).
+
+    ``persist`` (the generate route's bank write) runs inside the job, on a non-empty quiz,
+    before the settle: a write that fails releases the hold, so a 500 never bills.
+    """
+    with meter.job(usage) as job:
+        quiz, reused_prompts = _build_quiz(
+            settings,
+            history_store,
+            gemini_client,
+            bank_service,
+            caller_id,
+            school_ids,
+            subject_code=subject_code,
+            count=count,
+            topics=topics,
+        )
+        if not quiz.questions:
+            job.abandon()
+        elif persist is not None:
+            persist(quiz, reused_prompts)
+    return quiz, reused_prompts
+
+
 @router.post("/quizzes/preview", response_model=QuizPreviewDTO)
 def quiz_preview(
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_QUIZ)],
+    usage: Annotated[
+        UsageGrantContext,
+        Depends(
+            require_usage(MeteredAction.PREVIEW_QUIZ, target=_preview_quiz_target, team=_TEAM_QUIZ)
+        ),
+    ],
+    meter: Annotated[UsageMeter, Depends(get_usage_meter)],
     settings: Annotated[Settings, Depends(get_settings)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
     class_service: Annotated[ClassService, Depends(get_class_service)],
     bank_service: Annotated[QuestionBankService, Depends(get_question_bank_service)],
     subject_code: str = "",
-    count: int = 4,
+    count: _QuizCount = 4,
     topics: list[str] | None = None,
 ) -> QuizPreviewDTO:
     """Preview a quiz assembled from existing questions, topping up via generation.
 
-    Takes ``auth`` explicitly (the router already requires a staff role) so
-    the reuse pool can be scoped to this caller rather than read from a
+    The preview is scoped to the acting teacher (``actor.lead_teacher_user_id``:
+    the caller's own id, or the lead's for an assistant) rather than read from a
     process-global pool — see :func:`_existing_questions`.
     """
-    try:
-        caller_uuid = uuid.UUID(auth.user_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    quiz, _reused = _build_quiz(
+    # The guard has already parsed the token subject (401 otherwise), so this is the
+    # acting teacher's id as a UUID: the caller's own, or the lead's for an assistant.
+    caller_uuid = actor.lead_teacher_user_id
+    quiz, _reused = _build_quiz_metered(
+        meter,
+        usage,
         settings,
         history_store,
         gemini_client,
@@ -1767,14 +2067,23 @@ def quiz_preview(
 
 @router.post("/quizzes/generate", response_model=QuizPreviewDTO)
 def quiz_generate(
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_QUIZ)],
+    usage: Annotated[
+        UsageGrantContext,
+        Depends(
+            require_usage(
+                MeteredAction.GENERATE_QUIZ, target=_generate_quiz_target, team=_TEAM_QUIZ
+            )
+        ),
+    ],
+    meter: Annotated[UsageMeter, Depends(get_usage_meter)],
     settings: Annotated[Settings, Depends(get_settings)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
     class_service: Annotated[ClassService, Depends(get_class_service)],
     bank_service: Annotated[QuestionBankService, Depends(get_question_bank_service)],
     subject_code: str = "",
-    count: int = 5,
+    count: _QuizCount = 5,
     topics: list[str] | None = None,
 ) -> QuizPreviewDTO:
     """Generate a full quiz and persist it to the question bank.
@@ -1788,11 +2097,23 @@ def quiz_generate(
     fills the bank's generated pool (D3.7 consequence): the bank ships
     empty, and stays empty for a subject until a teacher generates here.
     """
-    try:
-        caller_uuid = uuid.UUID(auth.user_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    quiz, reused_prompts = _build_quiz(
+    # The guard has already parsed the token subject (401 otherwise), so this is the
+    # acting teacher's id as a UUID: the caller's own, or the lead's for an assistant.
+    caller_uuid = actor.lead_teacher_user_id
+
+    def _persist(quiz: GeneratedQuiz, reused_prompts: set[str]) -> None:
+        # Only genuinely new questions are written back: a question the builder
+        # reused *from* the bank is already a row there, and re-inserting it
+        # would inflate the pool count on every generate (see :func:`_build_quiz`).
+        fresh = GeneratedQuiz(
+            subject_code=quiz.subject_code,
+            questions=[q for q in quiz.questions if q.prompt not in reused_prompts],
+        )
+        bank_service.add_questions(generated_questions_to_bank_rows(fresh, owner_id=caller_uuid))
+
+    quiz, _reused = _build_quiz_metered(
+        meter,
+        usage,
         settings,
         history_store,
         gemini_client,
@@ -1802,15 +2123,8 @@ def quiz_generate(
         subject_code=subject_code,
         count=count,
         topics=topics,
+        persist=_persist,
     )
-    # Only genuinely new questions are written back: a question the builder
-    # reused *from* the bank is already a row there, and re-inserting it
-    # would inflate the pool count on every generate (see :func:`_build_quiz`).
-    fresh = GeneratedQuiz(
-        subject_code=quiz.subject_code,
-        questions=[q for q in quiz.questions if q.prompt not in reused_prompts],
-    )
-    bank_service.add_questions(generated_questions_to_bank_rows(fresh, owner_id=caller_uuid))
     return _quiz_to_preview(quiz)
 
 
@@ -1948,7 +2262,7 @@ def _acknowledgement_index(
 
 @router.get("/teacher/overview", response_model=OverviewDTO)
 def teacher_overview(
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     review_service: Annotated[ReviewService, Depends(get_review_service)],
@@ -1972,6 +2286,7 @@ def teacher_overview(
     (declining trend / predicted below target / inactive) — see ``_at_risk``.
     Each flag carries its acknowledged state (D3.5) via ``_acknowledgement_index``.
     """
+    auth = actor.auth
     try:
         visible = _visible_students(service, auth)
     except ValueError as exc:
@@ -2405,7 +2720,7 @@ def _student_detail_dto(
 @router.get("/teacher/students/{student_id}", response_model=StudentDetailDTO)
 def teacher_student_detail(
     student_id: str,
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
@@ -2446,6 +2761,7 @@ def teacher_student_detail(
     an ephemeral paper id, not yet a verified real-student identity — see
     ``upload_paper``'s docstring). There is nothing honest to compute here.
     """
+    auth = actor.auth
     try:
         visible = _visible_students(service, auth)
     except ValueError as exc:
@@ -2498,7 +2814,7 @@ def _at_risk_severity_key(entry: AtRiskListEntryDTO) -> tuple[int, int]:
 
 @router.get("/teacher/at-risk", response_model=AtRiskListDTO)
 def teacher_at_risk_list(
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
@@ -2530,6 +2846,7 @@ def teacher_at_risk_list(
     gathered first so this stays a single bulk query for the whole list
     rather than one per student across potentially many classes.
     """
+    auth = actor.auth
     try:
         rows = service.list_classes(auth.user_id, auth.role)
     except ValueError as exc:
@@ -2593,7 +2910,7 @@ def teacher_at_risk_list(
 def acknowledge_at_risk_flag(
     student_id: str,
     body: AcknowledgeAtRiskRequestDTO,
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_MANAGE_STUDENTS)],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
@@ -2618,6 +2935,7 @@ def acknowledge_at_risk_flag(
     ``reason`` string (not one of ``AtRiskReason``'s values) with the same
     422, since by definition it cannot be firing.
     """
+    auth = actor.auth
     try:
         visible = _visible_students(service, auth)
     except ValueError as exc:
@@ -2678,7 +2996,7 @@ def acknowledge_at_risk_flag(
 def unacknowledge_at_risk_flag(
     student_id: str,
     reason: str,
-    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    actor: Annotated[TeamActor, Depends(_TEAM_MANAGE_STUDENTS)],
     service: Annotated[ClassService, Depends(get_class_service)],
     ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
 ) -> None:
@@ -2692,6 +3010,7 @@ def unacknowledge_at_risk_flag(
     student is no longer inactive); there is nothing left to protect by
     rejecting it.
     """
+    auth = actor.auth
     try:
         visible = _visible_students(service, auth)
     except ValueError as exc:
