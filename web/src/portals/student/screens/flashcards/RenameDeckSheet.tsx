@@ -30,7 +30,7 @@ export function RenameDeckSheet({
   const controls = renameControls({ valid, pending: rename.isPending })
   const submit = () => { if (!rename.isPending) submitRename(deckId, title, value, rename.mutate, onClose) }
   return (
-    <FcSheet open={open} onOpenChange={(o) => { if (!o && !rename.isPending) onClose() }} title="Rename deck" restoreFocusTo={restoreFocusTo}>
+    <FcSheet open={open} onOpenChange={(o) => { if (!o && !rename.isPending) onClose() }} title="Rename deck" dismissible={!rename.isPending} restoreFocusTo={restoreFocusTo}>
       <Input label="Name" autoFocus maxLength={DECK_TITLE_MAX} value={value} onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => { if (e.key === "Enter" && valid) { e.preventDefault(); submit() } }}
         wrapperClassName={FIELD_WRAPPER} labelClassName={FIELD_LABEL} className={FIELD_CONTROL} />

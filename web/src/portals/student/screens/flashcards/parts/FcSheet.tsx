@@ -11,12 +11,15 @@ export const ALERT_BODY_ID = "fc-alert-body"
  * `SheetContent` renders `nativeHeader` first in the content when the frame is not native, so the
  * title is rendered once, there, in both frames. */
 export function FcSheet({
-  open, onOpenChange, title, alert = false, restoreFocusTo, children,
+  open, onOpenChange, title, alert = false, dismissible = true, restoreFocusTo, children,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   title: string
   alert?: boolean
+  /** False while the sheet's action is in flight: Back then re-pushes its entry (the page stays) instead of
+   * popping it while the caller's pending guard keeps the sheet open. */
+  dismissible?: boolean
   /** Where focus goes on close when the opener is not a Radix trigger and may be gone (a menu item,
    * a deleted card's pencil). Null or absent keeps the sheet's own return to the opener. */
   restoreFocusTo?: () => HTMLElement | null
@@ -24,7 +27,7 @@ export function FcSheet({
 }) {
   // Back and Escape both close the sheet (brief 2026-11-08:37). A menu-to-confirm hand-off closes the menu
   // (unwinding its entry) and opens the confirm (pushing its own), via the shared dialog-history stack.
-  useDialogHistory({ open, dismissible: true, onClose: () => onOpenChange(false) })
+  useDialogHistory({ open, dismissible, onClose: () => onOpenChange(false) })
   const heading = <SheetTitle className="block w-full text-start native:px-5 font-sans text-[22px] font-extrabold leading-tight text-on-surface">{title}</SheetTitle>
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>

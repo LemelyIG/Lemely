@@ -141,7 +141,7 @@ function NewDeckForm({ seed, onClose, onStarted, onDiscarded }: {
   }
 
   return (
-    <FcSheet open onOpenChange={(open) => { if (!open) close() }} title="New deck">
+    <FcSheet open onOpenChange={(open) => { if (!open) close() }} title="New deck" dismissible={!pending}>
       {failedDeckId ? <div role="alert" className={ERROR_ALERT}>{GENERATION_FAILED_TEXT}</div> : null}
       {!failedDeckId && subjects.length > 1 ? (
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Subject">

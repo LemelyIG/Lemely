@@ -55,6 +55,7 @@ export function CardSheet({
 
   const sheetProps = {
     open: mode !== null,
+    dismissible: !saving && !remove.isPending,
     onOpenChange: (open: boolean) => { if (!open && !saving && !remove.isPending) finish("dismissed")() },
     restoreFocusTo: () => restoreFocusTo?.(outcome.current) ?? null,
   }

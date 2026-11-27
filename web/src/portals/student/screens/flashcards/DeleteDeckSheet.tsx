@@ -33,7 +33,7 @@ export function DeleteDeckSheet({
   const view = deleteDeckConfirm({ title, cardCount })
   const controls = deleteControls(del, view)
   return (
-    <FcSheet open={open} onOpenChange={(o) => { if (!o && !del.isPending) onClose() }} title={view.title} alert restoreFocusTo={restoreFocusTo}>
+    <FcSheet open={open} onOpenChange={(o) => { if (!o && !del.isPending) onClose() }} title={view.title} alert dismissible={!del.isPending} restoreFocusTo={restoreFocusTo}>
       <p id={ALERT_BODY_ID} className="text-[14px] leading-[1.4] text-on-surface-variant">{view.body}</p>
       {del.isError ? <div role="alert" className={ERROR_ALERT}>{DELETE_DECK_ERROR}</div> : null}
       <button type="button" disabled={controls.confirmDisabled}

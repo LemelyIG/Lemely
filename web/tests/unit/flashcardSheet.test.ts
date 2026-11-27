@@ -54,5 +54,10 @@ describe("FcSheet", () => {
       useDialogHistory.mock.calls[0][0].onClose()
       expect(onOpenChange).toHaveBeenCalledWith(false)
     })
+
+    it("a sheet whose action is in flight is not dismissible, so Back re-pushes instead of leaving the page", () => {
+      FcSheet({ open: true, onOpenChange: () => {}, title: "Delete deck?", alert: true, dismissible: false, children: createElement("p") })
+      expect(useDialogHistory.mock.calls[0][0]).toMatchObject({ open: true, dismissible: false })
+    })
   })
 })
