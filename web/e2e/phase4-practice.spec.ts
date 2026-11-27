@@ -8,7 +8,7 @@ import { injectSession, readSeed, type SeedAccount } from "./seed"
  * onboard → placement → plan — is `phase4-journey.spec.ts`.
  *
  * WHAT MAKES THIS ONE DIFFERENT FROM "S-20 RENDERS". A spec that merely
- * loads the generator and asserts a heading passes just as happily on a
+ * loads the set builder and asserts a heading passes just as happily on a
  * screen that ignores weaknesses entirely. The word in the criterion is
  * *demonstrably*, so the assertion here names a specific topic string and
  * requires the screen to have pre-selected it — and is paired with its
@@ -27,17 +27,19 @@ import { injectSession, readSeed, type SeedAccount } from "./seed"
  * deliberately-wrong answer through the unmodified engine.
  *
  * The identifying strings are inherited from `web/scripts/audit.mjs`'s
- * registry (`:1535-1581`) rather than re-derived, including its two traps
- * for this screen:
+ * registry rather than re-derived, including its two traps for this screen.
+ * L4 moved the screen into the set builder sheet
+ * (`builder/SetBuilderSheet.tsx`), so every locator below is scoped to that
+ * sheet's dialog. The measurements are unchanged; only the controls moved.
  *
- *   1. The shortfall panel — "Only N of M requested questions match" — is
- *      the *normal* path for this corpus, not an error (D4.10: a short set
- *      is not a failed set). It is a regex; the numbers are corpus-dependent
- *      and pinning them would break on every ingest.
+ *   1. The shortfall line, "Only N questions match", is the *normal* path
+ *      for this corpus, not an error (D4.10: a short set is not a failed
+ *      set). It is a regex; the numbers are corpus-dependent and pinning
+ *      them would break on every ingest.
  *   2. The `no_weaknesses` refusal only renders once the "Weak topics only"
- *      filter is actually applied, so it must be driven live rather than
- *      deep-linked. Toggling *once* (rather than clicking blindly) keeps the
- *      drive safe under Playwright retry.
+ *      switch is actually on, so it must be driven live rather than
+ *      deep-linked. Switching on *once* (rather than clicking blindly) keeps
+ *      the drive safe under Playwright retry.
  */
 
 async function asStudent(page: Page, account: SeedAccount): Promise<void> {
@@ -48,50 +50,53 @@ async function asStudent(page: Page, account: SeedAccount): Promise<void> {
   })
 }
 
-/** Playwright's equivalent of `audit.mjs::pressCheckboxOnce`: tolerant of the
- * box already being checked, so a re-run or a retry does not toggle it back
+/** Playwright's equivalent of `audit.mjs::pressSwitchOnce`: tolerant of the
+ * switch already being on, so a re-run or a retry does not toggle it back
  * off and quietly test the opposite state. */
-async function checkOnce(page: Page, name: string): Promise<void> {
-  const box = page.getByRole("checkbox", { name })
-  await expect(box).toBeVisible({ timeout: 15_000 })
-  if (!(await box.isChecked())) await box.check()
-  await expect(box).toBeChecked()
+async function switchOnOnce(page: Page, name: string): Promise<void> {
+  const sw = page.getByRole("switch", { name })
+  await expect(sw).toBeVisible({ timeout: 15_000 })
+  if ((await sw.getAttribute("aria-checked")) !== "true") await sw.click()
+  await expect(sw).toHaveAttribute("aria-checked", "true")
 }
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
 test("S-20 · the generated set demonstrably targets a seeded weakness", async ({ page }) => {
   const seed = readSeed()
   const errors = watchConsole(page)
 
   // The cross-reference below is only legitimate if the plan and the practice
-  // generator are talking about the same subject. They are, but asserting it
+  // builder are talking about the same subject. They are, but asserting it
   // means a future seed that splits them fails here loudly instead of
   // comparing a physics topic against a maths topic list and finding nothing.
   expect(seed.studyPlan.subjectCode).toBe(seed.practice.subjectCode)
 
   await asStudent(page, seed.practice.students.active)
   await page.goto(`/student/practice/${seed.practice.subjectCode}`)
+  const sheet = page.getByRole("dialog", { name: "Practice set" })
 
-  // Trap 1: the honest-shortfall panel is the normal path for this corpus.
+  // Trap 1: the honest shortfall is the normal path for this corpus.
   // Waiting on it also guarantees the *preview* query has resolved, so the
   // topic assertions below run against a settled screen rather than racing
   // the prefill.
-  await expect(page.getByText(/Only \d+ of \d+ requested questions match/)).toBeVisible({
-    timeout: 15_000,
-  })
+  await expect(sheet.getByText(/Only \d+ questions? match/)).toBeVisible({ timeout: 15_000 })
 
-  // THE ACCEPTANCE ASSERTION. The chip label is `${topic} (${count})`, so
-  // this is a substring match on the accessible name — and it must be
-  // *checked*, not merely present: every topic in the subject has a chip on
-  // this screen regardless of weakness, so asserting visibility alone would
-  // pass on a generator that had lost the prefill entirely.
+  // THE ACCEPTANCE ASSERTION. The chip's accessible name is `${topic} ${count}`,
+  // so it is matched as a whole name, and it must be *pressed*, not merely
+  // present: every topic in the subject has a chip on this sheet regardless of
+  // weakness, so asserting visibility alone would pass on a builder that had
+  // lost the prefill entirely.
   const weakTopic = seed.studyPlan.activeSessionTopic
-  await expect(page.getByRole("checkbox", { name: weakTopic })).toBeChecked()
+  await expect(sheet.getByRole("button", { name: new RegExp(`^${escapeRegExp(weakTopic)} \\d+$`) })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  )
 
-  // And the prefill must be *selective*. `weakTopicPrefill` selects only the
-  // student's weak topics; a regression that checked every chip would satisfy
-  // the assertion above while making the word "targets" meaningless.
-  const checkedTopics = page.locator("fieldset input[type=checkbox]:checked")
-  await expect(checkedTopics).toHaveCount(1)
+  // And the prefill must be *selective*. The weak-topic prefill selects only
+  // the student's weak topics; a regression that pressed every chip would
+  // satisfy the assertion above while making the word "targets" meaningless.
+  await expect(sheet.getByRole("group", { name: "Topics" }).locator('[aria-pressed="true"]')).toHaveCount(1)
 
   expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
 })
@@ -107,27 +112,24 @@ test("S-20 · a student with no recorded weaknesses is honestly refused, not giv
   // has no `WeaknessRecord` rows at all.
   await asStudent(page, seed.practice.students.bare)
   await page.goto(`/student/practice/${seed.practice.subjectCode}`)
-
-  await expect(/*
-     * P4.10 · the heading was "Practice — <subject>" (§9.7). MISSION §3.2
-     * item 10 bans the em-dash in UI copy outright, and `npm run check:copy`
-     * is now at zero product-wide, so the screen reads "Practice for
-     * <subject>". The screen is unchanged in behaviour; only the connective is.
-     */
-    page.getByRole("heading", { name: /^Practice for/ })).toBeVisible({ timeout: 15_000 })
+  const sheet = page.getByRole("dialog", { name: "Practice set" })
+  await expect(sheet.getByRole("switch", { name: "Weak topics only" })).toBeVisible({ timeout: 15_000 })
 
   // Nothing prefilled, because there is nothing to target. Same locator as
   // above, so the pair reads as one measurement taken twice.
-  await expect(page.locator("fieldset input[type=checkbox]:checked")).toHaveCount(0)
+  await expect(sheet.getByRole("group", { name: "Topics" }).locator('[aria-pressed="true"]')).toHaveCount(0)
 
   // Trap 2: the refusal only exists once the filter is applied.
-  await checkOnce(page, "Weak topics only")
-  await expect(page.getByText("No weak topics recorded yet")).toBeVisible({ timeout: 15_000 })
+  await switchOnOnce(page, "Weak topics only")
+  await expect(sheet.getByText("No weak topics yet. Turn this off to pick any topic.")).toBeVisible({
+    timeout: 15_000,
+  })
 
   // It must be the refusal, not a set that happens to be empty: an empty
-  // preview would still render the "N questions match" panel and read as a
+  // preview would still render the "N questions match" status and read as a
   // pass to any check that only asserted the absence of a set.
-  await expect(page.getByText(/requested questions match/)).toHaveCount(0)
+  await expect(sheet.getByText(/questions? match/)).toHaveCount(0)
+  await expect(sheet.getByRole("button", { name: "Start now" })).toBeDisabled()
 
   expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
 })
@@ -145,10 +147,10 @@ test("S-20 · a subject with no ingested questions gets the honest no-questions 
   // `no_weaknesses` one above: this student has weaknesses, just not in a
   // subject the bank can serve.
   await page.goto("/student/practice/0580")
-  await expect(page.getByText("No practice material for this filter set")).toBeVisible({
-    timeout: 15_000,
-  })
-  await expect(page.getByText("No weak topics recorded yet")).toHaveCount(0)
+  const sheet = page.getByRole("dialog", { name: "Practice set" })
+  await expect(sheet.getByText(/^No .+ questions yet$/)).toBeVisible({ timeout: 15_000 })
+  await expect(sheet.getByText("No weak topics yet", { exact: false })).toHaveCount(0)
+  await expect(sheet.getByRole("button", { name: "Start now" })).toBeDisabled()
 
   expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
 })

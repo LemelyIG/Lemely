@@ -75,8 +75,14 @@ describe("studentShellTrail and studentPageTitle", () => {
     expect(studentPageTitle("/student/subject/0606", subjects)).toBe("Add Maths")
     expect(studentPageTitle("/student/subject/0606")).toBe("0606")
   })
+  it("links past papers to Practice, the crumb the shell's single phone back control leads to", () => {
+    expect(studentShellTrail("/student/practice/papers")).toEqual([{ label: "Practice", to: "/student/practice" }, { label: "Past papers" }])
+    expect(studentPageTitle("/student/practice/papers")).toBe("Past papers")
+  })
   it("keeps a trail when drilled in, so breadcrumbs render", () => {
-    expect(studentShellTrail("/student/practice/0580").map((c) => c.label)).toEqual(["Practice", "0580"])
+    expect(studentShellTrail("/student/practice/papers").map((c) => c.label)).toEqual(["Practice", "Past papers"])
+    // L4: the builder is a sheet over the hub, so its deep link is the Practice page itself.
+    expect(studentShellTrail("/student/practice/0580").map((c) => c.label)).toEqual(["Practice"])
   })
 })
 

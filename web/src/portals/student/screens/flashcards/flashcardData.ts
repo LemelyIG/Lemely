@@ -121,7 +121,7 @@ export function groupDecksByTopic(decks: readonly DeckSummaryDTO[]): DeckTopicGr
 }
 
 // ── Honest refusal messages (409 `{"reason": ...}`) — mirrors
-// `practiceUnavailableMessage`, never a generic "something went wrong" ────
+// `unavailableText` (practice/builder/builderModel.ts), never a generic "something went wrong" ──
 
 export interface FlashcardUnavailableMessage {
   heading: string

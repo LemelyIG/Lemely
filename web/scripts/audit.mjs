@@ -496,49 +496,37 @@ async function pressToggleOnce(page, pattern, timeout = 15_000) {
 }
 
 /**
- * Check a native `<input type="checkbox">` (C-14, `components/ui/checkbox.tsx`)
- * ONLY if it is not already checked, keyed on the visible `<label>` text
- * beside it — same idempotent shape as `pressToggleOnce`, for the one
- * control that renders as a real checkbox input rather than an
- * `aria-pressed` button (S-20's "Weak topics only").
+ * Turn a `role="switch"` on ONLY if it is off (the set builder's "Weak topics
+ * only", L4). Same idempotent shape as `pressToggleOnce`; the switch is
+ * named by its `<label for>`, `aria-labelledby` or `aria-label`.
  *
  * `visitRoute` re-navigates for every breakpoint plus axe, so any drive
- * written into `ready` runs repeatedly. The state this checkbox controls is
- * local React state (`useState`, `PracticeGenerator.tsx`) rather than
- * anything the server persists, and every `page.goto` is a real full
- * navigation that remounts the app from scratch — so in practice a plain
- * click would be idempotent-safe here too, but this mirrors
- * `pressToggleOnce`'s defensive check-before-click shape rather than relying
- * on that distinction staying true.
+ * written into `ready` runs repeatedly; checking `aria-checked` before the
+ * click keeps a repeat from toggling it back off.
  */
-async function pressCheckboxOnce(page, labelPattern, timeout = 15_000) {
+async function pressSwitchOnce(page, labelPattern, timeout = 15_000) {
   const handle = await page.waitForFunction(
     (source) => {
       const re = new RegExp(source, "i")
-      const label = Array.from(document.querySelectorAll("label")).find((l) =>
-        re.test(l.textContent || ""),
+      return (
+        Array.from(document.querySelectorAll('[role="switch"]')).find((el) => {
+          const byFor = el.id ? document.querySelector(`label[for="${el.id}"]`)?.textContent : null
+          const byIds = (el.getAttribute("aria-labelledby") || "")
+            .split(/\s+/)
+            .map((id) => document.getElementById(id)?.textContent || "")
+            .join(" ")
+          const text = byFor || byIds || el.getAttribute("aria-label") || el.closest("label")?.textContent || ""
+          return re.test(text)
+        }) ?? null
       )
-      return label ? label.querySelector('input[type="checkbox"]') : null
     },
     { timeout },
     labelPattern,
   )
   const element = handle.asElement()
-  if (!element) throw new Error(`No checkbox found under a label matching ${labelPattern}`)
-  const alreadyChecked = await element.evaluate((el) => el.checked)
-  if (!alreadyChecked) await element.click()
-  await page.waitForFunction(
-    (source) => {
-      const re = new RegExp(source, "i")
-      const label = Array.from(document.querySelectorAll("label")).find((l) =>
-        re.test(l.textContent || ""),
-      )
-      const input = label ? label.querySelector('input[type="checkbox"]') : null
-      return Boolean(input) && input.checked
-    },
-    { timeout },
-    labelPattern,
-  )
+  if (!element) throw new Error(`No switch found labelled ${labelPattern}`)
+  if ((await element.evaluate((el) => el.getAttribute("aria-checked"))) !== "true") await element.click()
+  await page.waitForFunction((el) => el.getAttribute("aria-checked") === "true", { timeout }, element)
 }
 
 /** Full-page capture at `$LEMELY_REPORT_DIR/screens/<screenId>/<state>--<bp>[--dark].png`
@@ -2004,11 +1992,21 @@ function buildRouteRegistry(seed) {
     // different routes so there is no route-collision risk, only shared
     // vocabulary.
     {
-      // S-20 · practice generator, `active` session, DEFAULT route state.
+      // L4 · Practice tab root (mock C), `active` session: tiles, win marks back, Recent.
+      screenId: "S-20",
+      slug: "student-practice-hub",
+      state: "hub",
+      path: "/student/practice",
+      session: practiceActiveSession,
+      ready: (page) => waitForText(page, "Win marks back"),
+      authed: true,
+    },
+    {
+      // S-20 · set builder sheet, `active` session, DEFAULT route state.
       // `insufficient_pool` is not a corner case here — it is the state this
       // seed's small hermetic bank reaches at S-20's own frontend default
       // count (10), reachable by URL alone with no created set required
-      // (`PracticeGenerator.tsx`'s shortfall panel renders off the live
+      // (`builder/SetBuilderSheet.tsx`'s shortfall line renders off the live
       // preview query). Topic chips nested by syllabus group and the
       // weak-topic prefill (from set A's one deliberate wrong answer) are
       // both on this same render — see scripts/seed_e2e.py's `practice`
@@ -2017,7 +2015,7 @@ function buildRouteRegistry(seed) {
       slug: "student-practice-generator",
       path: `/student/practice/${practiceSubject}`,
       session: practiceActiveSession,
-      ready: (page) => waitForText(page, "Only \\d+ of \\d+ requested questions match"),
+      ready: (page) => waitForText(page, "Only \\d+ questions? match"),
       authed: true,
     },
     {
@@ -2033,14 +2031,14 @@ function buildRouteRegistry(seed) {
           state: "no-questions",
           slug: "student-practice-generator-no-questions",
           lighthouse: false,
-          ready: (page) => waitForText(page, "No practice material for this filter set"),
+          ready: (page) => waitForText(page, "No .+ questions yet"),
         },
       ],
     },
     {
       // S-20 · the honest `no_weaknesses` refusal, on the `bare` account
       // that has none. Driven live through the real "Weak topics only"
-      // checkbox (`pressCheckboxOnce` — tolerant of already being checked,
+      // switch (`pressSwitchOnce` — tolerant of already being on,
       // since `visitRoute` re-navigates this same drive four times) rather
       // than deep-linked, because the refusal only renders once that filter
       // is actually applied.
@@ -2054,8 +2052,8 @@ function buildRouteRegistry(seed) {
           slug: "student-practice-generator-no-weaknesses",
           lighthouse: false,
           ready: async (page) => {
-            await pressCheckboxOnce(page, "Weak topics only")
-            await waitForText(page, "No weak topics recorded yet")
+            await pressSwitchOnce(page, "Weak topics only")
+            await waitForText(page, "No weak topics yet")
           },
         },
       ],

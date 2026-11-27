@@ -59,7 +59,7 @@ export interface PlanUnavailableMessage {
  * ratings — `lemely.core.study.StudyPlanUnavailableReason`); the fallback
  * branch only fires for a reason string this frontend has never seen, and
  * still names it rather than hiding it behind "something went wrong".
- * Mirrors `practiceUnavailableMessage`/`flashcardUnavailableMessage`. */
+ * Mirrors `unavailableText` (practice/builder/builderModel.ts) and `flashcardUnavailableMessage`. */
 export function planUnavailableMessage(reason: string | null): PlanUnavailableMessage {
   switch (reason) {
     case "no_signal":

@@ -5,7 +5,6 @@ import {
   practiceAvailabilityView,
   practiceMarkState,
   practiceResultView,
-  practiceUnavailableMessage,
   weakTopicPrefill,
 } from "@/portals/student/screens/practice/practiceData"
 import type { PracticePreview, PracticeResult, PracticeTopicCount } from "@/lib/practiceTypes"
@@ -107,26 +106,6 @@ describe("practiceAvailabilityView — the tri-state honesty rule, all three sta
   it("availableCount can exceed requestedCount without ever reading as a shortfall", () => {
     const view = practiceAvailabilityView(preview({ available: true, availableCount: 50, requestedCount: 10 }))
     expect(view.kind).toBe("available")
-  })
-})
-
-describe("practiceUnavailableMessage — a specific message per reason, never generic", () => {
-  it("no_questions and no_weaknesses get distinct, non-generic messages", () => {
-    const noQuestions = practiceUnavailableMessage("no_questions")
-    const noWeaknesses = practiceUnavailableMessage("no_weaknesses")
-    expect(noQuestions.heading).not.toBe(noWeaknesses.heading)
-    expect(noQuestions.body).not.toMatch(/something went wrong/i)
-    expect(noWeaknesses.body).not.toMatch(/something went wrong/i)
-  })
-
-  it("inverse: an unrecognised reason still names the reason rather than hiding it", () => {
-    const msg = practiceUnavailableMessage("some_future_reason")
-    expect(msg.body).toContain("some_future_reason")
-  })
-
-  it("a null reason never crashes and never invents a reason string", () => {
-    const msg = practiceUnavailableMessage(null)
-    expect(msg.body).not.toContain("null")
   })
 })
 

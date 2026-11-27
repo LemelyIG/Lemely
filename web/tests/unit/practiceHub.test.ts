@@ -1,0 +1,322 @@
+import { createElement } from "react"
+import { renderToStaticMarkup } from "react-dom/server"
+import { MemoryRouter } from "react-router-dom"
+import { beforeEach, describe, expect, it, vi } from "vitest"
+import type { PracticeRun } from "@/lib/practiceHubTypes"
+import type { PracticeTopics } from "@/lib/practiceTypes"
+import type { HubInput } from "@/portals/student/screens/practice/hub/hubModel"
+
+// The screen is thin: it renders practiceHubView(input). These tests drive it
+// through the data hook (mocked) and the breakpoint hook, one frame per state.
+const hub = vi.hoisted(() => ({
+  input: null as unknown as HubInput,
+  refetching: false,
+  refreshError: false,
+  wide: false,
+}))
+
+vi.mock("@/portals/student/screens/practice/hub/usePracticeHubData", () => ({
+  usePracticeHubData: () => ({
+    input: hub.input,
+    builderSubjects: hub.input.subjects.map(({ code, name }) => ({ code, name })),
+    refetchAll: () => {},
+    refetching: hub.refetching,
+    refreshError: hub.refreshError,
+  }),
+}))
+vi.mock("@/portals/student/screens/practice/hub/useWide", () => ({ useWide: () => hub.wide }))
+
+const { PracticeHub } = await import("@/portals/student/screens/practice/PracticeHub")
+
+const NOW = new Date(2026, 10, 15, 12, 0)
+const iso = (y: number, m: number, d: number) => new Date(y, m, d, 9).toISOString()
+
+function topics(code: string, rows: [string, number][]): PracticeTopics {
+  return {
+    subjectCode: code,
+    topics: rows.map(([topic, marksLost]) => ({ topic, availableCount: 10, syllabusGroup: topic, marksLost })),
+    weakTopics: rows.filter(([, lost]) => lost > 0).map(([t]) => t),
+    untopicedCount: 0,
+  }
+}
+
+function run(over: Partial<PracticeRun>): PracticeRun {
+  return {
+    assignmentId: "a1",
+    subjectCode: "0580",
+    title: "Mathematics Practice Set",
+    topics: ["Vectors"],
+    status: "marked",
+    questionCount: 9,
+    answeredCount: 9,
+    awardedMarks: 7,
+    maximumMarks: 9,
+    timeLimitMinutes: null,
+    lastActivityAt: iso(2026, 10, 10),
+    ...over,
+  }
+}
+
+function input(over: Partial<HubInput> = {}): HubInput {
+  return {
+    overviewStatus: "success",
+    profileStatus: "success",
+    subjects: [
+      { code: "0580", name: "Maths", papers: 3 },
+      { code: "0625", name: "Physics", papers: 2 },
+    ],
+    topics: [
+      { code: "0580", status: "success", data: topics("0580", [["Vectors", 9], ["2.1 Quadratic inequalities", 6]]) },
+      { code: "0625", status: "success", data: topics("0625", [["3 Waves", 1]]) },
+    ],
+    runsStatus: "success",
+    runs: [run({}), run({ assignmentId: "a2", status: "in_progress", answeredCount: 3, lastActivityAt: iso(2026, 10, 14) })],
+    dueTotal: 26,
+    deckCount: 4,
+    placement: [
+      { code: "0580", available: false, minutes: null },
+      { code: "0625", available: true, minutes: 10 },
+    ],
+    now: NOW,
+    ...over,
+  }
+}
+
+const render = () => renderToStaticMarkup(createElement(MemoryRouter, null, createElement(PracticeHub)))
+const count = (haystack: string, needle: string) => haystack.split(needle).length - 1
+/** Every live-region role in the markup, in order: nested regions double-announce. */
+const liveRegions = (html: string) => html.match(/role="(?:alert|status)"/g) ?? []
+/** The opening tag of the one button whose own content says "Try again", or "" when there is none. */
+const retryButton = (html: string) => html.match(/<button[^>]*>(?=(?:(?!<\/button>)[\s\S])*Try again)/)?.[0] ?? ""
+
+beforeEach(() => {
+  hub.input = input()
+  hub.refetching = false
+  hub.refreshError = false
+  hub.wide = false
+})
+
+describe("PracticeHub", () => {
+  it("one page heading, always", () => {
+    const out = render()
+    expect(count(out, "<h1")).toBe(1)
+    expect(out).toMatch(/<h1[^>]*>Practice<\/h1>/)
+  })
+
+  it("loading (CL): a busy skeleton and nothing that depends on data", () => {
+    hub.input = input({ runsStatus: "pending" })
+    const out = render()
+    expect(out).toContain('aria-busy="true"')
+    expect(out).not.toContain("Ways to practise")
+    // The skeleton tile grows where the real tiles do (md, four across), not a breakpoint later.
+    expect(out).toContain("md:h-[140px]")
+    expect(out).not.toContain("lg:h-[140px]")
+    expect(out).not.toContain("rd-say")
+  })
+
+  it("normal (CN): subtitle, four tiles, Binny once after the tiles on a phone, both lists", () => {
+    const out = render()
+    expect(out).toMatch(/<span class="font-mono">3<\/span> topics to win back/)
+    expect(out.replace(/<[^>]+>/g, "")).toContain("3 topics to win back")
+    expect(count(out, 'class="rd-tile"')).toBe(4)
+    expect(count(out, "rd-say")).toBe(1)
+    expect(out.indexOf("rd-say")).toBeGreaterThan(out.indexOf("Ways to practise"))
+    expect(out).toContain("Vectors first. +9 marks.")
+    expect(out).toContain("Win marks back")
+    expect(out).toContain('aria-label="Recent"')
+  })
+
+  it("desktop (CDK): Binny moves above the tiles and still mounts once", () => {
+    hub.wide = true
+    const out = render()
+    expect(count(out, "rd-say")).toBe(1)
+    expect(out.indexOf("rd-say")).toBeLessThan(out.indexOf("Ways to practise"))
+  })
+
+  it("pages are links; the builder (a sheet) opens from buttons", () => {
+    const out = render()
+    expect(out).toMatch(/<a class="rd-tile" data-tone="violet"[^>]*href="\/student\/flashcards"/)
+    expect(out).toMatch(/<a class="rd-tile" data-tone="mint"[^>]*href="\/student\/practice\/papers"/)
+    expect(out).toMatch(/<button type="button" class="rd-tile" data-tone="tide"/)
+    expect(out).toContain('href="/student/practice/set/a2"')
+  })
+
+  it("the due count is set in Mono", () => {
+    expect(render()).toMatch(/<b class="font-mono[^"]*">26<\/b> due today/)
+  })
+
+  it("a single mark reads singular in the win-back row", () => {
+    const out = render()
+    expect(out).toMatch(/\+1<small[^>]*>mark<\/small>/)
+    expect(out).toMatch(/\+9<small[^>]*>marks<\/small>/)
+  })
+
+  it("offers a keyboard-accessible disclosure for overflow topics", () => {
+    hub.input = input({ topics: [
+      { code: "0580", status: "success", data: topics("0580", [["A", 4], ["B", 3], ["C", 2]]) },
+      { code: "0625", status: "success", data: topics("0625", [["D", 1]]) },
+    ] })
+    expect(render()).toMatch(/<button type="button" class="rd-lnk" aria-expanded="false"[^>]*>All topics<\/button>/)
+  })
+
+  it("recent run counts are set in Mono and the line still reads whole", () => {
+    const out = render()
+    expect(out).toMatch(/Question <span class="font-mono">4<\/span> of <span class="font-mono">9<\/span> · saved/)
+    expect(out).toMatch(/<span class="font-mono">7<\/span> of <span class="font-mono">9<\/span> back/)
+    expect(out.replace(/<[^>]+>/g, "")).toContain("Question 4 of 9 · saved")
+  })
+
+  it("placement tile is not gold: nothing was earned", () => {
+    expect(render()).not.toContain('data-tone="gold"')
+  })
+
+  it("recent: See all is a disclosure when there are more than four", () => {
+    hub.input = input({ runs: Array.from({ length: 6 }, (_, i) => run({ assignmentId: `r${i}`, lastActivityAt: iso(2026, 10, 14 - i) })) })
+    const out = render()
+    expect(out).toMatch(/<button type="button" class="rd-lnk" aria-expanded="false"[^>]*>See all<\/button>/)
+  })
+
+  it("offers a retry while keeping cached content after refresh fails", () => {
+    hub.refreshError = true
+    const out = render()
+    expect(out).toContain("Win marks back")
+    expect(out).toContain("Couldn’t refresh practice")
+    expect(out).toContain("Try again")
+  })
+
+  it("the refresh banner is one live region, not an alert wrapping a status", () => {
+    hub.refreshError = true
+    const out = render()
+    expect(liveRegions(out)).toEqual(['role="status"'])
+    expect(out).not.toContain('role="alert"')
+  })
+
+  it("the refresh banner retry shows it is working while refetching", () => {
+    hub.refreshError = true
+    hub.refetching = true
+    const button = retryButton(render())
+    expect(button).toContain('aria-busy="true"')
+    expect(button).toContain('disabled=""')
+  })
+
+  it("the refresh banner retry is live while idle", () => {
+    hub.refreshError = true
+    const button = retryButton(render())
+    expect(button).not.toBe("")
+    expect(button).not.toContain(' disabled=""')
+    expect(button).not.toContain("aria-busy")
+  })
+
+  it("profile failed, subjects known: lists stay usable and one notice says subjects may be missing", () => {
+    hub.input = input({ profileStatus: "error" })
+    const out = render()
+    expect(out).toContain("Win marks back")
+    expect(out).toContain('aria-label="Recent"')
+    expect(out).toContain("Some subjects may be missing")
+    expect(liveRegions(out)).toEqual(['role="status"'])
+    expect(out).not.toContain("The tiles still work")
+    expect(retryButton(out)).not.toBe("")
+  })
+
+  it("profile failed with a failed refresh too: still one live region", () => {
+    hub.input = input({ profileStatus: "error" })
+    hub.refreshError = true
+    expect(liveRegions(render())).toHaveLength(1)
+  })
+
+  it("profile failed, no subject: says so, never claims the tiles work, no first-run walkthrough", () => {
+    hub.input = input({ profileStatus: "error", subjects: [], topics: [], placement: [], runs: [] })
+    const out = render()
+    expect(out).toContain("We couldn’t load your subjects")
+    expect(out).not.toContain("The tiles still work")
+    expect(out).not.toContain('class="rd-walk"')
+    expect(out).not.toContain("Scan a paper")
+    expect(liveRegions(out)).toEqual(['role="alert"'])
+    expect(retryButton(out)).not.toBe("")
+  })
+
+  it("profile failed, no subject: the retry shows it is working while refetching", () => {
+    hub.input = input({ profileStatus: "error", subjects: [], topics: [], placement: [], runs: [] })
+    hub.refetching = true
+    expect(retryButton(render())).toContain('disabled=""')
+  })
+
+  it("profile failed, subjects known: the notice retry shows it is working while refetching", () => {
+    hub.input = input({ profileStatus: "error" })
+    hub.refetching = true
+    expect(retryButton(render())).toContain('disabled=""')
+  })
+
+  it("profile failed, no subject, runs loaded: Recent still shows", () => {
+    hub.input = input({ profileStatus: "error", subjects: [], topics: [], placement: [] })
+    const out = render()
+    expect(out).toContain("We couldn’t load your subjects")
+    expect(out).toContain('aria-label="Recent"')
+  })
+
+  it("topics error with no subject to open: the tiles claim is dropped", () => {
+    hub.input = input({ runsStatus: "error", subjects: [], topics: [], placement: [] })
+    const out = render()
+    expect(out).toContain("We couldn’t load your topics")
+    expect(out).not.toContain("The tiles still work")
+  })
+
+  it("error (CE): the tiles still work, an alert explains and offers a retry", () => {
+    hub.input = input({ runsStatus: "error" })
+    const out = render()
+    expect(count(out, 'class="rd-tile"')).toBe(4)
+    expect(out).toContain('role="alert"')
+    expect(out).toContain("We couldn’t load your topics")
+    expect(out).toMatch(/<button[^>]*>.*Try again.*<\/button>/s)
+    expect(out).not.toContain("Win marks back")
+  })
+
+  it("error retrying: the button shows it is working", () => {
+    hub.input = input({ runsStatus: "error" })
+    hub.refetching = true
+    expect(render()).toMatch(/<button[^>]*disabled=""[^>]*>[\s\S]*Try again/)
+  })
+
+  it("first run (CZ): walkthrough, Binny open once, a scan call to action, no lists", () => {
+    hub.input = input({ subjects: [{ code: "0580", name: "Maths", papers: 0 }], topics: [], runs: [] })
+    const out = render()
+    expect(count(out, "rd-say")).toBe(1)
+    expect(out).toContain("Start with a scan.")
+    expect(out).toContain('class="rd-walk"')
+    expect(out).toContain("Scan a marked paper")
+    expect(out).toMatch(/<a [^>]*href="\/student\/correct"[^>]*>Scan a paper<\/a>/)
+    expect(out).not.toContain("Win marks back")
+    expect(out).not.toContain('aria-label="Recent"')
+  })
+
+  it("first run with no subject: the set tile is a link that says why and leads to adding one", () => {
+    hub.input = input({ subjects: [], topics: [], runs: [], placement: [] })
+    const out = render()
+    expect(out).toMatch(/<a class="rd-tile" data-tone="tide"[^>]*href="\/student\/onboard"[^>]*>[\s\S]*Add a subject first/)
+    expect(out).not.toMatch(/<button type="button" class="rd-tile"/)
+    // It is the placement tile (sea) that is paused, not merely some tile followed by the words.
+    expect(out).toMatch(/<[a-z]+ (?=[^>]*data-tone="sea")(?=[^>]*aria-disabled="true")[^>]*>(?:(?!<\/li>)[\s\S])*Needs a subject/)
+    expect(count(out, 'aria-disabled="true"')).toBe(1)
+  })
+
+  it("sparse (CS): one paper, no All topics link, the scan tip", () => {
+    hub.input = input({
+      subjects: [{ code: "0580", name: "Maths", papers: 1 }],
+      topics: [{ code: "0580", status: "success", data: topics("0580", [["Vectors", 9]]) }],
+      runs: [],
+    })
+    const out = render()
+    expect(out).toContain("Good start. Keep going.")
+    expect(out).toContain("More papers, sharper picks")
+    expect(out).toMatch(/<a [^>]*href="\/student\/correct"[^>]*>Scan<\/a>/)
+    expect(out).not.toContain("All topics")
+  })
+
+  it("sets done, no paper yet: the scan tip without an empty win-back heading", () => {
+    hub.input = input({ subjects: [{ code: "0580", name: "Maths", papers: 0 }], topics: [{ code: "0580", status: "success", data: topics("0580", []) }] })
+    const out = render()
+    expect(out).toContain("Scan a paper next.")
+    expect(out).toContain("More papers, sharper picks")
+    expect(out).not.toContain("Win marks back")
+  })
+})

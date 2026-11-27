@@ -7,7 +7,7 @@ import { decideBackPlan, linkedParent, previousPathAt, recordHistoryLocation, ty
 import { navGroups, studentShellTrail } from "@/portals/student/data"
 import { STUDENT_BOTTOM_TABS } from "@/portals/student"
 
-// develop has no student route with a linked parent yet (lanes add them), so the rule is exercised on fixture trails.
+// Fixture trails exercise the linked-parent rule independently of the current student routes.
 const DRILL: Crumb[] = [{ label: "Practice", to: "/student/practice" }, { label: "Past papers" }]
 const DEEP: Crumb[] = [{ label: "Subject", to: "/student/subject/0580" }, { label: "Practice", to: "/student/practice/0580" }, { label: "Result" }]
 
@@ -88,13 +88,28 @@ describe("decideBackPlan", () => {
     expect(decideBackPlan({ trail: DEEP, previousPath: "/student/practice/0580", hasHistory: true })).toMatchObject({ label: "Practice", action: "history" })
   })
 
-  it("no student route has a linked parent today", () => {
+  it("no student route outside Practice has a linked parent today", () => {
     // Guards the premise: if a lane adds a linked parent, this fails and the captures need a second look.
     const destinations = [...navGroups.flatMap((group) => group.items.map((item) => item.to)), ...STUDENT_BOTTOM_TABS.map((tab) => tab.to)]
     // Drilled-in pages are the likeliest to gain a linked parent, and no nav entry points at them.
-    const drilledIn = ["/student/practice/papers", "/student/practice/result/1", "/student/plan/0580", "/student/sessions/1"]
+    const drilledIn = ["/student/plan/0580", "/student/sessions/1"]
     for (const p of [...destinations, ...drilledIn]) {
       expect(decideBackPlan({ trail: studentShellTrail(p), previousPath: null, hasHistory: false }), p).toEqual({ control: "bar" })
+    }
+  })
+
+  it("Practice's drilled-in pages link Practice, so the shell's one phone back control leads there", () => {
+    // The generic rule covers them (past papers included): the trail's linked Practice crumb draws the one control and the top bar's Back steps aside.
+    for (const p of ["/student/practice/papers", "/student/practice/set/1", "/student/practice/result/1", "/student/practice/print/1"]) {
+      const trail = studentShellTrail(p)
+      expect(decideBackPlan({ trail, previousPath: "/student/practice", hasHistory: true }), p).toMatchObject({ control: "trail", action: "history", label: "Practice" })
+      expect(decideBackPlan({ trail, previousPath: null, hasHistory: false }), p).toEqual({
+        control: "trail",
+        action: "route",
+        label: "Practice",
+        ariaLabel: "Back to Practice",
+        parentTo: "/student/practice",
+      })
     }
   })
 })

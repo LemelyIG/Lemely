@@ -365,6 +365,7 @@ module = [
   "lemely.web.schemas_quiz",
   "lemely.web.schemas_placement",
   "lemely.web.schemas_practice",
+  "lemely.web.schemas_practice_hub",
   "lemely.web.schemas_flashcards",
   "lemely.web.schemas_parent",
   "lemely.web.schemas_me",

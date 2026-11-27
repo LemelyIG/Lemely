@@ -1,8 +1,9 @@
 /*
- * Pure data + decision logic for S-20 (practice generator) and S-21
+ * Pure data + decision logic for S-20 (set builder sheet, L4) and S-21
  * (practice set working view + finish summary). No React, no DOM —
  * exercised directly by `web/tests/unit/practice.test.ts`, same split as
  * `placementData.ts` (D3.20: `vitest.config.ts` runs unit-only, no jsdom).
+ * Owned by L4; L3 coordinates edits through it.
  */
 
 import { confidenceTierFor } from "@/lib/markingConfidence"
@@ -138,38 +139,6 @@ export function practiceAvailabilityView(preview: PracticePreview): PracticeAvai
     kind: "available",
     availableCount: preview.availableCount,
     requestedCount: preview.requestedCount,
-  }
-}
-
-export interface PracticeUnavailableMessage {
-  heading: string
-  body: string
-}
-
-/** One specific message per practice `reason` value — never a generic
- * "something went wrong", mirroring `unavailableMessage` in
- * `placementData.ts`. The fallback branch only fires for a reason string
- * this frontend has never seen, and still names the reason rather than
- * hiding it. */
-export function practiceUnavailableMessage(reason: string | null): PracticeUnavailableMessage {
-  switch (reason) {
-    case "no_questions":
-      return {
-        heading: "No practice material for this filter set",
-        body: "There's nothing in the question bank that matches what you've selected. Try widening your topic or difficulty selection.",
-      }
-    case "no_weaknesses":
-      return {
-        heading: "No weak topics recorded yet",
-        body: "\"Weak topics only\" needs at least one recorded weakness for this subject. Take a placement test or some general practice first, then this option will have something to draw from.",
-      }
-    default:
-      return {
-        heading: "Practice isn't available for this filter set right now",
-        body: reason
-          ? `This filter set isn't available right now (reason: ${reason}).`
-          : "This filter set isn't available right now.",
-      }
   }
 }
 

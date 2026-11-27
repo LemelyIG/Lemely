@@ -1,6 +1,8 @@
+import { matchRoutes } from "react-router-dom"
 import { describe, expect, it } from "vitest"
 
-import { navGroups, crumbs, resolveCrumb, resolveCrumbTrail } from "@/portals/student/data"
+import { navGroups, crumbs, currentSubjectCode, resolveCrumb, resolveCrumbTrail } from "@/portals/student/data"
+import { isStudentSubjectRoot } from "@/portals/student/shellNav"
 import { navItems, resolveTrail, classesItemActive } from "@/portals/teacher/data"
 import { studentRoute, STUDENT_BOTTOM_TABS } from "@/portals/student"
 import { teacherRoute, TEACHER_BOTTOM_TABS } from "@/portals/teacher"
@@ -169,19 +171,21 @@ describe("resolveCrumbTrail — the student portal's back affordance", () => {
   })
 
   /*
-   * Only "Home" is linkable. The other leading labels this map produces are
-   * grouping names with no route of their own — `/student/practice` and
-   * `/student/flashcards` are not mounted paths, and `Marking` never was —
-   * so linking them would manufacture the dead ends a back affordance exists
-   * to remove.
+   * L4 mounted `/student/practice` as the Practice tab root, so "Practice"
+   * is now a real destination and links there. Every other grouping label
+   * ("Marking", "Flashcards", "Study plan") still has no route and stays
+   * unlinked.
    */
-  it("links Home and nothing else", () => {
+  it("links Home, and Practice now that it is a mounted tab root", () => {
+    const allowed: Record<string, string> = { Home: "/student", Practice: "/student/practice" }
     const paths = [
       "/student",
       "/student/correct",
       "/student/board",
       "/student/subject/0625",
       "/student/practice/0625",
+      "/student/practice/set/abc-123",
+      "/student/practice/papers",
       "/student/flashcards/0625",
       "/student/plan/0625",
       "/student/plan/0625/session/abc-123",
@@ -190,11 +194,19 @@ describe("resolveCrumbTrail — the student portal's back affordance", () => {
     for (const path of paths) {
       for (const crumb of resolveCrumbTrail(path)) {
         if (crumb.to !== undefined) {
-          expect(crumb.to, `linked crumb "${crumb.label}" on ${path}`).toBe("/student")
-          expect(crumb.label).toBe("Home")
+          expect(allowed[crumb.label], `linked crumb "${crumb.label}" on ${path}`).toBe(crumb.to)
         }
       }
     }
+  })
+
+  it("the builder deep link reads as the Practice page, a tab root", () => {
+    expect(resolveCrumbTrail("/student/practice/0625").map((c) => c.label)).toEqual(["Home", "Practice"])
+    expect(resolveCrumbTrail("/student/practice/papers")).toEqual([
+      { label: "Home", to: "/student" },
+      { label: "Practice", to: "/student/practice" },
+      { label: "Past papers" },
+    ])
   })
 
   it("points every link it does emit at a route the router mounts", () => {
@@ -203,6 +215,7 @@ describe("resolveCrumbTrail — the student portal's back affordance", () => {
       "/student/subject/0625",
       "/student/result/abc-123",
       "/student/plan/0625/session/abc-123",
+      "/student/practice/set/abc-123",
     ].flatMap((path) => resolveCrumbTrail(path).flatMap((crumb) => (crumb.to ? [crumb.to] : [])))
 
     expect(linked.length).toBeGreaterThan(0)
@@ -617,5 +630,52 @@ describe("the nine signup/verify/reset/join routes — Task 19", () => {
     expect(containsComponent(route!.element, "RequireAuth"), `${path} is behind RequireAuth`).toBe(
       false,
     )
+  })
+})
+
+/*
+ * L4 · the Practice tab. `matchesSomeRoute` above is deliberately loose (a
+ * `:param` swallows any segment), so it cannot say WHICH route owns a path.
+ * That matters here: `practice/papers` sits beside `practice/:subjectCode`, and
+ * only the router's own ranking keeps "papers" from being read as a subject.
+ * `matchRoutes` runs that ranking.
+ */
+describe("Practice tab — L4", () => {
+  const owner = (pathname: string) => {
+    const hit = matchRoutes([studentRoute], pathname)?.at(-1)?.route
+    return { path: hit?.path, title: (hit?.handle as { title?: string } | undefined)?.title }
+  }
+
+  it("is a student bottom tab pointing at the mounted tab root", () => {
+    const practice = STUDENT_BOTTOM_TABS.find((t) => t.label === "Practice")
+    expect(practice?.to).toBe("/student/practice")
+    expect(matchesSomeRoute("/student/practice", studentRoutePaths)).toBe(true)
+  })
+
+  it("mounts past papers and keeps the builder deep link", () => {
+    expect(matchesSomeRoute("/student/practice/papers", studentRoutePaths)).toBe(true)
+    expect(matchesSomeRoute("/student/practice/0625", studentRoutePaths)).toBe(true)
+  })
+
+  it("routes the hub, past papers and the builder deep link to their own owners", () => {
+    expect(owner("/student/practice")).toEqual({ path: "practice", title: "Practice" })
+    expect(owner("/student/practice/papers")).toEqual({ path: "practice/papers", title: "Past papers" })
+    expect(owner("/student/practice/0625")).toEqual({ path: "practice/:subjectCode", title: "Practice" })
+  })
+
+  it("leaves the set, result and print routes to their own screens", () => {
+    expect(owner("/student/practice/set/abc-123").path).toBe("practice/set/:assignmentId")
+    expect(owner("/student/practice/result/abc-123").path).toBe("practice/result/:assignmentId")
+    expect(owner("/student/practice/print/abc-123").path).toBe("practice/print/:assignmentId")
+  })
+
+  it("never reads 'papers' as a subject code for the sidebar", () => {
+    expect(currentSubjectCode("/student/practice/papers")).toBeNull()
+    expect(currentSubjectCode("/student/practice/0625")).toBe("0625")
+  })
+
+  it("treats past papers as a drill-in, not a tab root, so it keeps a back path", () => {
+    expect(isStudentSubjectRoot("/student/practice/papers")).toBe(false)
+    expect(isStudentSubjectRoot("/student/practice/0625")).toBe(true)
   })
 })

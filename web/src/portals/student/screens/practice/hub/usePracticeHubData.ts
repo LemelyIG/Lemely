@@ -1,0 +1,78 @@
+import { useMemo } from "react"
+import { usePlacementAvailabilities } from "@/lib/hooks/usePlacementApi"
+import { useDueSession, useFlashcardDecks } from "@/lib/hooks/useFlashcardApi"
+import { useStudentProfile } from "@/lib/hooks/useMeApi"
+import { usePracticeRuns, usePracticeTopicsMany } from "@/lib/hooks/usePracticeHubApi"
+import { useReference } from "@/lib/hooks/useReferenceApi"
+import { useOverview } from "@/lib/hooks/useStudentApi"
+import { subjectNameFor } from "@/lib/reference"
+import { profileQueryState, type HubInput, type HubSubject } from "./hubModel"
+
+/**
+ * Composes every query the hub reads into one `HubInput`. Subjects are the
+ * overview's (they carry paper counts) followed by any enrolled subject with
+ * no paper yet, so a first-time student can still open the builder.
+ *
+ * `refetchAll` retries every query behind a hub error or notice (overview,
+ * profile, runs, topics); `refetching` is true while any of them is in flight,
+ * so the retry button can show it is working instead of looking dead.
+ */
+export function usePracticeHubData(): {
+  input: HubInput
+  builderSubjects: { code: string; name: string }[]
+  refetchAll: () => void
+  refetching: boolean
+  refreshError: boolean
+} {
+  const overview = useOverview()
+  const profile = useStudentProfile()
+  const { data: reference } = useReference()
+
+  const subjects = useMemo<HubSubject[]>(() => {
+    const fromOverview = (overview.data?.subjects ?? []).map((s) => ({ code: s.code, name: s.name, papers: s.papers }))
+    const seen = new Set(fromOverview.map((s) => s.code))
+    const fromEnrolments = (profile.data?.enrolments ?? [])
+      .filter((e) => !seen.has(e.subjectCode))
+      .map((e) => ({ code: e.subjectCode, name: subjectNameFor(reference, e.subjectCode), papers: 0 }))
+    return [...fromOverview, ...fromEnrolments]
+  }, [overview.data, profile.data, reference])
+
+  const codes = subjects.map((s) => s.code)
+  const topicQueries = usePracticeTopicsMany(codes)
+  const runs = usePracticeRuns()
+  const due = useDueSession()
+  const decks = useFlashcardDecks()
+  const placement = usePlacementAvailabilities(codes)
+  const now = useMemo(() => new Date(), [])
+
+  const profileState = profileQueryState(profile)
+  const input: HubInput = {
+    overviewStatus: overview.data === undefined ? overview.status : "success",
+    profileStatus: profileState.profileStatus,
+    subjects,
+    topics: codes.map((code, i) => ({ code, status: topicQueries[i].status, data: topicQueries[i].data })),
+    runsStatus: runs.data === undefined ? runs.status : "success",
+    runs: runs.data?.runs ?? [],
+    dueTotal: due.data?.totalDue ?? null,
+    deckCount: decks.data ? decks.data.length : null,
+    placement: codes.map((code, i) => ({
+      code,
+      available: placement[i].data?.available ?? null,
+      minutes: placement[i].data?.estimatedMinutes ?? null,
+    })),
+    now,
+  }
+
+  return {
+    input,
+    refreshError: [overview, profile, runs, ...topicQueries].some((q) => q.isError && q.data !== undefined),
+    builderSubjects: subjects.map(({ code, name }) => ({ code, name })),
+    refetchAll: () => {
+      void overview.refetch()
+      void profile.refetch()
+      void runs.refetch()
+      for (const q of topicQueries) void q.refetch()
+    },
+    refetching: overview.isFetching || profileState.refetching || runs.isFetching || topicQueries.some((q) => q.isFetching),
+  }
+}
