@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
-import { useId, useRef, useState, type KeyboardEvent } from "react"
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react"
 import { Link } from "react-router-dom"
-import { Flag } from "@phosphor-icons/react"
+import { Flag, TextAlignLeft } from "@phosphor-icons/react"
 import { KeyRing } from "@/components/redesign"
 import { Textarea } from "@/components/ui/textarea"
 import { relativeTime } from "@/lib/utils"
@@ -10,7 +10,7 @@ import { MarkControls } from "./MarkControls"
 import { canSave, notePlaceholder, primaryActionLabel, totalOf, type MarkState } from "./markModel"
 import { ringLabel, ringText, ringTone, ringValue } from "./reviewQueueModel"
 import "./review.css"
-import type { AnswerImages } from "./useAnswerImages"
+import { pageFrame, type AnswerImages } from "./useAnswerImages"
 
 export type { AnswerImages } from "./useAnswerImages"
 
@@ -41,6 +41,9 @@ export interface AnswerPanelProps {
   /** Null is read-only: a closed item, or L8. */
   marking: AnswerMarking | null
   showShortcuts?: boolean
+  /** The desktop queue's polite region, which is mounted before this panel is. Given it, the panel reports
+   * a scan failure there instead of rendering a region of its own that would arrive already holding the text. */
+  onScanNotice?: (text: string) => void
 }
 
 const ICON_BACK = <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M11 4 6 9l5 5" /></svg>
@@ -51,7 +54,7 @@ const NAV_BTN = `grid size-11 place-items-center rounded-chip bg-primary-contain
 const LABEL = "font-mono text-xs font-semibold uppercase tracking-[0.08em] text-on-surface-variant"
 const FRAME = "m-0 grid gap-1.5 rounded-2xl bg-surface-container-lowest p-3.5 shadow-[inset_0_0_0_1px_var(--color-outline)]"
 
-export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts }: AnswerPanelProps) {
+export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts, onScanNotice }: AnswerPanelProps) {
   const [mode, setMode] = useState<"crop" | "page">("crop")
   const [dismissNote, setDismissNote] = useState("")
   const uid = useId()
@@ -67,6 +70,18 @@ export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts 
   const total = marking ? totalOf(view.points, marking.state, view.maximumMarks) : (view.lemelyMarks ?? 0)
   const changed = view.lemelyMarks != null && total !== view.lemelyMarks
   const showPage = mode === "page" && view.hasScan
+  const wholePage = showPage ? pageFrame(images) : null
+  // The page tab is open for an item whose page nobody asked for yet (the queue moved on under it): ask now.
+  const requestPage = images.requestPage
+  useEffect(() => { if (wholePage === "idle") requestPage() }, [wholePage, requestPage])
+  const cropFrame = images.cropUrl ? "image" : images.cropFailed ? "failed" : "loading"
+  // One polite region that stays mounted across tabs and scanned answers, so a failure is announced when it happens.
+  const scanFailure = showPage ? (wholePage === "failed" ? "Couldn't show the page." : "") : cropFrame === "failed" ? "Couldn't show the scan. Lemely's reading is below." : ""
+  useEffect(() => {
+    if (!onScanNotice) return
+    onScanNotice(scanFailure)
+    return () => onScanNotice("")
+  }, [onScanNotice, scanFailure])
   const tone = ringTone(view.confidenceScore)
   // The phone answer page has no queue column, so the answer's title is the page's h1.
   const Title = onBack ? "h1" : "h2"
@@ -85,7 +100,13 @@ export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts 
             size={96}
             tone={tone === "gold" ? "gold" : tone === "neutral" ? "neutral" : "warn"}
             label={ringLabel(view.confidenceScore)}
-            center={<span className="font-display text-3xl font-extrabold leading-none tabular-nums tracking-[-0.03em]">{ringText(view.confidenceScore)}{view.confidenceScore != null ? <small className="text-sm font-bold opacity-70">%</small> : null}</span>}
+            center={view.confidenceScore == null ? (
+              <span className="block h-[3px] w-[18px] rounded-full bg-current opacity-80" />
+            ) : (
+              <span dir="ltr" className="rq-ring-num font-mono text-[28px] font-semibold tabular-nums slashed-zero tracking-[-0.03em]">
+                {ringText(view.confidenceScore)}<small className="rq-ring-pct font-sans text-sm font-bold opacity-70">%</small>
+              </span>
+            )}
           />
           <div className="min-w-0">
             <Title className="text-display-sm">
@@ -106,7 +127,7 @@ export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts 
       {view.hasScan ? (
         <div role="tablist" aria-label="Answer view" className="inline-flex justify-self-start rounded-chip bg-surface-container p-[3px]">
           {(["crop", "page"] as const).map((m) => (
-            <button key={m} ref={(el) => { tabRefs.current[m] = el }} id={`${uid}-tab-${m}`} aria-controls={`${uid}-panel`} tabIndex={mode === m ? 0 : -1} onKeyDown={onTabKey} type="button" role="tab" aria-selected={mode === m} onClick={() => pick(m)} className={`min-h-9 rounded-row px-3.5 py-1.5 text-dense font-bold text-on-surface-variant pointer-coarse:min-h-11 aria-selected:bg-surface-container-lowest aria-selected:text-primary aria-selected:shadow-[0_0_0_1px_var(--color-outline-variant)] ${FOCUS}`}>
+            <button key={m} ref={(el) => { tabRefs.current[m] = el }} id={`${uid}-tab-${m}`} aria-controls={`${uid}-panel`} tabIndex={mode === m ? 0 : -1} onKeyDown={onTabKey} type="button" role="tab" aria-selected={mode === m} onClick={() => pick(m)} className={`min-h-11 rounded-row px-3.5 py-1.5 text-dense font-bold text-on-surface-variant aria-selected:bg-surface-container-lowest aria-selected:text-primary aria-selected:shadow-[0_0_0_1px_var(--color-outline-variant)] ${FOCUS}`}>
               {m === "crop" ? "Answer" : "Whole page"}
             </button>
           ))}
@@ -114,28 +135,41 @@ export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts 
       ) : null}
 
       <div role={view.hasScan ? "tabpanel" : undefined} id={`${uid}-panel`} aria-labelledby={view.hasScan ? `${uid}-tab-${showPage ? "page" : "crop"}` : undefined} className="grid gap-3.5">
+      {/* Only a scanned answer has an image that can fail; one with no scan (and the sample) adds no live region. */}
+      {view.hasScan && !onScanNotice ? <p role="status" aria-live="polite" dir="auto" className="sr-only">{scanFailure}</p> : null}
       {showPage ? (
-        <figure className={`${FRAME} min-h-[300px]`}>
+        <figure className={`${FRAME} ${wholePage === "failed" ? "" : "min-h-[300px]"}`}>
           {view.pageLabel ? <figcaption className={LABEL}>{view.pageLabel}</figcaption> : null}
-          {images.pageUrl ? (
-            <img src={images.pageUrl} alt="The whole page this answer is on" onError={images.onPageError} decoding="async" className="max-h-[70vh] w-full rounded-row object-contain" />
-          ) : images.pageRequested ? (
-            <div className="rq-skel h-[300px] rounded-row bg-surface-container-high" role="status" aria-label="Loading the page" />
+          {wholePage === "image" ? (
+            <img src={images.pageUrl ?? undefined} alt="The whole page this answer is on" onError={images.onPageError} decoding="async" className="max-h-[70vh] w-full rounded-row object-contain" />
+          ) : wholePage === "failed" ? (
+            <p aria-hidden="true" dir="auto" className="text-on-surface-variant">Couldn't show the page.</p>
           ) : (
-            <p className="text-on-surface-variant">Couldn't show the page.</p>
+            <div className="rq-skel h-[300px] rounded-row bg-surface-container-high" role="status" aria-label="Loading the page" />
           )}
         </figure>
-      ) : images.cropUrl ? (
-        <figure className={FRAME}>
-          <img src={images.cropUrl} alt="The region of the student's scan this question's answer was read from" onError={images.onCropError} decoding="async" className="max-h-[420px] w-auto max-w-full rounded-row object-contain" />
-          <figcaption className="text-dense-sm text-on-surface-variant">From the student's scan</figcaption>
+      ) : view.hasScan ? (
+        <figure className={`${FRAME} min-w-0 gap-2.5`}>
+          {cropFrame === "image" ? (
+            <img src={images.cropUrl ?? undefined} alt="The region of the student's scan this question's answer was read from" onError={images.onCropError} decoding="async" className="max-h-[360px] w-auto max-w-full justify-self-start rounded-row object-contain" />
+          ) : cropFrame === "failed" ? (
+            <p aria-hidden="true" dir="auto" className="grid min-h-24 place-items-center rounded-row bg-surface-container px-4 text-center text-sm text-on-surface-variant">Couldn't show the scan.</p>
+          ) : (
+            <div className="rq-skel h-[150px] rounded-row bg-surface-container-high" role="status" aria-label="Loading the scan" />
+          )}
+          <figcaption className="grid min-w-0 gap-1 rounded-row bg-surface-container-low px-3 py-2.5">
+            <span className="flex items-center gap-1.5 text-dense-sm text-on-surface-variant"><TextAlignLeft size={14} aria-hidden />Lemely read</span>
+            <span dir="auto" className={`whitespace-pre-wrap text-base leading-normal wrap-anywhere ${view.transcription ? "text-on-surface" : "text-on-surface-variant"}`}>
+              {view.transcription || "No transcription recorded for this question."}
+            </span>
+          </figcaption>
         </figure>
       ) : (
-        <figure className="relative m-0 min-h-[210px] overflow-hidden rounded-2xl bg-surface-container-lowest px-[18px] py-3.5 shadow-[inset_0_0_0_1px_var(--color-outline)]">
+        <figure className={`${FRAME} min-w-0`}>
           <div className="rq-ruled text-2xl leading-[36px] shell-sm:text-3xl shell-sm:leading-[42px]">
-            <p className="m-0 whitespace-pre-wrap text-on-surface">{view.transcription ?? "No transcription recorded for this question."}</p>
+            <p dir="auto" className="m-0 whitespace-pre-wrap wrap-anywhere text-on-surface">{view.transcription || "No transcription recorded for this question."}</p>
           </div>
-          <figcaption className="mt-2 text-dense-sm text-on-surface-variant">Lemely's reading of the answer</figcaption>
+          <figcaption className="text-dense-sm text-on-surface-variant">Lemely's reading of the answer · no scan for this answer</figcaption>
         </figure>
       )}
       </div>

@@ -420,13 +420,25 @@ export function cropUrlFor(itemId: string | undefined, fetched: FetchedCrop | nu
 }
 
 /** `useReviewItemCrop`'s return value. `url` is the object URL to render, or
- * `null` for absence (never rendered, still loading, 404'd, or the decoded
- * image turned out to be broken). `onDecodeError` must be wired to the
- * rendered `<img>`'s own `onError` — see the hook's doc for why a 2xx
- * response is not the end of the failure surface. */
+ * `null` when there is nothing to render (not enabled, still loading, 404'd,
+ * or the decoded image turned out to be broken); `failed` tells the last two
+ * apart from the first two. `onDecodeError` must be wired to the rendered
+ * `<img>`'s own `onError` — see the hook's doc for why a 2xx response is not
+ * the end of the failure surface. */
 export interface ReviewItemCrop {
   url: string | null
   onDecodeError: () => void
+  /** True once the fetch or the decode failed for the CURRENT `itemId`.
+   * `url === null && !failed` is "not loaded yet"; without this the two are
+   * indistinguishable and a caller that shows a loading state for `null`
+   * never leaves it. */
+  failed: boolean
+}
+
+/** Same render-time identity rule as `cropUrlFor`: a failure recorded for one
+ * item never marks another item's image as failed. */
+export function imageFailedFor(itemId: string | undefined, failedFor: string | null): boolean {
+  return failedFor !== null && failedFor === itemId
 }
 
 function reviewImagePath(itemId: string, kind: "crop" | "page"): string {
@@ -449,16 +461,17 @@ function reviewImagePath(itemId: string, kind: "crop" | "page"): string {
  * exist, but it does not guarantee one: the route can still fail (404 when
  * the stored object has expired, 422 when the scan cannot be rendered).
  * `fetchBlobUrl` rejects on any non-2xx response, and that rejection resolves
- * `url` to `null` exactly like a network failure would — the caller must
- * render that as absence, never as a broken-image icon or an error toast.
+ * `url` to `null` and sets `failed`, exactly like a network failure would —
+ * the caller must say so in place ("Couldn't show the scan."), never with a
+ * broken-image icon or an error toast.
  *
  * A 2xx response is still not the end of the failure surface: the bytes
  * could fail to DECODE (a truncated stream, a body that claims `image/png`
  * and isn't) after this hook has already committed a `url`. `onDecodeError`
  * exists for exactly that — wire it to the rendered `<img>`'s own `onError`,
- * and this hook clears the stored URL the same way a 404 would, so a decode
- * failure degrades to the same absence rather than sitting in a bordered
- * card as a broken-image icon.
+ * and this hook clears the stored URL and sets `failed` the same way a 404
+ * would, so a decode failure reaches the same in-place message rather than
+ * sitting in a bordered card as a broken-image icon.
  *
  * **C1 (review of task #72).** The returned URL is tagged with the `itemId`
  * it was fetched for (`cropUrlFor`), and the identity check — does the tag
@@ -487,6 +500,7 @@ export function useReviewItemImage(
   enabled: boolean,
 ): ReviewItemCrop {
   const [fetched, setFetched] = useState<FetchedCrop | null>(null)
+  const [failedFor, setFailedFor] = useState<string | null>(null)
 
   useEffect(() => {
     // Reset before the new fetch even starts, not only in the catch below —
@@ -498,6 +512,7 @@ export function useReviewItemImage(
     // `cropUrlFor`'s `itemId` tag comparison instead), but tidying the state
     // promptly is still worth doing on its own.
     setFetched(null)
+    setFailedFor(null)
     if (!enabled || !itemId) return
 
     let cancelled = false
@@ -517,9 +532,12 @@ export function useReviewItemImage(
       })
       .catch(() => {
         // 404 (no upload, no box, an expired object) or any other failure —
-        // see this hook's own doc for why every one of these renders as
-        // absence, not as an error.
-        if (!cancelled) setFetched(null)
+        // all reported as `failed`, so the caller can leave its loading state
+        // and say the image couldn't be shown (see this hook's own doc).
+        if (!cancelled) {
+          setFetched(null)
+          setFailedFor(itemId)
+        }
       })
 
     return () => {
@@ -532,14 +550,17 @@ export function useReviewItemImage(
   // The functional updater reads the CURRENT `fetched` without needing it in
   // a dependency array, so this stays a stable callback across renders while
   // still revoking whichever URL was actually live at the moment it broke.
+  // The rendered `<img>` only ever carries the current item's URL (`cropUrlFor`),
+  // so a decode failure belongs to the current `itemId`.
   const onDecodeError = useCallback(() => {
     setFetched((current) => {
       if (current !== null) URL.revokeObjectURL(current.url)
       return null
     })
-  }, [])
+    setFailedFor(itemId ?? null)
+  }, [itemId])
 
-  return { url: cropUrlFor(itemId, fetched), onDecodeError }
+  return { url: cropUrlFor(itemId, fetched), onDecodeError, failed: imageFailedFor(itemId, failedFor) }
 }
 
 /** The boxed-region crop; a thin wrapper over `useReviewItemImage`. */

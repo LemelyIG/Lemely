@@ -15,7 +15,7 @@ import { SAMPLE_VIEW } from "./sampleAnswerView"
 
 const noop = () => {}
 // The sample has no scan to fetch, so the panel falls back to Lemely's reading of the answer.
-const NO_IMAGES: AnswerImages = { cropUrl: null, onCropError: noop, pageUrl: null, onPageError: noop, pageRequested: false, requestPage: noop }
+const NO_IMAGES: AnswerImages = { cropUrl: null, onCropError: noop, pageUrl: null, onPageError: noop, pageRequested: false, requestPage: noop, cropFailed: false, pageFailed: false }
 
 /** Practice, not a record: the ticks, the stepper and the note work, and Accept, Save or Dismiss only close it. */
 export function SampleAnswerBody({ onDone }: { onDone: () => void }) {

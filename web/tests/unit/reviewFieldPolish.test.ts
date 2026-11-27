@@ -38,6 +38,7 @@ function view(over: Partial<AnswerView> = {}): AnswerView {
 }
 const images: AnswerImages = {
   cropUrl: null, onCropError: vi.fn(), pageUrl: null, onPageError: vi.fn(), pageRequested: false, requestPage: vi.fn(),
+  cropFailed: false, pageFailed: false,
 }
 function marking(v: AnswerView): AnswerMarking {
   return { state: initialMarkState(v.points, v.lemelyMarks, v.maximumMarks), onChange: vi.fn(), note: "", onNote: vi.fn(), onAccept: vi.fn(), onDismiss: vi.fn() }

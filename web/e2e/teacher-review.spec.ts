@@ -262,6 +262,7 @@ test("a box-bearing question shows the scan crop, the image actually loads, and 
   // `GET .../crop` answers 200, not the 404 a box with no upload behind it
   // would produce.
   const cropRequests = watchCropRequests(page, reviewItem.itemId)
+  const pageRequests = watchPageRequests(page, reviewItem.itemId)
   await page.goto(`/teacher/review/${reviewItem.itemId}`)
   await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0, { timeout: 15_000 })
 
@@ -279,13 +280,13 @@ test("a box-bearing question shows the scan crop, the image actually loads, and 
       timeout: 15_000,
     })
     .toBeGreaterThan(0)
-  await expect(page.getByText("From the student's scan")).toBeVisible()
-  // Paired with the boxless test's `toEqual([])` above: exactly one fetch,
-  // not zero and not a retry storm.
+  // Before opening Whole page, the decoded crop and Lemely's reading belong
+  // to the same figure. Scope to the figure so unrelated text can't pass.
+  await expect(page.locator("figure").filter({ has: crop }).locator("figcaption")).toContainText("Lemely read")
   expect(cropRequests).toHaveLength(1)
 
-  // The whole page loads only when its tab is opened, and exactly once.
-  const pageRequests = watchPageRequests(page, reviewItem.itemId)
+  // Watching since before navigation proves the whole page is fetched lazily.
+  expect(pageRequests).toEqual([])
   await page.getByRole("tab", { name: "Whole page" }).click()
   const whole = page.getByAltText("The whole page this answer is on")
   await expect(whole).toBeVisible()
@@ -297,7 +298,7 @@ test("a box-bearing question shows the scan crop, the image actually loads, and 
   expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
 })
 
-test("a 404 from the crop route renders as absence, even though hasSourceBox is true", async ({
+test("a 404 from the crop route keeps the reading visible and notes the missing scan", async ({
   page,
 }) => {
   const seed = readSeed()
@@ -326,12 +327,13 @@ test("a 404 from the crop route renders as absence, even though hasSourceBox is 
   await page.goto(`/teacher/review/${reviewItem.itemId}`)
   await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0, { timeout: 15_000 })
 
-  // Renders exactly like a genuinely boxless row: no crop image, no
-  // broken-image frame standing in for it, no error affordance of any kind,
-  // and the banner reads the SAME false-branch sentence a boxless item
-  // gets -- not a half-true one that still claims to show the region.
+  // The crop failed, but the teacher can still compare the transcription
+  // with the mark. This is distinct from an item that never had a scan box.
+  await expect(page.getByRole("figure").getByText("Couldn't show the scan.", { exact: true })).toBeVisible()
+  // Announced once, through the panel's one persistent polite region.
+  await expect(page.getByRole("status").filter({ hasText: "Couldn't show the scan. Lemely's reading is below." })).toHaveCount(1)
   await expect(page.getByAltText(SCAN_CROP_ALT)).toHaveCount(0)
-  await expect(page.getByText("Lemely's reading of the answer")).toBeVisible()
+  await expect(page.getByText("Lemely read", { exact: true })).toBeVisible()
   // Scoped to a blob-sourced `<img>` specifically, not `getByRole("img")` --
   // this page legitimately carries two unrelated `role="img"` avatars (the
   // signed-in teacher's own, in the nav chrome, and the student's initials
@@ -347,6 +349,35 @@ test("a 404 from the crop route renders as absence, even though hasSourceBox is 
   // never surfaced the forced 404 as a React error or an uncaught exception,
   // not merely that the browser's own network log was ignored.
   expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
+})
+
+test("an undecodable whole-page response exits loading and leaves the answer available", async ({ page }) => {
+  const { teacher, reviewItem } = readSeed()
+  await page.goto("/login")
+  await page.getByLabel("Email").fill(teacher.email)
+  await page.getByLabel("Password").fill(teacher.password)
+  await page.getByRole("button", { name: /sign in/i }).click()
+  await expect(page).toHaveURL(/\/teacher$/, { timeout: 15_000 })
+
+  const pageRequests = watchPageRequests(page, reviewItem.itemId)
+  await page.route(`**/teacher/review/${reviewItem.itemId}/page`, (route) =>
+    route.fulfill({ status: 200, contentType: "image/png", body: "not a PNG" }),
+  )
+  await page.goto(`/teacher/review/${reviewItem.itemId}`)
+  await expect(page.getByText("Lemely read", { exact: true })).toBeVisible()
+  expect(pageRequests).toEqual([])
+
+  // HTTP 200 produces an object URL; the browser's image decoder, not the
+  // network catch branch, must take the view out of its loading state.
+  await page.getByRole("tab", { name: "Whole page" }).click()
+  await expect(page.getByRole("figure").getByText("Couldn't show the page.", { exact: true })).toBeVisible()
+  await expect(page.getByRole("status").filter({ hasText: "Couldn't show the page." })).toHaveCount(1)
+  await expect(page.getByRole("status", { name: "Loading the page" })).toHaveCount(0)
+  expect(pageRequests).toHaveLength(1)
+
+  await page.getByRole("tab", { name: "Answer", exact: true }).click()
+  await expect(page.getByAltText(SCAN_CROP_ALT)).toBeVisible()
+  await expect(page.getByText("Lemely read", { exact: true })).toBeVisible()
 })
 
 /** Reads the crop `<img>`'s own centre pixel through an offscreen canvas —

@@ -41,7 +41,7 @@ export function QueueRow({ item, focused, gone, selecting, picked, onOpen, onPic
           size={52}
           tone={tone === "gold" ? "gold" : tone === "neutral" ? "neutral" : "warn"}
           label={ringLabel(item.confidenceScore)}
-          center={<span className="font-mono text-sm font-semibold tabular-nums tracking-[-0.02em]">{ringText(item.confidenceScore)}{item.confidenceScore != null ? <small className="text-xs">%</small> : null}</span>}
+          center={item.confidenceScore == null ? <span className="block h-[2px] w-3 rounded-full bg-current opacity-80" /> : <span dir="ltr" className="rq-ring-num font-mono text-sm font-semibold tabular-nums slashed-zero tracking-[-0.02em]">{ringText(item.confidenceScore)}{/* At 100 a hanging % would touch this small ring's stroke, so "100%" centres as one group. */}<small className={`text-xs leading-none ${ringText(item.confidenceScore).length > 2 ? "ms-px" : "rq-ring-pct"}`}>%</small></span>}
         />
         <span className="grid min-w-0 gap-[3px]">
           <span className="flex min-w-0 flex-wrap items-baseline gap-x-1.5"><b className="max-w-full truncate text-md font-bold leading-[1.25] tracking-[-0.005em]">{item.studentDisplayName}</b><span className="text-dense text-on-surface-variant">{rowSubtitle(item)}</span></span>
