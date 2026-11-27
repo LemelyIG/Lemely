@@ -1,4 +1,4 @@
-"""Migration 0055_flashcard_generation: a generation status on flashcard decks.
+"""Migration 0061_flashcard_generation: a generation status on flashcard decks.
 
 Additive. Existing decks read as ``ready``; the check constraint refuses an unknown status; the
 downgrade drops the four columns and the constraint and nothing else.
@@ -29,8 +29,8 @@ if TYPE_CHECKING:
 
 import_all_models()
 
-REVISION = "0055_flashcard_generation"
-DOWN_REVISION = "0054_waitlist_email_confirmation"
+REVISION = "0061_flashcard_generation"
+DOWN_REVISION = "0060_merge_heads"
 TABLE = "flashcard_decks"
 NEW_COLUMNS = {"generation_status", "requested_count", "generation_started_at", "generation_error"}
 REVIEW_TABLE = "flashcard_reviews"
@@ -51,7 +51,7 @@ def _user(session: Session) -> uuid.UUID:
 
 
 def _insert_old_style_deck(session: Session, user_id: uuid.UUID) -> None:
-    # Only pre-0055 columns, as a deck written before this migration would be.
+    # Only pre-0061 columns, as a deck written before this migration would be.
     session.execute(
         sa.text(
             "INSERT INTO flashcard_decks (user_id, subject_code, title, origin) "
@@ -91,7 +91,7 @@ def _card(session: Session, user_id: uuid.UUID) -> uuid.UUID:
     ).scalar_one()
 
 
-def test_revision_chains_from_0054() -> None:
+def test_revision_chains_from_0060() -> None:
     script_dir = ScriptDirectory.from_config(Config("alembic.ini"))
     revision = script_dir.get_revision(REVISION)
     assert revision is not None

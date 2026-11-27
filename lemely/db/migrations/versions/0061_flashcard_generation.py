@@ -1,7 +1,7 @@
 """flashcard decks: generation status (redesign L10).
 
-Revision ID: 0055_flashcard_generation
-Revises: 0054_waitlist_email_confirmation
+Revision ID: 0061_flashcard_generation
+Revises: 0060_merge_heads
 Create Date: 2026-11-15 00:00:00.000000
 
 Four columns and one check constraint on ``flashcard_decks``, plus an idempotency key on
@@ -27,8 +27,8 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 # Kept to <=32 chars: alembic_version.version_num is varchar(32).
-revision: str = "0055_flashcard_generation"
-down_revision: str | Sequence[str] | None = "0054_waitlist_email_confirmation"
+revision: str = "0061_flashcard_generation"
+down_revision: str | Sequence[str] | None = "0060_merge_heads"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
