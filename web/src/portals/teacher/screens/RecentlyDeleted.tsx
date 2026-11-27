@@ -1,5 +1,4 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
-import { PermissionGate } from "@/components/acting/permission-gate"
 import { useState } from "react"
 import { ArrowCounterClockwise, Trash } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
@@ -58,18 +57,16 @@ function DeletedPaperRow({ paper, now }: { paper: DeletedTeacherPaper; now: stri
             {teacherPaperCountdownLabel(daysLeft)}
           </span>
         </div>
-        <PermissionGate permission="manage_classes" mode="hide">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => void handleRestore()}
-            loading={restorePaper.isPending}
-            disabled={gone}
-          >
-            <ArrowCounterClockwise size={16} weight="bold" />
-            Restore
-          </Button>
-        </PermissionGate>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => void handleRestore()}
+          loading={restorePaper.isPending}
+          disabled={gone}
+        >
+          <ArrowCounterClockwise size={16} weight="bold" />
+          Restore
+        </Button>
       </div>
       {error ? (
         <p role="alert" className="text-body-sm text-error">

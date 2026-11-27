@@ -310,9 +310,6 @@ export const FIXTURE_PROFILE: Profile = {
   avatarUrl: null,
   timezone: "Africa/Cairo",
   timezoneIsExplicit: true,
-  // A number on file, so the previews do not show the UD-11 phone banner.
-  phone: "+201000000000",
-  phoneMissing: false,
 }
 
 export const FIXTURE_NOTIFICATIONS: NotificationsPage = {

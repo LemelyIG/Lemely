@@ -45,8 +45,6 @@ export interface ShellTopBarProps {
   /** Where the native back chevron goes when there is no history (portal root). */
   backFallback: string
   account: Omit<AccountPanelProps, "triggerClassName">
-  /** Teacher only: the lead teacher being worked for. The bar carries the cue too: a primary ring, inset so the full-bleed phone bar does not clip it, at every width, and the name from `lg` up. */
-  actingAs?: string
 }
 
 /** `.as-bar.is-stuck`: the bar lifts once the page scrolls under it. */
@@ -91,7 +89,6 @@ export function ShellTopBar({
   largeTitleAction,
   backFallback,
   account,
-  actingAs,
 }: ShellTopBarProps) {
   const overlayState = useOverlayState()
   const { data: counts } = useNotificationCounts()
@@ -109,8 +106,7 @@ export function ShellTopBar({
         data-stuck={stuck}
         data-title-level={level}
         data-collapsed={collapsed}
-        data-acting={actingAs ? "true" : undefined}
-        className={cn(BAR, "lm-native-bar", actingAs && "ring-2 ring-inset ring-primary")}
+        className={cn(BAR, "lm-native-bar")}
       >
         {level === "detail" ? (
           <NativeBack fallback={backFallback} label={backLabel} />
@@ -140,23 +136,13 @@ export function ShellTopBar({
         </button>
         {/* aria-hidden: the page's h1 carries the name, so a screen reader would hear it twice. */}
         <p data-shell-title aria-hidden="true" className={cn(
-            "min-w-0 truncate text-title-bar text-on-surface lm-native-inline-title",
-            // The acting chip sits right after the title and takes the push to the end itself.
-            !actingAs && "me-auto",
+            "me-auto min-w-0 truncate text-title-bar text-on-surface lm-native-inline-title",
             // A child pill in the bar (parent) takes the room: the title is the page's own h1 again just below, so it steps aside on small web phones.
             !native && "[header:has([data-child-switcher])_&]:max-phone:hidden",
           )}
         >
           {title}
         </p>
-        {actingAs ? (
-          <span
-            data-testid="acting-chip"
-            className="me-auto hidden min-w-0 flex-none items-center gap-1.5 truncate rounded-chip bg-primary-container px-2.5 py-1 text-label text-on-primary-container lg:inline-flex lg:max-w-60"
-          >
-            <span className="truncate">Working as {actingAs}</span>
-          </span>
-        ) : null}
         {actions}
         <Suspense
           fallback={

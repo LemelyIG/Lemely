@@ -14,7 +14,7 @@ Per tick, at most ``batch`` rows are handled, **each in its own transaction**:
    the template's notification type off is ``skipped``; the mock provider is
    ``skipped`` with ``last_error='mock_provider'`` and never ``sent`` (SC-6); a 24 h sent count at
    or above ``[tutoring] email_daily_cap`` is ``skipped`` (counted under an advisory lock, so
-   replicas cannot overshoot); billing notices are exempt from the cap and out of its count (UD-9);
+   replicas cannot overshoot);
 3. send, and mark ``sent`` or ``failed`` with ``attempts = 1``. A ``skipped`` row keeps
    ``attempts = 0``: it was never handed to the provider.
 
@@ -47,7 +47,6 @@ from lemely.db.email_outbox_repo import (
 )
 from lemely.db.models.enums import EmailOutboxStatus
 from lemely.io.notify_email import (
-    BILLING_EMAIL_TEMPLATES,
     EMAIL_TEMPLATES,
     InvalidEmailContext,
     scrub_error,
@@ -171,13 +170,10 @@ def _decide_and_send(
             )
         return finish(EmailOutboxStatus.skipped, "mock_provider")
 
-    if row.template not in BILLING_EMAIL_TEMPLATES:
-        # Billing notices are exempt from the daily cap (UD-9): not skipped by it, and not counted
-        # toward it (``count_sent_since_in_session`` leaves them out), so they take no lock.
-        # Held until this transaction ends, i.e. until the send is marked and so counted (R3).
-        lock_daily_cap_in_session(session)
-        if count_sent_since_in_session(session, moment - CAP_WINDOW) >= daily_cap:
-            return finish(EmailOutboxStatus.skipped, "daily_cap")
+    # Held until this transaction ends, i.e. until the send below is marked and so counted (R3).
+    lock_daily_cap_in_session(session)
+    if count_sent_since_in_session(session, moment - CAP_WINDOW) >= daily_cap:
+        return finish(EmailOutboxStatus.skipped, "daily_cap")
     try:
         context = validate_context(row.template, row.context)
     except InvalidEmailContext:

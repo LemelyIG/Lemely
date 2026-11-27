@@ -32,7 +32,6 @@ from lemely import __version__
 from lemely.db.admin_repo import (
     PlatformAdminService,
     SubscriptionAlreadyDecidedError,
-    SubscriptionConflictError,
     SubscriptionNotFoundError,
 )
 from lemely.db.models.enums import Role
@@ -175,58 +174,32 @@ def activation_queue(
     )
 
 
-@router.post(
-    "/admin/activations/{subscription_id}/activate",
-    response_model=ActivationResultDTO,
-    deprecated=True,
-)
+@router.post("/admin/activations/{subscription_id}/activate", response_model=ActivationResultDTO)
 def activate_subscription(
     subscription_id: uuid.UUID,
     body: ActivationDecisionDTO,
     service: Annotated[PlatformAdminService, Depends(get_platform_admin_service)],
-    auth: Annotated[AuthContext, Depends(require_role(Role.platform_admin))],
 ) -> ActivationResultDTO:
     """Activate a pending subscription, recording the note.
 
     A subscription that has already been decided is a **409**, not an overwrite:
-    two admins working one queue is the ordinary case here. So is activating one for a
-    user who already holds a live subscription (a second live plan is never allowed).
-
-    Deprecated: the admin billing customer view's manual activation (``/api/admin/billing``) is
-    the new home; this route stays for the existing Activations screen and is audited.
+    two admins working one queue is the ordinary case here.
     """
-    return _decide(
-        service,
-        subscription_id,
-        activate=True,
-        note=body.note,
-        admin_user_id=uuid.UUID(auth.user_id),
-    )
+    return _decide(service, subscription_id, activate=True, note=body.note)
 
 
-@router.post(
-    "/admin/activations/{subscription_id}/reject",
-    response_model=ActivationResultDTO,
-    deprecated=True,
-)
+@router.post("/admin/activations/{subscription_id}/reject", response_model=ActivationResultDTO)
 def reject_subscription(
     subscription_id: uuid.UUID,
     body: ActivationDecisionDTO,
     service: Annotated[PlatformAdminService, Depends(get_platform_admin_service)],
-    auth: Annotated[AuthContext, Depends(require_role(Role.platform_admin))],
 ) -> ActivationResultDTO:
     """Reject a pending subscription, recording the note.
 
     The row lands on ``rejected``, not ``cancelled`` — the platform declining a
     request and a subscriber ending one are different events (migration ``0019``).
     """
-    return _decide(
-        service,
-        subscription_id,
-        activate=False,
-        note=body.note,
-        admin_user_id=uuid.UUID(auth.user_id),
-    )
+    return _decide(service, subscription_id, activate=False, note=body.note)
 
 
 def _decide(
@@ -235,16 +208,13 @@ def _decide(
     *,
     activate: bool,
     note: str | None,
-    admin_user_id: uuid.UUID,
 ) -> ActivationResultDTO:
     """Shared error mapping for the two decision routes."""
     try:
-        status = service.decide_activation(
-            subscription_id, activate=activate, note=note, admin_user_id=admin_user_id
-        )
+        status = service.decide_activation(subscription_id, activate=activate, note=note)
     except SubscriptionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except (SubscriptionAlreadyDecidedError, SubscriptionConflictError) as exc:
+    except SubscriptionAlreadyDecidedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return ActivationResultDTO(subscriptionId=str(subscription_id), status=status.value)
 

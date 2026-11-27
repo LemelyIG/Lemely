@@ -12,11 +12,10 @@ from __future__ import annotations
 # These imports must come before import_all_models so they are always available
 # regardless of whether the caller has already triggered the lazy imports.
 from lemely.db.models.academic import ExamDate, MarkScheme, Paper, Subject
-from lemely.db.models.admin_audit import AdminAuditLog
 from lemely.db.models.attempts import Attempt, QuestionResult, Upload, WeaknessRecord
 from lemely.db.models.auth_cooldowns import AuthCooldown
 from lemely.db.models.auth_tokens import AuthToken
-from lemely.db.models.billing import PlanTier, Subscription, SubscriptionPeriod
+from lemely.db.models.billing import PlanTier, Subscription
 from lemely.db.models.catalogue import SubjectTopic, SyllabusPaper
 from lemely.db.models.deletion import ClassPaperExclusion
 from lemely.db.models.engagement import Streak, XpEvent
@@ -88,7 +87,6 @@ from lemely.db.models.study_plan import StudyPlan as StudyPlanTable
 from lemely.db.models.study_plan import StudyPlanActivityType
 from lemely.db.models.study_plan import StudyPlanSession as StudyPlanSessionTable
 from lemely.db.models.teacher_papers import TeacherPaper
-from lemely.db.models.team import TeacherMember
 from lemely.db.models.thresholds import ComponentThreshold, OptionThreshold
 from lemely.db.models.users import Device, Friendship, ParentChildLink, User
 
@@ -103,12 +101,10 @@ def import_all_models() -> None:
     """
     from lemely.db.models import (  # noqa: F401
         academic,
-        admin_audit,
         attempts,
         auth_cooldowns,
         auth_tokens,
         billing,
-        billing_ops,
         catalogue,
         deletion,
         engagement,
@@ -121,10 +117,8 @@ def import_all_models() -> None:
         quizzes,
         study_plan,
         teacher_papers,
-        team,
         thresholds,
         tutoring,
-        usage,
         users,
         waitlist,
     )
@@ -148,7 +142,6 @@ from lemely.db.models.otp_challenges import OtpChallenge  # noqa: E402
 __all__ = [
     "SESSION_MONTH_LABELS",
     # Models
-    "AdminAuditLog",
     "Announcement",
     "AnnouncementRead",
     "AtRiskAcknowledgement",
@@ -225,10 +218,8 @@ __all__ = [
     "Subject",
     "SubjectTopic",
     "Subscription",
-    "SubscriptionPeriod",
     "SubscriptionStatus",
     "SyllabusPaper",
-    "TeacherMember",
     "TeacherPaper",
     "TimestampMixin",
     "Upload",

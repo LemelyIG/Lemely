@@ -9,12 +9,10 @@ and the cross-tenant 403/no-body-leakage split on the result route (D4.6 §7).
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
 import sqlalchemy as sa
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
@@ -24,13 +22,11 @@ from sqlalchemy.orm import Session, sessionmaker
 from lemely.db.base import Base
 from lemely.db.models import User
 from lemely.db.models.enums import DifficultySource, QuestionSource, Role
-from lemely.db.models.quizzes import QuizAssignment
 from lemely.db.placement_repo import PlacementService
 from lemely.db.question_bank_repo import NewBankQuestion, QuestionBankService
 from lemely.runtime.config import DatabaseSettings
 from lemely.web import create_app
-from lemely.web.deps import AuthContext, get_auth_context, get_placement_service, get_user_mirror
-from tests.test_student_correct import _PgUserMirror
+from lemely.web.deps import AuthContext, get_auth_context, get_placement_service
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -105,24 +101,10 @@ def _auth_as(client: TestClient, user_id: uuid.UUID, role: Role) -> None:
     )
 
 
-def _use_user_mirror(client: TestClient, sm: sessionmaker[Session]) -> None:
-    """``POST /placement`` reads the mirror for ``require_verified_email``."""
-    app = client.app
-    assert isinstance(app, FastAPI)
-    app.dependency_overrides[get_user_mirror] = lambda: _PgUserMirror(sm)
-
-
-def _seed_user(sm: sessionmaker[Session], role: Role, *, verified: bool = True) -> uuid.UUID:
+def _seed_user(sm: sessionmaker[Session], role: Role) -> uuid.UUID:
     uid = uuid.uuid4()
     with sm.begin() as session:
-        session.add(
-            User(
-                id=uid,
-                email=f"{uid}@example.com",
-                role=role,
-                email_verified_at=datetime.now(UTC) if verified else None,
-            )
-        )
+        session.add(User(id=uid, email=f"{uid}@example.com", role=role))
     return uid
 
 
@@ -210,7 +192,6 @@ def test_create_route_returns_201_with_the_assembled_counts(
     placement_service: PlacementService,
 ) -> None:
     _use_placement_service(client, placement_service)
-    _use_user_mirror(client, pg_sessionmaker)
     student = _seed_user(pg_sessionmaker, Role.student)
     _seed_placement_bank(pg_sessionmaker)
     _auth_as(client, student, Role.student)
@@ -225,59 +206,6 @@ def test_create_route_returns_201_with_the_assembled_counts(
     assert body["topicCount"] >= 4
 
 
-def test_create_route_unverified_student_is_403_and_assigns_nothing(
-    client: TestClient,
-    pg_sessionmaker: sessionmaker[Session],
-    placement_service: PlacementService,
-) -> None:
-    """The free signup allowance is granted on verification, so placement
-    (metered marking) requires a verified email."""
-    _use_placement_service(client, placement_service)
-    _use_user_mirror(client, pg_sessionmaker)
-    student = _seed_user(pg_sessionmaker, Role.student, verified=False)
-    _seed_placement_bank(pg_sessionmaker)
-    _auth_as(client, student, Role.student)
-
-    resp = client.post("/api/student/placement", json={"subjectCode": "0625"})
-
-    assert resp.status_code == 403
-    assert resp.json() == {"detail": {"code": "email_unverified"}}
-    with pg_sessionmaker() as session:
-        count = session.scalar(sa.select(sa.func.count()).select_from(QuizAssignment))
-    assert count == 0
-
-
-def test_create_route_verified_student_succeeds(
-    client: TestClient,
-    pg_sessionmaker: sessionmaker[Session],
-    placement_service: PlacementService,
-) -> None:
-    _use_placement_service(client, placement_service)
-    _use_user_mirror(client, pg_sessionmaker)
-    student = _seed_user(pg_sessionmaker, Role.student, verified=True)
-    _seed_placement_bank(pg_sessionmaker)
-    _auth_as(client, student, Role.student)
-
-    resp = client.post("/api/student/placement", json={"subjectCode": "0625"})
-
-    assert resp.status_code == 201
-
-
-def test_availability_route_does_not_require_a_verified_email(
-    client: TestClient,
-    pg_sessionmaker: sessionmaker[Session],
-    placement_service: PlacementService,
-) -> None:
-    _use_placement_service(client, placement_service)
-    _use_user_mirror(client, pg_sessionmaker)
-    student = _seed_user(pg_sessionmaker, Role.student, verified=False)
-    _auth_as(client, student, Role.student)
-
-    resp = client.get("/api/student/placement/0625/availability")
-
-    assert resp.status_code == 200
-
-
 def test_create_route_409_payload_equals_the_availability_payload(
     client: TestClient,
     pg_sessionmaker: sessionmaker[Session],
@@ -286,7 +214,6 @@ def test_create_route_409_payload_equals_the_availability_payload(
     """D4.6 §4: the 409 on create-when-unavailable carries the identical
     payload ``GET .../availability`` would have returned — not a bare string."""
     _use_placement_service(client, placement_service)
-    _use_user_mirror(client, pg_sessionmaker)
     student = _seed_user(pg_sessionmaker, Role.student)
     _auth_as(client, student, Role.student)
 

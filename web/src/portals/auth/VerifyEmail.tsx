@@ -2,7 +2,6 @@
 import { useEffect, useRef, useState } from "react"
 import { Link, useNavigate, useParams } from "react-router-dom"
 import { useAuth } from "@/lib/auth/AuthContext"
-import { afterVerifyPath } from "@/lib/auth/signupNext"
 import { portalPathForRole } from "@/lib/auth/RequireAuth"
 import type { Session } from "@/lib/auth/storage"
 import { useProfile } from "@/lib/hooks/useMeApi"
@@ -11,7 +10,7 @@ import { Input } from "@/components/ui/input"
 import { SkeletonLine } from "@/components/ui/skeleton"
 import { verificationCodeFailureMessage, verificationFailureMessage } from "@/lib/authOutcome"
 import { AuthFrame } from "./Login"
-import { canSubmitCode, resendButtonLabel } from "./verifyEmailLogic"
+import { canSubmitCode, postVerifyPath, resendButtonLabel } from "./verifyEmailLogic"
 
 /*
  * G-07 · Email verification, pending and confirm (v5 Abyss).
@@ -232,7 +231,7 @@ function SignedInPending({ session }: { session: Session }) {
     verifyEmailCode.mutate(
       { code },
       {
-        onSuccess: () => navigate(afterVerifyPath(session), { replace: true }),
+        onSuccess: () => navigate(postVerifyPath(session), { replace: true }),
         onError: (err) =>
           setOutcome({ kind: "error", message: verificationCodeFailureMessage(err) }),
       },
@@ -416,7 +415,7 @@ function ConfirmScreen({ token }: { token: string }) {
     attempted.current = token
     verifyEmail.mutate(
       { token },
-      { onSuccess: () => navigate(afterVerifyPath(session), { replace: true }) },
+      { onSuccess: () => navigate(postVerifyPath(session), { replace: true }) },
     )
   }, [token, verifyEmail, session, navigate])
 

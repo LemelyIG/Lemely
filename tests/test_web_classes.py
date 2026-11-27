@@ -1091,13 +1091,12 @@ def test_enroll_with_malformed_student_id_is_4xx(
     assert 400 <= resp.status_code < 500
 
 
-def test_list_classes_with_malformed_caller_id_is_401(client: TestClient) -> None:
+def test_list_classes_with_malformed_caller_id_is_422(client: TestClient) -> None:
     """A token whose ``sub`` is not a UUID must not reach the DB as a 500."""
     client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
         user_id="not-a-uuid", role=Role.teacher.value
     )
-    # The team guard rejects a non-UUID token subject before the handler runs.
-    assert client.get("/api/teacher/classes").status_code == 401
+    assert client.get("/api/teacher/classes").status_code == 422
 
 
 def test_raise_for_maps_an_unenumerated_class_error_to_409() -> None:

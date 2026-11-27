@@ -20,7 +20,6 @@ in a way nobody would notice:
 
 from __future__ import annotations
 
-import threading
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -36,7 +35,6 @@ from sqlalchemy.orm import Session, sessionmaker
 from lemely.db.admin_repo import (
     PlatformAdminService,
     SubscriptionAlreadyDecidedError,
-    SubscriptionConflictError,
     SubscriptionNotFoundError,
 )
 from lemely.db.base import Base
@@ -50,7 +48,6 @@ from lemely.db.models import (
     Upload,
     User,
 )
-from lemely.db.models.admin_audit import AdminAuditLog
 from lemely.db.models.billing import PlanTier
 from lemely.db.models.enums import (
     AttemptOrigin,
@@ -174,16 +171,11 @@ def _subscription(
     *,
     status: SubscriptionStatus = SubscriptionStatus.inactive,
     created_at: datetime | None = None,
-    payer_id: uuid.UUID | None = None,
 ) -> uuid.UUID:
     subscription_id = uuid.uuid4()
     with sm.begin() as session:
         subscription = Subscription(
-            id=subscription_id,
-            user_id=user_id,
-            plan_tier_id=plan_id,
-            status=status,
-            payer_user_id=payer_id,
+            id=subscription_id, user_id=user_id, plan_tier_id=plan_id, status=status
         )
         if created_at is not None:
             subscription.created_at = created_at
@@ -216,11 +208,10 @@ def _paper_with_scheme(sm: sessionmaker[Session], *, variant: int, with_scheme: 
 
 def _client(sm: sessionmaker[Session]) -> Iterator[TestClient]:
     service = PlatformAdminService(sm)
-    admin_id = _user(sm, Role.platform_admin)  # the audit log has a foreign key to users
     app = create_app()
     app.dependency_overrides[get_platform_admin_service] = lambda: service
     app.dependency_overrides[get_auth_context] = lambda: AuthContext(
-        user_id=str(admin_id), role=Role.platform_admin.value
+        user_id=str(uuid.uuid4()), role=Role.platform_admin.value
     )
     client = TestClient(app)
     try:
@@ -395,11 +386,7 @@ def test_activation_records_the_manual_flag_the_instant_and_the_note(
     decided_at = datetime(2026, 8, 14, 9, 0, tzinfo=UTC)
 
     status = PlatformAdminService(pg_sessionmaker).decide_activation(
-        subscription_id,
-        activate=True,
-        note="Paid by transfer, receipt seen",
-        now=decided_at,
-        admin_user_id=_user(pg_sessionmaker, Role.platform_admin),
+        subscription_id, activate=True, note="Paid by transfer, receipt seen", now=decided_at
     )
 
     assert status is SubscriptionStatus.active
@@ -424,10 +411,7 @@ def test_a_rejection_is_rejected_not_cancelled_and_has_no_activation_instant(
     subscription_id = _subscription(pg_sessionmaker, user, plan)
 
     status = PlatformAdminService(pg_sessionmaker).decide_activation(
-        subscription_id,
-        activate=False,
-        note="No payment received",
-        admin_user_id=_user(pg_sessionmaker, Role.platform_admin),
+        subscription_id, activate=False, note="No payment received"
     )
 
     assert status is SubscriptionStatus.rejected
@@ -446,13 +430,10 @@ def test_a_second_decision_is_refused_rather_than_overwriting_the_first(
     user = _user(pg_sessionmaker, Role.student)
     subscription_id = _subscription(pg_sessionmaker, user, plan)
     service = PlatformAdminService(pg_sessionmaker)
-    admin = _user(pg_sessionmaker, Role.platform_admin)
-    service.decide_activation(subscription_id, activate=True, note="first", admin_user_id=admin)
+    service.decide_activation(subscription_id, activate=True, note="first")
 
     with pytest.raises(SubscriptionAlreadyDecidedError) as excinfo:
-        service.decide_activation(
-            subscription_id, activate=False, note="second", admin_user_id=admin
-        )
+        service.decide_activation(subscription_id, activate=False, note="second")
 
     assert excinfo.value.status is SubscriptionStatus.active
     with pg_sessionmaker() as session:
@@ -464,9 +445,7 @@ def test_deciding_an_unknown_subscription_raises(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     with pytest.raises(SubscriptionNotFoundError):
-        PlatformAdminService(pg_sessionmaker).decide_activation(
-            uuid.uuid4(), activate=True, admin_user_id=_user(pg_sessionmaker, Role.platform_admin)
-        )
+        PlatformAdminService(pg_sessionmaker).decide_activation(uuid.uuid4(), activate=True)
 
 
 def test_decision_routes_map_their_errors(pg_sessionmaker: sessionmaker[Session]) -> None:
@@ -563,236 +542,3 @@ def test_recent_failed_uploads_are_listed_for_triage(
 
     assert health.recent_failed_uploads == [failed]
     assert health.uploads_by_status["failed"] == 1
-
-
-# ── Manual activation beside Paymob subscriptions (billing Phase 05) ─────────
-
-
-@pytest.mark.parametrize(
-    ("status", "paid"),
-    [
-        (SubscriptionStatus.active, True),
-        (SubscriptionStatus.past_due, True),
-        (SubscriptionStatus.pending_first_payment, True),
-        (SubscriptionStatus.active, False),  # another complimentary plan
-    ],
-)
-def test_activation_is_refused_while_the_user_has_a_live_subscription(
-    pg_sessionmaker: sessionmaker[Session], status: SubscriptionStatus, paid: bool
-) -> None:
-    plan = _plan(pg_sessionmaker)
-    user = _user(pg_sessionmaker, Role.student)
-    _subscription(pg_sessionmaker, user, plan, status=status, payer_id=user if paid else None)
-    queued = _subscription(pg_sessionmaker, user, plan)
-
-    with pytest.raises(SubscriptionConflictError):
-        PlatformAdminService(pg_sessionmaker).decide_activation(
-            queued,
-            activate=True,
-            note="comp",
-            admin_user_id=_user(pg_sessionmaker, Role.platform_admin),
-        )
-
-    with pg_sessionmaker() as session:
-        assert session.scalars(sa.select(AdminAuditLog)).all() == []
-        row = session.get(Subscription, queued)
-        assert row is not None
-        assert row.status is SubscriptionStatus.inactive
-        assert row.is_manually_activated is False
-
-
-@pytest.mark.parametrize(
-    "ended",
-    [SubscriptionStatus.expired, SubscriptionStatus.cancelled, SubscriptionStatus.rejected],
-)
-def test_activation_still_works_when_only_ended_subscriptions_exist(
-    pg_sessionmaker: sessionmaker[Session], ended: SubscriptionStatus
-) -> None:
-    plan = _plan(pg_sessionmaker)
-    user = _user(pg_sessionmaker, Role.student)
-    _subscription(pg_sessionmaker, user, plan, status=ended, payer_id=user)
-    queued = _subscription(pg_sessionmaker, user, plan)
-
-    status = PlatformAdminService(pg_sessionmaker).decide_activation(
-        queued, activate=True, admin_user_id=_user(pg_sessionmaker, Role.platform_admin)
-    )
-
-    assert status is SubscriptionStatus.active
-
-
-def test_rejection_is_not_blocked_by_a_live_subscription(
-    pg_sessionmaker: sessionmaker[Session],
-) -> None:
-    """Only an activation would create a second live plan; declining one never does."""
-    plan = _plan(pg_sessionmaker)
-    user = _user(pg_sessionmaker, Role.student)
-    _subscription(pg_sessionmaker, user, plan, status=SubscriptionStatus.active, payer_id=user)
-    queued = _subscription(pg_sessionmaker, user, plan)
-
-    status = PlatformAdminService(pg_sessionmaker).decide_activation(
-        queued, activate=False, admin_user_id=_user(pg_sessionmaker, Role.platform_admin)
-    )
-
-    assert status is SubscriptionStatus.rejected
-
-
-def test_activation_route_answers_409_on_a_live_subscription(
-    pg_sessionmaker: sessionmaker[Session],
-) -> None:
-    plan = _plan(pg_sessionmaker)
-    user = _user(pg_sessionmaker, Role.student)
-    _subscription(pg_sessionmaker, user, plan, status=SubscriptionStatus.past_due, payer_id=user)
-    queued = _subscription(pg_sessionmaker, user, plan)
-
-    for client in _client(pg_sessionmaker):
-        response = client.post(f"/api/admin/activations/{queued}/activate", json={"note": "x"})
-        assert response.status_code == 409
-        assert "live subscription" in response.json()["detail"]
-
-
-def test_activation_waits_for_the_users_lock_before_checking_for_a_live_plan(
-    pg_sessionmaker: sessionmaker[Session],
-) -> None:
-    """Two queued plans for one user are decided one at a time (the manual/manual race).
-
-    The decision locks only the row it changes, so two admins deciding two different queued rows
-    for the same user could each see the other still ``inactive``. A per-user lock closes that:
-    while another transaction holds the user's lock, the decision does not run.
-    """
-    plan = _plan(pg_sessionmaker)
-    user = _user(pg_sessionmaker, Role.student)
-    first = _subscription(pg_sessionmaker, user, plan)
-    done = threading.Event()
-    errors: list[BaseException] = []
-
-    def decide() -> None:
-        try:
-            PlatformAdminService(pg_sessionmaker).decide_activation(
-                first, activate=True, admin_user_id=_user(pg_sessionmaker, Role.platform_admin)
-            )
-        except BaseException as exc:  # reported to the main thread
-            errors.append(exc)
-        finally:
-            done.set()
-
-    with pg_sessionmaker() as holder, holder.begin():
-        holder.execute(sa.select(User.id).where(User.id == user).with_for_update(key_share=True))
-        worker = threading.Thread(target=decide)
-        worker.start()
-        assert not done.wait(timeout=1.0), "the decision ran while the user's lock was held"
-    assert done.wait(timeout=10.0)
-    worker.join()
-    assert errors == []
-    with pg_sessionmaker() as session:
-        row = session.get(Subscription, first)
-        assert row is not None
-        assert row.status is SubscriptionStatus.active
-
-
-def test_two_queued_activations_for_one_user_cannot_both_succeed(
-    pg_sessionmaker: sessionmaker[Session],
-) -> None:
-    plan = _plan(pg_sessionmaker)
-    user = _user(pg_sessionmaker, Role.student)
-    queued = [_subscription(pg_sessionmaker, user, plan) for _ in range(2)]
-    admin = _user(pg_sessionmaker, Role.platform_admin)
-    start = threading.Barrier(2)
-    outcomes: list[str] = []
-
-    def decide(subscription_id: uuid.UUID) -> None:
-        start.wait()
-        try:
-            PlatformAdminService(pg_sessionmaker).decide_activation(
-                subscription_id, activate=True, admin_user_id=admin
-            )
-            outcomes.append("activated")
-        except SubscriptionConflictError:
-            outcomes.append("refused")
-
-    threads = [threading.Thread(target=decide, args=(sid,)) for sid in queued]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=30)
-    assert sorted(outcomes) == ["activated", "refused"]
-    with pg_sessionmaker() as session:
-        live = session.scalar(
-            sa.select(sa.func.count())
-            .select_from(Subscription)
-            .where(Subscription.user_id == user, Subscription.status == SubscriptionStatus.active)
-        )
-    assert live == 1
-
-
-# ── The queue is audited (billing Phase 07, DV-26) ───────────────────────────
-
-
-def test_each_activation_decision_is_audited(pg_sessionmaker: sessionmaker[Session]) -> None:
-    plan = _plan(pg_sessionmaker)
-    admin = _user(pg_sessionmaker, Role.platform_admin)
-    with_note = _subscription(pg_sessionmaker, _user(pg_sessionmaker, Role.student), plan)
-    without_note = _subscription(pg_sessionmaker, _user(pg_sessionmaker, Role.student), plan)
-    blank_note = _subscription(pg_sessionmaker, _user(pg_sessionmaker, Role.student), plan)
-    service = PlatformAdminService(pg_sessionmaker)
-
-    service.decide_activation(
-        with_note, activate=True, note="Paid by transfer", admin_user_id=admin
-    )
-    service.decide_activation(without_note, activate=False, admin_user_id=admin)
-    service.decide_activation(blank_note, activate=True, note="   ", admin_user_id=admin)
-
-    with pg_sessionmaker() as session:
-        rows = {r.target_id: r for r in session.scalars(sa.select(AdminAuditLog))}
-    assert len(rows) == 3
-    assert rows[with_note].reason == "Paid by transfer"
-    assert rows[with_note].action == "subscription.activation_decision"
-    assert rows[with_note].after == {"status": "active", "is_manually_activated": True}
-    assert rows[without_note].reason == "Decided from the activations queue without a note."
-    assert rows[without_note].before == {"status": "inactive"}
-    assert rows[without_note].after == {"status": "rejected", "is_manually_activated": False}
-    assert rows[blank_note].reason == "Decided from the activations queue without a note."
-    assert {r.admin_user_id for r in rows.values()} == {admin}
-
-
-def test_a_refused_decision_writes_no_audit_row(pg_sessionmaker: sessionmaker[Session]) -> None:
-    plan = _plan(pg_sessionmaker)
-    admin = _user(pg_sessionmaker, Role.platform_admin)
-    decided = _subscription(
-        pg_sessionmaker,
-        _user(pg_sessionmaker, Role.student),
-        plan,
-        status=SubscriptionStatus.active,
-    )
-    with pytest.raises(SubscriptionAlreadyDecidedError):
-        PlatformAdminService(pg_sessionmaker).decide_activation(
-            decided, activate=True, admin_user_id=admin
-        )
-    with pytest.raises(SubscriptionNotFoundError):
-        PlatformAdminService(pg_sessionmaker).decide_activation(
-            uuid.uuid4(), activate=True, admin_user_id=admin
-        )
-    with pg_sessionmaker() as session:
-        assert session.scalars(sa.select(AdminAuditLog)).all() == []
-
-
-def test_the_old_routes_audit_under_the_callers_id_and_are_deprecated(
-    pg_sessionmaker: sessionmaker[Session],
-) -> None:
-    plan = _plan(pg_sessionmaker)
-    queued = _subscription(pg_sessionmaker, _user(pg_sessionmaker, Role.student), plan)
-    rejected = _subscription(pg_sessionmaker, _user(pg_sessionmaker, Role.student), plan)
-
-    for client in _client(pg_sessionmaker):
-        ok = client.post(f"/api/admin/activations/{queued}/activate", json={"note": "paid"})
-        no = client.post(f"/api/admin/activations/{rejected}/reject", json={})
-        schema = client.get("/openapi.json").json()["paths"]
-    assert ok.json() == {"subscriptionId": str(queued), "status": "active"}
-    assert no.json() == {"subscriptionId": str(rejected), "status": "rejected"}
-    assert schema["/api/admin/activations/{subscription_id}/activate"]["post"]["deprecated"] is True
-    assert schema["/api/admin/activations/{subscription_id}/reject"]["post"]["deprecated"] is True
-    with pg_sessionmaker() as session:
-        rows = {r.target_id: r for r in session.scalars(sa.select(AdminAuditLog))}
-        admins = set(session.scalars(sa.select(User.id).where(User.role == Role.platform_admin)))
-    assert {r.admin_user_id for r in rows.values()} <= admins
-    assert rows[queued].reason == "paid"
-    assert rows[rejected].reason == "Decided from the activations queue without a note."

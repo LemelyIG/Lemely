@@ -35,7 +35,6 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
-from lemely.core.metered_actions import MAX_ESTIMATE_INPUTS
 from lemely.db.base import Base
 from lemely.db.class_repo import ClassNotFoundError, ClassOwnershipError, ClassService
 from lemely.db.models import User
@@ -49,7 +48,7 @@ from lemely.db.models.enums import (
     QuizSubmissionStatus,
     Role,
 )
-from lemely.db.models.quizzes import QuestionBank, QuizQuestion, QuizSubmission
+from lemely.db.models.quizzes import QuestionBank, QuizSubmission
 from lemely.db.question_bank_repo import QuestionBankService
 from lemely.db.quiz_repo import (
     QuizNotFoundError,
@@ -469,149 +468,6 @@ def test_generate_questions_never_exceeds_pool_count_matching(
     # The builder created exactly as many as the bank could actually supply.
     assert len(result.created) == count.matching
     assert result.shortfall == count.shortfall
-
-
-# ---------------------------------------------------------------------------
-# The 50-question ceiling, top-up and de-duplication.
-# ---------------------------------------------------------------------------
-
-
-def _seed_band_rows(sm: sessionmaker[Session], per_band: int) -> set[uuid.UUID]:
-    ids: set[uuid.UUID] = set()
-    for band in (
-        QuestionDifficulty.foundation,
-        QuestionDifficulty.standard,
-        QuestionDifficulty.challenge,
-    ):
-        for _ in range(per_band):
-            ids.add(_seed_bank_row(sm, subject_code="0625", difficulty=band))
-    return ids
-
-
-def _draft(quiz_service: QuizService, teacher: uuid.UUID, requested: int) -> uuid.UUID:
-    created = quiz_service.create_quiz(teacher, "0625", "Quiz")
-    quiz_service.patch_draft(
-        teacher, created.quiz_id, pool_source=QuestionSource.generated, requested_count=requested
-    )
-    return created.quiz_id
-
-
-def test_generate_questions_twice_does_not_grow_a_quiz_past_its_requested_count(
-    quiz_service: QuizService, pg_sessionmaker: sessionmaker[Session]
-) -> None:
-    teacher = _seed_teacher(pg_sessionmaker)
-    _seed_band_rows(pg_sessionmaker, 10)
-    quiz_id = _draft(quiz_service, teacher, 5)
-
-    first = quiz_service.generate_questions(teacher, quiz_id)
-    second = quiz_service.generate_questions(teacher, quiz_id)
-
-    assert len(first.created) == 5
-    assert second.created == []
-    assert len(quiz_service.get_quiz(teacher, quiz_id).questions) == 5
-
-
-def test_raising_the_count_tops_up_with_only_new_bank_rows(
-    quiz_service: QuizService, pg_sessionmaker: sessionmaker[Session]
-) -> None:
-    teacher = _seed_teacher(pg_sessionmaker)
-    _seed_band_rows(pg_sessionmaker, 10)
-    quiz_id = _draft(quiz_service, teacher, 5)
-    quiz_service.generate_questions(teacher, quiz_id)
-    quiz_service.patch_draft(teacher, quiz_id, requested_count=12)
-
-    topped_up = quiz_service.generate_questions(teacher, quiz_id)
-
-    questions = quiz_service.get_quiz(teacher, quiz_id).questions
-    bank_ids = [q.question_bank_id for q in questions]
-    assert len(topped_up.created) == 7
-    assert len(questions) == 12
-    assert len(set(bank_ids)) == 12  # no bank row twice
-
-
-def test_the_top_up_over_fetches_so_taken_rows_cannot_starve_it(
-    quiz_service: QuizService,
-    bank_service: QuestionBankService,
-    pg_sessionmaker: sessionmaker[Session],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Pin the over-fetch deterministically: the bank answers with the taken rows first.
-
-    The real selection is ``ORDER BY random()``, so without the over-fetch a top-up only
-    sometimes draws a row already on the quiz. This selector is adversarial instead: it
-    returns every already-taken row ahead of the fresh ones, so a top-up that asks for
-    just ``needed`` rows gets them filtered away and under-fills, every time.
-    """
-    teacher = _seed_teacher(pg_sessionmaker)
-    _seed_band_rows(pg_sessionmaker, 10)
-    quiz_id = _draft(quiz_service, teacher, 5)
-    quiz_service.generate_questions(teacher, quiz_id)
-    with pg_sessionmaker() as session:
-        taken = set(
-            session.scalars(
-                sa.select(QuizQuestion.question_bank_id).where(QuizQuestion.quiz_id == quiz_id)
-            )
-        )
-    assert len(taken) == 5
-    real = bank_service.select_questions
-
-    def taken_first(*args: object, count: int, **kwargs: object) -> list[object]:
-        rows = real(*args, count=1000, **kwargs)  # type: ignore[arg-type]
-        rows.sort(key=lambda row: row.id not in taken)  # stable: taken rows lead
-        return list(rows[:count])
-
-    monkeypatch.setattr(bank_service, "select_questions", taken_first)
-    quiz_service.patch_draft(teacher, quiz_id, requested_count=12)
-
-    topped_up = quiz_service.generate_questions(teacher, quiz_id)
-
-    assert len(topped_up.created) == 7
-    assert len(quiz_service.get_quiz(teacher, quiz_id).questions) == 12
-
-
-def test_a_removed_question_is_not_selected_again(
-    quiz_service: QuizService, pg_sessionmaker: sessionmaker[Session]
-) -> None:
-    teacher = _seed_teacher(pg_sessionmaker)
-    _seed_band_rows(pg_sessionmaker, 10)
-    quiz_id = _draft(quiz_service, teacher, 5)
-    quiz_service.generate_questions(teacher, quiz_id)
-    first = quiz_service.get_quiz(teacher, quiz_id).questions[0]
-    quiz_service.remove_question(teacher, quiz_id, first.question_ref)
-
-    quiz_service.generate_questions(teacher, quiz_id)  # tops back up to 5 included
-
-    questions = quiz_service.get_quiz(teacher, quiz_id).questions
-    live = [q for q in questions if q.status is QuizQuestionStatus.included]
-    assert len(live) == 5
-    assert [q.question_bank_id for q in questions].count(first.question_bank_id) == 1
-
-
-def test_a_legacy_requested_count_over_the_ceiling_is_capped_at_fifty(
-    quiz_service: QuizService, pg_sessionmaker: sessionmaker[Session]
-) -> None:
-    teacher = _seed_teacher(pg_sessionmaker)
-    _seed_band_rows(pg_sessionmaker, 40)
-    quiz_id = _draft(quiz_service, teacher, 80)  # only the route bounds it, never the service
-
-    result = quiz_service.generate_questions(teacher, quiz_id)
-
-    assert len(result.created) == MAX_ESTIMATE_INPUTS
-    assert len(quiz_service.get_quiz(teacher, quiz_id).questions) == MAX_ESTIMATE_INPUTS
-
-
-def test_a_quiz_already_at_the_ceiling_refuses_more_questions(
-    quiz_service: QuizService, pg_sessionmaker: sessionmaker[Session]
-) -> None:
-    teacher = _seed_teacher(pg_sessionmaker)
-    _seed_band_rows(pg_sessionmaker, 40)
-    quiz_id = _draft(quiz_service, teacher, 50)
-    quiz_service.generate_questions(teacher, quiz_id)
-
-    with pytest.raises(QuizValidationError, match="50"):
-        quiz_service.generate_questions(teacher, quiz_id)
-
-    assert len(quiz_service.get_quiz(teacher, quiz_id).questions) == MAX_ESTIMATE_INPUTS
 
 
 def test_pool_count_and_selection_agree_when_pool_fully_covers_request(

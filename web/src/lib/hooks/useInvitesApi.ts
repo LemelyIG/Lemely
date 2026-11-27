@@ -49,36 +49,20 @@ import type { InvitePreview } from "@/lib/authTypes"
 // ---------------------------------------------------------------------------
 
 /**
- * Clean a typed, pasted or deep-linked code: drop every space and dash, uppercase.
+ * Trim and uppercase a typed or deep-linked code.
  *
  * Both code families this resolves against are minted from all-uppercase,
- * non-ambiguous alphabets (`invite_codes.py`'s `INVITE_CODE_ALPHABET`,
+ * non-ambiguous alphabets (`invite_repo.py`'s `_INVITE_CODE_ALPHABET`,
  * `class_repo.py`'s `_JOIN_CODE_ALPHABET` — neither contains a lowercase
- * letter, a space or a dash), and both are matched with a case-sensitive `==`
- * in SQL. So a correctly-minted code is already a no-op under this function.
- * What it forgives is how a holder copies a code: lowercase, trailing
- * whitespace, or one written in groups ("K7P-4RQ2", "K7P4 RQ2"). Silently
- * failing that transcription as "not found" would be a worse, unexplained
- * failure than normalising it before the lookup.
+ * letter), and both are matched with a case-sensitive `==` in SQL. So a
+ * correctly-minted code is already a no-op under this function, and the only
+ * effect this ever has is turning a holder's lowercase transcription of a
+ * code read off a screen or a slip of paper into the one casing that can
+ * actually match — silently failing that transcription as "not found" would
+ * be a worse, unexplained failure than normalising it before the lookup.
  */
 export function normalizeInviteCode(raw: string): string {
-  return raw.replace(/[\s-]/g, "").toUpperCase()
-}
-
-/**
- * Whether a (normalised) code has the shape of one this app mints: 7 characters
- * (a class join code) or 10 (every invite code) from the non-ambiguous
- * alphabet `invite_codes.py` and `class_repo.py` share (no 0, 1, I or O).
- * Mirrors `is_wellformed_code` in `lemely/web/routers/invites.py`. The server
- * answers 404 to anything else without looking it up, so sending it only costs
- * a round trip; the entry screen blocks it instead.
- */
-// Hard-coded copy of the server's format: keep in step with `is_wellformed_code` in
-// `lemely/web/routers/invites.py` and `INVITE_CODE_ALPHABET` in `lemely/db/invite_codes.py`.
-const INVITE_CODE_PATTERN = /^(?:[ABCDEFGHJKLMNPQRSTUVWXYZ2-9]{7}|[ABCDEFGHJKLMNPQRSTUVWXYZ2-9]{10})$/
-
-export function isInviteCodeFormat(code: string): boolean {
-  return INVITE_CODE_PATTERN.test(code)
+  return raw.trim().toUpperCase()
 }
 
 /**
@@ -98,14 +82,6 @@ export function isInviteCodeFormat(code: string): boolean {
  * looking for more.
  */
 export function describeInvitePreview(preview: InvitePreview): string[] {
-  if (preview.role === "assistant") {
-    // A team invite names the lead teacher and nothing else (`InvitePreviewDTO`: no school,
-    // class or child). What the role may do is the lead's choice and is not in the preview, so
-    // it is not claimed here; that billing and seats stay with the lead is true of every role.
-    const lead = preview.teacherName ?? "A teacher"
-    return [`${lead} invited you to assist on their team`, "Billing and seats stay with them."]
-  }
-
   if (preview.role === "parent") {
     // A parent invite is child-issued, never school/class-issued —
     // `schoolName`/`className`/`teacherName` are always `null` on this
@@ -148,14 +124,7 @@ export function describeInvitePreview(preview: InvitePreview): string[] {
  * the handoff is the same mechanism, not a new one. `role` comes from the
  * *preview* (what the code provisions), never from a caller's own session —
  * there is no session yet on this branch. */
-export function signupPathForInvite(
-  code: string,
-  role: "student" | "teacher" | "parent" | "assistant",
-): string {
-  // An assistant is an ordinary teacher account that redeems the code afterwards, through the
-  // team route. Signup's own redeem call goes to the invites route, which would only refuse it,
-  // so this sends them back here (`/join/<code>`) once the account exists.
-  if (role === "assistant") return `/signup/teacher?next=${encodeURIComponent(`/join/${code}`)}`
+export function signupPathForInvite(code: string, role: "student" | "teacher" | "parent"): string {
   return `/signup/${role}?code=${encodeURIComponent(code)}`
 }
 
@@ -176,9 +145,6 @@ export function signupPathForInvite(
  */
 export function canRedeemInviteAs(previewRole: InvitePreview["role"], signedInRole: string): boolean {
   if (previewRole === "parent") return signedInRole === "parent"
-  // Only a teacher account can join a team as an assistant (`POST /teacher/team/assistants/redeem`
-  // is teacher-only), and the other roles' invites stay open to everyone but a parent.
-  if (previewRole === "assistant") return signedInRole === "teacher"
   return signedInRole !== "parent"
 }
 
@@ -188,10 +154,6 @@ export function canRedeemInviteAs(previewRole: InvitePreview["role"], signedInRo
  * screen expects to be rare. */
 export const INVITE_ROLE_MISMATCH_MESSAGE =
   "This invite doesn't match the kind of account you're signed in with. Sign out to use a different account."
-
-/** An assistant invite shown to a signed-in account that is not a teacher. */
-export const ASSISTANT_INVITE_NEEDS_TEACHER_MESSAGE =
-  "Only teacher accounts can join a team. Sign out to use a teacher account."
 
 /**
  * Narrows an `ApiError.detail` onto a structured seat-quota-exceeded marker,
@@ -307,7 +269,7 @@ export function previewErrorCopy(err: unknown): {
  * linked to — `JoinWithCodeScreen`'s signed-in-parent branch reads it to land
  * on `/parent/children/<childId>` instead of the parent portal's own root. */
 export interface RedeemInviteResult {
-  role: "student" | "teacher" | "parent" | "assistant"
+  role: "student" | "teacher" | "parent"
   schoolId: string | null
   classId: string | null
   childId: string | null
@@ -319,9 +281,8 @@ export interface RedeemInviteResult {
  * ever *adds* a bearer token when one is stored (`lib/api.ts`'s
  * `authHeaders`) rather than requiring one.
  *
- * `enabled` is false for a code that is not well-formed (so an empty one too):
- * mounting this screen with nothing typed or deep-linked yet fires no request, a
- * malformed code is never sent (the server would 404 it unlooked-up), and the query key for
+ * `enabled` is false for an empty code, both so mounting this screen with
+ * nothing typed or deep-linked yet fires no request, and so the query key for
  * "nothing to look up" (`["invites", "preview", ""]`) never collides with a
  * real code's key. No `fallback`, matching every other read in this family
  * (`useAdminApi.ts`'s own note): a 404 must reach the screen as a real query
@@ -333,9 +294,7 @@ export function useInvitePreview(code: string): UseQueryResult<InvitePreview, Er
   return useQuery({
     queryKey: ["invites", "preview", trimmed],
     queryFn: () => request<InvitePreview>(`/invites/${encodeURIComponent(trimmed)}`),
-    enabled: isInviteCodeFormat(trimmed),
-    // A 404 or 429 will not change on a retry (and a retry spends the route's rate limit).
-    retry: (count, err) => count < 1 && !(err instanceof ApiError && err.status >= 400 && err.status < 500),
+    enabled: trimmed.length > 0,
   })
 }
 

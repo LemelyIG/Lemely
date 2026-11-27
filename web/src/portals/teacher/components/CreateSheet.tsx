@@ -2,7 +2,6 @@
 import type { RefObject } from "react"
 import { Books, Megaphone, Plus, Sparkle, UsersThree, type Icon } from "@phosphor-icons/react"
 import { ActionSheet } from "@/components/shell/TopBarSheets"
-import { useActingTeacher } from "@/components/acting/acting-state"
 import { CREATE_ACTIONS, type CreateActionIcon } from "./topBarActions"
 
 const ACTION_ICON: Record<CreateActionIcon, Icon> = {
@@ -33,9 +32,6 @@ export function CreateSheet({
   onOpenChange?: (open: boolean) => void
   restoreFocusTo?: RefObject<HTMLElement | null>
 }) {
-  // While acting for a lead, only what the role may do is offered.
-  const { can } = useActingTeacher()
-  const actions = CREATE_ACTIONS.filter((action) => !action.permission || can(action.permission))
   return (
     <ActionSheet
       open={open}
@@ -47,7 +43,7 @@ export function CreateSheet({
       triggerLabel={CREATE_LABEL}
       eyebrow={CREATE_LABEL}
       title="Start something"
-      actions={actions.map((action) => {
+      actions={CREATE_ACTIONS.map((action) => {
         const Glyph = ACTION_ICON[action.icon]
         return {
           id: action.id,

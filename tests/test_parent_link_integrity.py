@@ -452,7 +452,6 @@ def test_parent_signup_at_cap_409_creates_no_user(sm: sessionmaker[Session]) -> 
             "proofToken": verified.json()["proofToken"],
             "password": "pw-123456",
             "acceptedTerms": True,
-            "phone": "+201012345678",
         },
     )
 
@@ -695,11 +694,6 @@ def _wired_guard(route: APIRoute) -> str:
 #: "the after-commit notify calls in the four handlers"). They resolve services, never refuse.
 _NOTIFY_DEPENDENCIES = frozenset({"get_notification_service", "get_push_transport"})
 
-#: The per-user limiters ``POST /api/invites/{code}/redeem`` gained. They only ever refuse with
-#: a 429 before any lookup; they add no authentication or role check, so the guard pin below
-#: still excludes them.
-_RATE_LIMIT_DEPENDENCIES = frozenset({"get_invite_redeem_limiters"})
-
 #: Every dependency callable of the four routes at ``b540af94^`` (the commit before T09),
 #: read from ``create_app()`` on an export of that revision: a guard added or removed
 #: anywhere in a route's dependency tree (``require_verified_email``, a second role check)
@@ -772,7 +766,6 @@ def test_existing_route_guards_unchanged() -> None:
 
     assert set(_DEPENDENCIES_BEFORE_T09) == set(declared)
     dependencies = {
-        key: _dependency_names(route) - _NOTIFY_DEPENDENCIES - _RATE_LIMIT_DEPENDENCIES
-        for key, route in routes.items()
+        key: _dependency_names(route) - _NOTIFY_DEPENDENCIES for key, route in routes.items()
     }
     assert dependencies == _DEPENDENCIES_BEFORE_T09

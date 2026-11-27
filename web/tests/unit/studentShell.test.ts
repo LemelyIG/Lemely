@@ -31,10 +31,9 @@ describe("student shell destinations (design A)", () => {
     ])
   })
 
-  it("puts Your profile, Plan and billing, Your parents and Recently deleted in the account panel", () => {
+  it("puts Your profile, Your parents and Recently deleted in the account panel", () => {
     expect(studentAccountLinks.map((l) => [l.label, l.to])).toEqual([
       ["Your profile", "/student/profile"],
-      ["Plan and billing", "/student/billing"],
       ["Your parents", "/student/parents"],
       ["Recently deleted", "/student/recently-deleted"],
     ])

@@ -1,4 +1,4 @@
-import { useReviewQueue } from "./useShellQueries"
+import { useReviewQueue } from "./useTeacherApi"
 
 /**
  * Queue-depth count for badges (C3d) — the sidebar "Review" nav item and the

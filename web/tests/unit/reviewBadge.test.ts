@@ -59,7 +59,7 @@ describe("useReviewQueueCount.ts", () => {
     // `useReviewQueue`'s own queryKey starts `["teacher", "review", "queue",
     // ...]` — calling the hook itself (rather than hand-rolling a fetch)
     // guarantees this can never drift from that prefix.
-    expect(source).toMatch(/import\s*\{[^}]*\buseReviewQueue\b[^}]*\}\s*from\s*"\.\/useShellQueries"/)
+    expect(source).toMatch(/import\s*\{[^}]*\buseReviewQueue\b[^}]*\}\s*from\s*"\.\/useTeacherApi"/)
     expect(source).toMatch(/useReviewQueue\(/)
   })
 

@@ -1,5 +1,3 @@
-import { isActingPartitionHash } from "@/lib/actingTeacher"
-
 /*
  * Task 10 (B6b) — which react-query keys are allowed to survive a reload via
  * the persisted cache (`queryPersister.ts`, wired into `main.tsx`'s
@@ -45,8 +43,6 @@ export function isPersistableQueryKey(key: readonly unknown[]): boolean {
  * (and testable) without constructing a real `Query`. */
 export interface PersistableQuery {
   queryKey: readonly unknown[]
-  /** Optional so a caller with only a key and a state still fits; a real `Query` always has it. */
-  queryHash?: string
   state: { status: string }
 }
 
@@ -70,10 +66,5 @@ export interface PersistableQuery {
  * successfully AND carries an allowlisted key is ever written to IndexedDB.
  */
 export function shouldPersistQuery(query: PersistableQuery): boolean {
-  // An assistant acting for a lead teacher caches that lead's classes under a partitioned hash
-  // (`lib/actingTeacher.ts`). The lead's data must not be written to this device's IndexedDB: the
-  // choice of lead is per tab, the persisted cache is shared by every tab, and the membership that
-  // allowed the read can end while the copy is still on disk.
-  if (query.queryHash !== undefined && isActingPartitionHash(query.queryHash)) return false
   return query.state.status === "success" && isPersistableQueryKey(query.queryKey)
 }

@@ -87,21 +87,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The new revision carries SWEEP_JOBS_SECRET and answers 503 on the sweep route without it,
-      # and Cloud Run has no min instances, so nothing else would ever run the billing sweeps.
-      # Stop the whole deploy here, before any migration runs and before deploy-backend,
-      # edge-secret or deploy-frontend can start (all three need this job), when the secret is
-      # missing, blank or unusable (shorter than 32 characters, whitespace, a character that
-      # breaks gcloud's header syntax). The script uses the standard library only, so it runs
-      # before Python is set up. Only the checks' verdicts are printed, never a value. The
-      # optional SWEEP_JOBS_SECRET_PREVIOUS is held to the same character set; see
-      # docs/deployment.md section 5.2 for the staged rotation.
-      - name: Preflight the sweep secret
-        env:
-          SWEEP_JOBS_SECRET: ${{ secrets.SWEEP_JOBS_SECRET }}
-          SWEEP_JOBS_SECRET_PREVIOUS: ${{ secrets.SWEEP_JOBS_SECRET_PREVIOUS }}
-        run: python3 scripts/scheduler_reconcile.py --preflight
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -314,23 +299,6 @@ jobs:
           echo "project number: ${BASH_REMATCH[1]}"
           echo "number=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
 
-      # Who drives the sweeper on the revision about to be deployed. The in-process loop is
-      # turned off only when this environment's Cloud Scheduler sweep job already exists, is
-      # enabled, carries the lemely-deploy marker and calls this environment's sweep route;
-      # otherwise, as on the first deploy that introduces the job, the loop stays on until a
-      # later deploy finds the job working. Two drivers are safe (the pass lock lets one pass run
-      # at a time); no driver is not, so any failure to check keeps the loop on. The check reads
-      # no secret and ignores the job's header, so a secret rotation never changes the answer.
-      - name: Decide who drives the sweeper
-        id: sweep-driver
-        run: |
-          set -euo pipefail
-          python3 scripts/scheduler_reconcile.py --sweep-driver \
-            --environment "${{ needs.resolve-env.outputs.environment }}" \
-            --host "https://${{ needs.resolve-env.outputs.environment == 'production' && 'lemelyig.com' || 'staging.lemelyig.com' }}" \
-            --project "${{ vars.GCP_PROJECT_ID }}" \
-            --location us-central1 >> "$GITHUB_OUTPUT"
-
       # max-instances=3 is a COST knob, not a correctness one. Every piece of
       # state that once required a single replica now lives in Postgres or
       # object storage (docs/deployment.md §5.1); the only per-instance state
@@ -469,18 +437,6 @@ jobs:
           # above. Generate the pair with `lemely push-keygen`; rotating it
           # invalidates every stored subscription (docs/push-notifications.md).
           #
-          # Paymob (billing spec §3, §7). The secret key, API key, HMAC secret
-          # and card-token key are repository SECRETS; the public key and the
-          # integration ids are VARIABLES (the public key is handed to every
-          # browser inside the checkout URL). Unset ones render as "", which
-          # `_blank_to_none` maps to None, so this is safe to merge before
-          # Paymob credentials exist: checkout and the webhook answer 503 and
-          # nothing else changes. The two origins follow the environment like
-          # LEMELY_EMAIL__APP_BASE_URL, so a staging intention never calls
-          # back into production. Generate the card-token key with
-          # `python -c "from lemely.runtime.token_cipher import TokenCipher; print(TokenCipher.generate_key())"`;
-          # rotating it makes every stored card token undecryptable.
-          #
           # Access gate, pre-launch: only verified @lemelyig.com accounts may sign up, log
           # in or call an authenticated route, in staging AND production (this one job
           # deploys both). Everyone else gets 403 access_restricted. To open access at
@@ -493,14 +449,6 @@ jobs:
           # the Worker is given (the `edge-secret` job, which runs BEFORE this one).
           # EDGE_ORIGIN_SECRET_PREVIOUS is the value being rotated out: accepted, never
           # sent (docs/ci-cd.md, "Rotating the edge secret").
-          #
-          # Background jobs. Cloud Scheduler drives every sweeper pass through
-          # POST /api/internal/jobs/sweep with SWEEP_JOBS_SECRET in X-Cron-Secret.
-          # Once that job is in place the in-process sweep loop is turned off:
-          # Cloud Run throttles CPU outside requests, so a loop pass started
-          # between requests can stall while it holds the pass lock. Until then
-          # (the first deploy that creates the job) the loop stays on, so the
-          # service is never left without a driver; see the sweep-driver step.
           env_vars: |-
             LEMELY_RUN_MIGRATIONS=0
             LEMELY_STORAGE__BACKEND=gcs
@@ -525,24 +473,11 @@ jobs:
             LEMELY_PUSH__VAPID_PUBLIC_KEY=${{ vars.VAPID_PUBLIC_KEY }}
             LEMELY_PUSH__VAPID_PRIVATE_KEY=${{ secrets.VAPID_PRIVATE_KEY }}
             LEMELY_PUSH__VAPID_SUBJECT=mailto:support@lemelyig.com
-            LEMELY_PAYMOB__SECRET_KEY=${{ secrets.PAYMOB_SECRET_KEY }}
-            LEMELY_PAYMOB__API_KEY=${{ secrets.PAYMOB_API_KEY }}
-            LEMELY_PAYMOB__HMAC_SECRET=${{ secrets.PAYMOB_HMAC_SECRET }}
-            LEMELY_PAYMOB__CARD_TOKEN_KEY=${{ secrets.PAYMOB_CARD_TOKEN_KEY }}
-            LEMELY_PAYMOB__PUBLIC_KEY=${{ vars.PAYMOB_PUBLIC_KEY }}
-            LEMELY_PAYMOB__CARD_INTEGRATION_ID=${{ vars.PAYMOB_CARD_INTEGRATION_ID }}
-            LEMELY_PAYMOB__MOTO_INTEGRATION_ID=${{ vars.PAYMOB_MOTO_INTEGRATION_ID }}
-            LEMELY_PAYMOB__APPLE_PAY_INTEGRATION_ID=${{ vars.PAYMOB_APPLE_PAY_INTEGRATION_ID }}
-            LEMELY_PAYMOB__NOTIFICATION_BASE_URL=https://${{ needs.resolve-env.outputs.environment == 'production' && 'lemelyig.com' || 'staging.lemelyig.com' }}
-            LEMELY_PAYMOB__REDIRECTION_BASE_URL=https://${{ needs.resolve-env.outputs.environment == 'production' && 'lemelyig.com' || 'staging.lemelyig.com' }}
             LEMELY_EDGE__ORIGIN_SECRET=${{ secrets.EDGE_ORIGIN_SECRET }}
             LEMELY_EDGE__ORIGIN_SECRET_PREVIOUS=${{ secrets.EDGE_ORIGIN_SECRET_PREVIOUS }}
             LEMELY_WAITLIST__TURNSTILE_SECRET_KEY=${{ secrets.TURNSTILE_SECRET_KEY }}
             LEMELY_WAITLIST__TURNSTILE_SITE_KEY=${{ secrets.TURNSTILE_SITE_KEY }}
             LEMELY_WAITLIST__DIGEST_SECRET=${{ secrets.WAITLIST_DIGEST_SECRET }}
-            LEMELY_NOTIFICATIONS__JOBS_SECRET=${{ secrets.SWEEP_JOBS_SECRET }}
-            LEMELY_NOTIFICATIONS__JOBS_SECRET_PREVIOUS=${{ secrets.SWEEP_JOBS_SECRET_PREVIOUS }}
-            LEMELY_NOTIFICATIONS__SWEEPER_ENABLED=${{ steps.sweep-driver.outputs.sweeper_enabled }}
             LEMELY_ACCESS__ALLOWED_EMAIL_DOMAINS=lemelyig.com
 
       # Asserts what is SERVING, not what was created. `revision_traffic` above
@@ -708,34 +643,20 @@ jobs:
       # file are deleted, which is how a rename or a removal takes effect. Only jobs named
       # lemely-<environment>-* that carry the `managed-by=lemely-deploy` description marker
       # are ever deleted (Cloud Scheduler has no labels), so nothing else in the project can
-      # be touched. A job whose secret is empty is skipped with a warning and left alone, except a
-      # `required` job (the sweep), where it is an error; the preflight step in the migrate job
-      # already stopped the deploy before any migration or traffic switch in that case.
+      # be touched. A job whose secret is empty is skipped with a warning and left alone.
       # Runs last, after the serving-revision and health checks, so a bad rollout never
       # re-points the schedule. The URI is the public host, so the call takes the Worker
       # path like every other API call. Each job's secret must also be mapped below: add the
       # `NAME: ${{ secrets.NAME }}` line when adding a job that names a new one.
       - name: Reconcile Cloud Scheduler jobs
-        id: reconcile
         env:
           WAITLIST_DIGEST_SECRET: ${{ secrets.WAITLIST_DIGEST_SECRET }}
-          SWEEP_JOBS_SECRET: ${{ secrets.SWEEP_JOBS_SECRET }}
         run: |
           python3 scripts/scheduler_reconcile.py \
             --environment "${{ needs.resolve-env.outputs.environment }}" \
             --host "https://${{ needs.resolve-env.outputs.environment == 'production' && 'lemelyig.com' || 'staging.lemelyig.com' }}" \
             --project "${{ vars.GCP_PROJECT_ID }}" \
             --location us-central1
-
-      # The revision deployed above runs with its in-process sweep loop off, because the sweep
-      # job was found working before the deploy. If the reconcile then failed, that job may now
-      # be missing or broken, and nothing would run billing passes. Say so, and give the command
-      # that turns the loop back on until a deploy reconciles the job again.
-      - name: Report a missing billing sweep driver
-        if: failure() && steps.reconcile.outcome == 'failure' && steps.sweep-driver.outputs.sweeper_enabled == 'false'
-        run: |
-          echo "::error::billing sweep driver absent: the Cloud Scheduler reconcile failed while the new revision runs with LEMELY_NOTIFICATIONS__SWEEPER_ENABLED=false, so no billing or notification sweep may be running. Check lemely-${{ needs.resolve-env.outputs.environment }}-sweep in Cloud Scheduler, or turn the in-process loop back on until the next deploy: gcloud run services update lemely-backend-${{ needs.resolve-env.outputs.environment }} --region=us-central1 --project=${{ vars.GCP_PROJECT_ID }} --update-env-vars=LEMELY_NOTIFICATIONS__SWEEPER_ENABLED=true"
-          exit 1
 
   # Runs in parallel with deploy-backend (both need `migrate` and the quick
   # `edge-secret` job, nothing else), so the SPA build and Worker deploy overlap

@@ -1637,23 +1637,6 @@ class TestMainKeepsStdoutToTheJson:
 _E2E_DIR = Path(__file__).resolve().parents[1] / "web" / "e2e"
 
 
-class TestSeededAccountsCarryAValidPhone:
-    """UD-11: every account the e2e seed signs up has a phone, or it could never check out."""
-
-    def test_the_seed_phone_is_valid_and_already_e164(self) -> None:
-        from lemely.core.phone import validate_phone
-        from scripts.seed_e2e import SEED_PHONE
-
-        assert validate_phone(SEED_PHONE) == SEED_PHONE
-
-    def test_every_signup_in_the_seed_passes_that_phone(self) -> None:
-        source = (Path(__file__).resolve().parents[1] / "scripts" / "seed_e2e.py").read_text(
-            encoding="utf-8"
-        )
-        signup = source[source.index("auth_service.signup(") :].split(")\n", 1)[0]
-        assert "phone=SEED_PHONE" in signup
-
-
 class TestInviteOnlyStudentKeepsTheSeededParentsInboxEmpty:
     """T32: redeeming `declining`'s code notifies the seeded parent (SPEC §b.4)."""
 

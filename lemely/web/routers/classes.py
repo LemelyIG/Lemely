@@ -52,7 +52,6 @@ from lemely.core.history import (
     grade_bearing,
     latest_grade_bearing,
 )
-from lemely.core.team_permissions import TeamPermission
 from lemely.db.at_risk_repo import AtRiskAcknowledgementRow, AtRiskAckService
 from lemely.db.class_exclusion_repo import ClassExclusionRepository, ExclusionTargetNotFoundError
 from lemely.db.class_history import ClassScopedHistoryStore, load_roster_histories
@@ -72,7 +71,6 @@ from lemely.db.student_profile_repo import StudentProfileService
 from lemely.io.det.profiles import get_profile
 from lemely.web.deps import (
     AuthContext,
-    TeamActor,
     get_at_risk_ack_service,
     get_class_exclusion_repository,
     get_class_service,
@@ -80,7 +78,6 @@ from lemely.web.deps import (
     get_invite_service,
     get_student_profile_service,
     require_role,
-    require_team_permission,
 )
 from lemely.web.routers.invites import _invite_to_dto
 from lemely.web.routers.teacher import (
@@ -127,22 +124,6 @@ _STAFF_ROLES = (Role.teacher, Role.school_admin, Role.platform_admin)
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_role(*_STAFF_ROLES))])
-
-# Paymob billing Phase 03 (spec §2.3): routes an assistant may use for their lead
-# teacher. Each passes the roles the route already allowed, so the wired role guard
-# (tests/test_authz_matrix_complete.py) is unchanged.
-_TEAM_VIEW = require_team_permission(TeamPermission.VIEW_RESULTS, *_STAFF_ROLES)
-_TEAM_MANAGE_STUDENTS = require_team_permission(TeamPermission.MANAGE_STUDENTS, *_STAFF_ROLES)
-_TEAM_MANAGE_CLASSES = require_team_permission(TeamPermission.MANAGE_CLASSES, Role.teacher)
-_TEAM_VIEW_CLASS_PAPERS = require_team_permission(
-    TeamPermission.VIEW_RESULTS, Role.teacher, Role.school_admin
-)
-_TEAM_SHARE_PAPERS = require_team_permission(
-    TeamPermission.MANAGE_CLASSES, Role.teacher, Role.school_admin
-)
-_TEAM_MINT_INVITE = require_team_permission(
-    TeamPermission.MANAGE_STUDENTS, Role.teacher, Role.school_admin
-)
 
 
 # ---------------------------------------------------------------------------
@@ -645,7 +626,7 @@ def _scoped_history_store(
 
 @router.get("/teacher/classes", response_model=ClassListDTO)
 def list_classes(
-    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     exclusion_repo: Annotated[ClassExclusionRepository, Depends(get_class_exclusion_repository)],
@@ -657,7 +638,6 @@ def list_classes(
     schools they administer; ``platform_admin`` always gets an empty list — no
     super-role bypass, mirroring the seat-management surface (D1.6/D1.10).
     """
-    auth = actor.auth
     try:
         rows = service.list_classes(auth.user_id, auth.role)
     except ValueError as exc:
@@ -674,7 +654,7 @@ def list_classes(
 @router.get("/classes/{class_id}", response_model=ClassDetailDTO)
 def get_class(
     class_id: str,
-    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     exclusion_repo: Annotated[ClassExclusionRepository, Depends(get_class_exclusion_repository)],
@@ -693,7 +673,6 @@ def get_class(
     ``_acknowledgement_index(..., student_ids=...)`` — a single round trip
     for the whole class, not one per student.
     """
-    auth = actor.auth
     try:
         row = service.get_class(auth.user_id, auth.role, class_id)
         roster = service.roster(auth.user_id, auth.role, class_id)
@@ -712,7 +691,7 @@ def get_class(
 @router.get("/classes/{class_id}/analytics", response_model=ClassAnalyticsDTO)
 def class_analytics(
     class_id: str,
-    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     exclusion_repo: Annotated[ClassExclusionRepository, Depends(get_class_exclusion_repository)],
@@ -734,7 +713,6 @@ def class_analytics(
     route documents at length (random-UUID ids make enumeration infeasible,
     and no class *data* crosses the boundary either way).
     """
-    auth = actor.auth
     try:
         row = service.get_class(auth.user_id, auth.role, class_id)  # existence + scope check
         roster = service.roster(auth.user_id, auth.role, class_id)
@@ -754,7 +732,7 @@ def class_analytics(
 @router.post("/classes", response_model=ClassSummaryDTO, status_code=201)
 def create_class(
     body: CreateClassRequestDTO,
-    actor: Annotated[TeamActor, Depends(_TEAM_MANAGE_CLASSES)],
+    auth: Annotated[AuthContext, Depends(require_role(Role.teacher))],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     profile_service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
@@ -764,7 +742,6 @@ def create_class(
     ``schoolId`` is only accepted when the caller holds a membership there
     (independent teachers omit it entirely, per MISSION §1).
     """
-    auth = actor.auth
     try:
         row = service.create_class(
             auth.user_id, body.name, subject_code=body.subjectCode, school_id=body.schoolId
@@ -782,14 +759,13 @@ def create_class(
 def update_class(
     class_id: str,
     body: UpdateClassRequestDTO,
-    actor: Annotated[TeamActor, Depends(_TEAM_MANAGE_CLASSES)],
+    auth: Annotated[AuthContext, Depends(require_role(Role.teacher))],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     exclusion_repo: Annotated[ClassExclusionRepository, Depends(get_class_exclusion_repository)],
     profile_service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
 ) -> ClassSummaryDTO:
     """Rename a class and/or change its subject code. Owner-scoped."""
-    auth = actor.auth
     try:
         row = service.update_class(
             auth.user_id, class_id, name=body.name, subject_code=body.subjectCode
@@ -806,11 +782,10 @@ def update_class(
 @router.delete("/classes/{class_id}", status_code=204)
 def delete_class(
     class_id: str,
-    actor: Annotated[TeamActor, Depends(_TEAM_MANAGE_CLASSES)],
+    auth: Annotated[AuthContext, Depends(require_role(Role.teacher))],
     service: Annotated[ClassService, Depends(get_class_service)],
 ) -> None:
     """Delete a class (cascades to its enrolments). Owner-scoped."""
-    auth = actor.auth
     try:
         service.delete_class(auth.user_id, class_id)
     except (ClassNotFoundError, ClassOwnershipError) as exc:
@@ -827,11 +802,10 @@ def delete_class(
 @router.get("/classes/{class_id}/roster", response_model=RosterDTO)
 def get_roster(
     class_id: str,
-    actor: Annotated[TeamActor, Depends(_TEAM_VIEW)],
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[ClassService, Depends(get_class_service)],
 ) -> RosterDTO:
     """Return a class's enrolled students (identity only, no analytics)."""
-    auth = actor.auth
     try:
         entries = service.roster(auth.user_id, auth.role, class_id)
     except (ClassNotFoundError, ClassOwnershipError) as exc:
@@ -850,7 +824,7 @@ def get_roster(
 def enroll_student(
     class_id: str,
     body: EnrollStudentRequestDTO,
-    actor: Annotated[TeamActor, Depends(_TEAM_MANAGE_STUDENTS)],
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[ClassService, Depends(get_class_service)],
 ) -> RosterEntryDTO:
     """Direct-add an existing, seated student onto the class roster. Idempotent.
@@ -859,7 +833,6 @@ def enroll_student(
     non-revoked seat in that school (an independent teacher's class 409s here
     by construction — it has no seat pool at all).
     """
-    auth = actor.auth
     try:
         entry = service.enroll_by_seat(auth.user_id, auth.role, class_id, body.studentId)
     except (
@@ -878,11 +851,10 @@ def enroll_student(
 def remove_student(
     class_id: str,
     student_id: str,
-    actor: Annotated[TeamActor, Depends(_TEAM_MANAGE_STUDENTS)],
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[ClassService, Depends(get_class_service)],
 ) -> None:
     """Remove a student from a class's roster. Owner/admin-scoped, idempotent."""
-    auth = actor.auth
     try:
         service.remove_student(auth.user_id, auth.role, class_id, student_id)
     except (ClassNotFoundError, ClassOwnershipError) as exc:
@@ -923,7 +895,7 @@ def _unshare_target(
 @router.get("/classes/{class_id}/papers", response_model=ClassPapersDTO)
 def list_class_papers(
     class_id: str,
-    actor: Annotated[TeamActor, Depends(_TEAM_VIEW_CLASS_PAPERS)],
+    auth: Annotated[AuthContext, Depends(require_role(Role.teacher, Role.school_admin))],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     exclusion_repo: Annotated[ClassExclusionRepository, Depends(get_class_exclusion_repository)],
@@ -943,7 +915,6 @@ def list_class_papers(
     A file-store record (``attempt_id`` is ``None``) cannot be addressed by
     the unshare routes at all, so it is left out here too.
     """
-    auth = actor.auth
     try:
         row = service.get_class(auth.user_id, auth.role, class_id)
         roster = service.roster(auth.user_id, auth.role, class_id)
@@ -979,7 +950,7 @@ def list_class_papers(
 def unshare_paper(
     class_id: str,
     attempt_id: str,
-    actor: Annotated[TeamActor, Depends(_TEAM_SHARE_PAPERS)],
+    auth: Annotated[AuthContext, Depends(require_role(Role.teacher, Role.school_admin))],
     service: Annotated[ClassService, Depends(get_class_service)],
     exclusion_repo: Annotated[ClassExclusionRepository, Depends(get_class_exclusion_repository)],
 ) -> None:
@@ -994,7 +965,6 @@ def unshare_paper(
     Teacher and school_admin, the two roles that manage a class
     (``platform_admin`` has no class scope to act in, D1.6/D1.10).
     """
-    auth = actor.auth
     row, attempt_uuid, roster_ids = _unshare_target(service, auth, class_id, attempt_id)
     try:
         exclusion_repo.exclude(
@@ -1011,7 +981,7 @@ def unshare_paper(
 def reshare_paper(
     class_id: str,
     attempt_id: str,
-    actor: Annotated[TeamActor, Depends(_TEAM_SHARE_PAPERS)],
+    auth: Annotated[AuthContext, Depends(require_role(Role.teacher, Role.school_admin))],
     service: Annotated[ClassService, Depends(get_class_service)],
     exclusion_repo: Annotated[ClassExclusionRepository, Depends(get_class_exclusion_repository)],
 ) -> None:
@@ -1020,7 +990,6 @@ def reshare_paper(
     Resharing restores any review item unchanged, original ``created_at``
     included, because unshare never mutated it.
     """
-    auth = actor.auth
     row, attempt_uuid, roster_ids = _unshare_target(service, auth, class_id, attempt_id)
     try:
         exclusion_repo.include(row.class_id, attempt_uuid, roster_student_ids=roster_ids)
@@ -1043,7 +1012,7 @@ def reshare_paper(
 @router.post("/school/classes/{class_id}/invite-code", response_model=InviteCodeDTO)
 def mint_class_invite_code(
     class_id: str,
-    actor: Annotated[TeamActor, Depends(_TEAM_MINT_INVITE)],
+    auth: Annotated[AuthContext, Depends(require_role(Role.teacher, Role.school_admin))],
     service: Annotated[InviteService, Depends(get_invite_service)],
 ) -> InviteCodeDTO:
     """Mint a redeemable class invite code (D7.3/G-08).
@@ -1061,7 +1030,6 @@ def mint_class_invite_code(
     here, per-route, to just the two roles that may actually manage a
     class's roster (D1.6/D1.10, no super-role bypass).
     """
-    auth = actor.auth
     try:
         invite = service.mint_class_invite(auth.user_id, auth.role, class_id)
     except InviteNotFoundError as exc:

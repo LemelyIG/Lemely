@@ -1,5 +1,4 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
-import { useCan } from "@/components/acting/acting-state"
 import { useState } from "react"
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
@@ -43,10 +42,6 @@ function UnshareControl({ classId, row }: { classId: string; row: ClassPaperRow 
   const reshare = useReshareClassPaper()
   const [open, setOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  // Sharing a paper with a class is managing the class. A row action, so hidden rather than dead.
-  const canManage = useCan("manage_classes")
-
-  if (!canManage) return null
 
   if (row.unshared) {
     return (

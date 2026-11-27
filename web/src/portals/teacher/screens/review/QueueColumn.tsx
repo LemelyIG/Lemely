@@ -1,6 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import { useLayoutEffect, useRef } from "react"
-import { PermissionGate } from "@/components/acting/permission-gate"
 import type { ReviewQueueFilters } from "@/lib/reviewQueueQuery"
 import type { ReviewQueueItem } from "@/lib/teacherTypes"
 import { FilterBar } from "./FilterBar"
@@ -67,17 +66,15 @@ export function QueueColumn(p: QueueColumnProps) {
       {showChrome ? (
         <>
           <QueueHeader left={p.left} done={p.done} />
-          <PermissionGate permission="mark">
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={p.onToggleSelect} aria-pressed={p.selecting} className="rounded-button bg-surface-container-lowest px-3.5 py-[9px] text-dense font-bold shadow-[inset_0_0_0_1.5px_var(--color-outline)] transition-transform duration-150 motion-reduce:transition-none active:scale-[.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:min-h-11">
-                {p.selecting ? "Cancel" : "Select"}
-              </button>
-              <span className="flex-1" />
-              <button type="button" onClick={p.onBulk} disabled={p.bulk.disabled} className="rounded-button bg-primary px-3.5 py-[9px] text-dense font-bold text-on-primary transition-transform duration-150 motion-reduce:transition-none active:scale-[.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:bg-surface-container-high disabled:text-on-surface-variant disabled:shadow-[inset_0_0_0_1.5px_var(--color-outline)] pointer-coarse:min-h-11">
-                {p.bulk.label}
-              </button>
-            </div>
-          </PermissionGate>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={p.onToggleSelect} aria-pressed={p.selecting} className="rounded-button bg-surface-container-lowest px-3.5 py-[9px] text-dense font-bold shadow-[inset_0_0_0_1.5px_var(--color-outline)] transition-transform duration-150 motion-reduce:transition-none active:scale-[.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:min-h-11">
+              {p.selecting ? "Cancel" : "Select"}
+            </button>
+            <span className="flex-1" />
+            <button type="button" onClick={p.onBulk} disabled={p.bulk.disabled} className="rounded-button bg-primary px-3.5 py-[9px] text-dense font-bold text-on-primary transition-transform duration-150 motion-reduce:transition-none active:scale-[.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:bg-surface-container-high disabled:text-on-surface-variant disabled:shadow-[inset_0_0_0_1.5px_var(--color-outline)] pointer-coarse:min-h-11">
+              {p.bulk.label}
+            </button>
+          </div>
           {p.bulkError ? <div role="alert" className="text-dense text-error">Couldn't approve: {p.bulkError}</div> : null}
           {p.bulkSkips && p.bulkSkips.length > 0 ? (
             <div role="status" className="grid gap-1.5 rounded-button bg-surface-container px-3.5 py-2.5 text-dense">

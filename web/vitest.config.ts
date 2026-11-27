@@ -23,7 +23,7 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["tests/unit/**/*.test.{ts,tsx}"],
+    include: ["tests/unit/**/*.test.ts"],
     // `e2e/` holds Playwright specs, which define their own `test`/`expect`
     // and hang if vitest picks them up.
     exclude: ["e2e/**", "node_modules/**", "dist/**"],
