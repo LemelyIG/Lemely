@@ -1,4 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
+import { PermissionGate } from "@/components/acting/permission-gate"
 import { useMemo, useState, type FormEvent } from "react"
 import { Trash } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
@@ -109,18 +110,20 @@ function AnnouncementRow({
           Those are different facts and used to render identically: every row
           greyed out at once, so the teacher could not tell which of them was
           going, or whether anything was happening at all. */}
-      <Button
-        type="button"
-        variant="secondary"
-        size="sm"
-        onClick={onDelete}
-        loading={deleting}
-        disabled={otherDeleting}
-        aria-label={`Delete announcement ${announcement.title}`}
-      >
-        <Trash size={14} aria-hidden />
-        Delete
-      </Button>
+      <PermissionGate permission="manage_classes" mode="hide">
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={onDelete}
+          loading={deleting}
+          disabled={otherDeleting}
+          aria-label={`Delete announcement ${announcement.title}`}
+        >
+          <Trash size={14} aria-hidden />
+          Delete
+        </Button>
+      </PermissionGate>
     </li>
   )
 }
@@ -213,6 +216,8 @@ export function Announcements() {
         </p>
       </header>
 
+      {/* Writing an announcement is managing the lead's classes. */}
+      <PermissionGate permission="manage_classes">
       <form
         onSubmit={handleSubmit}
         className="bg-surface-container-lowest border border-outline-variant rounded-lg p-[18px] flex flex-col gap-4 max-w-[720px]"
@@ -371,6 +376,7 @@ export function Announcements() {
           </div>
         ) : null}
       </form>
+      </PermissionGate>
 
       {/* Preview of the stored record, deliberately not of the student
           announcements screen: that screen adds its own read state and

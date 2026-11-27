@@ -145,6 +145,11 @@ export interface QueryStateErrorProps {
    * preference here: an error the size of the page says the page is broken,
    * and on both of those screens it was not. */
   compact?: boolean
+  /** The state view's mono kicker above the heading ("Error", "Offline").
+   * Omit for each kind's default; pass `null` to drop it, for a page whose
+   * design takes no eyebrows (the public `/pricing`). Forwarded to the error,
+   * offline and no-data branches alike. */
+  kicker?: string | null
 }
 
 export interface QueryStateProps<T> {
@@ -242,6 +247,7 @@ export function QueryState<T>({
           action={{ label: error.retryLabel ?? "Try again", onClick: () => query.refetch() }}
           secondaryAction={error.secondaryAction}
           compact={error.compact}
+          kicker={error.kicker}
         />
       </>
     )
@@ -274,6 +280,7 @@ export function QueryState<T>({
           action={{ label: error.retryLabel ?? "Try again", onClick: () => query.refetch() }}
           secondaryAction={error.secondaryAction}
           compact={error.compact}
+          kicker={error.kicker}
         />
       </>
     )

@@ -1004,6 +1004,7 @@ def _seed_console_paper(
     repo.finish(
         paper_id,
         _report(questions if questions is not None else [_question("5b", awarded=1, maximum=4)]),
+        run_token=repo.run_token(paper_id),
     )
     return paper_id
 
@@ -1175,9 +1176,11 @@ def test_regrade_replaces_open_console_rows_and_preserves_closed_ones(
     assert client.post(f"/api/teacher/review/{rows['1a']}/resolve", json={}).status_code == 200
 
     # Re-mark the same paper.
-    TeacherPaperRepository(pg_sessionmaker, stale_after=timedelta(minutes=10)).finish(
+    remark = TeacherPaperRepository(pg_sessionmaker, stale_after=timedelta(minutes=10))
+    remark.finish(
         paper_id,
         _report([_question("1a", awarded=2, maximum=2), _question("1b", awarded=1, maximum=2)]),
+        run_token=remark.run_token(paper_id),
     )
 
     after = client.get("/api/teacher/review").json()["items"]

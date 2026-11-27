@@ -14,16 +14,20 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Protocol
 
+import structlog
 from sqlalchemy import select, update
 
 from lemely.db.models import User
 from lemely.db.models.enums import Role
 from lemely.db.session import session_scope
+from lemely.db.usage_catalogue_repo import grant_signup_allowance
 
 if TYPE_CHECKING:
     from datetime import datetime
 
     from lemely.runtime.config import Settings
+
+log = structlog.get_logger(__name__)
 
 
 class UserMirror(Protocol):
@@ -55,10 +59,6 @@ class UserMirror(Protocol):
 
     def get_by_id(self, user_id: uuid.UUID) -> User | None:
         """Return the mirrored user for ``user_id``, or ``None``."""
-        ...
-
-    def get_by_phone(self, phone: str) -> User | None:
-        """Return the mirrored user with ``phone``, or ``None``."""
         ...
 
     def get_by_email(self, email: str) -> User | None:
@@ -94,6 +94,9 @@ class UserMirror(Protocol):
         :meth:`~lemely.auth.service.AuthService.signup` itself just mirrored),
         and this is not the place to invent a new failure mode for the token
         store and the mirror having disagreed about who exists.
+
+        The first call also issues the role's billing signup grant (spec §2.1);
+        a grant failure is logged and never fails the verification.
         """
         ...
 
@@ -120,6 +123,16 @@ class UserMirror(Protocol):
         resumes. Validation (a resolvable IANA name, at most 64 characters) is
         the route's job; this writes what it is given. A ``user_id`` with no
         mirrored row is a silent no-op, matching :meth:`set_avatar_path`.
+        """
+        ...
+
+    def set_phone(self, user_id: uuid.UUID, phone: str) -> None:
+        """Replace ``users.phone`` with ``phone`` (UD-11).
+
+        ``phone`` is already validated and in E.164 form: the route runs
+        :func:`lemely.core.phone.validate_phone` and this writes what it is given. Unlike
+        :meth:`upsert`, an existing value is overwritten, because this is the user changing it.
+        A ``user_id`` with no mirrored row is a silent no-op, matching :meth:`set_timezone`.
         """
         ...
 
@@ -176,21 +189,12 @@ class DbUserMirror:
                 session.expunge(user)
             return user
 
-    def get_by_phone(self, phone: str) -> User | None:
-        """Return the most-recently-created user with ``phone``, or ``None``."""
-        with session_scope(self._settings) as session:
-            stmt = select(User).where(User.phone == phone).order_by(User.created_at.desc()).limit(1)
-            user = session.scalars(stmt).first()
-            if user is not None:
-                session.expunge(user)
-            return user
-
     def get_by_email(self, email: str) -> User | None:
         """Return the user with ``email``, detached from the session, or ``None``.
 
         ``users.email`` is unique (migration ``0002``), so — unlike
-        :meth:`get_by_phone`, which orders by recency because phone is not
-        unique — this is a single unambiguous lookup.
+        a phone, which is not unique and is
+        deliberately never a lookup key — this is a single unambiguous lookup.
         """
         with session_scope(self._settings) as session:
             user = session.scalars(select(User).where(User.email == email)).first()
@@ -203,13 +207,31 @@ class DbUserMirror:
 
         One conditional ``UPDATE … WHERE email_verified_at IS NULL``: two
         verifications racing cannot both write, and the first instant is kept.
+
+        Billing spec §2.1 (free start): the call that wins the stamp also issues the
+        role's signup grant, in the same transaction. The grant is idempotent per
+        account, and it runs in a savepoint so a ledger failure is logged and the
+        verification still commits.
         """
         with session_scope(self._settings) as session:
-            session.execute(
+            role = session.execute(
                 update(User)
                 .where(User.id == user_id, User.email_verified_at.is_(None))
                 .values(email_verified_at=verified_at)
-            )
+                .returning(User.role)
+            ).scalar_one_or_none()
+            if role is None:
+                return
+            # Lock order: the UPDATE above holds the ``users`` row lock, then the
+            # ledger takes its advisory lock inside ``issue_grant``. Keep that order
+            # everywhere: users row first, ledger advisory lock second.
+            # The teacher's 30-day expiry counts from this verification instant
+            # (``verified_at``), not from signup.
+            try:
+                with session.begin_nested():
+                    grant_signup_allowance(session, user_id=user_id, role=role, now=verified_at)
+            except Exception:
+                log.exception("signup_grant_failed", user_id=str(user_id))
 
     def set_avatar_path(self, user_id: uuid.UUID, path: str | None) -> None:
         """Set or clear ``users.avatar_path`` for ``user_id``, if the row exists."""
@@ -232,6 +254,13 @@ class DbUserMirror:
                 user.timezone_is_explicit = False
             elif not user.timezone_is_explicit:
                 user.timezone = zone
+
+    def set_phone(self, user_id: uuid.UUID, phone: str) -> None:
+        """Replace ``users.phone``, if the row exists."""
+        with session_scope(self._settings) as session:
+            user = session.get(User, user_id)
+            if user is not None:
+                user.phone = phone
 
 
 __all__ = ["DbUserMirror", "UserMirror"]

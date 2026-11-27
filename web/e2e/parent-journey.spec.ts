@@ -84,10 +84,11 @@ test("a fresh visitor joins via a child's invite code, signs up with an emailed 
   await page.getByLabel("Digit 1 of 6").click()
   await page.keyboard.type(code)
 
-  // G-05 step 3: password + the D7.11 data-handling consent checkbox.
-  await expect(page.getByRole("heading", { name: "Set a password" })).toBeVisible({
+  // G-05 step 3: phone (UD-11) + password + the D7.11 data-handling consent checkbox.
+  await expect(page.getByRole("heading", { name: "Finish your account" })).toBeVisible({
     timeout: 15_000,
   })
+  await page.getByLabel("Mobile number").fill("01012345678")
   await page.getByLabel("Password").fill("a-genuinely-strong-passphrase-1")
   // Name-qualified rather than a bare role: the sole checkbox on this step
   // (`SignupParent.tsx`'s `parent-signup-consent`) has no `<label>`, only an

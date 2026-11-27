@@ -557,3 +557,125 @@ def test_a_zero_cap_sends_nothing(pg_sessionmaker: sessionmaker[Session]) -> Non
     assert provider.calls == []
     (row,) = _rows(pg_sessionmaker)
     assert (row.status, row.last_error) == (EmailOutboxStatus.skipped, "daily_cap")
+
+
+# -- billing notices are exempt from the shared daily cap (UD-9) --------------
+
+BILLING_CONTEXT: dict[str, object] = {
+    "subscription_id": "66666666-6666-4666-8666-666666666666",
+    "notice": "payment_failed",
+    "effective_at": "2026-12-10T09:00:00+00:00",
+}
+
+
+def _enqueue_billing(sm: sessionmaker[Session], user: uuid.UUID, *, key: str) -> bool:
+    with sm.begin() as session:
+        return enqueue_in_session(
+            session,
+            recipient_user_id=user,
+            template="subscription_notice",
+            context=BILLING_CONTEXT,
+            dedupe_key=key,
+        )
+
+
+def _seed_sent(sm: sessionmaker[Session], template: str, count: int, *, tag: str) -> None:
+    sender = _user(sm)
+    context = BILLING_CONTEXT if template == "subscription_notice" else VALID[template]
+    with sm.begin() as session:
+        for index in range(count):
+            session.add(
+                EmailOutbox(
+                    recipient_user_id=sender,
+                    template=template,
+                    context=context,
+                    dedupe_key=f"seed:{tag}:{index}",
+                    status=EmailOutboxStatus.sent,
+                    attempts=1,
+                    sent_at=NOW - timedelta(hours=1),
+                )
+            )
+
+
+def test_billing_notice_is_sent_past_the_tutoring_cap(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    _seed_sent(pg_sessionmaker, "booking_requested", 2, tag="tutoring")
+    payer = _user(pg_sessionmaker)
+    _enqueue_billing(pg_sessionmaker, payer, key="bill:1")
+    provider = RecordingProvider()
+
+    assert _deliver(pg_sessionmaker, provider, cap=2) == 1
+
+    assert [call[1] for call in provider.calls] == ["subscription_notice"]
+    with pg_sessionmaker() as session:
+        row = session.scalars(
+            sa.select(EmailOutbox).where(EmailOutbox.dedupe_key == "bill:1")
+        ).one()
+    assert (row.status, row.last_error) == (EmailOutboxStatus.sent, None)
+
+
+def test_billing_notice_is_sent_under_a_zero_cap(pg_sessionmaker: sessionmaker[Session]) -> None:
+    _enqueue_billing(pg_sessionmaker, _user(pg_sessionmaker), key="bill:zero")
+    provider = RecordingProvider()
+
+    assert _deliver(pg_sessionmaker, provider, cap=0) == 1
+
+    assert [call[1] for call in provider.calls] == ["subscription_notice"]
+
+
+def test_sent_billing_notices_do_not_use_up_the_tutoring_cap(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    _seed_sent(pg_sessionmaker, "subscription_notice", 5, tag="billing")
+    for index in range(3):
+        _enqueue(pg_sessionmaker, _user(pg_sessionmaker), key=f"tut:{index}")
+    provider = RecordingProvider()
+
+    assert _deliver(pg_sessionmaker, provider, cap=2) == 3
+
+    with pg_sessionmaker() as session:
+        rows = list(
+            session.scalars(sa.select(EmailOutbox).where(EmailOutbox.dedupe_key.like("tut:%")))
+        )
+    by_status = sorted(row.status.value for row in rows)
+    assert by_status == ["sent", "sent", "skipped"]  # 5 billing rows counted for nothing
+    assert len(provider.calls) == 2
+
+
+def test_billing_sent_in_the_same_run_does_not_consume_the_tutoring_cap(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    payer = _user(pg_sessionmaker)
+    _enqueue_billing(pg_sessionmaker, payer, key="bill:first")
+    for index in range(3):
+        _enqueue(pg_sessionmaker, _user(pg_sessionmaker), key=f"tut:{index}")
+    provider = RecordingProvider()
+
+    assert _deliver(pg_sessionmaker, provider, cap=2) == 4
+
+    sent = [call[1] for call in provider.calls]
+    assert sorted(sent) == ["booking_requested", "booking_requested", "subscription_notice"]
+
+
+def test_billing_notice_still_honours_the_recipients_opt_out_past_the_cap(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    _seed_sent(pg_sessionmaker, "booking_requested", 5, tag="tutoring")
+    payer = _user(pg_sessionmaker)
+    _enqueue_billing(pg_sessionmaker, payer, key="bill:optout")
+    with pg_sessionmaker.begin() as session:
+        session.execute(
+            sa.text("INSERT INTO notification_preferences (user_id, billing) VALUES (:u, false)"),
+            {"u": payer},
+        )
+    provider = RecordingProvider()
+
+    assert _deliver(pg_sessionmaker, provider, cap=2) == 1
+
+    assert provider.calls == []
+    with pg_sessionmaker() as session:
+        row = session.scalars(
+            sa.select(EmailOutbox).where(EmailOutbox.dedupe_key == "bill:optout")
+        ).one()
+    assert (row.status, row.last_error) == (EmailOutboxStatus.skipped, "preference_off")

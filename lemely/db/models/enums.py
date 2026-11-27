@@ -163,6 +163,10 @@ class SubscriptionStatus(enum.Enum):
     ``0019``): a rejection is the platform declining a request, a cancellation is
     the subscriber ending one. They are different events with different parties
     responsible, and X-02's queue is the one place that difference is read.
+
+    ``pending_first_payment`` and ``past_due`` belong to the Paymob paid path
+    (billing spec §4.3). ``inactive`` and ``rejected`` remain the manual
+    activation path's states.
     """
 
     inactive = "inactive"
@@ -170,6 +174,11 @@ class SubscriptionStatus(enum.Enum):
     cancelled = "cancelled"
     expired = "expired"
     rejected = "rejected"
+    #: Paid path (billing spec §4.3, migration 0053): checkout created, first
+    #: payment not yet verified.
+    pending_first_payment = "pending_first_payment"
+    #: Paid path: a renewal failed and the grace (``billing_settings.grace_days``) is running.
+    past_due = "past_due"
 
 
 class SeatStatus(enum.Enum):
@@ -248,7 +257,9 @@ class NotificationType(enum.Enum):
     The last eight members are the tutoring marketplace's (migration
     ``0044_tutoring_enums_ext``, SPEC ``docs/tutoring/SPEC.md`` §a.1). Each has a
     same-named ``notification_preferences`` column, pinned by
-    ``tests/test_db_schema.py``'s enum/column vocabulary test.
+    ``tests/test_db_schema.py``'s enum/column vocabulary test. ``billing`` is the
+    payment notices' type (migration ``0055``); it has a preference column but no user
+    toggle.
     """
 
     grade_ready = "grade_ready"
@@ -265,6 +276,7 @@ class NotificationType(enum.Enum):
     tutor_listing = "tutor_listing"
     parent_link = "parent_link"
     tutoring_report = "tutoring_report"
+    billing = "billing"
 
 
 class XpSource(enum.Enum):
@@ -415,11 +427,17 @@ class InviteRole(enum.StrEnum):
     caller redeems, and the only thing standing between that and an
     escalation would be a validation nobody had written yet. A narrower type
     cannot express the mistake.
+
+    ``assistant`` (paymob billing Phase 03, spec §4.4) is a teacher's single-use,
+    expiring invite for another teacher account to become their assistant. Its target
+    is ``invites.team_teacher_id``; it is redeemed only through
+    ``POST /api/teacher/team/assistants/redeem``.
     """
 
     student = "student"
     teacher = "teacher"
     parent = "parent"
+    assistant = "assistant"
 
 
 class RevisionSource(enum.Enum):

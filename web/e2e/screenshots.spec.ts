@@ -68,7 +68,8 @@ interface SignedUpAccount {
  * without a second sign-in round trip. */
 async function apiSignUp(request: APIRequestContext, email: string): Promise<SignedUpAccount> {
   const res = await request.post(`${BACKEND_URL}/api/auth/signup`, {
-    data: { email, password: PASSWORD, role: "student", acceptedTerms: true },
+    // UD-11: a phone is required at sign-up.
+    data: { email, password: PASSWORD, role: "student", acceptedTerms: true, phone: "01012345678" },
   })
   expect(res.ok(), `signup failed: ${res.status()} ${await res.text()}`).toBeTruthy()
   const { accessToken, devLink } = (await res.json()) as {

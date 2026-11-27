@@ -111,6 +111,14 @@ class TeacherPaperDeletedError(Exception):
     """
 
 
+class TeacherRunSupersededError(Exception):
+    """A newer claim owns the paper: this run's ``run_started_at`` token no longer matches.
+
+    Raised by :meth:`TeacherPaperRepository.finish` under the row lock, so the run
+    that lost the paper to a re-run writes nothing (billing phase 04 Task 10).
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class TeacherPaperRow:
     """Detached snapshot of a paper. ``stale`` is computed against the repo's window."""
@@ -314,6 +322,43 @@ class TeacherPaperRepository:
             result = session.execute(stmt)
             return _rowcount(result) == 1
 
+    def run_token(self, paper_id: uuid.UUID) -> datetime | None:
+        """The live paper's ``run_started_at``: the token its current claim stamped.
+
+        Read straight after a winning :meth:`claim_run`: no other claim can take a
+        row whose ``updated_at`` the claim has just moved, so this is the winner's.
+        ``None`` for a paper never claimed, deleted or unknown.
+        """
+        with self._sm() as session:
+            return session.scalar(
+                select(TeacherPaper.run_started_at).where(
+                    TeacherPaper.id == paper_id, TeacherPaper.deleted_at.is_(None)
+                )
+            )
+
+    def confirm_run(self, paper_id: uuid.UUID, run_token: datetime) -> bool:
+        """``True`` iff the run holding ``run_token`` still owns the paper; refresh its liveness.
+
+        One conditional ``UPDATE``: it checks ownership (same token, still
+        ``processing``, not deleted) and moves ``updated_at`` in the same
+        statement. A job that waited in the grading queue past the stale window
+        calls this on start, so its row is never reclaimed between that start and
+        the run's first progress write. ``False`` means a newer claim took it, it
+        was finished or failed, or it was deleted: the run must not touch it.
+        """
+        stmt = (
+            sa.update(TeacherPaper)
+            .where(
+                TeacherPaper.id == paper_id,
+                TeacherPaper.deleted_at.is_(None),
+                TeacherPaper.status == UploadStatus.processing,
+                TeacherPaper.run_started_at == run_token,
+            )
+            .values(updated_at=sa.func.now())
+        )
+        with self._sm.begin() as session:
+            return _rowcount(session.execute(stmt)) == 1
+
     def set_stage(self, paper_id: uuid.UUID, stage: str) -> None:
         """Move to ``stage`` and clear the counter (``updated_at`` moves — liveness)."""
         self._update(paper_id, stage=stage, progress_index=None, progress_total=None)
@@ -330,7 +375,9 @@ class TeacherPaperRepository:
         """Cache the resolved scheme so a regrade need not re-parse."""
         self._update(paper_id, mark_scheme_json=scheme.model_dump(mode="json"))
 
-    def finish(self, paper_id: uuid.UUID, report: AccuracyReport) -> None:
+    def finish(
+        self, paper_id: uuid.UUID, report: AccuracyReport, *, run_token: datetime | None
+    ) -> None:
         """Terminal success: store the report **and** queue its flagged questions.
 
         The two writes share one transaction on purpose. A paper whose card
@@ -352,9 +399,16 @@ class TeacherPaperRepository:
         a second run beside it. Both write the same paper; the last ``finish``
         wins. That is benign, and stated so nobody is surprised by it.
 
+        ``run_token`` is the ``run_started_at`` this run's claim stamped. It is
+        checked under the same row lock, so a run that a re-run has superseded
+        writes nothing: a concurrent ``claim_run`` blocks on that lock and then
+        re-evaluates its condition, so check and save are one atomic step.
+
         Raises:
             TeacherPaperDeletedError: the paper was deleted or purged while
                 this run was in flight; nothing was written.
+            TeacherRunSupersededError: a newer claim owns the paper; nothing
+                was written.
         """
         with self._sm.begin() as session:
             paper = session.scalars(
@@ -365,6 +419,8 @@ class TeacherPaperRepository:
             ).one_or_none()
             if paper is None or paper.deleted_at is not None:
                 raise TeacherPaperDeletedError("This paper was deleted while it was being marked.")
+            if paper.run_started_at != run_token:
+                raise TeacherRunSupersededError("A newer run owns this paper.")
             session.execute(
                 sa.update(TeacherPaper)
                 .where(TeacherPaper.id == paper_id)
@@ -390,9 +446,25 @@ class TeacherPaperRepository:
             for item in _review_items_for(paper_id, report):
                 session.add(item)
 
-    def fail(self, paper_id: uuid.UUID, error: str) -> None:
-        """Terminal failure, with the reason the console shows."""
-        self._update(paper_id, status=UploadStatus.failed, error=error)
+    def fail(self, paper_id: uuid.UUID, error: str, *, run_token: datetime | None) -> bool:
+        """Terminal failure, with the reason the console shows; ``True`` iff it was written.
+
+        Conditional on ``run_token`` (the ``run_started_at`` this run's claim
+        stamped), in the ``UPDATE`` itself: a run a re-run has superseded never
+        marks the newer run's paper failed. A deleted paper is left as delete
+        ended it.
+        """
+        stmt = (
+            sa.update(TeacherPaper)
+            .where(
+                TeacherPaper.id == paper_id,
+                TeacherPaper.deleted_at.is_(None),
+                TeacherPaper.run_started_at.is_not_distinct_from(run_token),
+            )
+            .values(status=UploadStatus.failed, error=error)
+        )
+        with self._sm.begin() as session:
+            return _rowcount(session.execute(stmt)) == 1
 
     # -- helpers --------------------------------------------------------------
 

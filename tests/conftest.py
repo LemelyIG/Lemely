@@ -37,11 +37,19 @@ from lemely.core.loose_schemas import Question as SchemeQuestion
 from lemely.core.loose_schemas import QuestionType as SchemeQuestionType
 from lemely.core.loose_schemas import SessionMonth as LooseSessionMonth
 from lemely.runtime.config import Settings
+from lemely.web import usage
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from sqlalchemy.orm import Session, sessionmaker
+
+# The post-settle hooks registered before any test module is collected. Captured here, at
+# conftest import, because pytest imports conftest before it imports a test module: a module that
+# calls ``create_app()`` at import (the authz route tables do, to parametrize over the routes)
+# registers the auto top-up hook during collection, after this line. A per-test snapshot taken
+# later would treat that hook as the starting state and never remove it.
+_BASELINE_POST_SETTLE_HOOKS: tuple[usage.PostSettleHook, ...] = tuple(usage._POST_SETTLE_HOOKS)
 
 
 # US-036: `sys.flags.optimize != 0` (CPython `-O`/`-OO`, or `PYTHONOPTIMIZE`
@@ -134,6 +142,72 @@ def _disable_dotenv_file() -> Iterator[None]:
         yield
     finally:
         Settings.model_config["env_file"] = original
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _disable_usage_enforcement() -> Iterator[None]:
+    """Route tests run without the usage ledger (paymob billing phase 04, deviation 11).
+
+    Every metered route reads ``settings.usage.enforce`` through ``get_usage_meter``; with
+    it off, ``UsageMeter`` returns exempt contexts and never touches the ledger. The
+    metering tests override ``get_usage_meter`` with an enforcing meter on their own DB.
+    """
+    patch = pytest.MonkeyPatch()
+    patch.setenv("LEMELY_USAGE__ENFORCE", "0")
+    try:
+        yield
+    finally:
+        patch.undo()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _disable_teacher_seat_enforcement() -> Iterator[None]:
+    """Class joins in the suite need no teacher plan (paymob billing Phase 03, index R5).
+
+    ``ClassService`` reads ``settings.team.enforce_teacher_seats``; with it off, a join
+    with no free seat enrols without one. The seat tests build an enforcing
+    ``ClassService(sm, enforce_teacher_seats=True)`` themselves.
+    """
+    patch = pytest.MonkeyPatch()
+    patch.setenv("LEMELY_TEAM__ENFORCE_TEACHER_SEATS", "0")
+    try:
+        yield
+    finally:
+        patch.undo()
+
+
+@pytest.fixture(autouse=True)
+def _reset_llm_price_overrides() -> Iterator[None]:
+    """No admin AI price override leaks between tests (UD13-D).
+
+    The registry is process-global, and the app lifespan installs one at startup, so a test that
+    ran a lifespan or installed a snapshot would otherwise price every later test in the worker.
+    """
+    from lemely.io.llm import price_overrides
+
+    price_overrides.install(None)
+    yield
+    price_overrides.install(None)
+
+
+@pytest.fixture(autouse=True)
+def _reset_billing_process_wiring() -> Iterator[None]:
+    """No amount pusher or post-settle hook leaks between tests (paymob billing Phase 06 T10).
+
+    ``create_app`` registers both in process globals. A pusher left behind resolves the default
+    sessionmaker and Paymob client itself, so a later test that settles a payment would reach the
+    environment's database instead of its own throwaway one. Every test starts from, and the
+    registry is restored to, the hooks held at conftest import (``_BASELINE_POST_SETTLE_HOOKS``),
+    not a snapshot taken at test start. A hook added during collection, by a module that builds
+    the app at import, is therefore dropped before the first test rather than inherited by all.
+    """
+    from lemely.db.merchant_charge_repo import register_amount_pusher
+
+    usage._POST_SETTLE_HOOKS[:] = _BASELINE_POST_SETTLE_HOOKS
+    register_amount_pusher(None)
+    yield
+    register_amount_pusher(None)
+    usage._POST_SETTLE_HOOKS[:] = _BASELINE_POST_SETTLE_HOOKS
 
 
 @pytest.fixture(autouse=True)
@@ -237,6 +311,36 @@ def _forbid_live_gemini_calls() -> Iterator[None]:
         yield
     finally:
         gemini_module.GeminiClient._client = property(original)  # type: ignore[method-assign]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _stub_live_fx_feed() -> Iterator[None]:
+    """Keep the market hint offline, including in tests of unrelated settings fields.
+
+    Stub the real HTTPX transport so tests can still exercise the fetch with
+    MockTransport and unrelated HTTP requests keep their existing behavior.
+    """
+    import httpx
+
+    sync = httpx.HTTPTransport.handle_request
+    async_ = httpx.AsyncHTTPTransport.handle_async_request
+
+    def handle_request(transport: httpx.HTTPTransport, request: httpx.Request) -> httpx.Response:
+        if request.url.host == "open.er-api.com":
+            return httpx.Response(503)
+        return sync(transport, request)
+
+    async def handle_async_request(
+        transport: httpx.AsyncHTTPTransport, request: httpx.Request
+    ) -> httpx.Response:
+        if request.url.host == "open.er-api.com":
+            return httpx.Response(503)
+        return await async_(transport, request)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(httpx.HTTPTransport, "handle_request", handle_request)
+        patch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", handle_async_request)
+        yield
 
 
 class RepoLedgerWriteAttempted(BaseException):

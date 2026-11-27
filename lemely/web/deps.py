@@ -15,9 +15,10 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Final
 
-from fastapi import Depends, HTTPException, status
+import structlog
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer, SecurityScopes
 
 from lemely.auth.email import EmailProvider, MockEmailProvider, ResendEmailProvider
@@ -32,6 +33,7 @@ from lemely.db.announcement_repo import AnnouncementService
 from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.auth_token_repo import AuthTokenService
+from lemely.db.billing_observability_repo import JobRunRecorder
 from lemely.db.catalogue_repo import CatalogueService
 from lemely.db.class_exclusion_repo import ClassExclusionRepository
 from lemely.db.class_repo import ClassService
@@ -66,6 +68,7 @@ from lemely.db.session import get_sessionmaker
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.db.study_plan_repo import StudyPlanService
 from lemely.db.teacher_paper_repo import TeacherPaperRepository
+from lemely.db.teacher_team_repo import TeacherTeamStore
 from lemely.db.threshold_repo import ThresholdService
 from lemely.db.upload_repo import StudentUploadRepository
 from lemely.db.xp_repo import UserZoneReader, XpService
@@ -90,7 +93,10 @@ if TYPE_CHECKING:
     from lemely.auth.cooldown import CooldownStoreProtocol
     from lemely.core.history import HistoryStoreProtocol
     from lemely.core.self_review import EvidenceJudge
+    from lemely.core.team_permissions import TeamPermission
     from lemely.io.storage import StorageBackend
+
+log = structlog.get_logger(__name__)
 
 
 @lru_cache(maxsize=1)
@@ -446,8 +452,43 @@ def get_class_service() -> ClassService:
     class ownership/enrolment needs no account-creation seam, so there is no
     GoTrue dependency here at all. Tests override this dependency with a
     service built on a throwaway Postgres database.
+
+    Teacher seats are enforced unless ``settings.team.enforce_teacher_seats`` is off
+    (paymob billing Phase 03): a student's join of a school-less class with no free
+    seat is a 409 ``no_free_seat``.
     """
-    return ClassService(get_sessionmaker(get_settings()))
+    settings = get_settings()
+    return ClassService(
+        get_sessionmaker(settings),
+        enforce_teacher_seats=settings.team.enforce_teacher_seats,
+    )
+
+
+@lru_cache(maxsize=1)
+def get_teacher_team_store() -> TeacherTeamStore:
+    """Return the process-wide :class:`TeacherTeamStore` (paymob billing Phase 03).
+
+    One transaction per unit of team work, for the team router and the team guard.
+    Tests override this dependency with a store built on a throwaway database.
+    """
+    return TeacherTeamStore(get_sessionmaker(get_settings()))
+
+
+# Spec §7: invite redemption is rate-limited. 10 tries per user per 10 minutes is
+# far above a real assistant typing one code, and far below guessing a 10-character
+# code from a 32-letter alphabet.
+_ASSISTANT_REDEEM_LIMIT = 10
+_ASSISTANT_REDEEM_WINDOW_SECONDS = 600.0
+
+
+@lru_cache(maxsize=1)
+def get_assistant_redeem_limiter() -> SlidingWindowLimiter:
+    """Return the per-user limiter on ``POST /api/teacher/team/assistants/redeem``."""
+    return SlidingWindowLimiter(
+        limit=_ASSISTANT_REDEEM_LIMIT,
+        window_seconds=_ASSISTANT_REDEEM_WINDOW_SECONDS,
+        clock=time.monotonic,
+    )
 
 
 @lru_cache(maxsize=1)
@@ -816,6 +857,14 @@ def get_sweeper() -> Sweeper:
     opens no connection (the engine is lazy), and neither does the storage
     backend it carries for the purge job.
     """
+    from lemely.web.deps_billing import (
+        get_auto_topup_job,
+        get_billing_reconcile_job,
+        get_extra_seat_renewal_job,
+        get_subscription_deps,
+        get_subscription_jobs,
+    )
+
     settings = get_settings()
     return Sweeper(
         sessionmaker=get_sessionmaker(settings),
@@ -827,6 +876,15 @@ def get_sweeper() -> Sweeper:
         bucket=settings.storage.bucket,
         email_provider=build_transactional_provider(settings),
         email_daily_cap=settings.tutoring.email_daily_cap,
+        billing_reconcile=get_billing_reconcile_job(),
+        billing_extra_seat_renewal=get_extra_seat_renewal_job(),
+        billing_auto_topup=get_auto_topup_job(),
+        paymob=settings.paymob,
+        subscriptions=get_subscription_jobs(),
+        expiry=get_subscription_deps(),
+        seat_allowances=True,
+        usage_metering=settings.usage.enforce,
+        job_recorder=JobRunRecorder(get_sessionmaker(settings)),
     )
 
 
@@ -1092,6 +1150,179 @@ def require_verified_email(
     if user is None or user.email_verified_at is None:
         raise HTTPException(status_code=403, detail={"code": "email_unverified"})
     return auth
+
+
+ACTING_TEACHER_HEADER: Final = "X-Lemely-Acting-Teacher"
+"""Request header naming the lead teacher an assistant acts for (paymob billing Phase 03)."""
+
+
+@dataclass(frozen=True, slots=True)
+class TeamActor:
+    """Who is acting, and for which teacher (spec §2.3).
+
+    ``actor_user_id`` is the caller. ``lead_teacher_user_id`` is the teacher whose
+    resources the request touches: the caller themselves, or the lead teacher an
+    active assistant acts for. ``member_id`` is that assistant's ``teacher_members``
+    row (``None`` when acting as oneself); Phase 04 meters assistant usage by it.
+
+    ``auth`` is what the handler passes to its services. For the caller acting as
+    themselves it is their own :class:`AuthContext`. For an assistant it is an
+    ``AuthContext`` for the lead teacher with role ``teacher``, so every existing
+    ownership check (``classes.teacher_id == caller``, paper visibility, quiz
+    ownership) applies unchanged to the lead teacher's resources. Anything an
+    assistant does through such a route is therefore recorded against the lead.
+    """
+
+    actor_user_id: uuid.UUID
+    lead_teacher_user_id: uuid.UUID
+    member_id: uuid.UUID | None
+    auth: AuthContext
+
+
+def _team_permission_denied() -> HTTPException:
+    """The one refusal for every way the acting-teacher header can fail.
+
+    Malformed ids, unknown leads, strangers, removed assistants, missing permissions
+    and non-teacher callers all answer identically, so the header cannot be used to
+    probe whether an account exists or who assists whom.
+    """
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={
+            "code": "team_permission_denied",
+            "message": "You do not have permission to do this for that teacher.",
+        },
+    )
+
+
+def _team_lead_unavailable() -> HTTPException:
+    """The refusal for a lead whose team assistants cannot reach (school data).
+
+    Distinct from :func:`_team_permission_denied` so a client can say "this team is
+    unavailable right now" instead of "you may not". It is raised only for a caller who
+    holds an active assistant row under that lead (the lead is already someone they
+    know), so it does not widen the header probe: a stranger, a removed assistant or an
+    unknown id still get the uniform ``team_permission_denied``.
+    """
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={
+            "code": "team_lead_unavailable",
+            "message": "This teacher's team isn't available to assistants right now.",
+        },
+    )
+
+
+def team_permission_denied_error() -> HTTPException:
+    """Public name for the team guard's uniform 403 (:func:`_team_permission_denied`).
+
+    Other layers (usage metering) raise it so their refusal is byte-identical to the guard's.
+    """
+    return _team_permission_denied()
+
+
+def team_lead_unavailable_error() -> HTTPException:
+    """Public name for the team guard's lead-unavailable 403 (:func:`_team_lead_unavailable`)."""
+    return _team_lead_unavailable()
+
+
+def require_team_permission(
+    perm: TeamPermission, *roles: Role
+) -> Callable[[AuthContext, TeacherTeamStore, list[str] | None], TeamActor]:
+    """Build a dependency resolving the acting teacher for a route an assistant may use.
+
+    ``roles`` are the platform roles the route already allows (default: teacher). They
+    are enforced first, on the real caller, by :func:`require_role`, unchanged. Then:
+
+    * no ``X-Lemely-Acting-Teacher`` header, or a header naming the caller: the caller
+      acts as themselves, with their own :class:`AuthContext`;
+    * a header naming another account: the caller must be a ``teacher`` with an
+      active assistant row under that teacher whose effective permissions
+      (:func:`~lemely.db.teacher_team_repo.assistant_has_permission`) include ``perm``.
+      Anything else (malformed or repeated header, unknown or stranger lead, removed
+      assistant, missing permission, non-teacher caller) is the same 403
+      ``team_permission_denied``.
+      A lead who belongs to a school or owns a school class is refused too, but with
+      the distinct 403 ``team_lead_unavailable``, and only to a caller who holds an
+      active assistant row under that lead (anyone else gets the uniform code above).
+      The refusal is evaluated live on every request inside
+      ``assistant_access``: school-scoped data (the shared question-bank tier,
+      school rosters, analytics, invite codes) is out of the team spec's scope, so an
+      assistant never reaches it, and a lead who joins a school mid-session loses the
+      assistant path at once. The lead acting for themselves, a ``school_admin`` and a
+      ``platform_admin`` never take this branch and are unaffected.
+
+    Each successful assistant resolution emits one ``team_acting`` audit event
+    (``actor_user_id``, ``lead_teacher_user_id``, ``member_id``, ``permission``; ids
+    only, no emails or tokens) from here, because structlog context bound in a sync
+    dependency does not reach the handler. The self path logs nothing.
+
+    A student, parent or admin can never borrow a teacher's identity through the
+    header: the role check has already run on them, and the assistant branch also
+    insists on the ``teacher`` role.
+
+    Billing, plan, seat, cap and assistant routes never use this dependency (spec
+    §2.3, §7): they act only on the caller's own team.
+
+    The inner function is named ``_team_guard``, not ``_guard``, so
+    ``tests/test_authz_matrix_complete.py`` reads the role set from the wrapped
+    :func:`require_role` closure (a sub-dependency) exactly as for a plain
+    ``require_role`` route, and ``perm`` stays readable from this closure.
+    """
+    # ``require_role(...)`` builds a closure, and this module's annotations are strings
+    # resolved against module globals, so the dependencies are bound as defaults (which
+    # FastAPI reads as ``Depends``) rather than inside ``Annotated[...]`` strings.
+    role_dependency = Depends(require_role(*(roles or (Role.teacher,))))
+    store_dependency = Depends(get_teacher_team_store)
+
+    def _team_guard(
+        auth: AuthContext = role_dependency,
+        store: TeacherTeamStore = store_dependency,
+        acting_teacher: Annotated[list[str] | None, Header(alias=ACTING_TEACHER_HEADER)] = None,
+    ) -> TeamActor:
+        try:
+            actor_id = uuid.UUID(auth.user_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid access token subject"
+            ) from None
+        as_self = TeamActor(
+            actor_user_id=actor_id, lead_teacher_user_id=actor_id, member_id=None, auth=auth
+        )
+        if acting_teacher is None:
+            return as_self
+        if len(acting_teacher) != 1:
+            raise _team_permission_denied()
+        try:
+            lead_id = uuid.UUID(acting_teacher[0].strip())
+        except ValueError:
+            raise _team_permission_denied() from None
+        if lead_id == actor_id:
+            return as_self
+        if auth.role != Role.teacher.value:
+            raise _team_permission_denied()
+        with store.transaction() as team:
+            access = team.assistant_access(actor_id, lead_id, perm)
+            member_id = access.member.id if access.member is not None else None
+        if access.lead_unavailable:
+            raise _team_lead_unavailable()
+        if member_id is None:
+            raise _team_permission_denied()
+        log.info(
+            "team_acting",
+            actor_user_id=str(actor_id),
+            lead_teacher_user_id=str(lead_id),
+            member_id=str(member_id),
+            permission=str(perm),
+        )
+        return TeamActor(
+            actor_user_id=actor_id,
+            lead_teacher_user_id=lead_id,
+            member_id=member_id,
+            auth=AuthContext(user_id=str(lead_id), role=Role.teacher.value),
+        )
+
+    return _team_guard
 
 
 class AuthServiceSchoolAdminCreator:
@@ -1364,6 +1595,9 @@ def reset_singletons() -> None:
     get_school_admin_service.cache_clear()
     get_school_provisioning_service.cache_clear()
     get_invite_service.cache_clear()
+    # Paymob billing Phase 03: the teacher-team store and the assistant-redeem limiter.
+    get_teacher_team_store.cache_clear()
+    get_assistant_redeem_limiter.cache_clear()
     # Issue #10 / D7.7 / D7.12: the token service and the two cooldown stores
     # `get_auth_service` now wires. Added for the same reason the comment
     # above this one records — the promise is *all* cached singletons.
@@ -1382,3 +1616,12 @@ def reset_singletons() -> None:
     from lemely.web.deps_tutoring import reset_tutoring_singletons
 
     reset_tutoring_singletons()
+    # Billing providers (Paymob client, reconcile job) likewise; this also closes the
+    # cached client's HTTP pool.
+    from lemely.web.deps_billing import reset_billing_singletons
+
+    reset_billing_singletons()
+    # The public invite-preview limiters likewise.
+    from lemely.web.deps_invites import reset_invite_singletons
+
+    reset_invite_singletons()

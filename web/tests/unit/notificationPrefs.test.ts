@@ -40,6 +40,12 @@ function backendNotificationTypes(): string[] {
   return [...block[1].matchAll(/^ {4}([a-z_]+) = "[a-z_]+"$/gm)].map((m) => m[1])
 }
 
+/**
+ * Backend types with a preference column but no user switch: a payment notice is a receipt,
+ * not a preference (migration 0055; `/api/me` carries no `billing` field).
+ */
+const TRANSACTIONAL_TYPES: readonly string[] = ["billing"]
+
 function camelCase(snake: string): string {
   return snake.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase())
 }
@@ -56,15 +62,23 @@ const TUTORING_KEYS = [
 ] as const
 
 describe("NOTIFICATION_TOGGLES", () => {
-  it("ships one toggle per backend notification type (fourteen) and no weekly summary", () => {
+  it("ships one toggle per backend notification type but `billing` (fourteen) and no weekly summary", () => {
     // UI spec §G-12 lists a "weekly summary". `NotificationType` has no member,
     // column, sender or row for it — a switch for it would gate nothing, which is
     // what UI spec §1.4 forbids. The expected keys are derived from the backend
-    // enum's source, so a fifteenth type there fails this until it gets a switch.
+    // enum's source, so a sixteenth type there fails this until it gets a switch
+    // (or is added to `TRANSACTIONAL_TYPES` with a reason).
     const backend = backendNotificationTypes()
-    expect(backend).toHaveLength(14) // non-vacuity: 6 original + 8 tutoring
-    expect(NOTIFICATION_TOGGLES.map((toggle) => toggle.key)).toEqual(backend.map(camelCase))
+    expect(backend).toHaveLength(15) // non-vacuity: 6 original + 8 tutoring + billing
+    const switchable = backend.filter((type) => !TRANSACTIONAL_TYPES.includes(type))
+    expect(switchable).toHaveLength(14)
+    expect(NOTIFICATION_TOGGLES.map((toggle) => toggle.key)).toEqual(switchable.map(camelCase))
     expect(JSON.stringify(NOTIFICATION_TOGGLES).toLowerCase()).not.toContain("weekly")
+  })
+
+  it("has no billing toggle: payment notices are transactional", () => {
+    expect(NOTIFICATION_TOGGLES.map((toggle) => toggle.key)).not.toContain("billing")
+    expect(JSON.stringify(NOTIFICATION_TOGGLES).toLowerCase()).not.toContain("billing")
   })
 
   it("keeps the original six first, in their original order, then the eight tutoring ones", () => {

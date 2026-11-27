@@ -27,6 +27,13 @@ referencing column the database's own rule decides:
 Rows reachable by more than one path are counted once (by ``ctid``). The deletes run in a single
 transaction owned by the caller, so a failure anywhere rolls the whole purge back.
 
+**Append-only tables.** The billing ledgers (``usage_entries``, ``admin_audit_log``, and
+``plan_tier_terms`` for its ``created_by`` pointer) reject UPDATE and DELETE by trigger. A purged
+user's billing history must go. ``execute_purge`` therefore disables exactly the triggers in
+:data:`APPEND_ONLY_TRIGGERS` inside its transaction and enables them before returning (a failure
+rolls the change back). Rows the foreign keys cannot reach are found by
+:meth:`_Walker.collect_unlinked`: audit rows by ``target_id`` and Paymob events by transaction.
+
 **Not touched here:** object storage (uploaded scans, avatars), and tables keyed by email rather
 than by a user foreign key (``waitlist_applicants``, auth cooldowns).
 """
@@ -65,6 +72,55 @@ _MAX_DEPTH = 12
 #: Tables the purge must never reach. Waitlist applicants are not users (no foreign key to
 #: ``users``); if a future migration linked one, the walk stops instead of deleting it.
 PROTECTED_TABLES: frozenset[str] = frozenset({"waitlist_applicants"})
+
+#: Every ``(table, trigger)`` that makes a table append-only: a BEFORE UPDATE/DELETE row trigger
+#: that raises. ``execute_purge`` disables exactly these (``ALTER TABLE ... DISABLE TRIGGER``, which
+#: is transactional and leaves foreign keys enforced) for the length of its transaction, because the
+#: purge must remove a doomed user's billing history. ``tests/test_user_purge.py`` compares this
+#: with ``pg_trigger``, so a migration that adds another append-only table fails there until it is
+#: listed. ALTER TABLE requires table ownership (or an appropriately privileged role).
+APPEND_ONLY_TRIGGERS: tuple[tuple[str, str], ...] = (
+    ("admin_audit_log", "trg_admin_audit_log_append_only"),
+    ("plan_tier_terms", "trg_plan_tier_terms_append_only"),
+    ("usage_entries", "trg_usage_entries_append_only"),
+)
+
+#: How long ``execute_purge`` waits for any one lock (``SET LOCAL lock_timeout``). The trigger
+#: changes need a strong lock on the ledgers, so a busy app makes the purge fail fast and roll back
+#: instead of hanging; run it again when the app is quiet.
+LOCK_TIMEOUT = "5s"
+
+#: Nullable ``RESTRICT``/``NO ACTION`` edges (``table.column``) whose rows belong to the parent row
+#: and are deleted with it. The walker's default for a nullable edge is to clear the column (an
+#: audit pointer such as ``review_queue.resolved_by``), but clearing these violates a CHECK:
+#: ``ck_usage_entries_has_target`` (a ledger line needs a grant or a debt) and
+#: ``ck_usage_grants_seat_link`` (a seat allowance needs its seat).
+OWNED_BY_PARENT: frozenset[str] = frozenset(
+    {
+        "usage_entries.grant_id",
+        "usage_entries.debt_id",
+        "usage_grants.teacher_member_id",
+    }
+)
+
+#: Ledger lines have no foreign key to ``users``; they belong to a user through the grant or debt
+#: they sit on. ``(table, column) -> (owner table, owner column)``, so a kept user's lost lines
+#: show up in :attr:`PurgePlan.kept_impacts` as well as the grants and debts themselves.
+LEDGER_OWNERS: dict[tuple[str, str], tuple[str, str]] = {
+    ("usage_entries", "grant_id"): ("usage_grants", "owner_user_id"),
+    ("usage_entries", "debt_id"): ("usage_debts", "owner_user_id"),
+}
+
+#: ``admin_audit_log.target_kind`` values whose ``target_id`` names a row the purge can delete,
+#: and that row's table. The column has no foreign key (the log outlives its targets), so the
+#: purge clears these rows itself. Every other kind (``AuditTarget`` in ``admin_billing_repo``:
+#: plan_tier, credit_pack, usage_rate, usage_estimator, conversion_rate, billing_settings,
+#: llm_price) names catalogue rows the purge never deletes.
+AUDIT_TARGET_TABLES: dict[str, str] = {
+    "user": "users",
+    "subscription": "subscriptions",
+    "payment": "payments",
+}
 
 
 class PurgeError(RuntimeError):
@@ -212,6 +268,18 @@ NON_FK_UUID_COLUMNS: dict[tuple[str, str], str] = {
     ("tutoring_admin_access", "report_id"): "same append-only log",
     ("ai_detection_removal_audit_log", "source_id"): "id of a review_queue row, written once by "
     "migration 0037; no user data",
+    (
+        "admin_audit_log",
+        "target_id",
+    ): "cleared explicitly by the purge: plan_purge deletes the rows "
+    "whose target is a doomed user, subscription or payment (_Walker.collect_unlinked, "
+    "AUDIT_TARGET_TABLES); the other target kinds name catalogue rows the purge never deletes",
+    ("usage_jobs", "job_id"): "the job's own public id (unique), the target of the usage_debts "
+    "and usage_entries foreign keys; it names no user, and the row is reached through "
+    "actor_user_id",
+    ("usage_jobs", "teacher_member_id"): "id of the teacher_members seat the job was charged to, "
+    "copied onto the job (the ledger models declare no foreign key); it names a seat, not a user",
+    ("usage_entries", "teacher_member_id"): "same seat id, copied onto the append-only ledger line",
 }
 
 
@@ -638,7 +706,7 @@ class _Walker:
             if ref.on_delete in ("n", "d"):
                 if count:
                     self.detached[label] += count
-            elif ref.all_nullable:
+            elif ref.all_nullable and label not in OWNED_BY_PARENT:
                 if count:
                     self.detached[label] += count
                     self.steps.append(
@@ -650,6 +718,55 @@ class _Walker:
                 )
         if explicit:
             self.steps.append(_Step("delete", table, columns, tuple(values)))
+
+    def _doom_by_key(
+        self, table: str, columns: tuple[str, ...], values: list[tuple[object, ...]]
+    ) -> None:
+        """Doom the rows of ``table`` matching ``values`` and give them a delete step."""
+        if not values:
+            return
+        tbl = _tbl(table, columns)
+        found = self._rows(sa.select(_CTID).select_from(tbl).where(_match(tbl, columns, values)))
+        if found:
+            self._doomed[table].update(str(row[0]) for row in found)
+            self.steps.append(_Step("delete", table, columns, tuple(values)))
+
+    def collect_unlinked(self) -> None:
+        """Doom rows that name a doomed row without a foreign key.
+
+        Run after :meth:`collect`. ``admin_audit_log`` rows whose ``target_id`` is a doomed user,
+        subscription or payment (:data:`AUDIT_TARGET_TABLES`); and the ``paymob_events`` of a
+        doomed payment's Paymob transaction (``txn:<paymob_txn_id>:...``, the key
+        ``billing_repo.transaction_dedupe_key`` writes). Token and subscription events carry no
+        user or payment key, only a payload, so they are not reachable and stay.
+        """
+        pairs: list[tuple[object, ...]] = []
+        for kind, table in AUDIT_TARGET_TABLES.items():
+            ctids = self._doomed.get(table)
+            if ctids:
+                ids = _tbl(table, ["id"])
+                rows = self._rows(sa.select(ids.c.id).where(_CTID.in_(sorted(ctids))))
+                pairs.extend((kind, row[0]) for row in rows)
+        self._doom_by_key("admin_audit_log", ("target_kind", "target_id"), pairs)
+        payments = self._doomed.get("payments")
+        if payments:
+            pay = _tbl("payments", ["paymob_txn_id"])
+            txns = [
+                row[0]
+                for row in self._rows(
+                    sa.select(pay.c.paymob_txn_id).where(
+                        _CTID.in_(sorted(payments)), pay.c.paymob_txn_id.is_not(None)
+                    )
+                )
+            ]
+            if txns:
+                events = _tbl("paymob_events", ["dedupe_key"])
+                keys = self._rows(
+                    sa.select(events.c.dedupe_key).where(
+                        sa.or_(*[events.c.dedupe_key.like(f"txn:{txn}:%") for txn in txns])
+                    )
+                )
+                self._doom_by_key("paymob_events", ("dedupe_key",), keys)
 
     def doomed_ctids(self) -> dict[str, set[str]]:
         return self._doomed
@@ -673,6 +790,21 @@ class _Walker:
             )
             impacts.extend(
                 KeptImpact(ref.child_table, col, kept[uid], n) for uid, n in rows if uid in kept
+            )
+        for (table, column), (owner_table, owner_column) in LEDGER_OWNERS.items():
+            ctids = self._doomed.get(table)
+            if not ctids:
+                continue
+            owned = self._conn.execute(
+                sa.text(
+                    f"SELECT o.{owner_column}, count(*) FROM {table} e "  # noqa: S608
+                    f"JOIN {owner_table} o ON o.id = e.{column} "
+                    "WHERE e.ctid::text IN :ctids GROUP BY 1"
+                ).bindparams(sa.bindparam("ctids", expanding=True)),
+                {"ctids": sorted(ctids)},
+            )
+            impacts.extend(
+                KeptImpact(table, column, kept[uid], n) for uid, n in owned if uid in kept
             )
         return sorted(impacts, key=lambda i: (i.table, i.column, i.kept_email))
 
@@ -758,6 +890,7 @@ def plan_purge(
     if plan.to_delete:
         walker = _Walker(conn)
         walker.collect("users", ("id",), [(i,) for i in plan.delete_ids], explicit=True)
+        walker.collect_unlinked()
         plan.deleted_rows = walker.deleted_counts()
         plan.detached_rows = dict(sorted(walker.detached.items()))
         plan.steps = walker.steps
@@ -776,20 +909,41 @@ def plan_purge(
     return plan
 
 
+def _set_append_only_triggers(conn: Connection, *, enabled: bool) -> None:
+    quote = conn.dialect.identifier_preparer.quote
+    action = "ENABLE" if enabled else "DISABLE"
+    for table, trigger in APPEND_ONLY_TRIGGERS:
+        conn.execute(sa.text(f"ALTER TABLE {quote(table)} {action} TRIGGER {quote(trigger)}"))
+
+
 def execute_purge(conn: Connection, plan: PurgePlan) -> dict[str, int]:
     """Run ``plan``'s steps on ``conn``, children first, and return rows removed per step table.
 
     The caller owns the transaction: every statement here runs inside it, so any error leaves
-    the database untouched once the caller rolls back.
+    the database untouched once the caller rolls back. The whole body also runs in a SAVEPOINT,
+    which is what keeps the append-only triggers (:data:`APPEND_ONLY_TRIGGERS`) safe. They are
+    disabled for the steps and enabled again before returning, but a caller that catches an error
+    and commits anyway, or an AUTOCOMMIT connection, would commit the disable. The SAVEPOINT rolls
+    the disable and the deletes back on any error, and on an AUTOCOMMIT connection PostgreSQL
+    rejects it before any DDL or delete runs. ``SET LOCAL lock_timeout`` (:data:`LOCK_TIMEOUT`) is
+    set for the same span and put back afterwards. Foreign keys stay enforced throughout.
     """
     removed: dict[str, int] = defaultdict(int)
-    for step in plan.steps:
-        tbl = _tbl(step.table, step.columns)
-        where = _match(tbl, step.columns, step.values)
-        if step.kind == "delete":
-            removed[step.table] += conn.execute(sa.delete(tbl).where(where)).rowcount
-        else:
-            conn.execute(sa.update(tbl).where(where).values(dict.fromkeys(step.columns)))
+    with conn.begin_nested():
+        previous = conn.execute(sa.text("SHOW lock_timeout")).scalar_one()
+        conn.execute(sa.text(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'"))
+        if plan.steps:
+            _set_append_only_triggers(conn, enabled=False)
+        for step in plan.steps:
+            tbl = _tbl(step.table, step.columns)
+            where = _match(tbl, step.columns, step.values)
+            if step.kind == "delete":
+                removed[step.table] += conn.execute(sa.delete(tbl).where(where)).rowcount
+            else:
+                conn.execute(sa.update(tbl).where(where).values(dict.fromkeys(step.columns)))
+        if plan.steps:
+            _set_append_only_triggers(conn, enabled=True)
+        conn.execute(sa.text("SELECT set_config('lock_timeout', :v, true)"), {"v": previous})
     return dict(removed)
 
 
@@ -858,6 +1012,8 @@ def purge_auth_users(
 
 
 __all__ = [
+    "APPEND_ONLY_TRIGGERS",
+    "LOCK_TIMEOUT",
     "NON_FK_UUID_COLUMNS",
     "PRODUCTION_PROJECT_REFS",
     "PROTECTED_TABLES",

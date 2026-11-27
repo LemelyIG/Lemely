@@ -1,4 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
+import { PermissionGate } from "@/components/acting/permission-gate"
+import { useCan, useDeniedReason } from "@/components/acting/acting-state"
 import { useEffect, useMemo, useState, type FormEvent } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import type { UseQueryResult } from "@tanstack/react-query"
@@ -726,8 +728,12 @@ function StepPreview({
   const removed = questions.filter((q) => q.status !== "included")
   const canGenerate = quiz.poolSource != null
 
+  // Bank generation is a deterministic question-bank query with no AI call: it is free and
+  // unmetered, so it neither asks for a usage estimate nor gates on the balance.
   function handleGenerate() {
-    generate.mutate(undefined, { onSuccess: (data) => setLastGenerated(data) })
+    generate.mutate(undefined, {
+      onSuccess: (data) => setLastGenerated(data),
+    })
   }
 
   return (
@@ -1059,6 +1065,10 @@ export function QuizBuilder() {
   const classesQuery = useTeacherClasses()
 
   const quiz = quizQuery.data?.quiz
+  // An assistant whose role lacks `generate_quiz` reads the builder the way anyone reads a quiz
+  // that is no longer a draft: every step shows what was configured, none of it can be changed.
+  const canEdit = useCan("generate_quiz")
+  const deniedReason = useDeniedReason("generate_quiz")
 
   // Hydrate `?step=` from the stored `builderStep` on first load only — a
   // teacher who has already navigated (the param is present) keeps control
@@ -1106,7 +1116,10 @@ export function QuizBuilder() {
         }}
       >
         {({ quiz: loadedQuiz, questions }) => {
-          const isDraft = loadedQuiz.status === "draft"
+          const isDraftStatus = loadedQuiz.status === "draft"
+          // What the steps read to decide whether their inputs are live: the quiz is a draft AND
+          // this role may change it.
+          const isDraft = isDraftStatus && canEdit
           const stepFromUrl = Number(searchParams.get("step"))
           const step =
             Number.isInteger(stepFromUrl) && stepFromUrl >= 1 && stepFromUrl <= 6
@@ -1126,7 +1139,7 @@ export function QuizBuilder() {
           if (loadedQuiz.targetGrade) completed.add(3)
           if (loadedQuiz.poolSource) completed.add(4)
           if (loadedQuiz.questionCount > 0) completed.add(5)
-          if (!isDraft) completed.add(6)
+          if (!isDraftStatus) completed.add(6)
 
           // Task 8 (C3c) · `teacher-tools-quizbuilder-structure-divergence`.
           // Only what's already decided — a step the teacher is still on
@@ -1158,11 +1171,15 @@ export function QuizBuilder() {
                 </div>
               </div>
 
-              {!isDraft ? (
+              {!isDraftStatus ? (
                 <div className="text-body-sm text-on-surface-variant bg-surface-container-low border border-outline-variant rounded-md px-3.5 py-3 text-pretty">
                   This quiz is {statusLabel(loadedQuiz.status).toLowerCase()}, so its title, topics,
                   difficulty, source and questions can no longer be changed. What follows is
                   read-only, showing exactly what was configured and (below) who it's assigned to.
+                </div>
+              ) : !canEdit ? (
+                <div role="note" className="text-body-sm text-on-surface-variant bg-surface-container-low border border-outline-variant rounded-md px-3.5 py-3 text-pretty">
+                  {deniedReason} What follows is read-only.
                 </div>
               ) : null}
 
@@ -1250,12 +1267,16 @@ export function QuizBuilder() {
                 />
               ) : null}
               {step === 6 ? (
-                <StepAssign
-                  quizId={quizId}
-                  quiz={loadedQuiz}
-                  classesQuery={classesQuery}
-                  onBack={() => goToStep(5)}
-                />
+                // Assigning is the one step with no `isDraft` of its own (a closed quiz can still
+                // be assigned from here), so the role's lack is gated around it instead.
+                <PermissionGate permission="generate_quiz">
+                  <StepAssign
+                    quizId={quizId}
+                    quiz={loadedQuiz}
+                    classesQuery={classesQuery}
+                    onBack={() => goToStep(5)}
+                  />
+                </PermissionGate>
               ) : null}
             </>
           )

@@ -1,5 +1,5 @@
 {
-  "_comment": "Desired Cloud Scheduler jobs, reconciled on every deploy by scripts/scheduler_reconcile.py. Each job is created as lemely-<environment>-<id>. Adding an entry creates it, editing one updates it, and removing or renaming one deletes the old job, but only jobs carrying the lemely-deploy ownership marker are ever deleted. `secret` names a GitHub secret (per environment); the deploy step must also map it into its env. An empty secret skips that job with a warning and never deletes it. See docs/ci-cd.md.",
+  "_comment": "Desired Cloud Scheduler jobs, reconciled on every deploy by scripts/scheduler_reconcile.py. Each job is created as lemely-<environment>-<id>. Adding an entry creates it, editing one updates it, and removing or renaming one deletes the old job, but only jobs carrying the lemely-deploy ownership marker are ever deleted. `secret` names a GitHub secret (per environment); the deploy step must also map it into its env. An empty secret skips that job with a warning and never deletes it, unless the job is `required`, which makes it a deploy error (checked by `--preflight` before any migration runs too). Delivery policy is per job: maxRetryAttempts, minBackoff, maxBackoff, attemptDeadline (defaults: 3, 6m, 30m, none; the digest relies on the defaults). See docs/ci-cd.md.",
   "jobs": [
     {
       "id": "waitlist-digest",
@@ -9,6 +9,18 @@
       "method": "POST",
       "path": "/api/internal/waitlist/digest",
       "secret": "WAITLIST_DIGEST_SECRET"
+    },
+    {
+      "id": "sweep",
+      "description": "Billing and notification sweeper pass (the only driver of passes on Cloud Run)",
+      "schedule": "* * * * *",
+      "timeZone": "UTC",
+      "method": "POST",
+      "path": "/api/internal/jobs/sweep",
+      "secret": "SWEEP_JOBS_SECRET",
+      "maxRetryAttempts": 0,
+      "attemptDeadline": "90s",
+      "required": true
     }
   ]
 }

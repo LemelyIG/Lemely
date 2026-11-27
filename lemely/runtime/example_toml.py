@@ -577,9 +577,9 @@ def render_example_toml() -> str:
     lines.append("# two daily engagement notifications (streak_warning at streak_warning_hour,")
     lines.append("# study_plan_reminder at study_plan_reminder_hour) in each recipient's OWN")
     lines.append("# time zone. It runs inside the API process, started by create_app's lifespan;")
-    lines.append("# there is no separate worker to deploy. On Cloud Run, timely delivery needs")
-    lines.append("# --min-instances=1: at zero instances nothing is running to sweep, and a")
-    lines.append("# 19:00 warning may be missed for that day entirely. See docs/deployment.md.")
+    lines.append("# there is no separate worker to deploy. On Cloud Run at zero instances that")
+    lines.append("# loop is asleep, so Cloud Scheduler also calls POST /api/internal/jobs/sweep")
+    lines.append("# every minute (see jobs_secret below and docs/deployment.md).")
     lines.append("# The test suite sets LEMELY_NOTIFICATIONS__SWEEPER_ENABLED=0.")
     # The shipped default, deliberately not ``s.notifications.sweeper_enabled``:
     # the test suite sets LEMELY_NOTIFICATIONS__SWEEPER_ENABLED=0 for every
@@ -592,6 +592,21 @@ def render_example_toml() -> str:
     lines.append(f"sweep_poll_seconds = {s.notifications.sweep_poll_seconds}")
     lines.append(f"streak_warning_hour = {s.notifications.streak_warning_hour}")
     lines.append(f"study_plan_reminder_hour = {s.notifications.study_plan_reminder_hour}")
+    lines.append("# Shared secret Cloud Scheduler sends in X-Cron-Secret to POST")
+    lines.append(
+        "# /api/internal/jobs/sweep (one full sweeper pass). Unset, that route answers 503."
+    )
+    lines.append("# Deployed it is LEMELY_NOTIFICATIONS__JOBS_SECRET: never in lemely.toml.")
+    lines.append('# jobs_secret = "..."')
+    lines.append("# Only during a staged rotation of jobs_secret: the old value, still accepted")
+    lines.append("# beside the new one (LEMELY_NOTIFICATIONS__JOBS_SECRET_PREVIOUS).")
+    lines.append("# See docs/deployment.md.")
+    lines.append('# jobs_secret_previous = "..."')
+    lines.append("# Wall-clock seconds one sweep pass may run before the jobs not yet started are")
+    lines.append(
+        "# skipped until the next tick. Keep it 30 s or more under Cloud Scheduler's 90 s deadline."
+    )
+    lines.append(f"sweep_pass_budget_seconds = {s.notifications.sweep_pass_budget_seconds}")
     lines.append("")
 
     lines.append("[tutoring]")

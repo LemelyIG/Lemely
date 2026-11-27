@@ -79,7 +79,7 @@ def test_upgrade_downgrade_upgrade_round_trip(
     downgrade_to(DOWN_REVISION)
 
     with sm() as session:
-        assert current_revision(session) == DOWN_REVISION
+        assert current_revision(session, within=REVISION) == DOWN_REVISION
         assert session.execute(_COLUMN_SQL, {"t": TABLE}).first() is None
         # The rest of the table (and the row) survives.
         assert session.execute(sa.text(f"SELECT count(*) FROM {TABLE}")).scalar_one() == 1  # noqa: S608 - constant
@@ -87,5 +87,5 @@ def test_upgrade_downgrade_upgrade_round_trip(
     upgrade_head()
 
     with sm() as session:
-        assert current_revision(session) == head_revision()
+        assert current_revision(session, within=REVISION) == head_revision()
         assert session.execute(_COLUMN_SQL, {"t": TABLE}).one()[2] == "YES"
