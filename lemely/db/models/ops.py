@@ -501,9 +501,6 @@ class NotificationPreference(TimestampMixin, Base):
     tutoring_report: Mapped[bool] = mapped_column(
         sa.Boolean, nullable=False, server_default=sa.true()
     )
-    # Payment notices (migration 0055, Paymob billing). Not user-switchable: no /api/me toggle
-    # and no NotificationPreferencesService.set keyword write it.
-    billing: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.true())
     quiet_hours_start: Mapped[time | None] = mapped_column(sa.Time(), nullable=True)
     quiet_hours_end: Mapped[time | None] = mapped_column(sa.Time(), nullable=True)
 

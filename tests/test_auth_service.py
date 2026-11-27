@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from lemely.auth.otp import OtpRateLimitError, OtpResult, OtpStore
+from lemely.auth.otp import OtpChannel, OtpRateLimitError, OtpStore
 from lemely.auth.service import AuthService, DeviceContext
 from lemely.auth.sms import MockSmsProvider
 from lemely.auth.tokens import decode_token
@@ -131,6 +131,29 @@ def test_login_bad_password_raises() -> None:
         service.login("s@example.com", "wrong-pw")
 
 
+def test_parent_otp_flow_mints_self_signed_token(caplog: pytest.LogCaptureFixture) -> None:
+    clock = _Clock(datetime(2026, 1, 1, tzinfo=UTC))
+    service, mirror, settings = _service(clock)
+    phone = "+201112223334"
+
+    with caplog.at_level(logging.INFO, logger="lemely.auth.sms"):
+        service.request_otp(phone)
+    # The mock SMS logs the code; recover it from the log record for the test.
+    logged = [r.getMessage() for r in caplog.records if "Mock SMS" in r.getMessage()]
+    assert logged, "expected the mock SMS provider to log the code"
+    code = logged[-1].split()[-1]
+
+    result = service.verify_otp(phone, code)
+    assert result.role is Role.parent
+
+    claims = decode_token(result.access_token, settings)
+    assert claims.app_role == "parent"
+    assert claims.phone == phone
+    assert claims.sub == str(result.user_id)
+    # The parent user was mirrored with the phone number.
+    assert mirror.rows[result.user_id].phone == phone
+
+
 class _DeliveringSmsProvider:
     """Stands in for a real SMS gateway: it *does* deliver out of band."""
 
@@ -156,14 +179,57 @@ def test_request_otp_returns_the_code_only_for_a_non_delivering_provider() -> No
 
     mock_code = service.request_otp(phone)
     assert mock_code is not None
-    # It is the real challenge, not a decorative string: the store accepts it.
-    assert service._otp_store.verify(phone, mock_code) is OtpResult.ok
+    # It is the real challenge, not a decorative string: it verifies.
+    assert service.verify_otp(phone, mock_code).role is Role.parent
 
     real_provider = _DeliveringSmsProvider()
     service._sms = real_provider
     assert service.request_otp("+201110001112") is None
     # ...and the provider still received it — only the *return* is withheld.
     assert real_provider.sent and len(real_provider.sent[-1][1]) > 0
+
+
+def test_otp_verify_wrong_code_raises() -> None:
+    clock = _Clock(datetime(2026, 1, 1, tzinfo=UTC))
+    service, _, _ = _service(clock)
+    phone = "+201110000000"
+    service.request_otp(phone)
+    with pytest.raises(AuthError):
+        service.verify_otp(phone, "000000-wrong")
+
+
+def test_otp_verify_expired_raises() -> None:
+    clock = _Clock(datetime(2026, 1, 1, tzinfo=UTC))
+    service, _, settings = _service(clock)
+    phone = "+201119999999"
+    service.request_otp(phone)
+    clock.advance(settings.auth.otp_ttl_seconds + 1)
+    with pytest.raises(AuthError):
+        service.verify_otp(phone, "123456")
+
+
+def test_otp_reuses_existing_parent_row() -> None:
+    clock = _Clock(datetime(2026, 1, 1, tzinfo=UTC))
+    service, mirror, _ = _service(clock)
+    phone = "+201115556667"
+
+    # Pre-mirror a parent with this phone (e.g. created earlier).
+    import uuid
+
+    parent_id = uuid.uuid4()
+    mirror.upsert(parent_id, email="existing@parents.local", role=Role.parent, phone=phone)
+
+    service.request_otp(phone)
+    # Fetch the just-issued code via the store, deterministically.
+    result = _verify_with_current_code(service, phone)
+    assert result.user_id == parent_id  # reused existing row, no new id
+
+
+def _verify_with_current_code(service: AuthService, phone: str) -> object:
+    # Brute a small space is unnecessary: read from the store directly.
+    store = service._otp_store  # test-only introspection of the injected store
+    challenge = store._challenges[(OtpChannel.phone, phone)]
+    return service.verify_otp(phone, challenge.code)
 
 
 # ─────────────────────────────────────────────────────────────────────────

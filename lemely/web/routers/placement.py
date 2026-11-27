@@ -31,12 +31,7 @@ from lemely.db.placement_repo import (
     PlacementService,
     PlacementUnavailableError,
 )
-from lemely.web.deps import (
-    AuthContext,
-    get_placement_service,
-    require_role,
-    require_verified_email,
-)
+from lemely.web.deps import AuthContext, get_placement_service, require_role
 from lemely.web.schemas_placement import (
     CreatePlacementRequestDTO,
     CreatePlacementResponseDTO,
@@ -128,14 +123,9 @@ def placement_availability(
 def create_placement(
     body: CreatePlacementRequestDTO,
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
-    _verified: Annotated[AuthContext, Depends(require_verified_email)],
     service: Annotated[PlacementService, Depends(get_placement_service)],
 ) -> CreatePlacementResponseDTO:
     """Assemble and self-assign a placement test (S-03 → S-04).
-
-    403 ``{"code": "email_unverified"}`` until the student verifies their email:
-    placement marking is metered and the free signup allowance is only granted
-    on verification. Availability and result stay open to unverified students.
 
     409, carrying the identical payload ``GET .../availability`` would have
     returned, when assembly does not clear the viability floor.

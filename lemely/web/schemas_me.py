@@ -82,12 +82,6 @@ class ProfileDTO(ApiModel):
     ``users.timezone_is_explicit`` (push-delivery spec §3). ``timezone`` is
     ``null`` when never set; the client renders that as "follow this device"
     and never invents a name for the server-side default.
-
-    ``phone`` / ``phoneMissing`` (UD-11): ``phone`` is the stored number in E.164, or ``null``
-    when none is on file *or* the stored value does not validate (an older free-text entry);
-    ``phoneMissing`` is exactly ``phone is None``. Every role is asked for one, and a payer
-    without one cannot check out (422 ``phone_required``), so the client prompts on
-    ``phoneMissing`` and saves with ``PUT /api/me/phone``.
     """
 
     displayName: str | None = None
@@ -97,8 +91,6 @@ class ProfileDTO(ApiModel):
     avatarUrl: str | None = None
     timezone: str | None = None
     timezoneIsExplicit: bool = False
-    phone: str | None = None
-    phoneMissing: bool = False
 
 
 class NotificationPreferencesUpdateDTO(ApiModel):
@@ -144,25 +136,6 @@ class TimezoneUpdateDTO(ApiModel):
     explicit: bool
 
 
-class PhoneUpdateDTO(ApiModel):
-    """Body for ``PUT /api/me/phone`` (UD-11).
-
-    ``phone`` is typed ``str | None`` so a missing field is a 422 ``phone_required`` with the
-    stable code rather than a pydantic "field required"; the route validates it (format only,
-    no OTP) and stores E.164. Any international number is accepted; a number with no ``+``
-    is read as Egyptian.
-    """
-
-    phone: str | None = None
-
-
-class PhoneDTO(ApiModel):
-    """Response for ``PUT /api/me/phone``: the stored number, in E.164."""
-
-    phone: str
-    phoneMissing: bool = False
-
-
 class TimezoneDTO(ApiModel):
     """Response for ``PUT /api/me/timezone``: the stored state after the write.
 
@@ -177,8 +150,6 @@ class TimezoneDTO(ApiModel):
 __all__ = [
     "NotificationPreferencesDTO",
     "NotificationPreferencesUpdateDTO",
-    "PhoneDTO",
-    "PhoneUpdateDTO",
     "ProfileDTO",
     "TimezoneDTO",
     "TimezoneUpdateDTO",

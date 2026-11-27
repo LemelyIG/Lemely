@@ -73,7 +73,6 @@ class NotificationPreferencesRow:
     tutor_listing: bool = True
     parent_link: bool = True
     tutoring_report: bool = True
-    billing: bool = True
     quiet_hours_start: time | None = None
     quiet_hours_end: time | None = None
 
@@ -260,7 +259,6 @@ def _row_from_model(model: NotificationPreference) -> NotificationPreferencesRow
         tutor_listing=model.tutor_listing,
         parent_link=model.parent_link,
         tutoring_report=model.tutoring_report,
-        billing=model.billing,
         quiet_hours_start=model.quiet_hours_start,
         quiet_hours_end=model.quiet_hours_end,
     )

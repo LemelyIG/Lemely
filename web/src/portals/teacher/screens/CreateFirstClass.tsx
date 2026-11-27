@@ -1,5 +1,4 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
-import { PermissionGate } from "@/components/acting/permission-gate"
 import { useState, type FormEvent } from "react"
 import { Link } from "react-router-dom"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -143,7 +142,6 @@ export function CreateFirstClass() {
         topics, and who needs attention. Give it a name and you're ready to start marking.
       </p>
 
-      <PermissionGate permission="manage_classes">
       <Card>
         <CardBody>
           <form onSubmit={handleCreate} className="flex flex-col gap-4" noValidate>
@@ -175,7 +173,6 @@ export function CreateFirstClass() {
           </form>
         </CardBody>
       </Card>
-      </PermissionGate>
     </div>
   )
 }

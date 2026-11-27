@@ -117,7 +117,7 @@ class ParentRow:
 def _parent_display_name(display_name: str | None, email: str, phone: str | None) -> str:
     """Best honest identity for a parent, never an internal artefact.
 
-    A phone-only parent was once minted by the retired phone-OTP login
+    A phone-only parent is minted by :meth:`~lemely.auth.service.AuthService.verify_otp`
     with a **synthesised** ``phone+20…@parents.lemely.local`` address, because
     ``users.email`` is NOT NULL + unique and no real address has been captured
     yet (:func:`~lemely.auth.service._phone_placeholder_email`). Falling back

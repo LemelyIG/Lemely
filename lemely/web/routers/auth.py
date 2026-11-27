@@ -49,7 +49,6 @@ from lemely.web.deps import (
     get_user_mirror,
 )
 from lemely.web.devices import to_device_dto
-from lemely.web.phone_http import require_valid_phone
 from lemely.web.push import NotificationTransport
 from lemely.web.routers.invites import PARENT_LIMIT_MESSAGE, parent_link_change_notices
 from lemely.web.schemas_auth import (
@@ -259,12 +258,6 @@ def signup(
     email-verification token (D7.4/D7.7) whose dev link (only when the
     configured provider does not deliver out of band) rides back on
     :attr:`~lemely.web.schemas_auth.TokenResponseDTO.devLink`.
-
-    **A phone is required (UD-11).** ``phone`` is validated by
-    :func:`~lemely.web.phone_http.require_valid_phone` (format only, no OTP) and stored
-    as E.164. A missing or malformed one is a **422** ``{"code": "phone_required" |
-    "phone_invalid", "message": ...}``, raised after the role check and before the cooldown
-    is stamped, so a typo never spends the address's one attempt.
     """
     requested_role = Role(body.role)
     if requested_role not in _SELF_SERVICE_SIGNUP_ROLES:
@@ -275,7 +268,6 @@ def signup(
     # Before the cooldown: a refused address must keep answering 403 access_restricted on every
     # retry, never a 429 that hides the refusal.
     service.require_access(body.email)
-    phone = require_valid_phone(body.phone)
     if mirror.get_by_email(body.email) is None:
         try:
             cooldown.check_and_stamp(body.email)
@@ -287,7 +279,7 @@ def signup(
             body.password,
             requested_role,
             display_name=body.displayName,
-            phone=phone,
+            phone=body.phone,
             device=_device_context(body.deviceId, user_agent),
             accepted_terms=body.acceptedTerms,
         )
@@ -503,25 +495,18 @@ def parent_signup(
     and swallowed exactly like the race above. A successful link tells every
     parent already linked: the email is queued in the redemption's
     transaction, the inbox notice is sent here after it.
-
-    **A phone is required (UD-11)**, validated and stored exactly as in
-    :func:`signup` (422 ``phone_required`` / ``phone_invalid``). It is checked after the
-    proof token and the invite, so a bad token is still a 401 and a dead invite a 404, and
-    before any account exists.
     """
     try:
         claims = decode_email_proof_token(body.proofToken, settings)
     except TokenError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     _require_live_parent_invite(invite_service, claims.invite_code, refuse_at_parent_limit=True)
-    phone = require_valid_phone(body.phone)
     try:
         result = service.signup(
             claims.email,
             body.password,
             Role.parent,
             display_name=body.displayName,
-            phone=phone,
             device=_device_context(body.deviceId, user_agent),
             accepted_terms=body.acceptedTerms,
             email_verified=True,

@@ -1,5 +1,4 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
-import { PermissionGate } from "@/components/acting/permission-gate"
 import { useSettledCode } from "../home/useSettledCode"
 import { useState } from "react"
 import { Link, NavLink, Outlet, useNavigate, useOutletContext, useParams } from "react-router-dom"
@@ -133,9 +132,7 @@ export function JoinCodeChip({ code, settle = false }: { code: string; settle?: 
 function MintClassInvite({ classId }: { classId: string }) {
   const mint = useMintClassInviteCode(classId)
 
-  // A class invite is how a student gets into the class: managing students.
   return (
-    <PermissionGate permission="manage_students" mode="hide">
     <div className="flex flex-col items-end gap-1 max-w-[220px]">
       <span className="text-eyebrow text-on-surface-variant">One-time invite</span>
       {mint.data ? <JoinCodeChip code={mint.data.code} /> : null}
@@ -155,7 +152,6 @@ function MintClassInvite({ classId }: { classId: string }) {
         </p>
       ) : null}
     </div>
-    </PermissionGate>
   )
 }
 

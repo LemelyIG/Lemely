@@ -54,7 +54,6 @@ from sqlalchemy.exc import IntegrityError
 
 from lemely.core.difficulty import allocate_difficulty
 from lemely.core.history import GRADE_ORDER
-from lemely.core.metered_actions import MAX_ESTIMATE_INPUTS
 from lemely.db.models.enums import (
     QuestionDifficulty,
     QuestionSource,
@@ -385,16 +384,6 @@ class QuizService:
         continue from the highest already assigned) rather than clearing and
         rebuilding it — a teacher increasing the count mid-draft must not
         lose curation already done on the questions already materialized.
-        It only ever adds what is *missing*: ``requested_count`` minus the
-        questions still ``included``, so a second call at the same count adds
-        nothing. A bank row that is already on the quiz, curated out or not,
-        is never selected again.
-
-        **A quiz never holds more than** :data:`~lemely.core.metered_actions.MAX_ESTIMATE_INPUTS`
-        **included questions.** Marking holds at most that many, so any more
-        would be billed as debt. A ``requested_count`` over the ceiling (only a
-        direct service call can set one) is read as the ceiling, and a quiz
-        already at it is refused.
 
         A band the bank cannot fully supply is *not* padded from another
         band (§3: "a shortfall per band rather than silently substituting")
@@ -421,43 +410,27 @@ class QuizService:
             if quiz.pool_source is None:
                 raise QuizValidationError(f"Quiz {quiz_uuid} has no pool source selected yet")
 
-            existing = session.execute(
-                select(
-                    QuizQuestion.question_ref,
-                    QuizQuestion.question_bank_id,
-                    QuizQuestion.status,
-                ).where(QuizQuestion.quiz_id == quiz_uuid)
+            existing_refs = session.scalars(
+                select(QuizQuestion.question_ref).where(QuizQuestion.quiz_id == quiz_uuid)
             ).all()
-            included = sum(1 for row in existing if row.status == QuizQuestionStatus.included)
-            if included >= MAX_ESTIMATE_INPUTS:
-                raise QuizValidationError(
-                    f"Quiz {quiz_uuid} already has {included} questions; "
-                    f"a quiz holds at most {MAX_ESTIMATE_INPUTS}"
-                )
-            taken_bank_ids = {row.question_bank_id for row in existing} - {None}
-            next_index = _next_ref_index([row.question_ref for row in existing])
+            next_index = _next_ref_index(existing_refs)
             next_position = _next_position(session, quiz_uuid)
 
-            wanted = min(quiz.requested_count or 0, MAX_ESTIMATE_INPUTS) - included
-            allocation = allocate_difficulty(quiz.target_grade, max(wanted, 0))
+            allocation = allocate_difficulty(quiz.target_grade, quiz.requested_count or 0)
             created: list[QuizQuestion] = []
             shortfall: dict[Band, int] = {}
             for band, needed in allocation.items():
                 if needed <= 0:
                     continue
-                # Over-fetch by the rows already on the quiz so skipping them
-                # still leaves ``needed`` fresh ones whenever the bank has them.
-                fetched = self._bank.select_questions(
+                rows = self._bank.select_questions(
                     teacher_uuid,
                     school_ids,
                     subject_code=quiz.subject_code,
                     band=band,
-                    count=needed + len(taken_bank_ids),
+                    count=needed,
                     topics=list(quiz.included_topics) or None,
                     source=quiz.pool_source,
                 )
-                rows = [r for r in fetched if r.id not in taken_bank_ids][:needed]
-                taken_bank_ids.update(r.id for r in rows)
                 if len(rows) < needed:
                     shortfall[band] = needed - len(rows)
                 for bank_row in rows:

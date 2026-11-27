@@ -81,33 +81,10 @@ ALL_ROLES = frozenset(role.value for role in Role)
 
 # (method, path) → the guard that route must carry. Reviewed, not inferred.
 EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
-    # ── TEACHER (40) ────────────────────
-    # Billing phase 06: only a teacher holds seats, and only the paying teacher acts on them
-    # (404 for any other teacher; the acting-teacher header is never read).
-    ("POST", "/api/billing/subscriptions/{subscription_id}/seats/quote"): TEACHER,
-    ("POST", "/api/billing/subscriptions/{subscription_id}/seats"): TEACHER,
-    ("PUT", "/api/billing/subscriptions/{subscription_id}/seats/pending"): TEACHER,
+    # ── TEACHER (24) ────────────────────
     ("POST", "/api/classes"): TEACHER,
     ("DELETE", "/api/classes/{class_id}"): TEACHER,
     ("PATCH", "/api/classes/{class_id}"): TEACHER,
-    # Paymob billing Phase 03 (spec §2.2, §2.3, §7): the teacher-team router. Lead
-    # teacher only, acting on the caller's own team; an assistant never reaches
-    # another teacher's seats, caps or assistants through it (row-level proof:
-    # tests/test_web_teacher_team.py). Redeeming an assistant invite needs a
-    # teacher account, hence TEACHER on that route too.
-    ("GET", "/api/teacher/team/seats"): TEACHER,
-    ("GET", "/api/teacher/team/capacity"): TEACHER,
-    ("PUT", "/api/teacher/team/seats/{member_id}/scope"): TEACHER,
-    ("DELETE", "/api/teacher/team/seats/{member_id}"): TEACHER,
-    ("PUT", "/api/teacher/team/members/{member_id}/cap"): TEACHER,
-    ("GET", "/api/teacher/team/assistants"): TEACHER,
-    ("POST", "/api/teacher/team/assistants/invites"): TEACHER,
-    ("GET", "/api/teacher/team/invites"): TEACHER,
-    ("DELETE", "/api/teacher/team/invites/{invite_id}"): TEACHER,
-    ("POST", "/api/teacher/team/assistants/redeem"): TEACHER,
-    ("PATCH", "/api/teacher/team/assistants/{member_id}"): TEACHER,
-    ("DELETE", "/api/teacher/team/assistants/{member_id}"): TEACHER,
-    ("GET", "/api/teacher/team/memberships"): TEACHER,
     # Tutoring T1-T5 (SPEC §c.1). ADR-T01: role half only; "owns a tutor
     # profile" is object-level (tests/test_web_tutor.py,
     # tests/test_web_tutoring_authz_profiles.py), invisible to this sweep.
@@ -161,7 +138,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/school/teachers"): SCHOOL_ADMIN,
     ("POST", "/api/school/teachers/invite"): SCHOOL_ADMIN,
     ("POST", "/api/school/teachers/{teacher_id}/remove"): SCHOOL_ADMIN,
-    # ── PLATFORM_ADMIN (58) ────────────────────
+    # ── PLATFORM_ADMIN (25) ────────────────────
     # P4.7 (UI spec X-01/X-02/X-03), and the first routes in the product gated
     # to this role. Note what the 403 sweep below therefore proves here: a
     # `school_admin` is denied every one of them. There is no super-role, and
@@ -205,41 +182,6 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/admin/tutoring/moderation"): PLATFORM_ADMIN,
     ("POST", "/api/admin/tutoring/reviews/{review_id}/moderate"): PLATFORM_ADMIN,
     ("POST", "/api/admin/tutoring/replies/{reply_id}/moderate"): PLATFORM_ADMIN,
-    # Admin billing (Phase 07, spec §8): one router gated to platform_admin; every write is
-    # audited in the same transaction (tests/test_admin_billing_*.py).
-    ("GET", "/api/admin/billing/catalogue"): PLATFORM_ADMIN,
-    ("POST", "/api/admin/billing/tiers"): PLATFORM_ADMIN,
-    ("PUT", "/api/admin/billing/tiers/{plan_tier_id}"): PLATFORM_ADMIN,
-    ("POST", "/api/admin/billing/tiers/{plan_tier_id}/sync"): PLATFORM_ADMIN,
-    ("POST", "/api/admin/billing/packs"): PLATFORM_ADMIN,
-    ("PUT", "/api/admin/billing/packs/{credit_pack_id}"): PLATFORM_ADMIN,
-    ("GET", "/api/admin/billing/packs/{credit_pack_id}/price-impact"): PLATFORM_ADMIN,
-    ("POST", "/api/admin/billing/rates"): PLATFORM_ADMIN,
-    ("POST", "/api/admin/billing/estimators"): PLATFORM_ADMIN,
-    ("PUT", "/api/admin/billing/free-allowances"): PLATFORM_ADMIN,
-    ("GET", "/api/admin/billing/customers"): PLATFORM_ADMIN,
-    ("GET", "/api/admin/billing/customers/{user_id}"): PLATFORM_ADMIN,
-    ("POST", "/api/admin/billing/customers/{user_id}/grant"): PLATFORM_ADMIN,
-    ("POST", "/api/admin/billing/customers/{user_id}/adjust"): PLATFORM_ADMIN,
-    ("POST", "/api/admin/billing/customers/{user_id}/forgive-debt"): PLATFORM_ADMIN,
-    ("POST", "/api/admin/billing/customers/{user_id}/manual-activation"): PLATFORM_ADMIN,
-    ("POST", "/api/admin/billing/subscriptions/{subscription_id}/extend"): PLATFORM_ADMIN,
-    ("POST", "/api/admin/billing/subscriptions/{subscription_id}/cancel"): PLATFORM_ADMIN,
-    ("POST", "/api/admin/billing/payments/{payment_id}/refund"): PLATFORM_ADMIN,
-    ("POST", "/api/admin/billing/payments/{payment_id}/void"): PLATFORM_ADMIN,
-    ("GET", "/api/admin/billing/payments"): PLATFORM_ADMIN,
-    ("GET", "/api/admin/billing/problems"): PLATFORM_ADMIN,
-    ("POST", "/api/admin/billing/payments/{payment_id}/reconcile"): PLATFORM_ADMIN,
-    ("GET", "/api/admin/billing/health"): PLATFORM_ADMIN,
-    ("GET", "/api/admin/billing/margin"): PLATFORM_ADMIN,
-    ("GET", "/api/admin/billing/settings"): PLATFORM_ADMIN,
-    ("PUT", "/api/admin/billing/settings"): PLATFORM_ADMIN,
-    ("GET", "/api/admin/billing/credit-rates"): PLATFORM_ADMIN,
-    ("PUT", "/api/admin/billing/credit-rates/{currency}"): PLATFORM_ADMIN,
-    ("POST", "/api/admin/billing/credit-rates/{currency}/clear"): PLATFORM_ADMIN,
-    ("GET", "/api/admin/billing/llm-prices"): PLATFORM_ADMIN,
-    ("PUT", "/api/admin/billing/llm-prices/{model}"): PLATFORM_ADMIN,
-    ("POST", "/api/admin/billing/llm-prices/{model}/clear"): PLATFORM_ADMIN,
     # ── TEACHER_OR_SCHOOL_ADMIN (7) ────────────────────
     ("GET", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
     ("POST", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
@@ -277,7 +219,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # tests/test_web_tutoring_authz_parent_sharing.py).
     ("GET", "/api/parent/children/{child_id}/tutor-grants"): PARENT,
     ("GET", "/api/parent/children/{child_id}/tutor-access-log"): PARENT,
-    # ── PUBLIC (26) ────────────────────
+    # ── PUBLIC (22) ────────────────────
     ("POST", "/api/auth/login"): PUBLIC,
     # Whether sign-in is restricted (a boolean, never the domains): read before any account exists.
     ("GET", "/api/access/config"): PUBLIC,
@@ -322,9 +264,6 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("PATCH", "/api/waitlist"): PUBLIC,
     ("POST", "/api/waitlist/confirm"): PUBLIC,
     ("POST", "/api/internal/waitlist/digest"): PUBLIC,
-    # Cloud Scheduler's sweeper trigger: no user either, guarded by the same X-Cron-Secret
-    # scheme (503 when no secret is configured), see lemely/web/routers/internal_jobs.py.
-    ("POST", "/api/internal/jobs/sweep"): PUBLIC,
     # D7.3/spec §1.2: G-08's pre-account preview. Public and unauthenticated
     # by design - a visitor sees what a code joins *before* creating an
     # account, and `InviteService.preview` is written to be paranoid about
@@ -336,17 +275,6 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/public/tutors"): PUBLIC,
     ("GET", "/api/public/tutors/{tutor_id}"): PUBLIC,
     ("GET", "/api/public/tutoring-areas"): PUBLIC,
-    # Billing pricing page: active tiers and sellable packs, public fields only (no
-    # ids, Paymob plan or allowances), IP rate-limited (tests/test_web_billing.py).
-    ("GET", "/api/billing/public-catalogue"): PUBLIC,
-    # Billing spec 2026-11-02 §5.1/§6: Paymob's server-to-server callbacks hold
-    # no Lemely token; the HMAC in the query string is the only authenticity
-    # check (401 on mismatch, inside the handler). tests/test_web_paymob_webhooks.py.
-    ("POST", "/api/webhooks/paymob/transaction"): PUBLIC,
-    # Billing phase 05: the subscription callback is public for the same reason. The HMAC is in
-    # the body and signs the trigger and subscription id; 401 on mismatch, 503 while the secret
-    # is unset, checked before any database work (tests/test_web_subscriptions.py).
-    ("POST", "/api/webhooks/paymob/subscription"): PUBLIC,
     # ── STUDENT_OR_PARENT (6) ────────────────────
     # Tutoring SP1-SP2 (SPEC §c.1, row 10). SP2 also needs a verified email.
     ("GET", "/api/tutors"): STUDENT_OR_PARENT,
@@ -365,47 +293,15 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/tutoring/blocks"): STUDENT_OR_TEACHER,
     ("POST", "/api/tutoring/blocks"): STUDENT_OR_TEACHER,
     ("DELETE", "/api/tutoring/blocks/{counterpart_id}"): STUDENT_OR_TEACHER,
-    # ── TUTORING_PARTY (15) ────────────────────
+    # ── TUTORING_PARTY (1) ────────────────────
     # Tutoring R1 (SPEC §c.1): target visibility (O12, O19) is object-level.
     ("POST", "/api/tutoring/reports"): TUTORING_PARTY,
-    # Billing (spec 2026-11-02 §5.5, §7): the same three roles buy and pay.
-    # Role half only. Object-level rules: a parent buys only for a linked child,
-    # a payment is visible to its payer or beneficiary, receipts are the
-    # caller's own payments (tests/test_web_billing.py IDOR cases).
-    ("GET", "/api/billing/catalogue"): TUTORING_PARTY,
-    ("POST", "/api/billing/checkout/pack"): TUTORING_PARTY,
-    ("GET", "/api/billing/payments/{payment_id}"): TUTORING_PARTY,
-    ("GET", "/api/billing/receipts"): TUTORING_PARTY,
-    # Index R3: the caller's own saved cards, masked only.
-    ("GET", "/api/billing/cards"): TUTORING_PARTY,
-    # Index R3: object-level; a parent sees only a linked child (tests/test_web_billing_summary.py).
-    ("GET", "/api/billing/summary"): TUTORING_PARTY,
-    # Billing phase 05: role half only. Checkout is capped per user and priced on the server, a
-    # parent buys only for a linked child, and change/cancel are payer-only with one 404 for a
-    # beneficiary, a stranger and an assistant (tests/test_web_subscriptions.py IDOR cases).
-    ("POST", "/api/billing/subscriptions/checkout"): TUTORING_PARTY,
-    ("GET", "/api/billing/subscriptions"): TUTORING_PARTY,
-    ("POST", "/api/billing/subscriptions/{subscription_id}/downgrade"): TUTORING_PARTY,
-    ("POST", "/api/billing/subscriptions/{subscription_id}/cancel"): TUTORING_PARTY,
-    # Billing phase 06: role half only. Upgrade and auto top-up are payer-only (one identical 404
-    # for a beneficiary, a stranger, an unlinked parent), a parent manages auto top-up only for a
-    # linked student, and both checkout POSTs share the payer's checkout budget
-    # (tests/test_web_billing_charges.py).
-    ("POST", "/api/billing/subscriptions/{subscription_id}/upgrade/quote"): TUTORING_PARTY,
-    ("POST", "/api/billing/subscriptions/{subscription_id}/upgrade"): TUTORING_PARTY,
-    ("GET", "/api/billing/auto-topup"): TUTORING_PARTY,
-    ("PUT", "/api/billing/auto-topup"): TUTORING_PARTY,
-    # ── AUTH_ANY (23) ────────────────────
-    # Billing phase 04: usage estimate, meter and history answer only about the caller.
-    ("POST", "/api/usage/estimate"): AUTH_ANY,
-    ("GET", "/api/usage/meter"): AUTH_ANY,
-    ("GET", "/api/usage/history"): AUTH_ANY,
+    # ── AUTH_ANY (19) ────────────────────
     ("GET", "/api/me/devices"): AUTH_ANY,
     ("DELETE", "/api/me/devices/{device_id}"): AUTH_ANY,
     ("GET", "/api/me/notification-preferences"): AUTH_ANY,
     ("PUT", "/api/me/notification-preferences"): AUTH_ANY,
     ("GET", "/api/me/profile"): AUTH_ANY,
-    ("PUT", "/api/me/phone"): AUTH_ANY,
     ("PUT", "/api/me/timezone"): AUTH_ANY,
     # Profile picture set/clear: any authenticated role, same as the profile
     # GET above -- a student and a teacher both have exactly one avatar to
@@ -831,11 +727,9 @@ def test_the_sweeps_actually_cover_the_surface() -> None:
     # routes, plus issue #10's verify-email, password-reset/request,
     # password-reset/confirm) + /api/health + invite preview + PR 1 chunk C's
     # client-error sink + the three public tutoring routes (P1 directory, P2
-    # card, P3 areas) + the landing page contact form + the public pricing catalogue
-    # + the two Paymob webhooks (transaction, subscription) + the five waitlist routes
-    # (config, step 1, step 2, email confirmation, secret-guarded digest trigger)
-    # + the access config read + the secret-guarded sweeper trigger.
-    assert len(_NON_PUBLIC) == len(ROUTES) - 26
+    # card, P3 areas) + the landing page contact form + the five waitlist routes
+    # (config, step 1, step 2, email confirmation, secret-guarded digest trigger).
+    assert len(_NON_PUBLIC) == len(ROUTES) - 22
     assert len(_ROLE_GATED) > 300
     assert len(_REPRESENTATIVE) == 9
     assert len(_REAL_TOKEN_CASES) >= 20

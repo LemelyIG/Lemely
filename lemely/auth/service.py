@@ -14,6 +14,8 @@ GoTrue's own (ES256) token is discarded rather than forwarded (D1.5).
   discarded).
 * :meth:`request_otp` — issues a parent phone-OTP challenge and delivers the code
   via the injected :class:`~lemely.auth.sms.SmsProvider`.
+* :meth:`verify_otp` — verifies the challenge and mints a self-signed,
+  Supabase-compatible access token whose ``app_metadata.role == "parent"``.
 * :meth:`refresh` — redeems a refresh token for a new access token so a signed-in
   device stays signed in past the (short) access-token lifetime.
 * :meth:`verify_email` / :meth:`verify_email_code` / :meth:`resend_verification`
@@ -27,7 +29,7 @@ GoTrue's own (ES256) token is discarded rather than forwarded (D1.5).
   request step and the confirm step, the latter revoking every outstanding
   ``auth_tokens`` row and every device session for the account (D7.7 + D1.11).
 * :meth:`request_parent_signup_code` / :meth:`verify_parent_signup_code` — the
-  email-channel counterpart of :meth:`request_otp` (spec
+  email-channel counterpart of :meth:`request_otp` / :meth:`verify_otp` (spec
   §4): a parent proves an email address by code *before* any account exists,
   so the router mints an email-proof token (:mod:`lemely.auth.tokens`) from a
   successful verify and :meth:`signup` is called later with
@@ -125,7 +127,7 @@ class AuthResult:
     minted email-verification link, non-``None`` only when the configured
     :class:`~lemely.auth.email.EmailProvider` does not deliver out of band (or
     none is configured at all). Every other flow that returns an
-    :class:`AuthResult` (:meth:`login`, :meth:`refresh`)
+    :class:`AuthResult` (:meth:`login`, :meth:`verify_otp`, :meth:`refresh`)
     mints no verification token and leaves this ``None``."""
     verification_dev_code: str | None = None
     """The typed code minted alongside :attr:`verification_dev_link` (spec
@@ -301,13 +303,6 @@ class AuthService:
         roles itself would be enforcing the same policy in two places, one of
         which is wrong for the admin caller.
 
-        ``phone`` is stored in ``public.users`` exactly as given: this method does not
-        validate it, because the HTTP routes that require one (UD-11) validate and normalise it
-        first with :func:`lemely.core.phone.validate_phone`, while the admin-provisioning
-        callers (seat invites, school admins, seeds) create accounts with none, and the user is
-        then prompted for it (``phoneMissing`` on ``GET /api/me/profile``). It is **not** sent
-        to GoTrue, which keeps a unique index on ``auth.users.phone``.
-
         ``accepted_terms`` (D7.11) stamps ``users.terms_accepted_at`` with the
         current time when ``True``, and leaves it untouched (``NULL`` for a new
         row) when ``False`` — this records consent that was actually given
@@ -357,10 +352,7 @@ class AuthService:
         unaffected either way.
         """
         self.require_access(email)
-        # GoTrue is the credential store only: the phone lives in ``public.users``. GoTrue keeps a
-        # unique index on ``auth.users.phone``, so forwarding it would refuse a parent who gives
-        # the number their child already signed up with (UD-11 makes a phone mandatory for all).
-        created = self._gotrue.admin_create_user(email, password, role.value)
+        created = self._gotrue.admin_create_user(email, password, role.value, phone)
         self._mirror.upsert(
             created.id,
             email=created.email,
@@ -806,18 +798,14 @@ class AuthService:
         exists for. With a real SMS gateway configured this returns ``None`` and
         the code never crosses the wire (D3.16). The gate is the provider's own
         capability, never an environment string.
-
-        While ``[access]`` is restricted it is refused before any SMS: a phone is never a
-        lookup key (so no phone can be tied to an allow-listed account) and there is no
-        phone-login path a code could open.
-
-        Raises:
-            AccessRestrictedError: Access is restricted.
         """
         if self._settings.access.restricted:
-            self.require_access(None)
+            existing = self._mirror.get_by_phone(phone)
+            self.require_access(existing.email if existing is not None else None)
         code = self._otp_store.issue(phone)
         self._sms.send_code(phone, code)
+        if self._settings.access.restricted:
+            return None
         return None if self._sms.delivers_out_of_band else code
 
     def request_parent_signup_code(self, email: str) -> str | None:
@@ -872,6 +860,62 @@ class AuthService:
         result = self._otp_store.verify(email, code, channel=OtpChannel.email)
         if result is not OtpResult.ok:
             raise AuthError(f"Email verification failed: {result.value}")
+
+    def verify_otp(self, phone: str, code: str, device: DeviceContext | None = None) -> AuthResult:
+        """Verify an OTP and mint a self-signed parent access token.
+
+        On success the mirrored parent user is looked up (mirrored ``id`` becomes
+        the token ``sub``); if no parent row exists yet a fresh id is minted and
+        the user is mirrored so the token always has a stable subject. When a
+        :class:`DeviceContext` is supplied the login is registered against the
+        3-device limit (D1.11).
+
+        Unlike :meth:`login`, a fourth device here still **silently evicts** the
+        oldest rather than raising D5.12's confirmation challenge: the OTP code is
+        single-use and is consumed by the ``verify`` above, so a challenge the
+        caller re-sent confirmed would fail on a spent code and cost the parent a
+        second SMS. Scoping the challenge to the email/password path is deliberate
+        and is carried as an honest gap, not an oversight.
+
+        Raises:
+            AuthError: The OTP is unknown, expired, wrong, or locked out.
+        """
+        existing = self._mirror.get_by_phone(phone)
+        if self._settings.access.restricted:
+            # A phone-only parent has a placeholder email, which no allow-list admits: the
+            # account is neither opened nor created, and the code is not consumed.
+            self.require_access(
+                existing.email if existing is not None else _phone_placeholder_email(phone)
+            )
+        result = self._otp_store.verify(phone, code)
+        if result is not OtpResult.ok:
+            raise AuthError(f"OTP verification failed: {result.value}")
+
+        if existing is not None:
+            user_id = existing.id
+            email = existing.email
+        else:
+            user_id = uuid.uuid4()
+            email = None
+            self._mirror.upsert(
+                user_id, email=_phone_placeholder_email(phone), role=Role.parent, phone=phone
+            )
+
+        registration = self._register_device(user_id, device)
+        token = self._token_signer(
+            user_id=user_id,
+            settings=self._settings,
+            app_role=Role.parent.value,
+            phone=phone,
+            email=email,
+            session_id=registration.session_id if registration else None,
+        )
+        return AuthResult(
+            access_token=token,
+            user_id=user_id,
+            role=Role.parent,
+            refresh_token=self._mint_refresh(user_id, registration, "phone"),
+        )
 
     def refresh(self, refresh_token: str) -> AuthResult:
         """Redeem a refresh token for a new access token, keeping the session alive.

@@ -50,7 +50,6 @@ from lemely.core.history import (
     is_paper,
 )
 from lemely.core.loose_schemas import MarkScheme
-from lemely.core.metered_actions import MeteredAction
 from lemely.core.object_keys import sibling_scheme_key
 from lemely.core.schemas import ExamMetadata, WeaknessReport
 from lemely.db.attempt_repo import AttemptRepository, UploadDeletedError
@@ -68,7 +67,6 @@ from lemely.db.notification_repo import NotificationService
 from lemely.db.parent_repo import ParentLinkService
 from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
 from lemely.db.student_profile_repo import StudentProfileService, SubjectEnrolmentRow
-from lemely.db.teacher_team_repo import TeamError
 from lemely.db.upload_repo import IDEMPOTENCY_KEY_WINDOW, StudentUploadRepository, UploadRun
 from lemely.db.xp_repo import UserZoneReader, XpService, civil_date_in_zone
 from lemely.io.det.profiles import get_profile
@@ -146,17 +144,9 @@ from lemely.web.services.grading import (
     extract_answers,
     grade_paper,
 )
-from lemely.web.team_http import team_error_to_http
 from lemely.web.tutoring_http import NO_STORE
 from lemely.web.tutoring_notify import send_after_commit
 from lemely.web.upload_utils import check_scan_geometry, check_upload_cap, safe_upload_name
-from lemely.web.usage import (
-    USAGE_BLOCKED_MESSAGE,
-    UsageBlocked,
-    UsageMeter,
-    get_usage_meter,
-    request_from_auth,
-)
 from lemely.web.xp_awards import award_xp_safely
 
 router = APIRouter(prefix="/api")
@@ -985,18 +975,16 @@ def student_correct(
     class_service: Annotated[ClassService, Depends(get_class_service)],
     parent_service: Annotated[ParentLinkService, Depends(get_parent_link_service)],
     zones: Annotated[UserZoneReader, Depends(get_user_zone_reader)],
-    # Declared after the role guard above, so a wrong role is a 403 before any ledger read.
-    meter: Annotated[UsageMeter, Depends(get_usage_meter)],
 ) -> StreamingResponse:
     """Stream the real self-mark pipeline for an uploaded paper over SSE.
 
-    **Gated on a verified email (D7.5).** This is the Gemini spend, so it
-    carries ``require_verified_email`` (other student routes, such as tutor
-    reviews and placement creation, carry it too) — an unverified caller is
-    refused with a **403** (``detail={"code": "email_unverified"}``) before any
-    of the work below runs. ``POST /student/uploads`` is deliberately never
-    gated the same way: a student who has already photographed a paper must not
-    lose the capture to a verification wall.
+    **Gated on a verified email (D7.5).** This is the Gemini spend, and it is
+    the *only* student route that carries ``require_verified_email`` — an
+    unverified caller is refused with a **403**
+    (``detail={"code": "email_unverified"}``) before any of the work below
+    runs. ``POST /student/uploads`` is deliberately never gated the same way:
+    a student who has already photographed a paper must not lose the capture
+    to a verification wall.
 
     Resolves the caller-owned upload (a 404 for an unknown or foreign paper is
     raised *before* streaming starts, so the client never has to parse a
@@ -1009,18 +997,6 @@ def student_correct(
     traceback). The one exception is a paper the student deleted mid-run:
     persist refuses it (:class:`UploadDeletedError`), the error frame says so
     generically, and the deleted upload's status is left alone.
-
-    **Metered as ``mark_paper`` (billing spec §2.4, §5.7).** The paper's subject is
-    read off the scan inside the worker, so before streaming the request checks every
-    chain that subject could need (the student's own balance, or a seat covering
-    marking) against the *top* of the estimate: a short balance is a top-level 402
-    before any model call. The worker binds the detected subject, which reserves on
-    the chain that covers it (a maths scan is paid by the maths seat). If that chain
-    cannot pay, the stream ends with an ``error`` frame carrying
-    ``code: "usage_blocked"`` and the 402's ``reason``; only the scan read ran, and
-    its cost is logged. A finished paper settles its actual cost, even when the
-    client has gone (the run outlives the stream); a failed one releases and costs
-    nothing.
     """
     from lemely.runtime.events import EventType, bus
     from lemely.web.sse import bus_event_stream
@@ -1028,11 +1004,6 @@ def student_correct(
     owned = upload_repo.get_owned_upload(user_id=auth.user_id, upload_id=payload.paperId)
     if owned is None:
         raise HTTPException(status_code=404, detail=f"Unknown paper: {payload.paperId}")
-    # Billing spec §5.7: nothing is held yet (the subject is pending); `bind_subject`
-    # reserves in the worker. Raises UsageBlocked, the 402, before the stream starts.
-    job = meter.reserve(
-        meter.authorize(request_from_auth(auth, MeteredAction.MARK_PAPER, subject_pending=True))
-    )
 
     def run() -> None:
         # P6.2. `UploadStatus.processing` existed from the first migration and
@@ -1060,10 +1031,7 @@ def student_correct(
         # instead of failing.
         try:
             upload_repo.set_status(owned.id, UploadStatus.processing)
-            # The metered job opens here, in the SSE worker thread, and closes in it:
-            # settled on a normal exit, released on any exception (the handlers below
-            # see the error after the release).
-            with job.run(), tempfile.TemporaryDirectory() as tmp_dir:
+            with tempfile.TemporaryDirectory() as tmp_dir:
                 tmp_path = Path(tmp_dir)
                 scan_bytes = storage_backend.download(settings.storage.bucket, owned.storage_path)
                 scan_path = tmp_path / Path(owned.storage_path).name
@@ -1094,9 +1062,6 @@ def student_correct(
                                 paper_id=payload.paperId,
                                 message=f"Could not detect scan metadata: {exc}",
                             )
-                    # Spec §2.2: reserve on the chain for this paper's subject (None
-                    # when detection is off or failed: the student's own balance).
-                    job.bind_subject(metadata.subject_code if metadata is not None else None)
 
                     mark_scheme = resolve_mark_scheme(
                         sibling_scheme, corpus, settings, gemini_client, metadata=metadata
@@ -1108,8 +1073,6 @@ def student_correct(
                             message="No mark scheme available for this paper; cannot mark.",
                         )
                         upload_repo.set_status(owned.id, UploadStatus.failed)
-                        # Failed without raising: release, never charge (spec §2.4).
-                        job.abandon()
                         return
 
                     extracted = extract_answers(scan_path, mark_scheme, gemini_client=gemini_client)
@@ -1299,17 +1262,6 @@ def student_correct(
             )
             bus.publish(EventType.ERROR, paper_id=payload.paperId, message=str(exc))
             upload_repo.set_status(owned.id, UploadStatus.failed)
-        except UsageBlocked as exc:
-            # The detected subject's chain cannot pay (spec §5.6). Nothing was held, so
-            # nothing is charged; the scan read's cost is logged as unmetered.
-            bus.publish(
-                EventType.ERROR,
-                paper_id=payload.paperId,
-                message=USAGE_BLOCKED_MESSAGE,
-                code="usage_blocked",
-                reason=exc.reason.value,
-            )
-            upload_repo.set_status(owned.id, UploadStatus.failed)
         except Exception as exc:
             bus.publish(EventType.ERROR, paper_id=payload.paperId, message=str(exc))
             upload_repo.set_status(owned.id, UploadStatus.failed)
@@ -1391,18 +1343,11 @@ def student_join_class(
     school-less class whose teacher holds a tutor profile queues an email to
     each of the student's linked parents in the enrolment's transaction, and
     sends each an inbox notice here, after commit.
-
-    A teacher with no free seat refuses the join with a 409 ``no_free_seat`` (paymob
-    billing Phase 03); nothing is enrolled. A 409 ``conflict`` means the caller's
-    account can't hold a seat with this teacher (``team_error_to_http``). Re-joining a
-    class the caller is already in never fails on seats.
     """
     try:
         joined = service.join_by_code_with_notice(auth.user_id, payload.joinCode)
     except JoinCodeError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except TeamError as exc:
-        raise team_error_to_http(exc) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     send_after_commit(

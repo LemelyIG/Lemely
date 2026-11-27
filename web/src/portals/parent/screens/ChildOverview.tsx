@@ -2,7 +2,6 @@
 import { Link, useParams } from "react-router-dom"
 import { CaretRight, WarningCircle } from "@phosphor-icons/react"
 import { useChildOverview } from "@/lib/hooks/useParentApi"
-import { ChildBillingLink } from "@/portals/billing/ParentBilling"
 import { GradeBadge } from "@/components/ui/grade-badge"
 import { TrendSparkline } from "@/components/ui/trend-sparkline"
 import { WeaknessChip } from "@/components/ui/weakness-chip"
@@ -263,7 +262,6 @@ export function ChildOverview() {
                   Tutoring
                   <CaretRight size={14} aria-hidden="true" />
                 </Link>
-                <ChildBillingLink childId={childId} />
               </div>
 
               {/* "Activity summary (how much they've been working — parents ask this

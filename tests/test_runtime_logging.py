@@ -61,22 +61,6 @@ class LoggingConfigurationTests(unittest.TestCase):
         text = buf.getvalue()
         self.assertIn("library_event", text)
 
-    def test_lines_logged_inside_a_dry_run_are_dropped(self) -> None:
-        """``configure_logging`` installs ``_drop_dry_run``: a dry run never happened."""
-        buf = io.StringIO()
-        configure_logging(level="INFO", fmt="json", stream=buf)
-        log = structlog.get_logger("dry")
-        try:
-            with structlog.contextvars.bound_contextvars(dry_run=True):
-                log.info("inside_info")
-                log.error("inside_alert", alert=True)
-                logging.getLogger("dry.stdlib").warning("inside_stdlib")
-            log.info("after_info")
-        finally:
-            structlog.contextvars.clear_contextvars()
-        events = [json.loads(line)["event"] for line in buf.getvalue().splitlines() if line.strip()]
-        self.assertEqual(events, ["after_info"])
-
 
 if __name__ == "__main__":
     unittest.main()

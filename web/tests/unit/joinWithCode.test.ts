@@ -3,12 +3,10 @@ import { ApiError } from "@/lib/api"
 import type { InvitePreview } from "@/lib/authTypes"
 import { AUTH_INVITE_ALREADY_USED, AUTH_INVITE_NOT_FOUND } from "@/lib/authOutcome"
 import {
-  ASSISTANT_INVITE_NEEDS_TEACHER_MESSAGE,
   canRedeemInviteAs,
   describeInvitePreview,
   isSeatQuotaExceededError,
   isTerminalRedeemFailure,
-  isInviteCodeFormat,
   normalizeInviteCode,
   previewErrorCopy,
   redeemFailureMessage,
@@ -34,37 +32,6 @@ describe("normalizeInviteCode", () => {
 
   it("collapses whitespace-only input to empty", () => {
     expect(normalizeInviteCode("   ")).toBe("")
-  })
-
-  it("strips inner whitespace and dashes", () => {
-    expect(normalizeInviteCode("k7p-4rq2")).toBe("K7P4RQ2")
-    expect(normalizeInviteCode(" 7hkpx 2wcqy ")).toBe("7HKPX2WCQY")
-    expect(normalizeInviteCode("7HK-PX2\tWCQY\n")).toBe("7HKPX2WCQY")
-  })
-})
-
-describe("isInviteCodeFormat", () => {
-  it("accepts a 7-character join code and a 10-character invite code", () => {
-    expect(isInviteCodeFormat("LLLLLLL")).toBe(true) // L is in the minting alphabet
-    expect(isInviteCodeFormat("K7P4RQ2")).toBe(true)
-    expect(isInviteCodeFormat("7HKPX2WCQY")).toBe(true)
-  })
-
-  it("rejects the wrong length", () => {
-    expect(isInviteCodeFormat("")).toBe(false)
-    expect(isInviteCodeFormat("K7P4RQ")).toBe(false)
-    expect(isInviteCodeFormat("K7P4RQ2X")).toBe(false)
-    expect(isInviteCodeFormat("7HKPX2WCQYZ")).toBe(false)
-  })
-
-  it("rejects characters outside the non-ambiguous alphabet", () => {
-    for (const bad of ["K7P4RQ0", "K7P4RQ1", "K7P4RQI", "K7P4RQO", "k7p4rq2", "K7P-4RQ"]) {
-      expect(isInviteCodeFormat(bad), bad).toBe(false)
-    }
-  })
-
-  it("accepts a code once normalised", () => {
-    expect(isInviteCodeFormat(normalizeInviteCode(" k7p-4rq2 "))).toBe(true)
   })
 })
 
@@ -316,47 +283,5 @@ describe("previewErrorCopy", () => {
   it("offers a retry for a 5xx", () => {
     const copy = previewErrorCopy(new ApiError(503, "Service Unavailable"))
     expect(copy.retryable).toBe(true)
-  })
-})
-
-describe("assistant invites", () => {
-  const assistant: InvitePreview = {
-    role: "assistant",
-    schoolName: null,
-    className: null,
-    teacherName: "Mr Hassan",
-    childName: null,
-  }
-
-  it("names the lead teacher and says billing stays with them", () => {
-    expect(describeInvitePreview(assistant)).toEqual([
-      "Mr Hassan invited you to assist on their team",
-      "Billing and seats stay with them.",
-    ])
-  })
-
-  it("does not invent a lead when the preview carries none", () => {
-    expect(describeInvitePreview({ ...assistant, teacherName: null })[0]).toBe(
-      "A teacher invited you to assist on their team",
-    )
-  })
-
-  it("sends a signed-out visitor to a teacher signup that returns here, not to a redeem at signup", () => {
-    // `/signup/assistant` is not a route, and signup's own redeem call goes to the invites route.
-    expect(signupPathForInvite("7HKPX2WCQY", "assistant")).toBe("/signup/teacher?next=%2Fjoin%2F7HKPX2WCQY")
-  })
-
-  it("can be joined by a teacher account and nobody else", () => {
-    expect(canRedeemInviteAs("assistant", "teacher")).toBe(true)
-    expect(canRedeemInviteAs("assistant", "student")).toBe(false)
-    expect(canRedeemInviteAs("assistant", "parent")).toBe(false)
-    expect(canRedeemInviteAs("assistant", "school_admin")).toBe(false)
-    expect(ASSISTANT_INVITE_NEEDS_TEACHER_MESSAGE).toMatch(/teacher account/)
-  })
-
-  it("leaves the other roles' rules as they were", () => {
-    expect(canRedeemInviteAs("student", "teacher")).toBe(true)
-    expect(canRedeemInviteAs("student", "parent")).toBe(false)
-    expect(canRedeemInviteAs("parent", "parent")).toBe(true)
   })
 })

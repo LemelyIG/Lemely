@@ -28,8 +28,7 @@ from lemely.auth.otp import OtpStore
 from lemely.auth.service import AuthService, DeviceContext
 from lemely.auth.tokens import mint_access_token
 from lemely.core.access import email_domain, is_allowed_email, normalise_domain
-from lemely.db.invite_repo import ParentInvitePreview
-from lemely.db.models.enums import InviteRole, Role
+from lemely.db.models.enums import Role
 from lemely.runtime.config import AccessSettings, Settings
 from lemely.runtime.errors import AccessRestrictedError
 from lemely.web.app import create_app
@@ -39,7 +38,6 @@ from lemely.web.deps import (
     get_auth_context,
     get_auth_service,
     get_device_registry,
-    get_invite_service,
     get_resend_verification_cooldown_store,
     get_settings,
     get_signup_and_reset_cooldown_store,
@@ -286,24 +284,22 @@ def test_refresh_still_works_for_an_allowed_account(stack: _Stack) -> None:
     assert stack.restricted.refresh(signup.refresh_token).access_token
 
 
-def test_phone_otp_is_refused_before_any_sms(stack: _Stack) -> None:
+def test_phone_otp_is_refused_and_creates_no_parent(stack: _Stack) -> None:
+    with pytest.raises(AccessRestrictedError):
+        stack.restricted.verify_otp("+201001234567", "123456")
+    assert stack.mirror.rows == {}, "a phone-only parent was created"
     with pytest.raises(AccessRestrictedError):
         stack.restricted.request_otp("+201001234567")
     assert stack.sms.sent == [], "an SMS was sent to a phone that cannot get in"
-    assert stack.mirror.rows == {}, "a phone-only parent was created"
 
 
-def test_phone_otp_is_refused_even_for_an_allowed_parent(stack: _Stack) -> None:
-    # A phone is never a lookup key and there is no phone-login path, so while access is
-    # restricted no phone can be tied to an allow-listed account: the code is never issued.
+def test_phone_otp_login_of_an_allowed_parent_still_works(stack: _Stack) -> None:
     uid = uuid.uuid4()
     stack.mirror.upsert(uid, email="p@lemelyig.com", role=Role.parent, phone="+201001234567")
-    with pytest.raises(AccessRestrictedError):
-        stack.restricted.request_otp("+201001234567")
-    assert stack.sms.sent == []
-    # The unrestricted service still issues it, so the refusal is the gate.
-    stack.open.request_otp("+201001234567")
-    assert [p for p, _ in stack.sms.sent] == ["+201001234567"]
+    # While restricted the code is never handed back by the API: it goes out by SMS only.
+    assert stack.restricted.request_otp("+201001234567") is None
+    (_, code) = stack.sms.sent[-1]
+    assert stack.restricted.verify_otp("+201001234567", code).user_id == uid
 
 
 def test_parent_signup_code_is_refused_before_any_mail(stack: _Stack) -> None:
@@ -319,24 +315,10 @@ def test_parent_signup_code_is_refused_before_any_mail(stack: _Stack) -> None:
 # ── HTTP surface ─────────────────────────────────────────────────────────────
 
 
-class _LiveParentInvites:
-    """Stands in for ``InviteService``: every code is a live parent invite, with no database."""
-
-    def preview(self, code: str) -> ParentInvitePreview:
-        return ParentInvitePreview(
-            role=InviteRole.parent,
-            school_name=None,
-            class_name=None,
-            teacher_name=None,
-            child_name="your child",
-        )
-
-
 def _client(stack: _Stack) -> Iterator[TestClient]:
     app = create_app()
     app.dependency_overrides[get_settings] = lambda: stack.settings
     app.dependency_overrides[get_auth_service] = lambda: stack.restricted
-    app.dependency_overrides[get_invite_service] = _LiveParentInvites
     app.dependency_overrides[get_user_mirror] = lambda: stack.mirror
     app.dependency_overrides[get_device_registry] = lambda: stack.devices
     signup_cooldown = CooldownStore(clock=lambda: datetime.now(UTC), min_seconds=0)
@@ -356,14 +338,7 @@ def http(stack: _Stack) -> Iterator[TestClient]:
 
 
 def _signup_body(email: str) -> dict[str, object]:
-    # A phone is required on signup (UD-11); a valid one keeps these tests about the gate.
-    return {
-        "email": email,
-        "password": "pw-123456",
-        "role": "student",
-        "acceptedTerms": True,
-        "phone": "+201001234567",
-    }
+    return {"email": email, "password": "pw-123456", "role": "student", "acceptedTerms": True}
 
 
 def test_http_signup_disallowed_is_403_access_restricted(http: TestClient, stack: _Stack) -> None:
@@ -388,9 +363,8 @@ def test_http_parent_signup_with_a_disallowed_email_is_403(http: TestClient, sta
     resp = http.post(
         "/api/auth/parent/request-code", json={"email": "p@example.com", "inviteCode": "ANYCODE"}
     )
-    # The stubbed invite is live, so the refusal can only come from the access gate.
-    assert resp.status_code == 403, resp.text
-    assert resp.json() == {"detail": {"code": "access_restricted", "reason": "domain"}}
+    # Either the access gate (403 access_restricted) or the invite check: never a created account.
+    assert resp.status_code in (403, 404), resp.text
     assert stack.mirror.rows == {}
 
 

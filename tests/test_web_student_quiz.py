@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import threading
 import uuid
-from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -149,10 +148,9 @@ class _RecordingMarkingService:
         self.calls: list[uuid.UUID] = []
         self.event = threading.Event()
 
-    def mark_submission(self, submission_id: uuid.UUID) -> SimpleNamespace:
+    def mark_submission(self, submission_id: uuid.UUID) -> None:
         self.calls.append(submission_id)
         self.event.set()
-        return SimpleNamespace(submission_id=submission_id, marking_error=None)
 
 
 def _use_marking_service(client: TestClient, marking_service: _RecordingMarkingService) -> None:

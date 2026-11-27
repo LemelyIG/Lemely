@@ -209,11 +209,7 @@ def purge_users_command(
         # Two different refusals, two different flags: the production flag passes only a target
         # positively identified as production, never one the tool could not recognise.
         if verdict.kind == "production" and allow_production:
-            click.echo(
-                "--i-know-this-is-production given: continuing. --execute also deletes these "
-                "users' payments, Paymob events, ledger lines and admin audit entries.",
-                err=True,
-            )
+            click.echo("--i-know-this-is-production given: continuing.", err=True)
         elif verdict.kind == "unknown" and allow_unrecognised:
             click.echo("--target-is-unrecognised given: continuing.", err=True)
         elif verdict.kind == "unknown":

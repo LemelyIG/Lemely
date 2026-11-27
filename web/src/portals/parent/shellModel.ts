@@ -73,9 +73,6 @@ export function parentShellTrail(
     trail.push({ label: "Overview", to: overview }, { label: "Tutoring", to: `${overview}/tutoring` }, { label: "Who they share with" })
   else if (/\/sessions\/[^/]+$/.test(p))
     trail.push({ label: "Overview", to: overview }, { label: "Tutoring", to: `${overview}/tutoring` }, { label: "Session" })
-  else if (p === `${overview}/billing`) trail.push({ label: "Overview", to: overview }, { label: "Plan and billing" })
-  else if (p === `${overview}/billing/plans`)
-    trail.push({ label: "Overview", to: overview }, { label: "Plan and billing", to: `${overview}/billing` }, { label: "Plans" })
   else if (/\/subjects\/([^/]+)$/.test(p)) {
     const code = decodeURIComponent(p.split("/").pop() ?? "")
     trail.push({ label: "Overview", to: overview }, { label: subjectLabel ?? (code || "This subject") })
@@ -96,15 +93,12 @@ export function parentPageTitle(path: string, subjectLabel: string | null): stri
   if (p.endsWith("/tutor-access")) return "Who they share with"
   if (p.endsWith("/tutoring")) return "Tutoring"
   if (/\/sessions\/[^/]+$/.test(p)) return "Session details"
-  if (p === "/parent/billing/receipts") return "Receipts"
-  if (/^\/parent\/children\/[^/]+\/billing$/.test(p)) return "Plan and billing"
-  if (/^\/parent\/children\/[^/]+\/billing\/plans$/.test(p)) return "Plans and credits"
   const subject = p.match(/\/subjects\/([^/]+)$/)
   if (subject) return subjectLabel ?? decodeURIComponent(subject[1])
   return "Page not found"
 }
 
-const KEPT_TAILS = ["/topics", "/weaknesses", "/tutoring", "/tutor-access", "/billing"]
+const KEPT_TAILS = ["/topics", "/weaknesses", "/tutoring", "/tutor-access"]
 
 /** Switching child keeps the parent's place where the path still makes sense; a subject the other child does not take would 404, so it lands on the overview. */
 export function switchChildPath(pathname: string, nextChildId: string): string {

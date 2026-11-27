@@ -208,7 +208,7 @@ sent for a transaction that rolled back.
 | Queue table `email_outbox` and its repository | `lemely/db/email_outbox_repo.py` |
 | Provider seam for these mails (`TransactionalEmailProvider`) | `lemely/io/notify_email.py` |
 | Delivery job, mock-mode reporting, doctor lines | `lemely/web/tutoring_email.py` (`deliver_tutoring_email`) |
-| Where it runs | one more job in the sweeper pass, `Sweeper._sweep` (`lemely/web/scheduled_notifications.py`) |
+| Where it runs | one more job in `Sweeper.sweep_once` (`lemely/web/scheduled_notifications.py`) |
 | Daily cap setting | `[tutoring] email_daily_cap` (`LEMELY_TUTORING__EMAIL_DAILY_CAP`), default 60 |
 | Tests | `tests/test_email_outbox_repo.py`, `tests/test_tutoring_email.py`, `tests/test_notify_email.py` |
 

@@ -218,6 +218,9 @@ class _PgUserMirror:
                 session.expunge(user)
             return user
 
+    def get_by_phone(self, phone: str) -> User | None:  # pragma: no cover - unused here
+        raise NotImplementedError
+
     def get_by_email(self, email: str) -> User | None:  # pragma: no cover - unused here
         raise NotImplementedError
 

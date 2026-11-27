@@ -1,18 +1,14 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
-import { useEffect, useRef, useState, type FormEvent } from "react"
+import { useState, type FormEvent } from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { Eye, EyeSlash } from "@phosphor-icons/react"
 import { useAuth, type SelfServiceRole } from "@/lib/auth/AuthContext"
-import { rememberSignupNext } from "@/lib/auth/signupNext"
-import { safeNextPath } from "@/lib/nextPath"
 import { useRedeemInvite } from "@/lib/hooks/useInvitesApi"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { PhoneInput } from "@/components/ui/phone-input"
 import { Checkbox } from "@/components/ui/checkbox"
 import { ApiError } from "@/lib/api"
 import { signUpFailureMessage } from "@/lib/authOutcome"
-import { phoneErrorCode, phoneErrorMessage, validatePhoneField } from "@/lib/phone"
 import { useTeamSuffix } from "@/portals/access/team"
 import { cn } from "@/lib/utils"
 import { AuthFrame } from "./Login"
@@ -131,14 +127,6 @@ import {
  * school for a fresh code), not the account itself. Either way, submit routes
  * to `/verify-email`, per this task's own instruction, unconditionally.
  *
- * ── Binding requirement 6 — a mobile number, required (UD-11) ───────────────
- *
- * Every account carries a mobile number, because payment needs one and a placeholder is never sent
- * to the payment provider. The field sits after the email, uses `PhoneInput` (the "+20" default,
- * `tel` keypad, autofill) and is checked for shape only; the server is the validator and answers
- * 422 `phone_required` / `phone_invalid`, which land on the field itself. The number is never
- * verified (no code is sent), so nothing here promises it is.
- *
  * ── Frame ────────────────────────────────────────────────────────────────
  *
  * `AuthFrame` (`Login.tsx`) is reused, not copied — see its own docstring for
@@ -205,12 +193,10 @@ export function SignupDetails({ role }: SignupDetailsProps) {
   // See the module docstring's invite section: `?code=`, matching
   // `signupPathForInvite` (`lib/hooks/useInvitesApi.ts`) exactly.
   const inviteCode = searchParams.get("code")
-  const next = safeNextPath(searchParams.get("next"))
 
   const [values, setValues] = useState<SignupFormValues>({
     name: "",
     email: "",
-    phone: "",
     password: "",
     acceptedTerms: false,
   })
@@ -236,12 +222,6 @@ export function SignupDetails({ role }: SignupDetailsProps) {
     setFieldErrors((previous) => ({ ...previous, [field]: validateSignupFields(values)[field] }))
   }
 
-  // `PhoneInput` may tidy the value on blur (a leading national zero is dropped from view), and the
-  // state it just set has not rendered yet, so this validates the value it hands over.
-  const handlePhoneBlur = (tidy: string) => {
-    setFieldErrors((previous) => ({ ...previous, phone: validatePhoneField(tidy) }))
-  }
-
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const payload = buildSignupPayload(role, values)
@@ -257,7 +237,6 @@ export function SignupDetails({ role }: SignupDetailsProps) {
     setConsentError(false)
     signup.mutate(payload, {
       onSuccess: () => {
-        rememberSignupNext(next)
         const proceed = () => navigate("/verify-email", { replace: true })
         if (inviteCode) {
           redeemInvite.mutate({ code: inviteCode }, { onSuccess: proceed, onError: proceed })
@@ -269,16 +248,6 @@ export function SignupDetails({ role }: SignupDetailsProps) {
   }
 
   const signupError = signup.error
-  // UD-11: the server's own refusal of the number (`phone_required` / `phone_invalid`) belongs on
-  // the field, not in the alert under the form, and takes focus back so the fix is one keystroke
-  // away. Matched on the code, never the server's sentence. It clears with the next edit of the
-  // field, because `updateField` resets the mutation.
-  const serverPhoneCode = phoneErrorCode(signupError)
-  const phoneError = fieldErrors.phone ?? (serverPhoneCode ? phoneErrorMessage(serverPhoneCode) : undefined)
-  const phoneRef = useRef<HTMLInputElement>(null)
-  useEffect(() => {
-    if (serverPhoneCode) phoneRef.current?.focus()
-  }, [serverPhoneCode])
   // Binding requirement 4: the login link is offered only for the 400 class
   // `signUpFailureMessage`'s own "sign in instead" wording is written for —
   // never for a network failure, a cooldown 429, or a 5xx, where "sign in
@@ -349,16 +318,6 @@ export function SignupDetails({ role }: SignupDetailsProps) {
           onChange={(event) => updateField("email", event.target.value)}
           onBlur={() => handleBlur("email")}
           error={fieldErrors.email}
-        />
-
-        <PhoneInput
-          ref={phoneRef}
-          required
-          disabled={busy}
-          value={values.phone}
-          onValueChange={(value) => updateField("phone", value)}
-          onBlur={handlePhoneBlur}
-          error={phoneError}
         />
 
         <div className="flex flex-col gap-2">
@@ -486,7 +445,7 @@ export function SignupDetails({ role }: SignupDetailsProps) {
           ) : null}
         </div>
 
-        {signup.isError && !serverPhoneCode ? (
+        {signup.isError ? (
           <div className="flex flex-col gap-1.5">
             <p role="alert" className="text-body-sm text-error">
               {signUpFailureMessage(signup.error)}

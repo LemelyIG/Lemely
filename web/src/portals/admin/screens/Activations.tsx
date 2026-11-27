@@ -1,6 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useState } from "react"
-import { Link } from "react-router-dom"
 import { Card, CardBody } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -51,12 +50,6 @@ export function Activations() {
         <p className="max-w-prose text-body-md text-on-surface-variant">
           Subscriptions waiting on a person. Payments are handled outside Lemely, so each of these
           is switched on or turned down by hand.
-        </p>
-        <p className="max-w-prose text-body-sm text-on-surface-variant">
-          Manual activation also lives in each customer's billing view.{" "}
-          <Link to="/platform/billing" className="font-medium text-primary underline-offset-2 hover:underline">
-            Open billing
-          </Link>
         </p>
       </header>
 

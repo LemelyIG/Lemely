@@ -1,4 +1,4 @@
-import { ApiError, teamDeniedText } from "@/lib/api"
+import { ApiError } from "@/lib/api"
 
 /*
  * Loading/error primitives PR, part A · what `<QueryState>` says when a
@@ -91,10 +91,6 @@ export const QUERY_GENERIC_FAILURE = "Something went wrong loading this. Try aga
  */
 export function describeQueryFailure(error: unknown): string {
   if (error instanceof ApiError) {
-    // An assistant's role did not allow the read. `request()` already worded it with the lead's
-    // name; the generic "no access" below would say less.
-    const refusal = teamDeniedText(error)
-    if (refusal !== null) return refusal
     if (error.status === 0) return QUERY_NETWORK_FAILURE
     if (error.status === 401) return QUERY_SESSION_EXPIRED
     if (error.status === 403) return QUERY_ACCESS_DENIED

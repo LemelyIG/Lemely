@@ -67,10 +67,10 @@ import { readDismissed, writeDismissed } from "@/lib/verifyEmailDismissal"
  * standing fact about your account", which is a different thing to read even
  * though the underlying condition is the same.
  *
- * Why the copy names marking and placement tests in every portal: they are the
- * two things the gate locks (`isGatedPath` in `lib/verifyEmailBanner.ts`), so
- * the banner pinned above either screen explains the locked action under it.
- * Naming only marking read as wrong on the placement invite.
+ * Why the copy names marking in every portal: it is the only thing the gate
+ * actually locks today, and it locks it for every role rather than only for
+ * students, so it is true wherever this renders. A teacher reading it learns
+ * something accurate about their account rather than a vague nudge.
  *
  * Split in two, exactly as `offline-banner.tsx` is, so the strip can be looked
  * at in the dev-preview kit without a query client or a signed-in session:
@@ -86,8 +86,8 @@ export function VerifyEmailBannerView({ onDismiss }: { onDismiss?: () => void })
     >
       <EnvelopeSimple size={16} className="text-on-surface-variant" aria-hidden="true" />
       <p className="min-w-0 flex-1 text-body-sm text-on-surface">
-        <span className="font-medium">Your email isn't verified yet.</span> Marking papers and
-        placement tests stay locked until you verify it.
+        <span className="font-medium">Your email isn't verified yet.</span> Marking a paper stays
+        locked until you verify it.
       </p>
       <Link
         to="/verify-email"
