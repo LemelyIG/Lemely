@@ -7,7 +7,7 @@ import { decideBackPlan, linkedParent, previousPathAt, recordHistoryLocation, ty
 import { navGroups, studentShellTrail } from "@/portals/student/data"
 import { STUDENT_BOTTOM_TABS } from "@/portals/student"
 
-// develop has no student route with a linked parent yet (lanes add them), so the rule is exercised on fixture trails.
+// Fixture trails exercise the linked-parent rule independently of the current student routes.
 const DRILL: Crumb[] = [{ label: "Practice", to: "/student/practice" }, { label: "Past papers" }]
 const DEEP: Crumb[] = [{ label: "Subject", to: "/student/subject/0580" }, { label: "Practice", to: "/student/practice/0580" }, { label: "Result" }]
 
@@ -100,7 +100,7 @@ describe("decideBackPlan", () => {
 
   it("Practice's drilled-in pages link Practice, so the shell's one phone back control leads there", () => {
     // The generic rule covers them (past papers included): the trail's linked Practice crumb draws the one control and the top bar's Back steps aside.
-    for (const p of ["/student/practice/papers", "/student/practice/result/1"]) {
+    for (const p of ["/student/practice/papers", "/student/practice/set/1", "/student/practice/result/1", "/student/practice/print/1"]) {
       const trail = studentShellTrail(p)
       expect(decideBackPlan({ trail, previousPath: "/student/practice", hasHistory: true }), p).toMatchObject({ control: "trail", action: "history", label: "Practice" })
       expect(decideBackPlan({ trail, previousPath: null, hasHistory: false }), p).toEqual({
