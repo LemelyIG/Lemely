@@ -191,7 +191,7 @@ describe("swipe cancel (fix round 2, M-3 and M-5)", () => {
   it("spring-back takes a per-caller easing; the default keeps the drawer, quiz and flashcards on the overshoot", () => {
     expect(hook).toContain("springEasing")
     expect(hook).toContain('?? "var(--ease-spring)"')
-    for (const rel of ["components/ui/nav-drawer.tsx", "components/quiz/QuizTaker.tsx", "portals/student/screens/flashcards/FlashcardReview.tsx"])
+    for (const rel of ["components/ui/nav-drawer.tsx", "components/quiz/QuizTaker.tsx", "portals/student/screens/flashcards/ReviewCard.tsx"])
       expect(read(rel), rel).not.toContain("springEasing")
   })
 

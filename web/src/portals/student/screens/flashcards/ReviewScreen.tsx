@@ -125,6 +125,7 @@ export function ReviewScreen() {
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
+    // `grade` is rebuilt every render; the listener re-binds on the state it reads (card, flip, finish, exit sheet).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current, revealed, finished, exitModalOpen])
 

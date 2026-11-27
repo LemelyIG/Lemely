@@ -91,8 +91,8 @@ const SCANNED_FILES_CURATED = [
   // P6.2: in neither gate list until now, which is the recurring mechanism —
   // a file no gate reads. It is the camera half of the product's flagship flow.
   "src/components/CameraCapture.tsx",
-  "src/portals/student/screens/flashcards/FlashcardDecks.tsx",
-  "src/portals/student/screens/flashcards/FlashcardReview.tsx",
+  "src/portals/student/screens/flashcards/parts/DeckRow.tsx",
+  "src/portals/student/screens/flashcards/ReviewCard.tsx",
   "src/portals/student/screens/practice/PracticeGenerator.tsx",
   "src/portals/student/screens/practice/PracticePrint.tsx",
   "src/portals/student/screens/practice/PracticeResult.tsx",

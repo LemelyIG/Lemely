@@ -50,7 +50,6 @@ describe("H6 — long-press is cleaned up, keyboard-reachable and ARIA-wired", (
   it.each([
     "src/components/ui/question-row.tsx",
     "src/portals/student/screens/Notifications.tsx",
-    "src/portals/student/screens/flashcards/FlashcardDecks.tsx",
   ])("%s wires the popover's triggerProps instead of discarding them", (relative) => {
     const src = sourceOf(relative)
     // `renderTrigger={() => ...}` — the argument thrown away — is the defect.
@@ -64,7 +63,7 @@ describe("H6 — long-press is cleaned up, keyboard-reachable and ARIA-wired", (
   it.each([
     "src/components/ui/question-row.tsx",
     "src/portals/student/screens/Notifications.tsx",
-    "src/portals/student/screens/flashcards/FlashcardDecks.tsx",
+    "src/portals/student/screens/flashcards/parts/DeckRow.tsx",
   ])("%s spreads the whole long-press handler set, click suppressor included", (relative) => {
     const src = sourceOf(relative)
     // `onClickCapture` reaches the element through this spread; cherry-picking

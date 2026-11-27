@@ -105,7 +105,10 @@ export function DeckMenu({ deckId, onClose, onDeleted }: {
   const id = lastId.current
   return (
     <>
-      <FcSheet open={deckId !== null} onOpenChange={(o) => { if (!o) onClose() }} title={deck.data?.title ?? "Deck"}>
+      <FcSheet open={deckId !== null} onOpenChange={(o) => { if (!o) onClose() }} title={deck.data?.title ?? "Deck"}
+        // A menu item hands over to a sheet that has already moved focus into itself; Radix would
+        // otherwise return focus to the held row behind that sheet as this one finishes closing.
+        restoreFocusTo={() => (which && document.activeElement instanceof HTMLElement ? document.activeElement : null)}>
         <QueryState
           query={query}
           skeleton={<div className="grid gap-2" role="status" aria-label="Loading deck">

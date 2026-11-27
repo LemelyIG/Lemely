@@ -112,16 +112,18 @@ export function ReviewCard({
         ].join(" ")}
       >
         {visual.stamp ? (
-          <span aria-hidden style={{ opacity: visual.opacity }}
+          // The stamp sits on the side the card is travelling toward, and a swipe is physical (right is Good in
+          // either text direction), so the inset is a physical offset on purpose, not a missed logical one.
+          <span aria-hidden style={{ opacity: visual.opacity, ...(stampGood ? { left: 22 } : { right: 22 }) }}
             className={stampGood
-              ? "absolute left-[22px] top-[22px] -rotate-[10deg] rounded-[10px] px-3 py-1 text-[18px] font-extrabold text-success-text shadow-[inset_0_0_0_2.5px_var(--color-success-text)]"
-              : "absolute right-[22px] top-[22px] rotate-[10deg] rounded-[10px] px-3 py-1 text-[18px] font-extrabold text-on-error-container shadow-[inset_0_0_0_2.5px_var(--color-on-error-container)]"}>
+              ? "absolute top-[22px] -rotate-[10deg] rounded-[10px] px-3 py-1 text-[18px] font-extrabold text-success-text shadow-[inset_0_0_0_2.5px_var(--color-success-text)]"
+              : "absolute top-[22px] rotate-[10deg] rounded-[10px] px-3 py-1 text-[18px] font-extrabold text-on-error-container shadow-[inset_0_0_0_2.5px_var(--color-on-error-container)]"}>
             {stampGood ? "Good" : "Again"}
           </span>
         ) : null}
         {/* The mark never scrolls and never sits on text: the face below ends 40px above the card's bottom edge on an AI card.
             Decorative here; the face carries the spoken label (first in its name). */}
-        {ai ? <span aria-hidden className="pointer-events-none absolute bottom-4 right-5"><AiMark label={sourceLabel} /></span> : null}
+        {ai ? <span aria-hidden className="pointer-events-none absolute bottom-4 end-5"><AiMark label={sourceLabel} /></span> : null}
         {/* The face never grows: a long question scrolls inside it instead of spilling into the action row below.
             `my-auto` centres short content and, unlike justify-center, never pushes the start of tall content out of reach.
             An AI card trades 40px of the bottom for the mark, and takes it back as top padding so short text stays centred. */}

@@ -130,11 +130,10 @@ describe("Pull-to-refresh — the shell wires usePullToRefresh once (native fram
   })
 })
 
-describe("Long-press menus — question-row, Notifications and FlashcardDecks all wire useLongPress + Popover", () => {
+describe("Long-press menus — question-row, Notifications and the deck row/menu all wire useLongPress + Popover", () => {
   const files = [
     "src/components/ui/question-row.tsx",
     "src/portals/student/screens/Notifications.tsx",
-    "src/portals/student/screens/flashcards/FlashcardDecks.tsx",
   ]
 
   it.each(files)("%s imports useLongPress and Popover", (relative) => {
@@ -143,19 +142,22 @@ describe("Long-press menus — question-row, Notifications and FlashcardDecks al
     expect(src).toContain("Popover")
   })
 
+  it("the deck row listens for the hold and the deck menu is a Popover", () => {
+    expect(sourceOf("src/portals/student/screens/flashcards/parts/DeckRow.tsx")).toContain("useLongPress")
+    expect(sourceOf("src/portals/student/screens/flashcards/DeckMenu.tsx")).toContain("Popover")
+  })
+
   it("question-row.tsx gains optional practiceHref/onShare props, not a required rewrite", () => {
     const src = sourceOf("src/components/ui/question-row.tsx")
     expect(src).toContain("practiceHref?")
     expect(src).toContain("onShare?")
   })
 
-  it("FlashcardDecks.tsx has no Rename affordance — no deck rename endpoint exists", () => {
-    const src = sourceOf("src/portals/student/screens/flashcards/FlashcardDecks.tsx")
-    expect(src).not.toContain("Rename")
+  it("the deck menu offers Rename (a rename endpoint exists, K27)", () => {
+    expect(sourceOf("src/portals/student/screens/flashcards/DeckMenu.tsx")).toContain("RenameDeckSheet")
   })
 
-  it("FlashcardDecks.tsx's long-press menu still routes through the existing delete-confirm flow", () => {
-    const src = sourceOf("src/portals/student/screens/flashcards/FlashcardDecks.tsx")
-    expect(src).toContain("setDeckPendingDelete")
+  it("the deck menu's delete still routes through the confirm sheet", () => {
+    expect(sourceOf("src/portals/student/screens/flashcards/DeckMenu.tsx")).toContain("DeleteDeckSheet")
   })
 })
