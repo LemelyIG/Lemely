@@ -42,6 +42,9 @@ export interface AnswerPanelProps {
   /** Null is read-only: a closed item, or L8. */
   marking: AnswerMarking | null
   showShortcuts?: boolean
+  /** The desktop queue's polite region, which is mounted before this panel is. Given it, the panel reports
+   * a scan failure there instead of rendering a region of its own that would arrive already holding the text. */
+  onScanNotice?: (text: string) => void
 }
 
 const ICON_BACK = <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M11 4 6 9l5 5" /></svg>
@@ -52,7 +55,7 @@ const NAV_BTN = `grid size-11 place-items-center rounded-chip bg-primary-contain
 const LABEL = "font-mono text-xs font-semibold uppercase tracking-[0.08em] text-on-surface-variant"
 const FRAME = "m-0 grid gap-1.5 rounded-2xl bg-surface-container-lowest p-3.5 shadow-[inset_0_0_0_1px_var(--color-outline)]"
 
-export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts }: AnswerPanelProps) {
+export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts, onScanNotice }: AnswerPanelProps) {
   const [mode, setMode] = useState<"crop" | "page">("crop")
   const [dismissNote, setDismissNote] = useState("")
   const uid = useId()
@@ -78,6 +81,11 @@ export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts 
   const cropFrame = images.cropUrl ? "image" : images.cropFailed ? "failed" : "loading"
   // One polite region that stays mounted across tabs and scanned answers, so a failure is announced when it happens.
   const scanFailure = showPage ? (wholePage === "failed" ? "Couldn't show the page." : "") : cropFrame === "failed" ? "Couldn't show the scan. Lemely's reading is below." : ""
+  useEffect(() => {
+    if (!onScanNotice) return
+    onScanNotice(scanFailure)
+    return () => onScanNotice("")
+  }, [onScanNotice, scanFailure])
   const tone = ringTone(view.confidenceScore)
   // The phone answer page has no queue column, so the answer's title is the page's h1.
   const Title = onBack ? "h1" : "h2"
@@ -132,7 +140,7 @@ export function AnswerPanel({ view, images, nav, onBack, marking, showShortcuts 
 
       <div role={view.hasScan ? "tabpanel" : undefined} id={`${uid}-panel`} aria-labelledby={view.hasScan ? `${uid}-tab-${showPage ? "page" : "crop"}` : undefined} className="grid gap-3.5">
       {/* Only a scanned answer has an image that can fail; one with no scan (and the sample) adds no live region. */}
-      {view.hasScan ? <p role="status" aria-live="polite" dir="auto" className="sr-only">{scanFailure}</p> : null}
+      {view.hasScan && !onScanNotice ? <p role="status" aria-live="polite" dir="auto" className="sr-only">{scanFailure}</p> : null}
       {showPage ? (
         <figure className={`${FRAME} ${wholePage === "failed" ? "" : "min-h-[300px]"}`}>
           {view.pageLabel ? <figcaption className={LABEL}>{view.pageLabel}</figcaption> : null}

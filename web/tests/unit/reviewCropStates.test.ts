@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { createElement, useState } from "react"
 import { MemoryRouter } from "react-router-dom"
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
@@ -85,10 +87,53 @@ describe("the scan frame once the crop loads", () => {
     const view = await open()
     expect(img(view.container, CROP_ALT)?.getAttribute("src")).toBe("blob:test/teacher/review/item-1/crop")
     expect(skeleton(view.container, "Loading the scan")).toBeNull()
-    expect(view.container.textContent).toContain("Lemely read")
-    expect(view.container.textContent).toContain("x = 3")
+    // The reading captions the scan: both sit in the one figure, the reading in its figcaption.
+    const figure = find(view.container, (n) => n.nodeName === "FIGURE" && img(n, CROP_ALT) !== null) as FakeNode
+    expect(figure).not.toBeNull()
+    const caption = find(figure, (n) => n.nodeName === "FIGCAPTION")
+    expect(caption?.textContent).toContain("Lemely read")
+    expect(caption?.textContent).toContain("x = 3")
     expect(live(view.container)?.textContent).toBe("")
     await view.unmount()
+  })
+})
+
+describe("the desktop queue, where the panel is withheld while the queue loads", () => {
+  /** The desktop queue's wiring: it owns the polite region, mounted before the panel, and the panel reports into it. */
+  function DesktopHost() {
+    const [loaded, setLoaded] = useState(false)
+    const [notice, setNotice] = useState("")
+    const images = useAnswerImages("item-1", true)
+    return createElement("div", null,
+      createElement("button", { type: "button", onClick: () => setLoaded(true) }, "Queue loaded"),
+      createElement("p", { role: "status", "aria-live": "polite" }, notice),
+      loaded ? createElement(AnswerPanel, { view: view(), images, marking: null, onScanNotice: setNotice }) : null)
+  }
+  const regions = (root: FakeNode) => findAll(root, (n) => n.getAttribute("aria-live") === "polite")
+
+  it("has the region in the DOM, empty, before a crop that failed early is shown, then fills that same region", async () => {
+    fetchBlobUrl.mockRejectedValue(new Error("404"))
+    const mounted = await mount(dom, createElement(MemoryRouter, null, createElement(DesktopHost)))
+    await settle()
+    // The fetch has already been rejected, and the panel is not there to say so yet.
+    expect(requested()).toEqual(["/teacher/review/item-1/crop"])
+    expect(find(mounted.container, (n) => n.nodeName === "ARTICLE")).toBeNull()
+    const region = live(mounted.container) as FakeNode
+    expect(region.textContent).toBe("")
+
+    await click(find(mounted.container, byText("button", "Queue loaded")) as FakeNode)
+    await settle()
+    expect(visibleMessages(mounted.container, SCAN_FAILED)).toHaveLength(1)
+    // No second region arrived with the text already in it: the one that was silent now carries the message.
+    expect(regions(mounted.container)).toEqual([region])
+    expect(region.textContent).toBe(SCAN_ANNOUNCED)
+    await mounted.unmount()
+  })
+
+  it("is wired that way in the queue: its own region, outside the panel, fed by the panel", () => {
+    const src = readFileSync(join(import.meta.dirname, "../../src/portals/teacher/screens/review/ReviewQueue.tsx"), "utf8")
+    expect(src).toMatch(/<p role="status" aria-live="polite"[^>]*>\{scanNotice\}<\/p>/)
+    expect(src).toMatch(/<AnswerPanel\b[^>]*onScanNotice=\{setScanNotice\}/)
   })
 })
 

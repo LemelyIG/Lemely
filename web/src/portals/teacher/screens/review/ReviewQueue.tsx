@@ -125,6 +125,8 @@ export function ReviewQueue() {
   const detail = useReviewItem(focusId ?? undefined)
   const view = detail.data ? answerViewFromReviewItem(detail.data) : null
   const images = useAnswerImages(focusId ?? undefined, view?.hasScan ?? false)
+  // Desktop: the crop can fail while the queue is still loading and the panel is withheld, so the region lives here.
+  const [scanNotice, setScanNotice] = useState("")
   const [mark, setMark] = useState<{ id: string; state: MarkState; note: string } | null>(null)
   const markState = view && mark?.id === view.key ? mark.state : view ? initialMarkState(view.points, view.lemelyMarks, view.maximumMarks) : null
   const note = view && mark?.id === view.key ? mark.note : ""
@@ -319,7 +321,8 @@ export function ReviewQueue() {
           {phone ? null : (
             <div className="flex min-h-0 flex-col px-6 pt-5 shell-lg:px-9 shell-lg:pt-6">
               {state === "loading" ? <div className="rq-skel h-[min(420px,60vh)] rounded-inner bg-surface-container-high" role="status" aria-label="Loading the answer" /> : null}
-              {state !== "loading" && state !== "error" ? (detailError ?? (panelProps && view ? <AnswerPanel key={view.key} {...panelProps} /> : null)) : null}
+              <p role="status" aria-live="polite" dir="auto" className="sr-only">{scanNotice}</p>
+              {state !== "loading" && state !== "error" ? (detailError ?? (panelProps && view ? <AnswerPanel key={view.key} {...panelProps} onScanNotice={setScanNotice} /> : null)) : null}
             </div>
           )}
         </>
