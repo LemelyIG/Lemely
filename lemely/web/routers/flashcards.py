@@ -51,8 +51,12 @@ from lemely.web.schemas_flashcards import (
     EditCardRequestDTO,
     GenerateDeckRequestDTO,
     GenerateDeckResponseDTO,
+    GenerationStatusDTO,
+    NextIntervalsDTO,
+    RenameDeckRequestDTO,
     ReviewCardRequestDTO,
     ReviewResultDTO,
+    WeakTopicDTO,
 )
 from lemely.web.xp_awards import award_xp_safely
 
@@ -62,7 +66,7 @@ if TYPE_CHECKING:
         DeckDetail,
         DeckSummary,
         DueSession,
-        GeneratedDeckResult,
+        GenerationState,
         ReviewOutcome,
     )
 
@@ -117,6 +121,7 @@ def _card_to_dto(card: CardView) -> CardDTO:
         lapses=card.lapses,
         dueAt=card.due_at.isoformat(),
         lastReviewedAt=card.last_reviewed_at.isoformat() if card.last_reviewed_at else None,
+        nextIntervalDays=NextIntervalsDTO(**card.next_interval_days),
     )
 
 
@@ -131,6 +136,12 @@ def _summary_to_dto(deck: DeckSummary) -> DeckSummaryDTO:
         cardCount=deck.card_count,
         dueCount=deck.due_count,
         createdAt=deck.created_at.isoformat(),
+        newCount=deck.mastery.new,
+        learningCount=deck.mastery.learning,
+        knownCount=deck.mastery.known,
+        marksLost=deck.marks_lost,
+        generationStatus=deck.generation_status.value,
+        requestedCount=deck.requested_count,
     )
 
 
@@ -142,15 +153,24 @@ def _detail_to_dto(deck: DeckDetail) -> DeckDetailDTO:
         title=deck.title,
         description=deck.description,
         origin=deck.origin.value,
+        dueCount=deck.due_count,
+        newCount=deck.mastery.new,
+        learningCount=deck.mastery.learning,
+        knownCount=deck.mastery.known,
+        marksLost=deck.marks_lost,
+        generationStatus=deck.generation_status.value,
+        requestedCount=deck.requested_count,
         cards=[_card_to_dto(c) for c in deck.cards],
     )
 
 
-def _generated_to_dto(result: GeneratedDeckResult) -> GenerateDeckResponseDTO:
-    return GenerateDeckResponseDTO(
-        deck=_summary_to_dto(result.deck),
-        requestedCount=result.requested_count,
-        generatedCount=result.generated_count,
+def _generation_to_dto(state: GenerationState) -> GenerationStatusDTO:
+    return GenerationStatusDTO(
+        deckId=str(state.deck_id),
+        status=state.status.value,
+        requestedCount=state.requested_count,
+        generatedCount=state.generated_count,
+        error=state.error,
     )
 
 
@@ -159,16 +179,19 @@ def _session_to_dto(session: DueSession) -> DueSessionDTO:
         cards=[_card_to_dto(c) for c in session.cards],
         totalDue=session.total_due,
         nextDueAt=session.next_due_at.isoformat() if session.next_due_at else None,
+        upcoming=[d.isoformat() for d in session.upcoming],
+        againDelayMinutes=session.again_delay_minutes,
     )
 
 
-def _review_to_dto(outcome: ReviewOutcome) -> ReviewResultDTO:
+def _review_to_dto(outcome: ReviewOutcome, xp_awarded: int) -> ReviewResultDTO:
     return ReviewResultDTO(
         card=_card_to_dto(outcome.card),
         reviewId=str(outcome.review_id),
         grade=outcome.grade.value,
         intervalBeforeDays=outcome.interval_before_days,
         intervalAfterDays=outcome.interval_after_days,
+        xpAwarded=xp_awarded,
     )
 
 
@@ -215,22 +238,44 @@ def create_deck(
     return _summary_to_dto(deck)
 
 
+@router.get("/weak-topics", response_model=list[WeakTopicDTO])
+def weak_topics(
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[FlashcardService, Depends(get_flashcard_service)],
+    subject_code: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=20)] = 6,
+) -> list[WeakTopicDTO]:
+    """The caller's recorded weak topics, most marks lost first (new-deck sheet chips)."""
+    return [
+        WeakTopicDTO(
+            subjectCode=t.subject_code,
+            topic=t.topic,
+            marksLost=t.marks_lost,
+            accuracyPct=t.accuracy_pct,
+        )
+        for t in service.weak_topics(auth.user_id, subject_code=subject_code, limit=limit)
+    ]
+
+
 @router.post("/decks/generate", response_model=GenerateDeckResponseDTO, status_code=201)
 def generate_deck(
     body: GenerateDeckRequestDTO,
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
     service: Annotated[FlashcardService, Depends(get_flashcard_service)],
 ) -> GenerateDeckResponseDTO:
-    """Generate an AI deck for a topic, or for the caller's weakest topic.
+    """Write an AI deck: save it as ``writing`` (409/422/503 refusals happen here), then write it.
 
-    Every card lands ``source="ai"`` and stays that way. The response
-    reports the true ``generatedCount`` beside ``requestedCount``; a short
-    response is not padded and must not be rendered as if it were complete.
+    The cards are written inside this request, after the deck is saved and before the response
+    is sent. Production is Cloud Run, which throttles CPU once a response is sent, so the work
+    is neither a ``BackgroundTasks`` job nor a thread. The model call is bounded below the Cloud
+    Run request timeout, so the deck always leaves ``writing``. The response is the final state
+    (``ready`` or ``failed``) with the real, never-padded ``generatedCount``, re-read after the
+    work, so the client never shows a stale ``writing``.
 
     Declared before ``/decks/{deck_id}`` so the literal path wins the match.
     """
     try:
-        result = service.generate_deck(
+        deck = service.start_generation(
             auth.user_id,
             subject_code=body.subjectCode,
             origin=_parse_origin(body.origin),
@@ -240,7 +285,15 @@ def generate_deck(
         )
     except FlashcardError as exc:
         _raise_for(exc)
-    return _generated_to_dto(result)
+    service.run_generation(deck.id)
+    try:
+        final = service.deck_summary(auth.user_id, str(deck.id))
+        state = service.generation_status(auth.user_id, str(deck.id))
+    except FlashcardError as exc:
+        _raise_for(exc)
+    return GenerateDeckResponseDTO(
+        deck=_summary_to_dto(final), requestedCount=body.count, generatedCount=state.generated_count
+    )
 
 
 @router.get("/decks/{deck_id}", response_model=DeckDetailDTO)
@@ -257,6 +310,66 @@ def get_deck(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _detail_to_dto(deck)
+
+
+@router.patch("/decks/{deck_id}", response_model=DeckSummaryDTO)
+def rename_deck(
+    deck_id: str,
+    body: RenameDeckRequestDTO,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[FlashcardService, Depends(get_flashcard_service)],
+) -> DeckSummaryDTO:
+    """Rename one of the caller's decks. Blank or over 80 characters is 422."""
+    try:
+        deck = service.rename_deck(auth.user_id, deck_id, title=body.title)
+    except FlashcardError as exc:
+        _raise_for(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _summary_to_dto(deck)
+
+
+@router.get("/decks/{deck_id}/generation", response_model=GenerationStatusDTO)
+def generation_status(
+    deck_id: str,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[FlashcardService, Depends(get_flashcard_service)],
+) -> GenerationStatusDTO:
+    """Where the deck's card writing stands (``writing`` / ``ready`` / ``failed``)."""
+    try:
+        state = service.generation_status(auth.user_id, deck_id)
+    except FlashcardError as exc:
+        _raise_for(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _generation_to_dto(state)
+
+
+@router.post(
+    "/decks/{deck_id}/generation/retry", response_model=GenerationStatusDTO, status_code=200
+)
+def retry_generation(
+    deck_id: str,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[FlashcardService, Depends(get_flashcard_service)],
+) -> GenerationStatusDTO:
+    """Write a failed deck's cards again, inside this request. A deck that is not failed is 422.
+
+    Like ``POST /decks/generate``, the work runs (bounded) before the response, and the body is
+    the final status re-read after it.
+    """
+    try:
+        state = service.retry_generation(auth.user_id, deck_id)
+    except FlashcardError as exc:
+        _raise_for(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    service.run_generation(state.deck_id)
+    try:
+        final = service.generation_status(auth.user_id, str(state.deck_id))
+    except FlashcardError as exc:
+        _raise_for(exc)
+    return _generation_to_dto(final)
 
 
 @router.delete("/decks/{deck_id}", status_code=204)
@@ -340,9 +453,12 @@ def due_session(
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
     service: Annotated[FlashcardService, Depends(get_flashcard_service)],
     subject_code: str | None = None,
+    deck_id: str | None = None,
     limit: Annotated[int | None, Query(ge=1)] = None,
 ) -> DueSessionDTO:
-    """S-22/S-23: the cards due now, the whole backlog size, and the next due time.
+    """S-22/S-23: due cards, the backlog size, the next due time and the 8-day forecast.
+
+    ``deck_id`` narrows to one of the caller's decks (another student's deck is a 404).
 
     An empty ``cards`` list is a real, successful state — S-22's "nothing due
     today" — and it carries ``nextDueAt`` so the screen can say *when* rather
@@ -352,9 +468,15 @@ def due_session(
     bare ``LIMIT``, and Postgres rejects a negative one with an error, so an
     unguarded ``?limit=-1`` is a 500 for what is plainly a malformed request.
     """
-    return _session_to_dto(
-        service.due_session(auth.user_id, subject_code=subject_code, limit=limit)
-    )
+    try:
+        session = service.due_session(
+            auth.user_id, subject_code=subject_code, deck_id=deck_id, limit=limit
+        )
+    except FlashcardError as exc:
+        _raise_for(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _session_to_dto(session)
 
 
 @router.post("/cards/{card_id}/review", response_model=ReviewResultDTO)
@@ -375,14 +497,23 @@ def review_card(
     act (unlike the other three seams, a card can be reviewed again and again
     on purpose), so the per-source daily cap (D5.1 §3), not dedupe, is what
     stops this from being farmed.
+
+    A body ``clientReviewId`` makes the call idempotent: a repeat with the same key replays the
+    stored review (same row id, so the XP dedupe key above holds too) and neither reschedules the
+    card nor awards twice. The replay's ``xpAwarded`` is 0, as the award is already recorded.
     """
     try:
-        outcome = service.record_review(auth.user_id, card_id, _parse_grade(body.grade))
+        outcome = service.record_review(
+            auth.user_id,
+            card_id,
+            _parse_grade(body.grade),
+            client_review_id=body.clientReviewId,
+        )
     except FlashcardError as exc:
         _raise_for(exc)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    award_xp_safely(
+    award = award_xp_safely(
         xp_service,
         user_id=auth.user_id,
         source=XpSource.flashcard_reviewed,
@@ -390,7 +521,8 @@ def review_card(
         subject_code=outcome.subject_code,
         seam="flashcard_reviewed",
     )
-    return _review_to_dto(outcome)
+    xp_awarded = award.amount if award is not None and award.awarded else 0
+    return _review_to_dto(outcome, xp_awarded)
 
 
 __all__ = ["router"]

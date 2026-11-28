@@ -139,7 +139,7 @@ describe("H5 — a drag cleans up its own imperative state, not just its listene
 describe("MEDIUM — horizontal drag surfaces declare touch-action", () => {
   const HORIZONTAL = [
     "src/components/quiz/QuizTaker.tsx",
-    "src/portals/student/screens/flashcards/FlashcardReview.tsx",
+    "src/portals/student/screens/flashcards/ReviewCard.tsx",
     "src/components/ui/nav-drawer.tsx",
   ]
 

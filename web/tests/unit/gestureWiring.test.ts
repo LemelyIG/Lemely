@@ -22,23 +22,20 @@ function sourceOf(relative: string): string {
   return stripComments(fs.readFileSync(path.join(ROOT, relative), "utf8"))
 }
 
-describe("FlashcardReview.tsx — swipe reveal/grade is additive to the existing controls", () => {
-  const src = sourceOf("src/portals/student/screens/flashcards/FlashcardReview.tsx")
+describe("flashcard review — swipe is additive to buttons and keys", () => {
+  const card = sourceOf("src/portals/student/screens/flashcards/ReviewCard.tsx")
+  const screen = sourceOf("src/portals/student/screens/flashcards/ReviewScreen.tsx")
 
-  it("imports useDragGesture and flashcardSwipeAction", () => {
-    expect(src).toContain("useDragGesture")
-    expect(src).toContain("flashcardSwipeAction")
+  it("uses the drag gesture and swipe decision", () => {
+    expect(card).toContain("useDragGesture")
+    expect(card).toContain("flashcardSwipeAction")
   })
-
-  it("still has the Reveal answer button and isRevealKey's keyboard path", () => {
-    expect(src).toContain("Reveal answer")
-    expect(src).toContain("isRevealKey")
+  it("retains the answer button and keyboard path", () => {
+    expect(screen).toContain("Show answer")
+    expect(screen).toContain("reviewKeyAction")
   })
-
-  it("still has all four grade button labels", () => {
-    for (const label of ["Again", "Hard", "Good", "Easy"]) {
-      expect(src).toContain(label)
-    }
+  it("renders the four grades from gradeButtons", () => {
+    expect(screen).toContain("gradeButtons")
   })
 })
 
@@ -133,11 +130,10 @@ describe("Pull-to-refresh — the shell wires usePullToRefresh once (native fram
   })
 })
 
-describe("Long-press menus — question-row, Notifications and FlashcardDecks all wire useLongPress + Popover", () => {
+describe("Long-press menus — question-row, Notifications and flashcards", () => {
   const files = [
     "src/components/ui/question-row.tsx",
     "src/portals/student/screens/Notifications.tsx",
-    "src/portals/student/screens/flashcards/FlashcardDecks.tsx",
   ]
 
   it.each(files)("%s imports useLongPress and Popover", (relative) => {
@@ -146,19 +142,24 @@ describe("Long-press menus — question-row, Notifications and FlashcardDecks al
     expect(src).toContain("Popover")
   })
 
+  it("the deck row listens for the hold, which has a sheet menu; Deck options uses a Popover", () => {
+    expect(sourceOf("src/portals/student/screens/flashcards/parts/DeckRow.tsx")).toContain("useLongPress")
+    const menu = sourceOf("src/portals/student/screens/flashcards/DeckMenu.tsx")
+    expect(menu).toContain("<FcSheet")
+    expect(menu).toContain('<Popover label="Deck options"')
+  })
+
   it("question-row.tsx gains optional practiceHref/onShare props, not a required rewrite", () => {
     const src = sourceOf("src/components/ui/question-row.tsx")
     expect(src).toContain("practiceHref?")
     expect(src).toContain("onShare?")
   })
 
-  it("FlashcardDecks.tsx has no Rename affordance — no deck rename endpoint exists", () => {
-    const src = sourceOf("src/portals/student/screens/flashcards/FlashcardDecks.tsx")
-    expect(src).not.toContain("Rename")
+  it("the deck menu offers Rename (a rename endpoint exists, K27)", () => {
+    expect(sourceOf("src/portals/student/screens/flashcards/DeckMenu.tsx")).toContain("RenameDeckSheet")
   })
 
-  it("FlashcardDecks.tsx's long-press menu still routes through the existing delete-confirm flow", () => {
-    const src = sourceOf("src/portals/student/screens/flashcards/FlashcardDecks.tsx")
-    expect(src).toContain("setDeckPendingDelete")
+  it("the deck menu's delete still routes through the confirm sheet", () => {
+    expect(sourceOf("src/portals/student/screens/flashcards/DeckMenu.tsx")).toContain("DeleteDeckSheet")
   })
 })

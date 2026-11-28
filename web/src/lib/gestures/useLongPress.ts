@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react"
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react"
-import { longPressDecision, shouldStartLongPress, shouldSuppressContextMenu } from "./longPressMath"
+import { longPressDecision, pressStartedOnInteractive, shouldStartLongPress, shouldSuppressContextMenu } from "./longPressMath"
 import { GESTURE_INTERACTIVE_SELECTOR } from "./interactiveSelector"
 import { nativeHaptic } from "@/lib/haptics"
 
@@ -70,7 +70,9 @@ export function useLongPress(handlers: UseLongPressHandlers): UseLongPressResult
   function onPointerDown(event: ReactPointerEvent) {
     suppressClickRef.current = false
     const target = event.target
-    const startedOnInteractive = target instanceof Element && target.closest(GESTURE_INTERACTIVE_SELECTOR) !== null
+    // The handlers' own element is not a reason to refuse: only an interactive element inside it is.
+    const match = target instanceof Element ? target.closest(GESTURE_INTERACTIVE_SELECTOR) : null
+    const startedOnInteractive = pressStartedOnInteractive(match, event.currentTarget)
     if (!shouldStartLongPress({ button: event.button, startedOnInteractive })) return
 
     const nativeEvent = event.nativeEvent

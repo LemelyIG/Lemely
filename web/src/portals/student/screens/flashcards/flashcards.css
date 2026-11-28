@@ -1,0 +1,60 @@
+/* The wash follows the shell's horizontal padding, including native safe areas. */
+.fc-review-done {
+  --fc-bleed-l: var(--native-bleed-l, 14px);
+  --fc-bleed-r: var(--native-bleed-r, 14px);
+}
+
+@media (max-width: 720px) {
+  :root[data-platform="ios"] .fc-review-done {
+    --fc-bleed-l: max(var(--native-group-inset-ios), env(safe-area-inset-left));
+    --fc-bleed-r: max(var(--native-group-inset-ios), env(safe-area-inset-right));
+  }
+}
+
+/* L10 · keyframes. Values from .impeccable/mocks/student-r2/fc.css (flip) and the motion
+ * table in the L10 plan. Each keyframe has a utility class below; under reduced motion all of them
+ * resolve to no animation, so a call site never has to remember the guard. */
+@keyframes fc-flip {
+  from { transform: rotateY(-80deg); opacity: 0.3; }
+}
+@keyframes fc-rise {
+  from { transform: translateY(12px) scale(0.94); opacity: 0.6; }
+}
+@keyframes fc-out-right {
+  to { transform: translateX(120%) rotate(18deg); opacity: 0; }
+}
+@keyframes fc-out-left {
+  to { transform: translateX(-120%) rotate(-18deg); opacity: 0; }
+}
+
+.fc-flip { animation: fc-flip 0.34s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.fc-rise { animation: fc-rise 0.3s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.fc-out-right { animation: fc-out-right 0.28s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+.fc-out-left { animation: fc-out-left 0.28s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fc-flip, .fc-rise, .fc-out-right, .fc-out-left { animation: none; }
+}
+/* Let the shell allocate its remaining space after any banners. Flex items may grow
+ * with long content, so the document retains its normal scrolling behaviour. */
+main:has(.fc-review-fill) {
+  display: flex;
+  flex-direction: column;
+}
+main:has(.fc-review-fill) .lm-screen:has(.fc-review-fill) {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+}
+.fc-review-fill {
+  flex: 1 0 auto;
+}
+/* The web bottom nav renders 7px taller than the shell's reserved padding. */
+@media (max-width: 819px) {
+  .fc-review-fill:not(.fc-review-done) { padding-bottom: 8px; }
+}
+/* The review face's transparent outline is redrawn as a visible system colour in High Contrast. The frame draws the focus
+   indicator around the whole card, so suppress only the face's shorter duplicate in this mode. */
+@media (forced-colors: active) {
+  .fc-card-face:focus-visible { outline: none !important; }
+}

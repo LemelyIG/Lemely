@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   longPressDecision,
+  pressStartedOnInteractive,
   shouldStartLongPress,
   shouldSuppressContextMenu,
 } from "@/lib/gestures/longPressMath"
@@ -70,5 +71,22 @@ describe("shouldSuppressContextMenu", () => {
   it("never suppresses when no press is in flight", () => {
     expect(shouldSuppressContextMenu("touch", false)).toBe(false)
     expect(shouldSuppressContextMenu("mouse", false)).toBe(false)
+  })
+})
+
+describe("pressStartedOnInteractive", () => {
+  const row = { tag: "row" }
+  const inner = { tag: "inner" }
+
+  it("is false when the press did not start on anything interactive", () => {
+    expect(pressStartedOnInteractive(null, row)).toBe(false)
+  })
+
+  it("is true for an interactive element inside the one that owns the handlers", () => {
+    expect(pressStartedOnInteractive(inner, row)).toBe(true)
+  })
+
+  it("is false when the nearest interactive element is the owner itself (handlers on a row's own button)", () => {
+    expect(pressStartedOnInteractive(row, row)).toBe(false)
   })
 })

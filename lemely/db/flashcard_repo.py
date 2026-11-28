@@ -41,20 +41,24 @@ practice and flashcards, not two that could drift.
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import func, select
+import structlog
+from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 
-from lemely.core.spaced_repetition import CardSchedule, initial_schedule
+from lemely.core.spaced_repetition import AGAIN_REVIEW_DELAY, CardSchedule, initial_schedule
 from lemely.core.spaced_repetition import ReviewGrade as CoreReviewGrade
 from lemely.core.spaced_repetition import review as apply_review
 from lemely.db.models.attempts import Attempt, WeaknessRecord
 from lemely.db.models.flashcards import (
     CardSource,
+    DeckGenerationStatus,
     DeckOrigin,
     Flashcard,
     FlashcardDeck,
@@ -65,9 +69,25 @@ from lemely.db.models.flashcards import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    import sqlalchemy as sa
     from sqlalchemy.orm import Session, sessionmaker
 
     from lemely.io.flashcard_generation import FlashcardGenerator
+
+
+log = structlog.get_logger(__name__)
+
+#: A card whose interval has reached a week counts as "known" on the deck's mastery bar.
+#: "Easy" on a young card sends it about a week out, so "known" means "you said it was easy".
+KNOWN_INTERVAL_DAYS = 7
+#: How far ahead :meth:`FlashcardService.due_session` lists upcoming due times ("Coming back").
+UPCOMING_WINDOW = timedelta(days=8)
+#: Hard cap on the forecast list so a huge backlog can't bloat the response.
+UPCOMING_CAP = 1000
+#: Longest title a rename accepts.
+DECK_TITLE_MAX = 80
+#: A topic label's leading syllabus code, e.g. ``"4.3 "`` in ``"4.3 Electric circuits"``.
+_TOPIC_CODE = re.compile(r"^[A-Z]?\d+(?:\.\d+)*\s+")
 
 
 def _utcnow() -> datetime:
@@ -141,6 +161,11 @@ class DeckSummary:
     card_count: int
     due_count: int
     created_at: datetime
+    mastery: MasteryCounts
+    marks_lost: int | None
+    """Net marks the deck's topic cost the student. Only for ``origin=weakness``."""
+    generation_status: DeckGenerationStatus
+    requested_count: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +184,8 @@ class CardView:
     lapses: int
     due_at: datetime
     last_reviewed_at: datetime | None
+    next_interval_days: dict[str, int]
+    """The interval in days each grade would give right now (``again`` is 0: the 10-minute step)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +199,11 @@ class DeckDetail:
     description: str | None
     origin: DeckOrigin
     cards: list[CardView]
+    due_count: int
+    mastery: MasteryCounts
+    marks_lost: int | None
+    generation_status: DeckGenerationStatus
+    requested_count: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +219,57 @@ class DueSession:
     cards: list[CardView]
     total_due: int
     next_due_at: datetime | None
+    upcoming: list[datetime]
+    """Due times of cards coming due within :data:`UPCOMING_WINDOW`, soonest first."""
+    again_delay_minutes: int
+
+
+@dataclass(frozen=True, slots=True)
+class MasteryCounts:
+    """How a deck's cards split on the mastery bar: never reviewed, in progress, known."""
+
+    new: int
+    learning: int
+    known: int
+
+
+@dataclass(frozen=True, slots=True)
+class WeakTopic:
+    """One recorded weak topic, for the new-deck sheet's chips."""
+
+    subject_code: str
+    topic: str
+    marks_lost: int
+    accuracy_pct: int
+
+
+@dataclass(frozen=True, slots=True)
+class _DeckCounts:
+    total: int
+    due: int
+    mastery: MasteryCounts
+
+    @classmethod
+    def empty(cls) -> _DeckCounts:
+        return cls(total=0, due=0, mastery=MasteryCounts(new=0, learning=0, known=0))
+
+
+#: A ``writing`` deck older than this is reported (and saved) as failed: its worker died.
+GENERATION_STALE_AFTER = timedelta(minutes=5)
+GENERATION_TIMEOUT_SECONDS = 120.0
+"""Bound on the model call. Under the 300 s Cloud Run request timeout, so the request that runs
+the generation always has time left to mark the deck ``failed`` and answer."""
+
+
+@dataclass(frozen=True, slots=True)
+class GenerationState:
+    """Where one deck's card writing stands. ``generated_count`` is the real row count."""
+
+    deck_id: uuid.UUID
+    status: DeckGenerationStatus
+    requested_count: int | None
+    generated_count: int
+    error: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,11 +320,13 @@ class FlashcardService:
         generator: FlashcardGenerator | None = None,
         *,
         now: Callable[[], datetime] = _utcnow,
+        generation_timeout_seconds: float = GENERATION_TIMEOUT_SECONDS,
     ) -> None:
         """Wire the service to a session factory, an optional generator, and a clock."""
         self._sessionmaker = sessionmaker
         self._generator = generator
         self._now = now
+        self._generation_timeout = generation_timeout_seconds
 
     # -- Deck creation (manual / topic / weakness) -----------------------------
 
@@ -261,16 +346,15 @@ class FlashcardService:
           ``None`` — a manual deck need not target a syllabus topic).
         * ``origin=topic``: ``topic`` is required (:class:`FlashcardValidationError`
           if omitted).
-        * ``origin=weakness``: ``topic`` must be ``None`` on input — this
-          method resolves it from the caller's own ``WeaknessRecord`` rows
-          for ``subject_code`` (highest net lost marks first) and raises
-          :class:`FlashcardUnavailableError` with reason ``no_weaknesses`` if
-          there are none, rather than silently creating an empty,
-          untargeted deck.
+        * ``origin=weakness``: ``topic`` may be omitted, in which case this method picks the
+          caller's own top weak topic for ``subject_code`` (highest net lost marks first); or it
+          may be one of the caller's recorded weak topics. It raises
+          :class:`FlashcardUnavailableError` with reason ``no_weaknesses`` if there are none,
+          rather than silently creating an empty, untargeted deck.
 
         Raises:
             FlashcardValidationError: ``origin='topic'`` with no topic, or
-                ``origin='weakness'`` with one supplied.
+                ``origin='weakness'`` with a topic that is not a recorded weakness.
             FlashcardUnavailableError: ``origin='weakness'`` and the caller
                 has no weakness data for ``subject_code`` yet.
         """
@@ -284,10 +368,11 @@ class FlashcardService:
                 title=title,
                 description=description,
                 origin=origin,
+                generation_status=DeckGenerationStatus.ready.value,
             )
             session.add(deck)
             session.flush()
-            return self._to_summary(deck, card_count=0, due_count=0)
+            return self._to_summary(deck, _DeckCounts.empty(), marks_lost=None)
 
     def _resolve_deck_topic(
         self,
@@ -301,20 +386,29 @@ class FlashcardService:
                 raise FlashcardValidationError("origin='topic' requires a non-empty topic")
             return topic
         if origin == DeckOrigin.weakness:
-            if topic is not None:
-                raise FlashcardValidationError(
-                    "origin='weakness' resolves its own topic; do not pass one"
-                )
             with self._sessionmaker() as session:
-                resolved = self._top_weak_topic(session, student_uuid, subject_code)
-            if resolved is None:
+                totals = self._weak_topic_totals(session, student_uuid, subject_code)
+            if not totals:
                 raise FlashcardUnavailableError(FlashcardUnavailableReason.no_weaknesses)
-            return resolved
+            if topic is None:
+                return sorted(totals, key=lambda t: (-totals[t], t))[0]
+            if topic not in totals:
+                # The student may choose among their own recorded weak topics, never name one the
+                # weakness engine did not flag: that would launder an arbitrary topic as a weakness.
+                raise FlashcardValidationError(
+                    "origin='weakness' topic must be one of your recorded weak topics"
+                )
+            return topic
         return topic
 
     # -- AI generation ----------------------------------------------------------
 
-    def generate_deck(
+    @staticmethod
+    def _default_title(topic: str) -> str:
+        name = _TOPIC_CODE.sub("", topic).strip()
+        return name or topic
+
+    def start_generation(
         self,
         student_id: uuid.UUID | str,
         *,
@@ -323,25 +417,18 @@ class FlashcardService:
         count: int,
         topic: str | None = None,
         title: str | None = None,
-    ) -> GeneratedDeckResult:
-        """Resolve a topic, call Gemini, and persist an AI deck in one transaction.
+    ) -> DeckSummary:
+        """Resolve the topic and save an empty ``writing`` deck. No model call happens here.
 
-        ``origin`` must be :attr:`~lemely.db.models.flashcards.DeckOrigin.topic`
-        or :attr:`~lemely.db.models.flashcards.DeckOrigin.weakness` — a manual
-        deck has no AI content to generate for
-        (:class:`FlashcardValidationError`). Topic resolution follows the same
-        rule as :meth:`create_deck`.
-
-        Every card this method inserts is ``source=CardSource.ai`` (P4.6
-        honesty rule 1) with its ``source_question_id`` taken verbatim from
-        the generator's response.
+        The caller must hand :meth:`run_generation` to a worker request (a Cloud Tasks job), so the
+        student can leave the screen while the cards are written. Do not run it as post-response
+        background work: Cloud Run throttles CPU once the response is sent, so it would stall.
+        A deck whose worker never finishes is saved as ``failed/timeout`` once it goes stale.
 
         Raises:
-            FlashcardGenerationUnavailableError: no generator was wired in.
-            FlashcardValidationError: ``origin=manual``, or a topic/weakness
-                mismatch (see :meth:`create_deck`).
-            FlashcardUnavailableError: ``origin='weakness'`` and the caller
-                has no weakness data for ``subject_code``.
+            FlashcardGenerationUnavailableError: no generator was wired in (checked first).
+            FlashcardValidationError: ``origin=manual`` or a topic mismatch.
+            FlashcardUnavailableError: weakness origin with no recorded weaknesses.
         """
         if self._generator is None:
             raise FlashcardGenerationUnavailableError(
@@ -349,34 +436,77 @@ class FlashcardService:
             )
         if origin == DeckOrigin.manual:
             raise FlashcardValidationError("origin='manual' has no AI content to generate")
-
         student_uuid = _as_uuid(student_id)
         resolved_topic = self._resolve_deck_topic(student_uuid, subject_code, origin, topic)
         if resolved_topic is None:
-            # Unreachable in practice: origin is topic or weakness here (manual
-            # was excluded above), and _resolve_deck_topic never returns None
-            # for either. A real runtime check rather than an assert (S101) so
-            # a future bug here is a clean 422, not a stripped-in-prod assert.
             raise FlashcardValidationError("could not resolve a topic to generate for")
-
-        generated = self._generator.generate(
-            subject_code=subject_code, topic=resolved_topic, count=count
-        )
-
-        deck_title = title or f"{resolved_topic} (AI generated)"
-        moment = self._now()
         with self._sessionmaker() as session, session.begin():
             deck = FlashcardDeck(
                 user_id=student_uuid,
                 subject_code=subject_code,
                 topic=resolved_topic,
-                title=deck_title,
+                title=(title or "").strip() or self._default_title(resolved_topic),
                 description=None,
                 origin=origin,
+                generation_status=DeckGenerationStatus.writing.value,
+                requested_count=count,
+                generation_started_at=self._now(),
+                generation_error=None,
             )
             session.add(deck)
             session.flush()
+            return self._to_summary(deck, _DeckCounts.empty(), marks_lost=None)
 
+    def run_generation(self, deck_id: uuid.UUID | str) -> None:
+        """Write the cards for a ``writing`` deck, then mark it ``ready`` or ``failed``.
+
+        Never raises: it runs in a worker, where an exception would only reach a log. Any model
+        or database error marks the deck ``failed`` (and is logged if even that write fails). A
+        deck that is no longer ``writing`` (deleted, or already finished) is left alone.
+        """
+        try:
+            deck_uuid = _as_uuid(deck_id)
+        except ValueError:
+            log.exception("flashcard_generation_bad_deck_id", deck_id=str(deck_id))
+            return
+        try:
+            self._run_generation(deck_uuid)
+        except Exception:  # last line of defence: the worker must never crash
+            log.exception("flashcard_generation_internal_error", deck_id=str(deck_uuid))
+            self._mark_failed_quietly(deck_uuid, "internal_error")
+
+    def _run_generation(self, deck_uuid: uuid.UUID) -> None:
+        with self._sessionmaker() as session:
+            deck = session.get(FlashcardDeck, deck_uuid)
+            if deck is None or deck.generation_status != DeckGenerationStatus.writing.value:
+                return
+            subject_code, topic, count = deck.subject_code, deck.topic, deck.requested_count or 0
+        if self._generator is None or topic is None or count < 1:
+            self._mark_failed_quietly(deck_uuid, "unavailable")
+            return
+        try:
+            generated = self._generator.generate(
+                subject_code=subject_code,
+                topic=topic,
+                count=count,
+                timeout_seconds=self._generation_timeout,
+            )
+        except TimeoutError:
+            log.error("flashcard_generation_timeout", deck_id=str(deck_uuid))
+            self._mark_failed_quietly(deck_uuid, "timeout")
+            return
+        except Exception:  # any model or parse failure is a failed deck, never a crash
+            log.exception("flashcard_generation_failed", deck_id=str(deck_uuid))
+            self._mark_failed_quietly(deck_uuid, "model_error")
+            return
+        if not generated.cards:
+            self._mark_failed_quietly(deck_uuid, "no_cards")
+            return
+        moment = self._now()
+        with self._sessionmaker() as session, session.begin():
+            deck = session.get(FlashcardDeck, deck_uuid)
+            if deck is None or deck.generation_status != DeckGenerationStatus.writing.value:
+                return
             for position, card in enumerate(generated.cards, start=1):
                 sched = initial_schedule(moment)
                 session.add(
@@ -395,15 +525,126 @@ class FlashcardService:
                         last_reviewed_at=sched.last_reviewed_at,
                     )
                 )
-            session.flush()
+            deck.generation_status = DeckGenerationStatus.ready.value
+            deck.generation_error = None
+        log.info(
+            "flashcard_generation_ready",
+            deck_id=str(deck_uuid),
+            requested=count,
+            generated=len(generated.cards),
+        )
 
-            return GeneratedDeckResult(
-                deck=self._to_summary(
-                    deck, card_count=len(generated.cards), due_count=len(generated.cards)
-                ),
-                requested_count=count,
-                generated_count=len(generated.cards),
+    def _mark_failed_quietly(self, deck_uuid: uuid.UUID, error: str) -> None:
+        """Mark the deck failed; if that write fails too, log it (the stale timeout recovers)."""
+        try:
+            self._mark_failed(deck_uuid, error)
+        except Exception:
+            log.exception("flashcard_generation_mark_failed_error", deck_id=str(deck_uuid))
+
+    def _mark_failed(self, deck_uuid: uuid.UUID, error: str) -> None:
+        with self._sessionmaker() as session, session.begin():
+            deck = session.get(FlashcardDeck, deck_uuid)
+            if deck is not None and deck.generation_status == DeckGenerationStatus.writing.value:
+                deck.generation_status = DeckGenerationStatus.failed.value
+                deck.generation_error = error
+
+    @staticmethod
+    def _expire_if_stale(deck: FlashcardDeck, moment: datetime) -> None:
+        """Save a ``writing`` deck past :data:`GENERATION_STALE_AFTER` as ``failed/timeout``."""
+        if (
+            deck.generation_status == DeckGenerationStatus.writing.value
+            and deck.generation_started_at is not None
+            and moment - deck.generation_started_at > GENERATION_STALE_AFTER
+        ):
+            deck.generation_status = DeckGenerationStatus.failed.value
+            deck.generation_error = "timeout"
+
+    def generation_status(
+        self, student_id: uuid.UUID | str, deck_id: uuid.UUID | str
+    ) -> GenerationState:
+        """The deck's writing status.
+
+        A ``writing`` deck past :data:`GENERATION_STALE_AFTER` is saved as ``failed``
+        (``timeout``) first, so the list and this endpoint agree.
+        """
+        student_uuid = _as_uuid(student_id)
+        deck_uuid = _as_uuid(deck_id)
+        moment = self._now()
+        with self._sessionmaker() as session, session.begin():
+            deck = self._owned_deck(session, student_uuid, deck_uuid)
+            self._expire_if_stale(deck, moment)
+            generated = session.scalar(
+                select(func.count()).select_from(Flashcard).where(Flashcard.deck_id == deck.id)
             )
+            return GenerationState(
+                deck_id=deck.id,
+                status=DeckGenerationStatus(deck.generation_status),
+                requested_count=deck.requested_count,
+                generated_count=int(generated or 0),
+                error=deck.generation_error,
+            )
+
+    def retry_generation(
+        self, student_id: uuid.UUID | str, deck_id: uuid.UUID | str
+    ) -> GenerationState:
+        """Put a ``failed`` deck back to ``writing``. The caller schedules :meth:`run_generation`.
+
+        Raises:
+            FlashcardValidationError: the deck is not failed (ready, or still writing).
+        """
+        state = self.generation_status(student_id, deck_id)
+        if state.status != DeckGenerationStatus.failed:
+            raise FlashcardValidationError("only a deck whose writing failed can be retried")
+        with self._sessionmaker() as session, session.begin():
+            claimed = session.execute(
+                update(FlashcardDeck)
+                .where(
+                    FlashcardDeck.id == state.deck_id,
+                    FlashcardDeck.generation_status == DeckGenerationStatus.failed.value,
+                )
+                .values(
+                    generation_status=DeckGenerationStatus.writing.value,
+                    generation_started_at=self._now(),
+                    generation_error=None,
+                )
+            )
+            if getattr(claimed, "rowcount", 0) != 1:
+                raise FlashcardValidationError("only a deck whose writing failed can be retried")
+        return GenerationState(
+            deck_id=state.deck_id,
+            status=DeckGenerationStatus.writing,
+            requested_count=state.requested_count,
+            generated_count=state.generated_count,
+            error=None,
+        )
+
+    def generate_deck(
+        self,
+        student_id: uuid.UUID | str,
+        *,
+        subject_code: str,
+        origin: DeckOrigin,
+        count: int,
+        topic: str | None = None,
+        title: str | None = None,
+    ) -> GeneratedDeckResult:
+        """Synchronous generation: :meth:`start_generation`, then :meth:`run_generation`.
+
+        Kept for scripts and tests. ``generated_count`` is the real persisted count, never padded.
+        """
+        deck = self.start_generation(
+            student_id,
+            subject_code=subject_code,
+            origin=origin,
+            count=count,
+            topic=topic,
+            title=title,
+        )
+        self.run_generation(deck.id)
+        [summary] = [d for d in self.list_decks(student_id) if d.id == deck.id]
+        return GeneratedDeckResult(
+            deck=summary, requested_count=count, generated_count=summary.card_count
+        )
 
     # -- Listing / reading --------------------------------------------------------
 
@@ -413,17 +654,23 @@ class FlashcardService:
         """Every deck owned by ``student_id``, most recently created first."""
         student_uuid = _as_uuid(student_id)
         moment = self._now()
-        with self._sessionmaker() as session:
+        with self._sessionmaker() as session, session.begin():
             stmt = select(FlashcardDeck).where(FlashcardDeck.user_id == student_uuid)
             if subject_code is not None:
                 stmt = stmt.where(FlashcardDeck.subject_code == subject_code)
             stmt = stmt.order_by(FlashcardDeck.created_at.desc())
             decks = session.scalars(stmt).all()
-            summaries = []
             for deck in decks:
-                card_count, due_count = self._deck_counts(session, deck.id, moment)
-                summaries.append(self._to_summary(deck, card_count=card_count, due_count=due_count))
-            return summaries
+                self._expire_if_stale(deck, moment)
+            marks = self._marks_lost_by_topic(session, student_uuid)
+            return [
+                self._to_summary(
+                    deck,
+                    self._deck_counts(session, deck.id, moment),
+                    marks_lost=self._deck_marks_lost(deck, marks),
+                )
+                for deck in decks
+            ]
 
     def get_deck(self, student_id: uuid.UUID | str, deck_id: uuid.UUID | str) -> DeckDetail:
         """A deck and all of its cards, in position order.
@@ -439,6 +686,8 @@ class FlashcardService:
             cards = session.scalars(
                 select(Flashcard).where(Flashcard.deck_id == deck.id).order_by(Flashcard.position)
             ).all()
+            counts = self._deck_counts(session, deck.id, self._now())
+            marks = self._marks_lost_by_topic(session, student_uuid)
             return DeckDetail(
                 id=deck.id,
                 subject_code=deck.subject_code,
@@ -447,80 +696,189 @@ class FlashcardService:
                 description=deck.description,
                 origin=deck.origin,
                 cards=[self._to_card_view(c) for c in cards],
+                due_count=counts.due,
+                mastery=counts.mastery,
+                marks_lost=self._deck_marks_lost(deck, marks),
+                generation_status=DeckGenerationStatus(deck.generation_status),
+                requested_count=deck.requested_count,
             )
+
+    def deck_summary(self, student_id: uuid.UUID | str, deck_id: uuid.UUID | str) -> DeckSummary:
+        """One of the caller's decks as a list row, with its current status and counts.
+
+        Raises:
+            FlashcardNotFoundError / FlashcardOwnershipError: as :meth:`get_deck`.
+        """
+        student_uuid = _as_uuid(student_id)
+        deck_uuid = _as_uuid(deck_id)
+        moment = self._now()
+        with self._sessionmaker() as session, session.begin():
+            deck = self._owned_deck(session, student_uuid, deck_uuid)
+            self._expire_if_stale(deck, moment)
+            session.flush()
+            marks = self._marks_lost_by_topic(session, student_uuid)
+            return self._to_summary(
+                deck,
+                self._deck_counts(session, deck.id, moment),
+                marks_lost=self._deck_marks_lost(deck, marks),
+            )
+
+    def rename_deck(
+        self, student_id: uuid.UUID | str, deck_id: uuid.UUID | str, *, title: str
+    ) -> DeckSummary:
+        """Rename one of the caller's decks. The title is trimmed; blank or over 80 chars is 422.
+
+        Raises:
+            FlashcardValidationError: blank or too long.
+            FlashcardNotFoundError / FlashcardOwnershipError: as :meth:`get_deck`.
+        """
+        cleaned = title.strip()
+        if not cleaned or len(cleaned) > DECK_TITLE_MAX:
+            raise FlashcardValidationError(f"title must be 1-{DECK_TITLE_MAX} characters")
+        student_uuid = _as_uuid(student_id)
+        deck_uuid = _as_uuid(deck_id)
+        with self._sessionmaker() as session, session.begin():
+            deck = self._owned_deck(session, student_uuid, deck_uuid)
+            deck.title = cleaned
+            self._expire_if_stale(deck, self._now())
+            session.flush()
+            marks = self._marks_lost_by_topic(session, student_uuid)
+            return self._to_summary(
+                deck,
+                self._deck_counts(session, deck.id, self._now()),
+                marks_lost=self._deck_marks_lost(deck, marks),
+            )
+
+    def weak_topics(
+        self, student_id: uuid.UUID | str, *, subject_code: str | None = None, limit: int = 6
+    ) -> list[WeakTopic]:
+        """The caller's recorded weak topics, most marks lost first (ties: subject, then topic).
+
+        ``accuracy_pct`` is ``100 * (available - lost) / available`` over the same rows, rounded
+        and clamped to 0-100. Topics with no net marks lost are left out, as in deck creation.
+        """
+        student_uuid = _as_uuid(student_id)
+        with self._sessionmaker() as session:
+            stmt = (
+                select(
+                    Attempt.subject_code,
+                    WeaknessRecord.topic,
+                    func.sum(WeaknessRecord.lost_marks),
+                    func.sum(WeaknessRecord.maximum_marks),
+                )
+                .join(Attempt, Attempt.id == WeaknessRecord.attempt_id)
+                .where(WeaknessRecord.user_id == student_uuid)
+                .group_by(Attempt.subject_code, WeaknessRecord.topic)
+            )
+            if subject_code is not None:
+                stmt = stmt.where(Attempt.subject_code == subject_code)
+            rows = session.execute(stmt).all()
+        topics: list[WeakTopic] = []
+        for subject, topic, lost, available in rows:
+            lost_i, available_i = int(lost or 0), int(available or 0)
+            if lost_i <= 0:
+                continue
+            pct = round(100 * (available_i - lost_i) / available_i) if available_i else 0
+            topics.append(WeakTopic(subject, topic, lost_i, max(0, min(100, pct))))
+        topics.sort(key=lambda t: (-t.marks_lost, t.subject_code, t.topic))
+        return topics[:limit]
+
+    def _due_scope(
+        self,
+        session: Session,
+        student_uuid: uuid.UUID,
+        subject_code: str | None,
+        deck_id: uuid.UUID | str | None,
+    ) -> list[sa.ColumnElement[bool]]:
+        clauses: list[sa.ColumnElement[bool]] = [FlashcardDeck.user_id == student_uuid]
+        if subject_code is not None:
+            clauses.append(FlashcardDeck.subject_code == subject_code)
+        if deck_id is not None:
+            deck = self._owned_deck(session, student_uuid, _as_uuid(deck_id))
+            clauses.append(FlashcardDeck.id == deck.id)
+        return clauses
 
     def list_due_cards(
         self,
         student_id: uuid.UUID | str,
         *,
         subject_code: str | None = None,
+        deck_id: uuid.UUID | str | None = None,
         limit: int | None = None,
     ) -> list[CardView]:
         """Every card owned by ``student_id`` due at or before now, soonest first.
 
-        An empty list is a real state ("nothing due today", S-22) — this
-        method never invents a card to fill it.
+        An empty list is a real state ("nothing due today", S-22). ``deck_id`` narrows to one
+        deck the caller owns (another student's deck raises, it is never silently empty).
         """
         student_uuid = _as_uuid(student_id)
         moment = self._now()
         with self._sessionmaker() as session:
+            scope = self._due_scope(session, student_uuid, subject_code, deck_id)
             stmt = (
                 select(Flashcard)
                 .join(FlashcardDeck, FlashcardDeck.id == Flashcard.deck_id)
-                .where(FlashcardDeck.user_id == student_uuid, Flashcard.due_at <= moment)
+                .where(*scope, Flashcard.due_at <= moment)
                 .order_by(Flashcard.due_at)
             )
-            if subject_code is not None:
-                stmt = stmt.where(FlashcardDeck.subject_code == subject_code)
             if limit is not None:
                 stmt = stmt.limit(limit)
-            cards = session.scalars(stmt).all()
-            return [self._to_card_view(c) for c in cards]
+            return [self._to_card_view(c, moment) for c in session.scalars(stmt).all()]
 
     def due_session(
         self,
         student_id: uuid.UUID | str,
         *,
         subject_code: str | None = None,
+        deck_id: uuid.UUID | str | None = None,
         limit: int | None = None,
     ) -> DueSession:
-        """A review session: the due cards, the true due total, and the next due time.
+        """A review session: due cards, the true due total, the next due time and the forecast.
 
-        S-23 serves ``cards``; S-22's "nothing due today" is a **real state
-        that carries information**, not an empty list — so this returns
-        ``next_due_at``, the earliest future due time among the caller's
-        remaining cards, letting the screen say *when* rather than just
-        *nothing*. It is ``None`` in the two cases that genuinely differ from
-        "come back later": the student owns no cards at all, or every card
-        they own is already due (in which case ``cards`` is non-empty anyway).
-
-        ``total_due`` is the real count of due cards, unaffected by ``limit``
-        — a capped session must not report its cap as the whole backlog
-        (spec §1.4).
+        ``total_due`` ignores ``limit`` (spec §1.4). ``next_due_at`` is the earliest future due
+        time, ``None`` when the student has no cards or all are already due. ``upcoming`` lists
+        the due times of cards coming due within :data:`UPCOMING_WINDOW` so the done screen can
+        say what comes back when without inventing it.
         """
         student_uuid = _as_uuid(student_id)
         moment = self._now()
-        cards = self.list_due_cards(student_id, subject_code=subject_code, limit=limit)
+        cards = self.list_due_cards(
+            student_id, subject_code=subject_code, deck_id=deck_id, limit=limit
+        )
         with self._sessionmaker() as session:
-            due_filter = (FlashcardDeck.user_id == student_uuid, Flashcard.due_at <= moment)
-            total_stmt = (
+            scope = self._due_scope(session, student_uuid, subject_code, deck_id)
+            total_due = session.scalar(
                 select(func.count())
                 .select_from(Flashcard)
                 .join(FlashcardDeck, FlashcardDeck.id == Flashcard.deck_id)
-                .where(*due_filter)
+                .where(*scope, Flashcard.due_at <= moment)
             )
-            next_stmt = (
+            next_due_at = session.scalar(
                 select(func.min(Flashcard.due_at))
                 .select_from(Flashcard)
                 .join(FlashcardDeck, FlashcardDeck.id == Flashcard.deck_id)
-                .where(FlashcardDeck.user_id == student_uuid, Flashcard.due_at > moment)
+                .where(*scope, Flashcard.due_at > moment)
             )
-            if subject_code is not None:
-                total_stmt = total_stmt.where(FlashcardDeck.subject_code == subject_code)
-                next_stmt = next_stmt.where(FlashcardDeck.subject_code == subject_code)
-            total_due = session.scalar(total_stmt) or 0
-            next_due_at = session.scalar(next_stmt)
-        return DueSession(cards=cards, total_due=int(total_due), next_due_at=next_due_at)
+            upcoming = list(
+                session.scalars(
+                    select(Flashcard.due_at)
+                    .join(FlashcardDeck, FlashcardDeck.id == Flashcard.deck_id)
+                    .where(
+                        *scope,
+                        Flashcard.due_at > moment,
+                        Flashcard.due_at <= moment + UPCOMING_WINDOW,
+                    )
+                    .order_by(Flashcard.due_at)
+                    .limit(UPCOMING_CAP)
+                ).all()
+            )
+        return DueSession(
+            cards=cards,
+            total_due=int(total_due or 0),
+            next_due_at=next_due_at,
+            upcoming=upcoming,
+            again_delay_minutes=int(AGAIN_REVIEW_DELAY.total_seconds() // 60),
+        )
 
     # -- Card mutation ------------------------------------------------------------
 
@@ -648,6 +1006,7 @@ class FlashcardService:
         grade: ReviewGrade,
         *,
         now: datetime | None = None,
+        client_review_id: uuid.UUID | None = None,
     ) -> ReviewOutcome:
         """Apply one SM-2 review via :func:`lemely.core.spaced_repetition.review`.
 
@@ -668,17 +1027,48 @@ class FlashcardService:
                 boundary (see both enums' docstrings).
             now: Injected clock override for tests; defaults to this
                 service's constructor-supplied clock.
+            client_review_id: Optional idempotency key, minted once per rating by the client.
+                When this student already recorded a review under the key, that review is
+                replayed (same ``review_id``, same before/after intervals) and the card is
+                neither rescheduled nor logged again. ``None`` records a new review every call.
 
         Raises:
             FlashcardNotFoundError: no card exists with ``card_id`` (404).
             FlashcardOwnershipError: it exists but is not the caller's (403).
+            FlashcardValidationError: the key was already used for a different card.
         """
         student_uuid = _as_uuid(student_id)
         card_uuid = _as_uuid(card_id)
+        try:
+            return self._record_review_once(student_uuid, card_uuid, grade, now, client_review_id)
+        except IntegrityError:
+            # Two requests with the same key raced past the replay check; the unique
+            # constraint let one win. The loser replays the winner's row.
+            if client_review_id is None:
+                raise
+            return self._record_review_once(student_uuid, card_uuid, grade, now, client_review_id)
+
+    def _record_review_once(
+        self,
+        student_uuid: uuid.UUID,
+        card_uuid: uuid.UUID,
+        grade: ReviewGrade,
+        now: datetime | None,
+        client_review_id: uuid.UUID | None,
+    ) -> ReviewOutcome:
         moment = now if now is not None else self._now()
         core_grade = CoreReviewGrade(grade.value)
         with self._sessionmaker() as session, session.begin():
             card = self._owned_card(session, student_uuid, card_uuid)
+            if client_review_id is not None:
+                prior = session.scalars(
+                    select(FlashcardReview).where(
+                        FlashcardReview.user_id == student_uuid,
+                        FlashcardReview.client_review_id == client_review_id,
+                    )
+                ).first()
+                if prior is not None:
+                    return self._replay_review(session, card, prior)
             # Ownership of ``card`` is already proven by ``_owned_card`` (it
             # loads and checks the same deck internally); this is a second,
             # cheap fetch purely for ``subject_code`` and never re-validates
@@ -716,6 +1106,7 @@ class FlashcardService:
                 interval_before_days=schedule_before.interval_days,
                 interval_after_days=schedule_after.interval_days,
                 ease_after=schedule_after.ease_factor,
+                client_review_id=client_review_id,
             )
             session.add(review_row)
             session.flush()
@@ -728,6 +1119,24 @@ class FlashcardService:
                 interval_after_days=schedule_after.interval_days,
                 subject_code=deck.subject_code,
             )
+
+    def _replay_review(
+        self, session: Session, card: Flashcard, prior: FlashcardReview
+    ) -> ReviewOutcome:
+        """The stored outcome of a review this student already recorded under the same key."""
+        if prior.card_id != card.id:
+            raise FlashcardValidationError("clientReviewId was already used for another card")
+        deck = session.get(FlashcardDeck, card.deck_id)
+        if deck is None:
+            raise FlashcardNotFoundError(f"Unknown deck for card: {card.id}")
+        return ReviewOutcome(
+            card=self._to_card_view(card),
+            review_id=prior.id,
+            grade=prior.grade,
+            interval_before_days=prior.interval_before_days,
+            interval_after_days=prior.interval_after_days,
+            subject_code=deck.subject_code,
+        )
 
     # -- Internals ----------------------------------------------------------------
 
@@ -764,40 +1173,32 @@ class FlashcardService:
         )
         return int(highest or 0) + 1
 
-    def _deck_counts(
-        self, session: Session, deck_id: uuid.UUID, moment: datetime
-    ) -> tuple[int, int]:
-        total = (
-            session.scalar(
-                select(func.count()).select_from(Flashcard).where(Flashcard.deck_id == deck_id)
+    def _deck_counts(self, session: Session, deck_id: uuid.UUID, moment: datetime) -> _DeckCounts:
+        total, due, new, known = session.execute(
+            select(
+                func.count(),
+                func.count().filter(Flashcard.due_at <= moment),
+                func.count().filter(
+                    Flashcard.repetitions == 0, Flashcard.last_reviewed_at.is_(None)
+                ),
+                func.count().filter(Flashcard.interval_days >= KNOWN_INTERVAL_DAYS),
             )
-            or 0
+            .select_from(Flashcard)
+            .where(Flashcard.deck_id == deck_id)
+        ).one()
+        total, due, new, known = int(total or 0), int(due or 0), int(new or 0), int(known or 0)
+        return _DeckCounts(
+            total=total,
+            due=due,
+            mastery=MasteryCounts(new=new, learning=max(total - new - known, 0), known=known),
         )
-        due = (
-            session.scalar(
-                select(func.count())
-                .select_from(Flashcard)
-                .where(Flashcard.deck_id == deck_id, Flashcard.due_at <= moment)
-            )
-            or 0
-        )
-        return total, due
 
-    def _top_weak_topic(
+    def _weak_topic_totals(
         self, session: Session, student_uuid: uuid.UUID, subject_code: str
-    ) -> str | None:
-        """The caller's single most-net-lost-marks topic for ``subject_code``.
+    ) -> dict[str, int]:
+        """Net lost marks per topic for ``subject_code``, keeping only topics with marks lost.
 
-        Mirrors :meth:`~lemely.db.practice_repo.PracticeService
-        ._weak_topics_for`'s aggregation (D4.10 §2: read ``WeaknessRecord``
-        rows verbatim for the subject, never re-derive the weakness engine),
-        but reduces to a single topic rather than the full set, because a
-        flashcard deck targets exactly one topic
-        (``FlashcardDeck.topic`` is singular — see the module docstring).
-        Ties broken alphabetically for a deterministic result. Returns
-        ``None`` when the caller has no ``WeaknessRecord`` row with net lost
-        marks > 0 for this subject — the caller turns that into the
-        ``no_weaknesses`` refusal.
+        Reads ``WeaknessRecord`` rows verbatim (D4.10 §2), as P4.5's practice service does.
         """
         rows = session.execute(
             select(WeaknessRecord.topic, WeaknessRecord.lost_marks)
@@ -807,12 +1208,29 @@ class FlashcardService:
         totals: dict[str, int] = {}
         for topic, lost in rows:
             totals[topic] = totals.get(topic, 0) + lost
-        candidates = sorted(
-            (t for t, lost in totals.items() if lost > 0), key=lambda t: (-totals[t], t)
-        )
-        return candidates[0] if candidates else None
+        return {t: lost for t, lost in totals.items() if lost > 0}
 
-    def _to_summary(self, deck: FlashcardDeck, *, card_count: int, due_count: int) -> DeckSummary:
+    def _marks_lost_by_topic(
+        self, session: Session, student_uuid: uuid.UUID
+    ) -> dict[tuple[str, str], int]:
+        rows = session.execute(
+            select(Attempt.subject_code, WeaknessRecord.topic, func.sum(WeaknessRecord.lost_marks))
+            .join(Attempt, Attempt.id == WeaknessRecord.attempt_id)
+            .where(WeaknessRecord.user_id == student_uuid)
+            .group_by(Attempt.subject_code, WeaknessRecord.topic)
+        ).all()
+        return {(subject, topic): int(lost or 0) for subject, topic, lost in rows}
+
+    @staticmethod
+    def _deck_marks_lost(deck: FlashcardDeck, marks: dict[tuple[str, str], int]) -> int | None:
+        if deck.origin != DeckOrigin.weakness or deck.topic is None:
+            return None
+        lost = marks.get((deck.subject_code, deck.topic), 0)
+        return lost if lost > 0 else None
+
+    def _to_summary(
+        self, deck: FlashcardDeck, counts: _DeckCounts, *, marks_lost: int | None
+    ) -> DeckSummary:
         return DeckSummary(
             id=deck.id,
             subject_code=deck.subject_code,
@@ -820,12 +1238,25 @@ class FlashcardService:
             title=deck.title,
             description=deck.description,
             origin=deck.origin,
-            card_count=card_count,
-            due_count=due_count,
+            card_count=counts.total,
+            due_count=counts.due,
             created_at=deck.created_at,
+            mastery=counts.mastery,
+            marks_lost=marks_lost,
+            generation_status=DeckGenerationStatus(deck.generation_status),
+            requested_count=deck.requested_count,
         )
 
-    def _to_card_view(self, card: Flashcard) -> CardView:
+    def _to_card_view(self, card: Flashcard, moment: datetime | None = None) -> CardView:
+        schedule = CardSchedule(
+            repetitions=card.repetitions,
+            ease_factor=card.ease_factor,
+            interval_days=card.interval_days,
+            lapses=card.lapses,
+            due_at=card.due_at,
+            last_reviewed_at=card.last_reviewed_at,
+        )
+        at = moment if moment is not None else self._now()
         return CardView(
             id=card.id,
             front=card.front,
@@ -839,6 +1270,10 @@ class FlashcardService:
             lapses=card.lapses,
             due_at=card.due_at,
             last_reviewed_at=card.last_reviewed_at,
+            next_interval_days={
+                grade.value: apply_review(schedule, grade, now=at).interval_days
+                for grade in CoreReviewGrade
+            },
         )
 
 
@@ -853,6 +1288,8 @@ def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:
 
 
 __all__ = [
+    "GENERATION_STALE_AFTER",
+    "KNOWN_INTERVAL_DAYS",
     "CardView",
     "DeckDetail",
     "DeckSummary",
@@ -866,5 +1303,8 @@ __all__ = [
     "FlashcardUnavailableReason",
     "FlashcardValidationError",
     "GeneratedDeckResult",
+    "GenerationState",
+    "MasteryCounts",
     "ReviewOutcome",
+    "WeakTopic",
 ]

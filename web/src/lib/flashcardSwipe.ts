@@ -46,3 +46,28 @@ export function flashcardSwipeAction({
   if (dx >= GRADE_SWIPE_THRESHOLD) return "good"
   return "none"
 }
+
+export interface SwipeVisual {
+  stamp: "again" | "good" | null
+  /** 0..1, reaches 1 at the grade threshold. */
+  opacity: number
+  rotateDeg: number
+  /** Past the threshold: releasing now grades. */
+  armed: boolean
+}
+
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+
+/** What the card shows mid-drag. Pure, so the stamp maths are unit-tested. Reduced motion
+ * keeps the stamp (it carries meaning) but never tilts the card. */
+export function swipeVisual(dx: number, revealed: boolean, reduced: boolean): SwipeVisual {
+  if (!revealed) {
+    return { stamp: null, opacity: 0, rotateDeg: reduced ? 0 : clamp(dx * 0.05, -6, 6), armed: false }
+  }
+  return {
+    stamp: dx > 0 ? "good" : dx < 0 ? "again" : null,
+    opacity: clamp(Math.abs(dx) / GRADE_SWIPE_THRESHOLD, 0, 1),
+    rotateDeg: reduced ? 0 : clamp(dx * 0.08, -12, 12),
+    armed: Math.abs(dx) >= GRADE_SWIPE_THRESHOLD,
+  }
+}

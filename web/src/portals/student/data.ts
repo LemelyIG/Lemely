@@ -90,7 +90,7 @@ export function currentSubjectCode(pathname: string): string | null {
   const exactArms = [
     /^\/student\/subject\/([^/]+)$/,
     /^\/student\/practice\/([^/]+)$/,
-    /^\/student\/flashcards\/([^/]+)$/,
+    /^\/student\/flashcards\/(?!review$|deck$)([^/]+)$/,
   ]
   for (const arm of exactArms) {
     const match = pathname.match(arm)
@@ -109,7 +109,7 @@ export function currentSubjectCode(pathname: string): string | null {
  *
  * P3.1 removed four keys from this map: `/student/subject`,
  * `/student/practice`, `/student/flashcards` and `/student/result`. All four
- * were dead lookups. Every one of those routes is parameterised
+ * were dead lookups at the time. Every one of those routes was parameterised
  * (`subject/:code`, `practice/:subjectCode`, `flashcards/:subjectCode`,
  * `result/:paperId`), so no pathname the router can produce ever equals the
  * bare key, and `resolveCrumb` was already answering all four from its pattern
@@ -118,6 +118,9 @@ export function currentSubjectCode(pathname: string): string | null {
  * siblings kept theirs. Behaviour is unchanged — unreachable entries cannot
  * change what anything renders — but a map with dead keys in it is a map the
  * next person edits the wrong half of.
+ *
+ * `/student/flashcards` has since become a real mounted route (the decks shelf, L10), so its key
+ * is back in the map.
  *
  * Found by `tests/unit/navigation.test.ts`, which asserts that every key here
  * matches a route the router actually mounts.
@@ -132,6 +135,8 @@ export const crumbs: Record<string, string> = {
   "/student/board": "Home / Standings",
   "/student/friends": "Home / Friends",
   "/student/profile": "Home / Your profile",
+  "/student/flashcards": "Home / Flashcards",
+  "/student/flashcards/review": "Home / Flashcards / Review",
   // Absent until P3.1, and silently so: with no nav entry the only way onto
   // this route was a push deep link, and a wrong-but-valid breadcrumb ("Home")
   // trips no typecheck and no axe rule — the exact failure mode `resolveCrumb`
@@ -195,6 +200,9 @@ export function resolveCrumb(pathname: string): string {
   if (pathname.match(/^\/student\/practice\/set\//)) return "Home / Practice / Set"
   if (pathname.match(/^\/student\/practice\/result\//)) return "Home / Practice / Result"
   if (pathname.match(/^\/student\/practice\/print\//)) return "Home / Practice / Print"
+
+  const flashcardDeckMatch = pathname.match(/^\/student\/flashcards\/deck\/([^/]+)$/)
+  if (flashcardDeckMatch) return "Home / Flashcards / Deck"
 
   const flashcardReviewMatch = pathname.match(/^\/student\/flashcards\/review\/([^/]+)$/)
   if (flashcardReviewMatch) return `Home / Flashcards / Review ${flashcardReviewMatch[1]}`

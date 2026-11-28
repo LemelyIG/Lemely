@@ -18,15 +18,15 @@ function readSource(relativePath: string): string {
 }
 
 describe("useFlashcardApi.ts — useReviewCard retries", () => {
-  it("configures retry: 3 with an exponential-backoff delay", () => {
+  it("configures retry: 0 on the review mutation (not idempotent without a key, a retry could double-grade)", () => {
     const source = readSource("src/lib/hooks/useFlashcardApi.ts")
-    expect(source).toContain("retry: 3")
-    expect(source).toContain("retryDelay:")
+    expect(source).toContain("retry: 0")
+    expect(source).not.toContain("retry: 3")
   })
 })
 
-describe("FlashcardReview.tsx — optimistic advance and capability imports", () => {
-  const source = readSource("src/portals/student/screens/flashcards/FlashcardReview.tsx")
+describe("ReviewScreen.tsx — optimistic advance and capability imports", () => {
+  const source = readSource("src/portals/student/screens/flashcards/ReviewScreen.tsx")
 
   it("imports applyGradeOutcome and haptic", () => {
     expect(source).toContain("applyGradeOutcome")
@@ -34,7 +34,7 @@ describe("FlashcardReview.tsx — optimistic advance and capability imports", ()
   })
 
   it("advances the index before the mutation is sent (optimistic advance)", () => {
-    expect(source).toMatch(/setIndex[\s\S]{0,200}reviewCard\.mutate/)
+    expect(source).toMatch(/setIndex[\s\S]{0,300}send\(/)
   })
 })
 

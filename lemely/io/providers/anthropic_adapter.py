@@ -470,7 +470,12 @@ class AnthropicAdapter:
                     return cast("Message", stream.get_final_message())
             return cast("Message", self._client.messages.create(**kwargs))
         except anthropic.APIError as exc:
-            if _is_transient(exc):
+            # A request that passed its own timeout is final: retrying would multiply the
+            # bound the caller asked for.
+            timed_out = kwargs.get("timeout") is not None and isinstance(
+                exc, anthropic.APITimeoutError
+            )
+            if _is_transient(exc) and not timed_out:
                 raise ProviderTransientError(str(exc)) from exc
             raise ProviderError(str(exc)) from exc
 
@@ -489,8 +494,11 @@ class AnthropicAdapter:
         max_tokens: int = MAX_OUTPUT_TOKENS,
         cache_plan: CachePlan | None = None,
         page_sizes: Sequence[tuple[int, int]] | None = None,
+        timeout_seconds: float | None = None,
     ) -> AnthropicReply:
         """Send one request; return the unvalidated reply.
+
+        ``timeout_seconds`` is the request's own HTTP timeout; None leaves the SDK default.
 
         ``page_sizes`` is the pixel size of each image sent, by order; with it every
         page label states its size (:func:`labelled_pictures`).
@@ -531,6 +539,7 @@ class AnthropicAdapter:
             cache_plan=cache_plan,
             page_sizes=page_sizes,
         )
+        timeout = {} if timeout_seconds is None else {"timeout": timeout_seconds}
         response = self._send(
             model=model,
             max_tokens=max_tokens,
@@ -538,6 +547,7 @@ class AnthropicAdapter:
             messages=[message],
             thinking=thinking_block,
             output_config=output_config,
+            **timeout,
         )
         text = "".join(block.text for block in response.content if block.type == "text")
         if prompt_json:

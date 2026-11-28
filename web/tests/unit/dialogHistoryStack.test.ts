@@ -203,6 +203,29 @@ describe("createDialogHistoryStack", () => {
     expect(waiting).not.toHaveBeenCalled()
   })
 
+  it("waiting work that issues no move lets the next in line run on the same popstate", () => {
+    // An overlay opening behind another's unwind waits to push; a push moves no cursor, so nothing
+    // would otherwise come back to release whatever queued behind it.
+    const order: string[] = []
+    stack.expectSelfPop(4)
+    stack.afterNextSelfPop(() => order.push("push"))
+    stack.afterNextSelfPop(() => {
+      order.push("unwind")
+      stack.expectSelfPop(3)
+    })
+    const third = vi.fn()
+    stack.afterNextSelfPop(third)
+
+    expect(stack.handlePopState(4)).toBe("self")
+
+    expect(order).toEqual(["push", "unwind"])
+    // The unwind's own move is now in flight: the third still waits for it.
+    expect(third).not.toHaveBeenCalled()
+    expect(stack.handlePopState(3)).toBe("self")
+    expect(third).toHaveBeenCalledTimes(1)
+    expect(stack.hasPendingWork()).toBe(false)
+  })
+
   it("reports how many overlays hold a history entry", () => {
     expect(stack.size).toBe(0)
     const release = stack.register(overlay(true))

@@ -25,6 +25,7 @@ Covers:
 
 from __future__ import annotations
 
+import threading
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -41,6 +42,8 @@ from lemely.core.flashcards import GeneratedFlashcard, GeneratedFlashcardDeck
 from lemely.core.spaced_repetition import AGAIN_REVIEW_DELAY, INITIAL_EASE_FACTOR
 from lemely.db.base import Base
 from lemely.db.flashcard_repo import (
+    GENERATION_TIMEOUT_SECONDS,
+    KNOWN_INTERVAL_DAYS,
     FlashcardGenerationUnavailableError,
     FlashcardNotFoundError,
     FlashcardOwnershipError,
@@ -48,11 +51,19 @@ from lemely.db.flashcard_repo import (
     FlashcardUnavailableError,
     FlashcardUnavailableReason,
     FlashcardValidationError,
+    MasteryCounts,
 )
 from lemely.db.models import User
 from lemely.db.models.attempts import Attempt, WeaknessRecord
 from lemely.db.models.enums import AttemptOrigin, Role
-from lemely.db.models.flashcards import CardSource, DeckOrigin, Flashcard, FlashcardReview
+from lemely.db.models.flashcards import (
+    CardSource,
+    DeckGenerationStatus,
+    DeckOrigin,
+    Flashcard,
+    FlashcardDeck,
+    FlashcardReview,
+)
 from lemely.db.models.flashcards import ReviewGrade as DbReviewGrade
 from lemely.runtime.config import DatabaseSettings
 
@@ -239,7 +250,7 @@ def test_weakness_deck_excludes_a_topic_with_zero_net_lost_marks(
     assert exc_info.value.reason == FlashcardUnavailableReason.no_weaknesses
 
 
-def test_weakness_deck_rejects_a_caller_supplied_topic(
+def test_weakness_deck_rejects_a_topic_that_is_not_a_recorded_weakness(
     pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
 ) -> None:
     student = _seed_user(pg_sessionmaker)
@@ -250,8 +261,20 @@ def test_weakness_deck_rejects_a_caller_supplied_topic(
             subject_code="0625",
             title="Weak spots",
             origin=DeckOrigin.weakness,
-            topic="3 Waves",
+            topic="1 Motion",
         )
+
+
+def test_weakness_deck_accepts_a_chosen_recorded_weakness(
+    pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _seed_weakness(pg_sessionmaker, student, topic="3 Waves", lost_marks=9)
+    _seed_weakness(pg_sessionmaker, student, topic="1 Motion", lost_marks=2)
+    deck = flashcard_service.create_deck(
+        student, subject_code="0625", title="Motion", origin=DeckOrigin.weakness, topic="1 Motion"
+    )
+    assert deck.topic == "1 Motion"
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +300,9 @@ def test_generate_deck_reports_the_true_short_count_never_padded(
     assert result.requested_count == 5
     assert result.generated_count == 1
     assert result.deck.card_count == 1
-    generator.generate.assert_called_once_with(subject_code="0625", topic="1 Motion", count=5)
+    generator.generate.assert_called_once_with(
+        subject_code="0625", topic="1 Motion", count=5, timeout_seconds=GENERATION_TIMEOUT_SECONDS
+    )
 
 
 def test_generate_deck_cards_are_stored_as_ai_source(
@@ -339,7 +364,9 @@ def test_generate_deck_with_weakness_origin_resolves_the_top_topic(
         student, subject_code="0625", origin=DeckOrigin.weakness, count=3
     )
     assert result.deck.topic == "3 Waves"
-    generator.generate.assert_called_once_with(subject_code="0625", topic="3 Waves", count=3)
+    generator.generate.assert_called_once_with(
+        subject_code="0625", topic="3 Waves", count=3, timeout_seconds=GENERATION_TIMEOUT_SECONDS
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -602,3 +629,432 @@ def test_record_review_unknown_card_is_not_found(
     student = _seed_user(pg_sessionmaker)
     with pytest.raises(FlashcardNotFoundError):
         flashcard_service.record_review(student, uuid.uuid4(), DbReviewGrade.good, now=_FIXED_NOW)
+
+
+# ---------------------------------------------------------------------------
+# Redesign L10: mastery, marks lost, rename, weak topics, due scope, forecast
+# ---------------------------------------------------------------------------
+
+
+def _manual_deck_with_cards(service: FlashcardService, student: uuid.UUID, n: int) -> uuid.UUID:
+    deck = service.create_deck(student, subject_code="0625", title="Deck", origin=DeckOrigin.manual)
+    for i in range(n):
+        service.add_card(student, deck.id, front=f"Q{i}", back=f"A{i}")
+    return deck.id
+
+
+def test_list_decks_reports_new_learning_known_counts(
+    pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    deck_id = _manual_deck_with_cards(flashcard_service, student, 4)
+    cards = flashcard_service.get_deck(student, deck_id).cards
+    # One card reviewed once (learning), one pushed past the known threshold, two untouched.
+    flashcard_service.record_review(student, cards[0].id, DbReviewGrade.good)
+    with pg_sessionmaker.begin() as session:
+        row = session.get(Flashcard, cards[1].id)
+        assert row is not None
+        row.repetitions = 3
+        row.interval_days = KNOWN_INTERVAL_DAYS
+        row.last_reviewed_at = _FIXED_NOW
+
+    [summary] = flashcard_service.list_decks(student)
+    assert summary.mastery == MasteryCounts(new=2, learning=1, known=1)
+    assert summary.card_count == 4
+
+
+def test_weakness_deck_reports_the_marks_its_topic_cost(
+    pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _seed_weakness(pg_sessionmaker, student, topic="3 Waves", lost_marks=5)
+    _seed_weakness(pg_sessionmaker, student, topic="3 Waves", lost_marks=4)
+    flashcard_service.create_deck(
+        student, subject_code="0625", title="Waves", origin=DeckOrigin.weakness
+    )
+    flashcard_service.create_deck(
+        student, subject_code="0625", title="Mine", origin=DeckOrigin.manual, topic="3 Waves"
+    )
+    by_title = {d.title: d for d in flashcard_service.list_decks(student)}
+    assert by_title["Waves"].marks_lost == 9
+    # Only a weakness deck claims "cost you N marks"; a manual deck on the same topic does not.
+    assert by_title["Mine"].marks_lost is None
+
+
+def test_rename_deck_trims_and_rejects_blank_or_long_titles(
+    pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    deck_id = _manual_deck_with_cards(flashcard_service, student, 1)
+    renamed = flashcard_service.rename_deck(student, deck_id, title="  Vectors  ")
+    assert renamed.title == "Vectors"
+    assert renamed.card_count == 1
+    with pytest.raises(FlashcardValidationError):
+        flashcard_service.rename_deck(student, deck_id, title="   ")
+    with pytest.raises(FlashcardValidationError):
+        flashcard_service.rename_deck(student, deck_id, title="x" * 81)
+
+
+def test_rename_someone_elses_deck_is_an_ownership_error(
+    pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    owner = _seed_user(pg_sessionmaker)
+    other = _seed_user(pg_sessionmaker)
+    deck_id = _manual_deck_with_cards(flashcard_service, owner, 0)
+    with pytest.raises(FlashcardOwnershipError):
+        flashcard_service.rename_deck(other, deck_id, title="Mine now")
+
+
+def test_weak_topics_ranks_by_marks_lost_with_accuracy(
+    pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _seed_weakness(pg_sessionmaker, student, topic="3 Waves", lost_marks=6, maximum_marks=10)
+    _seed_weakness(pg_sessionmaker, student, topic="1 Motion", lost_marks=2, maximum_marks=10)
+    _seed_weakness(
+        pg_sessionmaker,
+        student,
+        subject_code="0580",
+        topic="E7 Vectors",
+        lost_marks=9,
+        maximum_marks=15,
+    )
+    topics = flashcard_service.weak_topics(student)
+    assert [(t.subject_code, t.topic, t.marks_lost) for t in topics] == [
+        ("0580", "E7 Vectors", 9),
+        ("0625", "3 Waves", 6),
+        ("0625", "1 Motion", 2),
+    ]
+    assert topics[0].accuracy_pct == 40
+    only_physics = flashcard_service.weak_topics(student, subject_code="0625", limit=1)
+    assert [t.topic for t in only_physics] == ["3 Waves"]
+
+
+def test_due_session_scoped_to_one_deck_and_carries_the_forecast(
+    pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    deck_a = _manual_deck_with_cards(flashcard_service, student, 2)
+    deck_b = _manual_deck_with_cards(flashcard_service, student, 3)
+    first_b = flashcard_service.get_deck(student, deck_b).cards[0]
+    flashcard_service.record_review(student, first_b.id, DbReviewGrade.good)  # due in 1 day
+
+    session_a = flashcard_service.due_session(student, deck_id=deck_a)
+    assert session_a.total_due == 2
+    assert {c.id for c in session_a.cards} <= {
+        c.id for c in flashcard_service.get_deck(student, deck_a).cards
+    }
+
+    session_all = flashcard_service.due_session(student)
+    assert session_all.total_due == 4
+    assert session_all.upcoming == [_FIXED_NOW + timedelta(days=1)]
+    assert session_all.again_delay_minutes == 10
+
+
+def test_due_session_for_someone_elses_deck_is_an_ownership_error(
+    pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    owner = _seed_user(pg_sessionmaker)
+    other = _seed_user(pg_sessionmaker)
+    deck_id = _manual_deck_with_cards(flashcard_service, owner, 1)
+    with pytest.raises(FlashcardOwnershipError):
+        flashcard_service.due_session(other, deck_id=deck_id)
+
+
+def test_cards_carry_the_interval_each_grade_would_give(
+    pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    deck_id = _manual_deck_with_cards(flashcard_service, student, 1)
+    [card] = flashcard_service.due_session(student, deck_id=deck_id).cards
+    # A new card: Again is the 10-minute relearning step (0 days); any pass is 1 day.
+    assert card.next_interval_days == {"again": 0, "hard": 1, "good": 1, "easy": 1}
+
+
+# ---------------------------------------------------------------------------
+# Redesign L10: background generation with a status
+# ---------------------------------------------------------------------------
+
+
+def test_start_generation_saves_a_writing_deck_without_calling_the_model(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    generator = _mock_generator([], subject_code="0625", topic="4.3 Electric circuits")
+    service = FlashcardService(pg_sessionmaker, generator, now=lambda: _FIXED_NOW)
+
+    deck = service.start_generation(
+        student,
+        subject_code="0625",
+        origin=DeckOrigin.topic,
+        topic="4.3 Electric circuits",
+        count=12,
+    )
+
+    assert deck.generation_status == DeckGenerationStatus.writing
+    assert deck.requested_count == 12
+    assert deck.card_count == 0
+    assert deck.title == "Electric circuits"
+    generator.generate.assert_not_called()
+    state = service.generation_status(student, deck.id)
+    assert (state.status, state.generated_count) == (DeckGenerationStatus.writing, 0)
+
+
+def test_run_generation_writes_ai_cards_and_marks_the_deck_ready(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    generator = _mock_generator(
+        [GeneratedFlashcard(front="Q1", back="A1"), GeneratedFlashcard(front="Q2", back="A2")],
+        subject_code="0625",
+        topic="1 Motion",
+    )
+    service = FlashcardService(pg_sessionmaker, generator, now=lambda: _FIXED_NOW)
+    deck = service.start_generation(
+        student, subject_code="0625", origin=DeckOrigin.topic, topic="1 Motion", count=5
+    )
+
+    service.run_generation(deck.id)
+
+    state = service.generation_status(student, deck.id)
+    assert state.status == DeckGenerationStatus.ready
+    assert (state.requested_count, state.generated_count) == (5, 2)  # never padded
+    detail = service.get_deck(student, deck.id)
+    assert [c.source for c in detail.cards] == [CardSource.ai, CardSource.ai]
+    generator.generate.assert_called_once_with(
+        subject_code="0625", topic="1 Motion", count=5, timeout_seconds=GENERATION_TIMEOUT_SECONDS
+    )
+
+
+def test_a_model_error_marks_the_deck_failed_and_saves_no_cards(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    generator = MagicMock()
+    generator.generate.side_effect = RuntimeError("gemini down")
+    service = FlashcardService(pg_sessionmaker, generator, now=lambda: _FIXED_NOW)
+    deck = service.start_generation(
+        student, subject_code="0625", origin=DeckOrigin.topic, topic="1 Motion", count=5
+    )
+
+    service.run_generation(deck.id)  # must not raise
+
+    state = service.generation_status(student, deck.id)
+    assert (state.status, state.error, state.generated_count) == (
+        DeckGenerationStatus.failed,
+        "model_error",
+        0,
+    )
+
+
+def test_an_empty_model_answer_is_a_failure_not_an_empty_ready_deck(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    generator = _mock_generator([], subject_code="0625", topic="1 Motion")
+    service = FlashcardService(pg_sessionmaker, generator, now=lambda: _FIXED_NOW)
+    deck = service.start_generation(
+        student, subject_code="0625", origin=DeckOrigin.topic, topic="1 Motion", count=5
+    )
+    service.run_generation(deck.id)
+    state = service.generation_status(student, deck.id)
+    assert (state.status, state.error) == (DeckGenerationStatus.failed, "no_cards")
+
+
+def test_a_stale_writing_deck_is_reported_failed(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    clock = {"now": _FIXED_NOW}
+    generator = _mock_generator([], subject_code="0625", topic="1 Motion")
+    service = FlashcardService(pg_sessionmaker, generator, now=lambda: clock["now"])
+    deck = service.start_generation(
+        student, subject_code="0625", origin=DeckOrigin.topic, topic="1 Motion", count=5
+    )
+    clock["now"] = _FIXED_NOW + timedelta(minutes=6)
+    state = service.generation_status(student, deck.id)
+    assert (state.status, state.error) == (DeckGenerationStatus.failed, "timeout")
+    # Persisted, so the list agrees with the status endpoint.
+    [summary] = service.list_decks(student)
+    assert summary.generation_status == DeckGenerationStatus.failed
+
+
+def test_retry_puts_a_failed_deck_back_to_writing_and_refuses_a_ready_one(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    generator = MagicMock()
+    generator.generate.side_effect = [
+        RuntimeError("first try fails"),
+        GeneratedFlashcardDeck(
+            subject_code="0625", topic="1 Motion", cards=[GeneratedFlashcard(front="Q", back="A")]
+        ),
+    ]
+    service = FlashcardService(pg_sessionmaker, generator, now=lambda: _FIXED_NOW)
+    deck = service.start_generation(
+        student, subject_code="0625", origin=DeckOrigin.topic, topic="1 Motion", count=3
+    )
+    service.run_generation(deck.id)
+
+    retried = service.retry_generation(student, deck.id)
+    assert retried.status == DeckGenerationStatus.writing
+    service.run_generation(deck.id)
+    assert service.generation_status(student, deck.id).status == DeckGenerationStatus.ready
+    with pytest.raises(FlashcardValidationError):
+        service.retry_generation(student, deck.id)
+
+
+def test_a_deck_deleted_while_writing_is_left_alone(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    generator = _mock_generator(
+        [GeneratedFlashcard(front="Q", back="A")], subject_code="0625", topic="1 Motion"
+    )
+    service = FlashcardService(pg_sessionmaker, generator, now=lambda: _FIXED_NOW)
+    deck = service.start_generation(
+        student, subject_code="0625", origin=DeckOrigin.topic, topic="1 Motion", count=3
+    )
+    service.delete_deck(student, deck.id)
+    service.run_generation(deck.id)  # no deck: a no-op, not an error
+    assert service.list_decks(student) == []
+
+
+def test_generation_status_of_someone_elses_deck_is_an_ownership_error(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    owner = _seed_user(pg_sessionmaker)
+    other = _seed_user(pg_sessionmaker)
+    generator = _mock_generator([], subject_code="0625", topic="1 Motion")
+    service = FlashcardService(pg_sessionmaker, generator, now=lambda: _FIXED_NOW)
+    deck = service.start_generation(
+        owner, subject_code="0625", origin=DeckOrigin.topic, topic="1 Motion", count=3
+    )
+    with pytest.raises(FlashcardOwnershipError):
+        service.generation_status(other, deck.id)
+
+
+# ---------------------------------------------------------------------------
+# Redesign L10 fix round 1: run_generation never raises, stale everywhere, atomic retry
+# ---------------------------------------------------------------------------
+
+
+def test_a_database_error_while_saving_cards_marks_the_deck_failed(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    # A NUL byte is valid for the model but rejected by Postgres, so the card insert fails.
+    generator = _mock_generator(
+        [GeneratedFlashcard(front="bad\x00front", back="A")], subject_code="0625", topic="1 Motion"
+    )
+    service = FlashcardService(pg_sessionmaker, generator, now=lambda: _FIXED_NOW)
+    deck = service.start_generation(
+        student, subject_code="0625", origin=DeckOrigin.topic, topic="1 Motion", count=3
+    )
+
+    service.run_generation(deck.id)  # must not raise
+
+    state = service.generation_status(student, deck.id)
+    assert (state.status, state.error, state.generated_count) == (
+        DeckGenerationStatus.failed,
+        "internal_error",
+        0,
+    )
+
+
+def test_run_generation_survives_the_failure_marker_failing_too(
+    pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    generator = MagicMock()
+    generator.generate.side_effect = RuntimeError("gemini down")
+    service = FlashcardService(pg_sessionmaker, generator, now=lambda: _FIXED_NOW)
+    deck = service.start_generation(
+        student, subject_code="0625", origin=DeckOrigin.topic, topic="1 Motion", count=3
+    )
+
+    def _boom(_deck_uuid: uuid.UUID, _error: str) -> None:
+        raise OperationalError("UPDATE", {}, Exception("db gone"))
+
+    monkeypatch.setattr(service, "_mark_failed", _boom)
+
+    service.run_generation(deck.id)  # must not raise
+
+
+def test_list_decks_and_rename_report_a_stale_writing_deck_as_failed(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    clock = {"now": _FIXED_NOW}
+    generator = _mock_generator([], subject_code="0625", topic="1 Motion")
+    service = FlashcardService(pg_sessionmaker, generator, now=lambda: clock["now"])
+    first = service.start_generation(
+        student, subject_code="0625", origin=DeckOrigin.topic, topic="1 Motion", count=5
+    )
+    second = service.start_generation(
+        student, subject_code="0625", origin=DeckOrigin.topic, topic="1 Motion", count=5
+    )
+    clock["now"] = _FIXED_NOW + timedelta(minutes=6)
+
+    renamed = service.rename_deck(student, second.id, title="Renamed")
+    assert renamed.generation_status == DeckGenerationStatus.failed
+
+    # No generation_status call before this: the list itself applies the stale rule.
+    statuses = {d.id: d.generation_status for d in service.list_decks(student)}
+    assert statuses == {
+        first.id: DeckGenerationStatus.failed,
+        second.id: DeckGenerationStatus.failed,
+    }
+    with pg_sessionmaker() as session:
+        saved = session.get(FlashcardDeck, first.id)
+        assert saved is not None
+        assert (saved.generation_status, saved.generation_error) == ("failed", "timeout")
+
+
+def test_a_second_concurrent_retry_loses_the_claim(
+    pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    generator = MagicMock()
+    generator.generate.side_effect = RuntimeError("gemini down")
+    service = FlashcardService(pg_sessionmaker, generator, now=lambda: _FIXED_NOW)
+    deck = service.start_generation(
+        student, subject_code="0625", origin=DeckOrigin.topic, topic="1 Motion", count=3
+    )
+    service.run_generation(deck.id)
+    stale_failed_state = service.generation_status(student, deck.id)
+    assert stale_failed_state.status == DeckGenerationStatus.failed
+
+    service.retry_generation(student, deck.id)  # the first worker claims it
+
+    # The second caller read the status before the first claim, so it still sees `failed`.
+    monkeypatch.setattr(service, "generation_status", lambda *_a, **_k: stale_failed_state)
+    with pytest.raises(FlashcardValidationError):
+        service.retry_generation(student, deck.id)
+
+
+def test_a_model_call_that_times_out_marks_the_deck_failed_timeout_and_leaves_no_thread(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    generator = MagicMock()
+    generator.generate.side_effect = TimeoutError  # what the generator raises on an SDK timeout
+    service = FlashcardService(
+        pg_sessionmaker, generator, now=lambda: _FIXED_NOW, generation_timeout_seconds=7.5
+    )
+    deck = service.start_generation(
+        student, subject_code="0625", origin=DeckOrigin.topic, topic="1 Motion", count=3
+    )
+    threads_before = threading.active_count()
+
+    service.run_generation(deck.id)
+
+    assert threading.active_count() == threads_before  # no orphaned worker
+    assert generator.generate.call_args.kwargs["timeout_seconds"] == 7.5
+    state = service.generation_status(student, deck.id)
+    assert (state.status, state.error, state.generated_count) == (
+        DeckGenerationStatus.failed,
+        "timeout",
+        0,
+    )
+    assert service.deck_summary(student, deck.id).generation_status == DeckGenerationStatus.failed

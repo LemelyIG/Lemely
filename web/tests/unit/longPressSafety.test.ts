@@ -50,7 +50,7 @@ describe("H6 — long-press is cleaned up, keyboard-reachable and ARIA-wired", (
   it.each([
     "src/components/ui/question-row.tsx",
     "src/portals/student/screens/Notifications.tsx",
-    "src/portals/student/screens/flashcards/FlashcardDecks.tsx",
+    "src/portals/student/screens/flashcards/DeckMenu.tsx",
   ])("%s wires the popover's triggerProps instead of discarding them", (relative) => {
     const src = sourceOf(relative)
     // `renderTrigger={() => ...}` — the argument thrown away — is the defect.
@@ -58,13 +58,18 @@ describe("H6 — long-press is cleaned up, keyboard-reachable and ARIA-wired", (
     // …and the trigger element has to actually receive them, either spread
     // whole (question-row's own button) or picked apart minus `onClick`
     // (a row where a plain tap must not open the menu).
-    expect(src).toMatch(/\{\.\.\.triggerProps\}|triggerProps\.ref/)
+    if (relative.endsWith("/DeckMenu.tsx")) {
+      expect(src).toMatch(/<button \{\.\.\.triggerProps\}[^>]*aria-label="Deck options"/)
+      expect(src).toContain("triggerProps.ref(node)")
+    } else {
+      expect(src).toMatch(/\{\.\.\.triggerProps\}|triggerProps\.ref/)
+    }
   })
 
   it.each([
     "src/components/ui/question-row.tsx",
     "src/portals/student/screens/Notifications.tsx",
-    "src/portals/student/screens/flashcards/FlashcardDecks.tsx",
+    "src/portals/student/screens/flashcards/parts/DeckRow.tsx",
   ])("%s spreads the whole long-press handler set, click suppressor included", (relative) => {
     const src = sourceOf(relative)
     // `onClickCapture` reaches the element through this spread; cherry-picking

@@ -1,11 +1,15 @@
+import { useCallback, useEffect, useMemo, useRef } from "react"
 import {
   useMutation,
+  useMutationState,
   useQuery,
   useQueryClient,
+  type MutationCache,
+  type QueryClient,
   type UseMutationResult,
   type UseQueryResult,
 } from "@tanstack/react-query"
-import { request } from "@/lib/api"
+import { flashcardApi, flashcardKeys, type DueScope } from "@/lib/flashcardApi"
 import type {
   AddCardRequest,
   CardDTO,
@@ -16,205 +20,298 @@ import type {
   EditCardRequest,
   GenerateDeckRequest,
   GenerateDeckResponseDTO,
-  ReviewCardRequest,
+  GenerationStatusDTO,
+  ReviewGrade,
   ReviewResultDTO,
+  WeakTopicDTO,
 } from "@/lib/flashcardTypes"
 
 /*
- * React-query hooks for `/api/student/flashcards/*` (S-22/S-23), following
- * `usePracticeApi.ts`'s conventions exactly: one hook per endpoint, no
- * `fallback` passed to `request()` — a real backend/auth failure surfaces as
- * a query/mutation error the screen renders, never silently resolves to
- * empty data.
+ * React-query hooks for `/api/student/flashcards/*` (L10). No `fallback` on any request: a
+ * real failure surfaces as an error the screen renders, never as silently empty data.
  */
 
-const DECKS_KEY = ["flashcards", "decks"] as const
-const DUE_KEY = ["flashcards", "due"] as const
+/** Poll while a generated deck is writing. */
+export const GENERATION_POLL_MS = 2000
+const DECKS_POLL_MS = 4000
 
-/** `GET /api/student/flashcards/decks` — the caller's own decks (S-22),
- * optionally narrowed to one subject. */
-export function useFlashcardDecks(subjectCode?: string): UseQueryResult<DeckSummaryDTO[], Error> {
+function invalidateDeckLists(queryClient: QueryClient): void {
+  void queryClient.invalidateQueries({ queryKey: flashcardKeys.decksRoot })
+  void queryClient.invalidateQueries({ queryKey: flashcardKeys.dueRoot })
+}
+
+/** Every deck, or one subject's. Polls while any deck is still writing. */
+export function useFlashcardDecks(subjectCode?: string | null): UseQueryResult<DeckSummaryDTO[], Error> {
   return useQuery({
-    queryKey: [...DECKS_KEY, subjectCode ?? null],
-    queryFn: () =>
-      request<DeckSummaryDTO[]>(
-        subjectCode
-          ? `/student/flashcards/decks?subject_code=${encodeURIComponent(subjectCode)}`
-          : "/student/flashcards/decks",
-      ),
+    queryKey: flashcardKeys.decks(subjectCode),
+    queryFn: () => flashcardApi.listDecks(subjectCode),
+    refetchInterval: (query) =>
+      query.state.data?.some((d) => d.generationStatus === "writing") ? DECKS_POLL_MS : false,
   })
 }
 
-/** `GET /api/student/flashcards/decks/{deckId}` — one deck and every card in
- * it, in position order. */
 export function useFlashcardDeck(deckId: string): UseQueryResult<DeckDetailDTO, Error> {
   return useQuery({
-    queryKey: ["flashcards", "deck", deckId],
-    queryFn: () => request<DeckDetailDTO>(`/student/flashcards/decks/${deckId}`),
+    queryKey: flashcardKeys.deck(deckId),
+    queryFn: () => flashcardApi.getDeck(deckId),
     enabled: !!deckId,
   })
 }
 
+export function useDueSession(scope: DueScope): UseQueryResult<DueSessionDTO, Error> {
+  return useQuery({
+    queryKey: flashcardKeys.due(scope),
+    queryFn: () => flashcardApi.dueSession(scope),
+  })
+}
+
+export function useWeakTopics(subjectCode?: string | null): UseQueryResult<WeakTopicDTO[], Error> {
+  return useQuery({
+    queryKey: flashcardKeys.weakTopics(subjectCode),
+    queryFn: () => flashcardApi.weakTopics(subjectCode),
+    staleTime: 60_000,
+  })
+}
+
 /**
- * `POST /api/student/flashcards/decks` — create an empty deck (manual,
- * topic-targeted, or weakness-targeted). A 409 with
- * `{"reason": "no_weaknesses"}` throws `ApiError` whose `.detail` carries
- * that reason — the caller renders the honest refusal rather than a generic
- * failure.
+ * The writing status of one generated deck. It polls every 2 s while the deck is `writing`.
+ * When the deck leaves `writing`, it refreshes the deck, the lists and the due session once.
  */
+export function useGenerationStatus(
+  deckId: string,
+  enabled: boolean,
+): UseQueryResult<GenerationStatusDTO, Error> {
+  const queryClient = useQueryClient()
+  const query = useQuery({
+    queryKey: flashcardKeys.generation(deckId),
+    queryFn: () => flashcardApi.generationStatus(deckId),
+    enabled: enabled && !!deckId,
+    refetchInterval: (q) => (q.state.data?.status === "writing" ? GENERATION_POLL_MS : false),
+  })
+  const previous = useRef<string | undefined>(undefined)
+  const status = query.data?.status
+  useEffect(() => {
+    if (previous.current === "writing" && status && status !== "writing") {
+      void queryClient.invalidateQueries({ queryKey: flashcardKeys.deck(deckId) })
+      invalidateDeckLists(queryClient)
+    }
+    previous.current = status
+  }, [status, deckId, queryClient])
+  return query
+}
+
 export function useCreateDeck(): UseMutationResult<DeckSummaryDTO, Error, CreateDeckRequest> {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (body: CreateDeckRequest) =>
-      request<DeckSummaryDTO>("/student/flashcards/decks", {
-        method: "POST",
-        body: JSON.stringify(body),
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: DECKS_KEY })
+    mutationFn: (body) => flashcardApi.createDeck(body),
+    onSuccess: () => invalidateDeckLists(queryClient),
+  })
+}
+
+export function useRenameDeck(): UseMutationResult<DeckSummaryDTO, Error, { deckId: string; title: string }> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ deckId, title }) => flashcardApi.renameDeck(deckId, { title }),
+    onSuccess: (_deck, { deckId }) => {
+      void queryClient.invalidateQueries({ queryKey: flashcardKeys.deck(deckId) })
+      invalidateDeckLists(queryClient)
     },
   })
 }
 
 /**
- * `POST /api/student/flashcards/decks/generate` — an AI-generated deck for a
- * topic, or for the caller's weakest topic. The response's `generatedCount`
- * is the true persisted count and may be less than `requestedCount` — never
- * rendered as if it were the requested number.
+ * The cache once a deck is gone. It leaves every cached list first, so a screen told "deleted" cannot
+ * fall back to the deck that just went (`removeQueries` and the refetch both land after that), and
+ * then its own query goes. The lists are refetched to confirm.
  */
-export function useGenerateDeck(): UseMutationResult<
-  GenerateDeckResponseDTO,
-  Error,
-  GenerateDeckRequest
-> {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (body: GenerateDeckRequest) =>
-      request<GenerateDeckResponseDTO>("/student/flashcards/decks/generate", {
-        method: "POST",
-        body: JSON.stringify(body),
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: DECKS_KEY })
-    },
-  })
+export function afterDeleteDeck(queryClient: QueryClient, deckId: string): void {
+  queryClient.setQueriesData<DeckSummaryDTO[]>({ queryKey: flashcardKeys.decksRoot }, (decks) =>
+    decks?.filter((d) => d.id !== deckId),
+  )
+  queryClient.removeQueries({ queryKey: flashcardKeys.deck(deckId) })
+  invalidateDeckLists(queryClient)
 }
 
-/** `DELETE /api/student/flashcards/decks/{deckId}` — delete one of the
- * caller's own decks, and every card in it. */
 export function useDeleteDeck(): UseMutationResult<void, Error, string> {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (deckId: string) =>
-      request<void>(`/student/flashcards/decks/${deckId}`, { method: "DELETE" }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: DECKS_KEY })
-    },
+    mutationFn: (deckId) => flashcardApi.deleteDeck(deckId),
+    onSuccess: (_v, deckId) => afterDeleteDeck(queryClient, deckId),
   })
 }
 
-/** `POST /api/student/flashcards/decks/{deckId}/cards` — add a card the
- * student wrote themselves; always lands `source: "manual"`. */
-export function useAddCard(
-  deckId: string,
-): UseMutationResult<CardDTO, Error, AddCardRequest> {
+/**
+ * Writes an AI deck. The call is synchronous server-side (201): the returned deck is already
+ * `ready` or `failed` (with an error code from `useGenerationStatus`), never `writing`.
+ */
+export function useGenerateDeck(): UseMutationResult<GenerateDeckResponseDTO, Error, GenerateDeckRequest> {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (body: AddCardRequest) =>
-      request<CardDTO>(`/student/flashcards/decks/${deckId}/cards`, {
-        method: "POST",
-        body: JSON.stringify(body),
-      }),
+    mutationFn: (body) => flashcardApi.generateDeck(body),
+    onSuccess: () => invalidateDeckLists(queryClient),
+  })
+}
+
+const RETRY_GENERATION_KEY = ["flashcards", "retry-generation"] as const
+
+type RetryMutation = ReturnType<MutationCache["getAll"]>[number]
+
+/**
+ * The request behind each retry mutation this hook started. Keyed by the Mutation object, not by deck
+ * id and not module-wide: "in flight" is then whatever the QueryClient's own mutation cache still
+ * holds, so `queryClient.clear()` on sign-out drops every entry with it (a retry of the same deck id in
+ * the next session sends a new request) and a mutation that was cleared is recognisably orphaned.
+ * A pending mutation missing from this map (restored, or started elsewhere) has no request to join.
+ */
+const retryRequests = new WeakMap<RetryMutation, Promise<GenerationStatusDTO>>()
+
+const retryMutations = (cache: MutationCache) => cache.findAll({ mutationKey: RETRY_GENERATION_KEY })
+
+/** The request of a retry this hook started for the deck and the cache still holds as pending. */
+function liveRetryRequest(cache: MutationCache, deckId: string): Promise<GenerationStatusDTO> | undefined {
+  for (const m of retryMutations(cache)) {
+    if (m.state.status === "pending" && m.state.variables === deckId) {
+      const request = retryRequests.get(m)
+      if (request) return request
+    }
+  }
+  return undefined
+}
+
+/**
+ * Retries a failed deck. Returns the final state (200), which seeds the generation query.
+ * A second call for a deck that is already retrying (a stale closure, a second screen instance)
+ * joins the live request instead of sending another. Only the call that started the request acts on
+ * its outcome (seeding the cache and refreshing the lists on success, `onError` on failure), so a
+ * deck settling once has its effects once. `onError` is not passed to `mutate()`, which fires only
+ * for the latest call when several decks are retried in a row. `queryClient.clear()` empties the
+ * mutation cache but cannot cancel a request: an outcome that lands after it belongs to the old
+ * session and is dropped, success and failure alike, so it cannot overwrite the new session's cache.
+ */
+export function useRetryGeneration(
+  onError?: (error: Error, deckId: string) => void,
+): { mutate: (deckId: string) => void } {
+  const queryClient = useQueryClient()
+  const mutation = useMutation({
+    mutationKey: RETRY_GENERATION_KEY,
+    mutationFn: (deckId: string) => flashcardApi.retryGeneration(deckId),
+  })
+  // Calls from older renders must see the latest callback and mutation without changing identity.
+  const latest = useRef({ mutation, onError })
+  latest.current = { mutation, onError }
+  const mutateAsync = useCallback(
+    (deckId: string) => {
+      const cache = queryClient.getMutationCache()
+      const joined = liveRetryRequest(cache, deckId)
+      if (joined) return joined
+      // The mutation is added to the cache synchronously, so the one that was not there before the
+      // call is this call's. Looking for "a pending retry of this deck" could find a restored one.
+      const before = new Set(retryMutations(cache))
+      const request = latest.current.mutation.mutateAsync(deckId)
+      const owner = retryMutations(cache).find((m) => !before.has(m))
+      if (owner) retryRequests.set(owner, request)
+      const owned = () => owner !== undefined && retryMutations(cache).includes(owner)
+      const report = latest.current.onError
+      request.then(
+        (state) => {
+          if (!owned()) return
+          queryClient.setQueryData(flashcardKeys.generation(deckId), state)
+          void queryClient.invalidateQueries({ queryKey: flashcardKeys.deck(deckId) })
+          invalidateDeckLists(queryClient)
+        },
+        (error: Error) => {
+          if (owned()) report?.(error, deckId)
+        },
+      )
+      return request
+    },
+    [queryClient],
+  )
+  // Only the action is exposed: per-call callbacks and the raw mutation result could still report an
+  // outcome from a session that `queryClient.clear()` has ended.
+  const mutate = useCallback(
+    (deckId: string) => {
+      void mutateAsync(deckId).catch(() => {})
+    },
+    [mutateAsync],
+  )
+  return useMemo(() => ({ mutate }), [mutate])
+}
+
+/**
+ * Decks with a retry in flight. Read from the mutation cache rather than from one `useMutation`
+ * result, which only ever describes its latest call: retry A, then B, and A is still pending.
+ */
+export function useRetryingDeckIds(): ReadonlySet<string> {
+  const ids = useMutationState({
+    filters: { mutationKey: RETRY_GENERATION_KEY, status: "pending" },
+    select: (mutation) => mutation.state.variables as string,
+  })
+  return useMemo(() => new Set(ids), [ids])
+}
+
+export function useAddCard(deckId: string): UseMutationResult<CardDTO, Error, AddCardRequest> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body) => flashcardApi.addCard(deckId, body),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["flashcards", "deck", deckId] })
-      queryClient.invalidateQueries({ queryKey: DECKS_KEY })
+      void queryClient.invalidateQueries({ queryKey: flashcardKeys.deck(deckId) })
+      invalidateDeckLists(queryClient)
     },
   })
 }
 
-/** `PATCH /api/student/flashcards/cards/{cardId}` — reword a card. No
- * `source` field exists on the request; rewording an AI card never
- * relabels it as the student's own. */
+/** Reword a card. No `source` field exists, so an AI card never becomes "yours". */
 export function useEditCard(
   deckId: string,
 ): UseMutationResult<CardDTO, Error, { cardId: string; body: EditCardRequest }> {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ cardId, body }) =>
-      request<CardDTO>(`/student/flashcards/cards/${cardId}`, {
-        method: "PATCH",
-        body: JSON.stringify(body),
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["flashcards", "deck", deckId] })
-    },
+    mutationFn: ({ cardId, body }) => flashcardApi.editCard(cardId, body),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: flashcardKeys.deck(deckId) }),
   })
 }
 
-/** `DELETE /api/student/flashcards/cards/{cardId}` — delete one of the
- * caller's own cards. */
-export function useDeleteCard(
-  deckId: string,
-): UseMutationResult<void, Error, string> {
+export function useDeleteCard(deckId: string): UseMutationResult<void, Error, string> {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (cardId: string) =>
-      request<void>(`/student/flashcards/cards/${cardId}`, { method: "DELETE" }),
+    mutationFn: (cardId) => flashcardApi.deleteCard(cardId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["flashcards", "deck", deckId] })
-      queryClient.invalidateQueries({ queryKey: DECKS_KEY })
+      void queryClient.invalidateQueries({ queryKey: flashcardKeys.deck(deckId) })
+      invalidateDeckLists(queryClient)
     },
   })
 }
 
 /**
- * `GET /api/student/flashcards/due` — the cards due now, the whole backlog
- * size, and the next due time (S-22/S-23). An empty `cards` list is a real,
- * successful state — S-22's "nothing due today" — never treated as an
- * error.
+ * Options for grading one card. Grading is optimistic (the review screen moves on before this
+ * settles). The query layer does not retry on its own; a failure goes straight to "ratings not
+ * saved", and the banner's Retry re-sends the same `clientReviewId`, which the server replays
+ * instead of grading the card (and awarding XP) a second time.
  */
-export function useDueSession(
-  subjectCode?: string,
-  limit?: number,
-): UseQueryResult<DueSessionDTO, Error> {
-  const query = new URLSearchParams()
-  if (subjectCode) query.set("subject_code", subjectCode)
-  if (limit) query.set("limit", String(limit))
-  const qs = query.toString()
-  return useQuery({
-    queryKey: [...DUE_KEY, subjectCode ?? null, limit ?? null],
-    queryFn: () => request<DueSessionDTO>(`/student/flashcards/due${qs ? `?${qs}` : ""}`),
-  })
+export interface ReviewVariables {
+  cardId: string
+  grade: ReviewGrade
+  clientReviewId: string
 }
 
-/**
- * `POST /api/student/flashcards/cards/{cardId}/review` — grade one card and
- * reschedule it through the SM-2 scheduler. The response carries the
- * interval before and after so the effect of the grade is visible.
- */
+export function reviewCardMutationOptions(queryClient: QueryClient) {
+  return {
+    mutationFn: ({ cardId, grade, clientReviewId }: ReviewVariables) =>
+      flashcardApi.reviewCard(cardId, grade, clientReviewId),
+    retry: 0,
+    onSuccess: () => {
+      invalidateDeckLists(queryClient)
+      void queryClient.invalidateQueries({ queryKey: ["flashcards", "deck"] })
+    },
+  }
+}
+
 export function useReviewCard(): UseMutationResult<
   ReviewResultDTO,
   Error,
-  { cardId: string; grade: ReviewCardRequest["grade"] }
+  ReviewVariables
 > {
   const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: ({ cardId, grade }) =>
-      request<ReviewResultDTO>(`/student/flashcards/cards/${cardId}/review`, {
-        method: "POST",
-        body: JSON.stringify({ grade } satisfies ReviewCardRequest),
-      }),
-    // Task 7 (B5a): grading is now optimistic — `FlashcardReview.tsx`
-    // advances to the next card before this settles — so a transient
-    // failure is worth retrying quietly before it ever reaches the failed-
-    // grades banner. Capped backoff, not unbounded: a card that is really
-    // failing (a 4xx, an offline device) should reach the banner in seconds,
-    // not hang the session.
-    retry: 3,
-    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: DUE_KEY })
-      queryClient.invalidateQueries({ queryKey: DECKS_KEY })
-    },
-  })
+  return useMutation(reviewCardMutationOptions(queryClient))
 }

@@ -42,6 +42,17 @@ export function shouldStartLongPress(input: {
 }
 
 /**
+ * Whether a press began on an interactive element that is not the one carrying the handlers.
+ *
+ * `match` is the nearest interactive ancestor of the press target and `owner` the element the
+ * handlers are on. A row's own button spreads the hold handlers onto itself, so its own match is
+ * the owner and must not veto the hold; a nested button, link or field still owns its own tap.
+ */
+export function pressStartedOnInteractive(match: object | null, owner: object | null): boolean {
+  return match !== null && match !== owner
+}
+
+/**
  * Whether to `preventDefault()` a `contextmenu` event.
  *
  * Only for a touch/pen hold, where our own menu is about to open in the

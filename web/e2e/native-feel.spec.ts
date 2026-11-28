@@ -22,12 +22,8 @@ import { readSeed } from "./seed"
  * full below — never weakened or stubbed — and are deferred to CI, which
  * has its own database.
  *
- * A dismissible `<Modal>` reachable from seed data was re-grepped for under
- * `web/src/portals/student` (per this task's own instruction) and none
- * exists — every `<Modal` use there goes through `<ConfirmModal>`, which is
- * `dismissible={false}` by design. Assertion 5 therefore covers the
- * `NavDrawer` (dismissible) and a `ConfirmModal` (non-dismissible, "Delete
- * deck") case, and does not have a third dismissible-`Modal` case to add.
+ * Assertion 5 covers the navigation drawer's back interception and checks
+ * that backing out of the flashcard deck delete sheet leaves the deck intact.
  */
 
 const SIGNED_OUT_ROUTES = [
@@ -176,9 +172,7 @@ test.describe("Assertion 5: browser back dismisses overlays without navigating a
     expect(page.url()).toBe(urlBefore)
   })
 
-  test("a ConfirmModal (non-dismissible, 'Delete deck') survives back; deck not deleted", async ({
-    page,
-  }) => {
+  test("a long-press deck delete confirmation closes on browser back; URL unchanged; deck not deleted", async ({ page }) => {
     const seed = readSeed()
     const account = seed.practice.students.active
     await page.goto("/login")
@@ -187,30 +181,36 @@ test.describe("Assertion 5: browser back dismisses overlays without navigating a
     await page.getByRole("button", { name: /sign in/i }).click()
     await expect(page).toHaveURL(/\/student$/, { timeout: 15_000 })
 
-    await page.goto(`/student/flashcards/${seed.practice.subjectCode}`)
-    await expect(page.getByRole("heading", { name: /^Flashcards for/ })).toBeVisible()
+    const shelfPath = `/student/flashcards/${seed.practice.subjectCode}`
+    await page.goto(shelfPath)
+    await expect(page.getByRole("heading", { name: "Flashcards", exact: true })).toBeVisible()
 
-    const deleteButton = page.getByRole("button", { name: /^Delete deck:/ }).first()
-    await expect(deleteButton).toBeVisible()
-    const deckLabel = await deleteButton.getAttribute("aria-label")
+    const deckTitle = `P4.9 Seed Deck ${seed.runTag}`
+    const deckRow = page.getByRole("listitem").getByRole("button").filter({
+      has: page.getByText(deckTitle, { exact: true }),
+    })
+    await deckRow.hover()
+    await page.mouse.down()
+    const menu = page.getByRole("dialog", { name: deckTitle, exact: true })
+    await expect(menu).toBeVisible()
+    await page.mouse.up()
+    await menu.getByRole("button", { name: "Delete deck", exact: true }).click()
 
-    await deleteButton.click()
-    const dialog = page.getByRole("dialog")
-    await expect(dialog).toBeVisible()
-    const urlBefore = page.url()
+    const confirm = page.getByRole("alertdialog", { name: `Delete ${deckTitle}?`, exact: true })
+    await expect(confirm.getByRole("button", { name: "Keep it" })).toBeVisible()
 
+    // Back closes the sheet (brief 2026-11-08:37); the URL stays on the shelf and nothing is deleted.
+    const shelfUrl = page.url()
     await page.goBack()
-
-    // ConfirmModal is `dismissible={false}` — back re-pushes the history
-    // entry rather than closing it (Task 2 Behaviour 2).
-    await expect(dialog).toBeVisible()
-    expect(page.url()).toBe(urlBefore)
-
-    await page.getByRole("button", { name: "Keep it" }).click()
-    await expect(dialog).toBeHidden()
+    await expect(confirm).toBeHidden()
+    expect(page.url()).toBe(shelfUrl)
 
     await page.reload()
-    await expect(page.getByRole("button", { name: deckLabel ?? "" })).toBeVisible()
+    await expect(deckRow).toBeVisible()
+
+    // The menu and the confirm left no entry behind: one more Back leaves the shelf for the page before it.
+    await page.goBack()
+    await expect(page).toHaveURL(/\/student$/)
   })
 })
 

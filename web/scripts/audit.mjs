@@ -2169,13 +2169,13 @@ function buildRouteRegistry(seed) {
       slug: "student-flashcards-due",
       path: `/student/flashcards/${practiceSubject}`,
       session: practiceActiveSession,
-      // P6.4: `\s+`, not a space — see S-21 above. `FlashcardDecks.tsx` renders
+      // P6.4: `\s+`, not a space — see S-21 above. the decks screen renders
       // the count and its noun as two spans in a `flex items-baseline` row, so
-      // `innerText` reads `"7\ncards due today"`. Not a data problem: the
+      // `innerText` may read `"7\ncards due"`. Not a data problem: the
       // `settled` and `empty` states of this same screen pass on their own
       // sessions, and S-23 rides the same `active` session and needs cards to
       // be due at all.
-      ready: (page) => waitForText(page, "\\d+\\s+cards? due today"),
+      ready: (page) => waitForText(page, "\\d+\\s+cards? due"),
       authed: true,
     },
     {
@@ -2183,8 +2183,7 @@ function buildRouteRegistry(seed) {
       // carrying the real next-due date a genuine SM-2 `good` review
       // produced (scripts/seed_e2e.py asserts this against `due_session`
       // itself before ever handing the seed payload to this harness).
-      // Combined with "Decks grouped by topic" (FlashcardDecks' own fixed
-      // intro copy) so this ready string cannot be satisfied by S-23's
+      // Combined with "Flashcards" (the decks screen header) so this ready string cannot be satisfied by S-23's
       // identical "Nothing due today" heading on a different route.
       screenId: "S-22",
       path: `/student/flashcards/${practiceSubject}`,
@@ -2196,7 +2195,7 @@ function buildRouteRegistry(seed) {
           slug: "student-flashcards-settled",
           lighthouse: false,
           ready: (page) =>
-            waitForText(page, "(?=[\\s\\S]*Nothing due today)(?=[\\s\\S]*Decks grouped by topic)"),
+            waitForText(page, "(?=[\\s\\S]*Nothing due)(?=[\\s\\S]*Flashcards)"),
         },
       ],
     },
@@ -2220,16 +2219,15 @@ function buildRouteRegistry(seed) {
           state: "empty",
           slug: "student-flashcards-empty",
           lighthouse: false,
-          ready: (page) => waitForText(page, "No decks yet for"),
+          ready: (page) => waitForText(page, "Your shelf is empty"),
         },
         {
           state: "no-weaknesses",
           slug: "student-flashcards-no-weaknesses",
           lighthouse: false,
           ready: async (page) => {
-            await pressToggleOnce(page, "Generate from a weakness")
-            await clickButtonByText(page, "^Generate deck$")
-            await waitForText(page, "No weak topics recorded yet")
+            await clickButtonByText(page, "^From a weakness")
+            await waitForText(page, "Needs a marked paper first")
           },
         },
       ],
@@ -2249,8 +2247,8 @@ function buildRouteRegistry(seed) {
       path: `/student/flashcards/review/${practiceSubject}`,
       session: practiceActiveSession,
       ready: async (page) => {
-        await waitForText(page, "Reveal answer")
-        await clickButtonByText(page, "^Reveal answer")
+        await waitForText(page, "Show answer")
+        await clickButtonByText(page, "^Show answer")
         await waitForText(page, "Again")
       },
       authed: true,
@@ -2271,7 +2269,7 @@ function buildRouteRegistry(seed) {
           slug: "student-flashcard-review-settled",
           lighthouse: false,
           ready: (page) =>
-            waitForText(page, "(?=[\\s\\S]*Nothing due today)(?=[\\s\\S]*Back to decks)"),
+            waitForText(page, "(?=[\\s\\S]*Nothing due)(?=[\\s\\S]*Back to decks)"),
         },
       ],
     },

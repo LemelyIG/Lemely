@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { flashcardSwipeAction, GRADE_SWIPE_THRESHOLD, REVEAL_SWIPE_THRESHOLD } from "@/lib/flashcardSwipe"
+import { flashcardSwipeAction, GRADE_SWIPE_THRESHOLD, REVEAL_SWIPE_THRESHOLD, swipeVisual } from "@/lib/flashcardSwipe"
 
 /*
  * Consolidation pass · this used to also take a `dy` and reveal on `dy <=
@@ -49,5 +49,22 @@ describe("flashcardSwipeAction — revealed: left grades again, right grades goo
 
   it("inverse: swipe right short of the threshold does nothing", () => {
     expect(flashcardSwipeAction({ dx: GRADE_SWIPE_THRESHOLD - 1, revealed: true })).toBe("none")
+  })
+})
+
+describe("swipeVisual", () => {
+  it("shows no stamp before the flip", () => {
+    expect(swipeVisual(120, false, false)).toEqual({ stamp: null, opacity: 0, rotateDeg: 6, armed: false })
+  })
+  it("fades the Good stamp in to the grade threshold, then arms", () => {
+    expect(swipeVisual(40, true, false)).toEqual({ stamp: "good", opacity: 0.5, rotateDeg: 3.2, armed: false })
+    expect(swipeVisual(GRADE_SWIPE_THRESHOLD, true, false).armed).toBe(true)
+  })
+  it("stamps Again to the left and caps the tilt", () => {
+    expect(swipeVisual(-400, true, false)).toEqual({ stamp: "again", opacity: 1, rotateDeg: -12, armed: true })
+  })
+  it("never tilts under reduced motion", () => {
+    expect(swipeVisual(-400, true, true).rotateDeg).toBe(0)
+    expect(swipeVisual(120, false, true).rotateDeg).toBe(0)
   })
 })

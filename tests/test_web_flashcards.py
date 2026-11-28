@@ -30,11 +30,13 @@ from lemely.core.flashcards import GeneratedFlashcard, GeneratedFlashcardDeck
 from lemely.db.base import Base
 from lemely.db.flashcard_repo import FlashcardService
 from lemely.db.models import User
+from lemely.db.models.academic import Subject
 from lemely.db.models.attempts import Attempt, WeaknessRecord
 from lemely.db.models.enums import AttemptOrigin, Role
+from lemely.db.xp_repo import XpService
 from lemely.runtime.config import DatabaseSettings
 from lemely.web import create_app
-from lemely.web.deps import AuthContext, get_auth_context, get_flashcard_service
+from lemely.web.deps import AuthContext, get_auth_context, get_flashcard_service, get_xp_service
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -382,6 +384,10 @@ def test_generated_cards_are_marked_ai_on_the_wire(
         json={"subjectCode": "0625", "origin": "topic", "topic": "4.3 Circuits", "count": 2},
     )
     assert response.status_code == 201
+    body = response.json()
+    # The work is done before the response: the body is the final state, not a snapshot.
+    assert body["deck"]["generationStatus"] == "ready"
+    assert (body["deck"]["cardCount"], body["generatedCount"]) == (2, 2)
     deck_id = response.json()["deck"]["id"]
 
     cards = client.get(f"/api/student/flashcards/decks/{deck_id}").json()["cards"]
@@ -401,13 +407,22 @@ def test_a_short_generation_reports_the_true_count_never_the_requested_one(
     _use_service(client, service)
     _auth_as(client, student)
 
-    body = client.post(
+    started = client.post(
         "/api/student/flashcards/decks/generate",
         json={"subjectCode": "0625", "origin": "topic", "topic": "4.3 Circuits", "count": 10},
     ).json()
-    assert body["requestedCount"] == 10
-    assert body["generatedCount"] == 1
-    assert body["deck"]["cardCount"] == 1
+    assert started["requestedCount"] == 10
+    assert started["generatedCount"] == 1
+    assert started["deck"]["generationStatus"] == "ready"
+
+    status = client.get(f"/api/student/flashcards/decks/{started['deck']['id']}/generation").json()
+    assert status == {
+        "deckId": started["deck"]["id"],
+        "status": "ready",
+        "requestedCount": 10,
+        "generatedCount": 1,
+        "error": None,
+    }
 
 
 def test_generating_a_manual_deck_is_refused(
@@ -646,3 +661,301 @@ def test_the_due_backlog_total_ignores_the_session_limit(
     assert len(body["cards"]) == 2
     # A capped session must not report its cap as the whole backlog.
     assert body["totalDue"] == 4
+
+
+# ---------------------------------------------------------------------------
+# Redesign L10 routes.
+# ---------------------------------------------------------------------------
+
+
+def _deck_with_cards(client: TestClient, n: int, title: str = "Deck") -> str:
+    deck_id = client.post(
+        "/api/student/flashcards/decks", json={"subjectCode": "0625", "title": title}
+    ).json()["id"]
+    for i in range(n):
+        client.post(
+            f"/api/student/flashcards/decks/{deck_id}/cards", json={"front": f"Q{i}", "back": "A"}
+        )
+    return str(deck_id)
+
+
+def test_deck_summary_carries_mastery_and_generation_fields(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _use_service(client, flashcard_service)
+    _auth_as(client, student)
+    _deck_with_cards(client, 2)
+
+    [deck] = client.get("/api/student/flashcards/decks").json()
+    assert (deck["newCount"], deck["learningCount"], deck["knownCount"]) == (2, 0, 0)
+    assert deck["generationStatus"] == "ready"
+    assert deck["requestedCount"] is None
+    assert deck["marksLost"] is None
+
+
+def test_rename_a_deck_and_reject_a_blank_title(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _use_service(client, flashcard_service)
+    _auth_as(client, student)
+    deck_id = _deck_with_cards(client, 0)
+
+    renamed = client.patch(f"/api/student/flashcards/decks/{deck_id}", json={"title": " Vectors "})
+    assert renamed.status_code == 200
+    assert renamed.json()["title"] == "Vectors"
+    assert (
+        client.patch(f"/api/student/flashcards/decks/{deck_id}", json={"title": "  "}).status_code
+        == 422
+    )
+
+
+def test_rename_someone_elses_deck_is_404(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    owner = _seed_user(pg_sessionmaker)
+    other = _seed_user(pg_sessionmaker)
+    _use_service(client, flashcard_service)
+    _auth_as(client, owner)
+    deck_id = _deck_with_cards(client, 0)
+    _auth_as(client, other)
+    assert (
+        client.patch(f"/api/student/flashcards/decks/{deck_id}", json={"title": "Mine"}).status_code
+        == 404
+    )
+    assert client.get(f"/api/student/flashcards/decks/{deck_id}/generation").status_code == 404
+    assert (
+        client.post(f"/api/student/flashcards/decks/{deck_id}/generation/retry").status_code == 404
+    )
+    assert client.get(f"/api/student/flashcards/due?deck_id={deck_id}").status_code == 404
+
+
+def test_weak_topics_route_ranks_by_marks_lost(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _seed_weakness(pg_sessionmaker, student, topic="3 Waves", lost_marks=6)
+    _seed_weakness(pg_sessionmaker, student, topic="1 Motion", lost_marks=3)
+    _use_service(client, flashcard_service)
+    _auth_as(client, student)
+
+    body = client.get("/api/student/flashcards/weak-topics?subject_code=0625").json()
+    assert body == [
+        {"subjectCode": "0625", "topic": "3 Waves", "marksLost": 6, "accuracyPct": 40},
+        {"subjectCode": "0625", "topic": "1 Motion", "marksLost": 3, "accuracyPct": 70},
+    ]
+
+
+def test_generate_for_a_chosen_weak_topic(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _seed_weakness(pg_sessionmaker, student, topic="3 Waves", lost_marks=9)
+    _seed_weakness(pg_sessionmaker, student, topic="1 Motion", lost_marks=2)
+    generator = _mock_generator([GeneratedFlashcard(front="Q", back="A")], topic="1 Motion")
+    service = FlashcardService(pg_sessionmaker, generator, now=lambda: _FIXED_NOW)
+    _use_service(client, service)
+    _auth_as(client, student)
+
+    ok = client.post(
+        "/api/student/flashcards/decks/generate",
+        json={"subjectCode": "0625", "origin": "weakness", "topic": "1 Motion", "count": 4},
+    )
+    assert ok.status_code == 201
+    assert ok.json()["deck"]["topic"] == "1 Motion"
+    not_weak = client.post(
+        "/api/student/flashcards/decks/generate",
+        json={"subjectCode": "0625", "origin": "weakness", "topic": "9 Space", "count": 4},
+    )
+    assert not_weak.status_code == 422
+
+
+def test_a_failed_generation_can_be_retried(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    generator = MagicMock()
+    generator.generate.side_effect = [
+        RuntimeError("down"),
+        GeneratedFlashcardDeck(
+            subject_code="0625", topic="1 Motion", cards=[GeneratedFlashcard(front="Q", back="A")]
+        ),
+    ]
+    service = FlashcardService(pg_sessionmaker, generator, now=lambda: _FIXED_NOW)
+    _use_service(client, service)
+    _auth_as(client, student)
+
+    first = client.post(
+        "/api/student/flashcards/decks/generate",
+        json={"subjectCode": "0625", "origin": "topic", "topic": "1 Motion", "count": 3},
+    )
+    # A failed run still answers with the final state, so the client does not flash "writing".
+    assert first.status_code == 201
+    assert first.json()["deck"]["generationStatus"] == "failed"
+    assert first.json()["generatedCount"] == 0
+    deck_id = first.json()["deck"]["id"]
+    failed = client.get(f"/api/student/flashcards/decks/{deck_id}/generation").json()
+    assert (failed["status"], failed["error"]) == ("failed", "model_error")
+
+    retried = client.post(f"/api/student/flashcards/decks/{deck_id}/generation/retry")
+    assert retried.status_code == 200
+    assert (retried.json()["status"], retried.json()["generatedCount"]) == ("ready", 1)
+    after = client.get(f"/api/student/flashcards/decks/{deck_id}/generation").json()
+    assert (after["status"], after["generatedCount"]) == ("ready", 1)
+    # A ready deck cannot be retried.
+    assert (
+        client.post(f"/api/student/flashcards/decks/{deck_id}/generation/retry").status_code == 422
+    )
+
+
+def test_due_session_scoped_to_a_deck_with_intervals_and_forecast(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _use_service(client, flashcard_service)
+    _auth_as(client, student)
+    deck_a = _deck_with_cards(client, 2, "A")
+    _deck_with_cards(client, 3, "B")
+
+    body = client.get(f"/api/student/flashcards/due?deck_id={deck_a}").json()
+    assert body["totalDue"] == 2
+    assert body["againDelayMinutes"] == 10
+    assert body["upcoming"] == []
+    assert body["cards"][0]["nextIntervalDays"] == {"again": 0, "hard": 1, "good": 1, "easy": 1}
+    assert client.get("/api/student/flashcards/due?deck_id=not-a-uuid").status_code == 422
+
+
+def test_review_reports_the_xp_it_awarded(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _use_service(client, flashcard_service)
+    _auth_as(client, student)
+    xp = MagicMock()
+    xp.award.return_value = MagicMock(awarded=True, amount=2)
+    client.app.dependency_overrides[get_xp_service] = lambda: xp  # type: ignore[union-attr]
+    deck_id = _deck_with_cards(client, 1)
+    card_id = client.get(f"/api/student/flashcards/decks/{deck_id}").json()["cards"][0]["id"]
+
+    body = client.post(
+        f"/api/student/flashcards/cards/{card_id}/review", json={"grade": "good"}
+    ).json()
+    assert body["xpAwarded"] == 2
+
+    xp.award.side_effect = RuntimeError("xp down")
+    second = client.post(
+        f"/api/student/flashcards/cards/{card_id}/review", json={"grade": "again"}
+    ).json()
+    assert second["xpAwarded"] == 0  # the review still succeeded
+
+
+# ---------------------------------------------------------------------------
+# Review idempotency (clientReviewId).
+# ---------------------------------------------------------------------------
+
+
+def _one_card(client: TestClient) -> str:
+    deck_id = _deck_with_cards(client, 1)
+    return str(client.get(f"/api/student/flashcards/decks/{deck_id}").json()["cards"][0]["id"])
+
+
+def _review_count(sm: sessionmaker[Session]) -> int:
+    with sm() as session:
+        return int(session.execute(sa.text("SELECT count(*) FROM flashcard_reviews")).scalar_one())
+
+
+def _xp_count(sm: sessionmaker[Session]) -> int:
+    with sm() as session:
+        return int(session.execute(sa.text("SELECT count(*) FROM xp_events")).scalar_one())
+
+
+def test_repeat_review_with_the_same_key_changes_nothing(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    with pg_sessionmaker.begin() as session:
+        session.add(Subject(code="0625", name="Physics"))
+    _use_service(client, flashcard_service)
+    _auth_as(client, student)
+    client.app.dependency_overrides[get_xp_service] = lambda: XpService(pg_sessionmaker)  # type: ignore[union-attr]
+    card_id = _one_card(client)
+    key = str(uuid.uuid4())
+    url = f"/api/student/flashcards/cards/{card_id}/review"
+
+    first = client.post(url, json={"grade": "good", "clientReviewId": key})
+    xp_after_first = _xp_count(pg_sessionmaker)
+    second = client.post(url, json={"grade": "good", "clientReviewId": key})
+
+    assert (first.status_code, second.status_code) == (200, 200)
+    assert second.json()["reviewId"] == first.json()["reviewId"]
+    assert second.json()["card"] == first.json()["card"]
+    assert second.json()["intervalAfterDays"] == first.json()["intervalAfterDays"]
+    assert second.json()["card"]["repetitions"] == 1  # not rescheduled twice
+    assert _review_count(pg_sessionmaker) == 1
+    assert xp_after_first == 1
+    assert _xp_count(pg_sessionmaker) == xp_after_first
+
+
+def test_a_different_key_grades_again(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _use_service(client, flashcard_service)
+    _auth_as(client, student)
+    card_id = _one_card(client)
+    url = f"/api/student/flashcards/cards/{card_id}/review"
+
+    first = client.post(url, json={"grade": "good", "clientReviewId": str(uuid.uuid4())})
+    second = client.post(url, json={"grade": "good", "clientReviewId": str(uuid.uuid4())})
+
+    assert second.json()["reviewId"] != first.json()["reviewId"]
+    assert second.json()["card"]["repetitions"] == 2
+    assert _review_count(pg_sessionmaker) == 2
+
+
+def test_review_without_a_key_behaves_as_before(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _use_service(client, flashcard_service)
+    _auth_as(client, student)
+    card_id = _one_card(client)
+    url = f"/api/student/flashcards/cards/{card_id}/review"
+
+    client.post(url, json={"grade": "good"})
+    client.post(url, json={"grade": "good"})
+
+    assert _review_count(pg_sessionmaker) == 2
+
+
+def test_a_malformed_key_is_422(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _use_service(client, flashcard_service)
+    _auth_as(client, student)
+    card_id = _one_card(client)
+    response = client.post(
+        f"/api/student/flashcards/cards/{card_id}/review",
+        json={"grade": "good", "clientReviewId": "not-a-uuid"},
+    )
+    assert response.status_code == 422
+    assert _review_count(pg_sessionmaker) == 0
+
+
+def test_the_same_key_from_another_student_is_not_a_replay(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], flashcard_service: FlashcardService
+) -> None:
+    key = str(uuid.uuid4())
+    for _ in range(2):
+        student = _seed_user(pg_sessionmaker)
+        _use_service(client, flashcard_service)
+        _auth_as(client, student)
+        card_id = _one_card(client)
+        response = client.post(
+            f"/api/student/flashcards/cards/{card_id}/review",
+            json={"grade": "good", "clientReviewId": key},
+        )
+        assert response.status_code == 200
+    assert _review_count(pg_sessionmaker) == 2

@@ -16,6 +16,8 @@ mirroring the absent parameter on
 
 from __future__ import annotations
 
+import uuid  # noqa: TC003 - pydantic resolves the annotation at runtime
+
 from pydantic import Field
 
 from lemely.web.schemas import ApiModel
@@ -42,7 +44,8 @@ class GenerateDeckRequestDTO(ApiModel):
 
     ``origin`` must be ``"topic"`` or ``"weakness"`` — a manual deck has no
     AI content to generate for, and asking for one is a 422 rather than a
-    quietly empty deck.
+    quietly empty deck. ``topic`` is required for ``"topic"``, and optional for
+    ``"weakness"``, where it must be one of the caller's recorded weak topics.
 
     ``count`` is bounded on the wire because it is the size of a **billed**
     Gemini request (MISSION §8's hard $8 ceiling) and nothing downstream
@@ -88,9 +91,51 @@ class ReviewCardRequestDTO(ApiModel):
     ``grade`` is one of ``"again"``, ``"hard"``, ``"good"``, ``"easy"`` — the
     four-button vocabulary chunk A's scheduler maps onto SM-2 qualities
     0/3/4/5 (no invented quality 1 or 2).
+
+    ``clientReviewId`` is an optional idempotency key (a UUID the client mints once per rating).
+    A repeat with the same key replays the stored result instead of grading again. Old clients
+    omit it and behave as before.
     """
 
     grade: str
+    clientReviewId: uuid.UUID | None = None
+
+
+class RenameDeckRequestDTO(ApiModel):
+    """Body for ``PATCH /api/student/flashcards/decks/{deck_id}``. Trimmed; 1-80 characters."""
+
+    title: str = Field(max_length=200)
+
+
+class NextIntervalsDTO(ApiModel):
+    """Interval in days each grade would give the card right now.
+
+    ``again`` is 0: the same-session step of ``DueSessionDTO.againDelayMinutes``.
+    """
+
+    again: int
+    hard: int
+    good: int
+    easy: int
+
+
+class GenerationStatusDTO(ApiModel):
+    """Where a generated deck's card writing stands. ``generatedCount`` is the real row count."""
+
+    deckId: str
+    status: str
+    requestedCount: int | None
+    generatedCount: int
+    error: str | None
+
+
+class WeakTopicDTO(ApiModel):
+    """One recorded weak topic for the new-deck sheet. ``accuracyPct`` is 0-100."""
+
+    subjectCode: str
+    topic: str
+    marksLost: int
+    accuracyPct: int
 
 
 class CardDTO(ApiModel):
@@ -112,6 +157,7 @@ class CardDTO(ApiModel):
     lapses: int
     dueAt: str
     lastReviewedAt: str | None
+    nextIntervalDays: NextIntervalsDTO
 
 
 class DeckSummaryDTO(ApiModel):
@@ -132,6 +178,12 @@ class DeckSummaryDTO(ApiModel):
     cardCount: int
     dueCount: int
     createdAt: str
+    newCount: int
+    learningCount: int
+    knownCount: int
+    marksLost: int | None
+    generationStatus: str
+    requestedCount: int | None
 
 
 class DeckDetailDTO(ApiModel):
@@ -143,16 +195,23 @@ class DeckDetailDTO(ApiModel):
     title: str
     description: str | None
     origin: str
+    dueCount: int
+    newCount: int
+    learningCount: int
+    knownCount: int
+    marksLost: int | None
+    generationStatus: str
+    requestedCount: int | None
     cards: list[CardDTO] = Field(default_factory=list)
 
 
 class GenerateDeckResponseDTO(ApiModel):
-    """201 response for a generated deck.
+    """201 response: the deck as it stands once its cards are written (``ready`` or ``failed``).
 
-    ``generatedCount`` is the real, persisted number of cards and may be less
-    than ``requestedCount`` — the model is free to return fewer and nothing
-    pads the difference (spec §1.4). The frontend must render the true
-    number, not the requested one.
+    ``generatedCount`` is the real, persisted number, re-read after the work. It may be
+    less than ``requestedCount`` — the model is
+    free to return fewer and nothing pads the difference (spec §1.4). The frontend
+    must render the true number, not the requested one.
     """
 
     deck: DeckSummaryDTO
@@ -172,6 +231,8 @@ class DueSessionDTO(ApiModel):
     cards: list[CardDTO] = Field(default_factory=list)
     totalDue: int
     nextDueAt: str | None
+    upcoming: list[str] = Field(default_factory=list)
+    againDelayMinutes: int
 
 
 class ReviewResultDTO(ApiModel):
@@ -187,3 +248,4 @@ class ReviewResultDTO(ApiModel):
     grade: str
     intervalBeforeDays: int
     intervalAfterDays: int
+    xpAwarded: int = 0
